@@ -42,7 +42,6 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
-import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -60,6 +59,7 @@ import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -71,6 +71,7 @@ import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -154,6 +155,7 @@ function startWithMissingWorktree(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
           realPath: (target: string) =>
@@ -216,7 +218,7 @@ function startWithMissingWorktree(
 
   const start = Effect.gen(function* () {
     return yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
-      .start({ threadId, runId })
+      .start({ threadId, runId, willRetry: true })
       .pipe(Effect.flip);
   }).pipe(Effect.provide(layer), Effect.runPromise);
   return {
@@ -286,6 +288,8 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly nativeGoals?: boolean;
+  readonly goalDriver?: "opencode" | "antigravity";
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -303,6 +307,7 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
   readonly missingProviderSession?: boolean;
+  readonly recoveryReadFailure?: string;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -320,6 +325,7 @@ function makeLocalCommandHarness(input: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
+    readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
   };
 }) {
   const settledRuns: Array<string> = [];
@@ -354,7 +360,9 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: ProviderDriverKind.make(
+      input.nativeGoals === undefined ? "codex" : (input.goalDriver ?? "opencode"),
+    ),
     providerInstanceId: newInstanceId,
     providerSessionId: input.missingProviderSession === true ? null : providerSessionId,
     appThreadId: threadId,
@@ -584,7 +592,7 @@ function makeLocalCommandHarness(input: {
       ...projection,
       thread: {
         ...projection.thread,
-        runtimeMode: "full-access",
+        runtimeMode: input.sideChat.threadRuntimeMode ?? "full-access",
         lineage: {
           parentThreadId,
           relationshipToParent: "fork",
@@ -795,7 +803,13 @@ function makeLocalCommandHarness(input: {
     status: "ready",
     cwd: "/tmp/native-account-command",
     model: null,
-    capabilities: CodexProviderCapabilitiesV2,
+    capabilities: {
+      ...CodexProviderCapabilitiesV2,
+      turns: {
+        ...CodexProviderCapabilitiesV2.turns,
+        ...(input.nativeGoals === undefined ? {} : { supportsNativeGoals: input.nativeGoals }),
+      },
+    },
     createdAt: now,
     updatedAt: now,
     lastError: null,
@@ -935,14 +949,27 @@ function makeLocalCommandHarness(input: {
   const getRuntimeRecoveryProjection = vi.fn<
     ProjectionStore.ProjectionStoreV2Shape["getRuntimeRecoveryProjection"]
   >(() =>
-    Effect.as(failReadIfRunning, {
-      ...projection,
-      hasConversation: projection.messages.some(
-        (m) =>
-          m.role === "user" &&
-          (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-      ),
-    }),
+    input.recoveryReadFailure !== undefined
+      ? Effect.fail(
+          new ProjectionStore.ProjectionStoreReadError({
+            threadId,
+            cause: input.recoveryReadFailure,
+          }),
+        )
+      : Effect.as(failReadIfRunning, {
+          ...projection,
+          hasConversation: projection.messages.some(
+            (m) =>
+              m.role === "user" &&
+              (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+          ),
+        }),
+  );
+  const getRun = vi.fn<ProjectionStore.ProjectionStoreV2Shape["getRun"]>((_threadId, id) =>
+    Effect.as(
+      failReadIfRunning,
+      projection.runs.find((candidate) => candidate.id === id),
+    ),
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
@@ -973,6 +1000,7 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
@@ -994,6 +1022,7 @@ function makeLocalCommandHarness(input: {
           getThreadRecords,
           getTurnStartContext,
           getRuntimeRecoveryProjection,
+          getRun,
           getTurnStartHistory: () =>
             input.sideChat !== undefined
               ? Effect.succeed([])
@@ -1037,6 +1066,7 @@ function makeLocalCommandHarness(input: {
     getThreadRecords,
     getTurnStartContext,
     getRuntimeRecoveryProjection,
+    getRun,
     setProjection: (next: OrchestrationV2ThreadProjection) => {
       projection = next;
     },
@@ -1307,6 +1337,9 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
     harness.getRuntimeRecoveryProjection.mockImplementation(() =>
       Effect.succeed(harness.projection()),
     );
+    harness.getRun.mockImplementation((_threadId, id) =>
+      Effect.succeed(harness.projection().runs.find((candidate) => candidate.id === id)),
+    );
     const projection = harness.projection();
     const run = projection.runs[0]!;
     const replacementAttemptId = RunAttemptId.make("replacement-before-settlement");
@@ -1347,8 +1380,17 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
-          Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent: harness.writeIfRunCurrent }),
+          Layer.mock(EventSink.EventSinkV2)({
+            consumeProviderEvents: (source, process, after) =>
+              source.pipe(
+                Stream.mapEffect((event) => process(event).pipe(Effect.andThen(after))),
+                Stream.takeUntil(Boolean),
+                Stream.runDrain,
+              ),
+            writeIfRunCurrent: harness.writeIfRunCurrent,
+          }),
           IdAllocator.layer,
+          ThreadCommandExecutor.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
             ingestNormalized: () =>
               Effect.sync(() => {
@@ -1694,16 +1736,22 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
 );
 
 effectIt.effect.each([
-  { contextRun: "current", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "failed", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "cancelled", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  { contextRun: "cancelled", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   {
     contextRun: "failed",
     switchedProvider: true,
-    runtimeMode: "approval-required",
+    runtimeMode: "full-access",
     context: "SIDE_CHAT_CONTEXT",
   },
   { contextRun: "delivered", runtimeMode: "full-access", context: "" },
+  {
+    contextRun: "current",
+    threadRuntimeMode: "approval-required",
+    runtimeMode: "approval-required",
+    context: "SIDE_CHAT_CONTEXT",
+  },
 ] as const)(
   "sends side chat context inline once, for the first turn that reaches the provider: %j",
   ({ runtimeMode, context, ...sideChat }) =>
@@ -1715,7 +1763,6 @@ effectIt.effect.each([
 
       yield* harness.start;
 
-      // The turn that delivers the context is clamped; a later one follows the thread's mode.
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
@@ -1763,6 +1810,29 @@ effectIt.effect.each([
         !forks,
       );
       expect(harness.projection().providerThreads[0]?.handoffIds).toEqual(handoffIds);
+    }),
+);
+
+effectIt.effect.each([
+  { goalDriver: "opencode", nativeGoals: false },
+  { goalDriver: "opencode", nativeGoals: true },
+  { goalDriver: "antigravity", nativeGoals: false },
+  { goalDriver: "antigravity", nativeGoals: true },
+] as const)(
+  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals",
+  ({ goalDriver, nativeGoals }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "/goal all tests pass",
+        goalDriver,
+        nativeGoals,
+        sideChat: { contextRun: "failed", switchedProvider: true },
+      });
+      harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+      yield* harness.start;
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
+        !nativeGoals,
+      );
     }),
 );
 
@@ -2051,6 +2121,25 @@ effectIt.effect("starts another provider in the same checkout while a turn is pe
   }),
 );
 
+effectIt.effect("fails a starting run when its recovery state cannot be read", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      recoveryReadFailure: "stored turn item no longer decodes",
+    });
+
+    yield* harness.start.pipe(Effect.ignore);
+
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.turnItems).toMatchObject([{ type: "error", status: "failed" }]);
+  }),
+);
+
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
@@ -2165,6 +2254,29 @@ effectIt.effect("does not overwrite a run interrupted while its provider session
     expect(projection.nodes[0]?.status).toBe("pending");
     expect(projection.turnItems).toEqual([]);
     expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("checks the run's status without loading the thread's history", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+
+    yield* harness.start;
+
+    const controls = harness.startRootRun.mock.calls[0]?.[0];
+    expect(controls).toBeDefined();
+    if (controls === undefined) return;
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(true);
+    expect(yield* controls.shouldFinalizeRun!()).toBe(true);
+    // Each check needs one run row; the recovery projection reads every run and open turn item.
+    // The one read left is the start's inherited background items snapshot, not a status check.
+    expect(
+      harness.getRuntimeRecoveryProjection.mock.calls.length,
+      "recovery projection reads beyond the inherited background items snapshot",
+    ).toBe(1);
   }),
 );
 

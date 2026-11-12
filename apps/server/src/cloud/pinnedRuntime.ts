@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -71,6 +72,8 @@ export class PinnedRuntimeInstallError extends Schema.TaggedError<PinnedRuntimeI
     exitCode: Schema.optional(Schema.Number),
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.optional(Schema.Number),
+    httpStatus: Schema.optional(Schema.Number),
+    downloadHost: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -117,6 +120,20 @@ interface PinnedRuntimeInstallInput {
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
+// GitHub release downloads intermittently answer 5xx during incidents; a retry usually lands.
+const DOWNLOAD_RETRY = { times: 3, schedule: Schedule.exponential("2 seconds") } as const;
+
+const isTransientDownloadFailure = (
+  error: HttpClientError.HttpClientError | Cause.TimeoutError,
+): boolean => {
+  // No answer or a stall means the host cannot reach the release source; retrying only delays that.
+  if (error._tag === "TimeoutError") return false;
+  // Body bytes are read raw, so a DecodeError is a body that failed after the host answered.
+  if (error.reason._tag === "DecodeError") return true;
+  const status = error.response?.status;
+  return status !== undefined && (status >= 500 || status === 429 || status === 408);
+};
+
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
   url: string,
@@ -159,10 +176,18 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         return bytes;
       }),
     ),
+    Effect.retry({ ...DOWNLOAD_RETRY, while: isTransientDownloadFailure }),
     Effect.mapError(
       (cause) =>
         new PinnedRuntimeInstallError({
           step: cause._tag === "TimeoutError" ? `${step} (timed out)` : step,
+          httpStatus:
+            HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
+              ? cause.reason.response.status
+              : undefined,
+          downloadHost: URL.parse(
+            HttpClientError.isHttpClientError(cause) ? cause.request.url : url,
+          )?.host,
           cause,
         }),
     ),
@@ -422,6 +447,34 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+/** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
+export const resolveLauncherPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const invokedAs = yield* HostProcess.InvokedAs;
+  const cwd = yield* HostProcess.WorkingDirectory;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  if (invokedAs.includes("/") || invokedAs.includes("\\")) {
+    return path.resolve(cwd, invokedAs);
+  }
+  const delimiter = platform === "win32" ? ";" : ":";
+  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
+    if (directory.length === 0) continue;
+    const candidate = path.resolve(cwd, directory, invokedAs);
+    const info = yield* fs.stat(candidate).pipe(Effect.option);
+    // Like the shell, pass over directories and non-executable files named the same.
+    if (
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      (platform === "win32" || (info.value.mode & 0o111) !== 0)
+    ) {
+      return candidate;
+    }
+  }
+  return undefined;
+});
+
 /**
  * `t3 update` repoints the launcher it was started through, which may be on neither PATH nor the
  * default bin dir. Unrecorded, the next prune would remove the runtime it now points at.
@@ -443,8 +496,23 @@ export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.recor
   },
 );
 
+/** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */
+export function isVersionExecutable(
+  path: Path.Path,
+  versionsDir: string,
+  candidate: string,
+): boolean {
+  const relative = path.relative(versionsDir, path.resolve(candidate));
+  // On another Windows drive, relative() returns the absolute path, like `D:\t3.exe`.
+  return !path.isAbsolute(relative) && /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative);
+}
+
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
+
+/** Like {@link windowsShimTarget}, but only for a shim exactly as written; never a user's wrapper. */
+export const generatedWindowsShimTarget = (contents: string) =>
+  /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(contents)?.[1];
 
 /** Where the `t3` launchers written by the install scripts and `t3 update` point. */
 const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targets")(function* (
@@ -470,6 +538,9 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
+  const inVersionsDir = (candidate: string) =>
+    launcherOwnsVersionsDir(path, versionsDir, candidate) ||
+    launcherOwnsVersionsDir(path, realVersionsDir, candidate);
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
   for (const launcher of [...recorded, ...found]) {
@@ -482,13 +553,19 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
         : // Fully resolved, through chained links and a symlinked T3 home alike.
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (target === undefined) continue;
-    targets.push(target);
+    // A runtime's own entry, on the macOS service PATH or recorded by an earlier prune, is no launcher.
+    // It is named as `versions/<version>/t3`, and neither it nor its directory is a link.
+    const entryDir = path.dirname(path.resolve(launcher));
+    const parent = path.dirname(entryDir);
     if (
-      (launcherOwnsVersionsDir(path, versionsDir, target) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
-      !recorded.includes(launcher) &&
-      !unrecorded.includes(launcher)
+      platform !== "win32" &&
+      (parent === versionsDir || parent === realVersionsDir) &&
+      target === path.join(realVersionsDir, path.basename(entryDir), path.basename(launcher))
     ) {
+      continue;
+    }
+    targets.push(target);
+    if (inVersionsDir(target) && !recorded.includes(launcher) && !unrecorded.includes(launcher)) {
       unrecorded.push(launcher);
     }
   }
