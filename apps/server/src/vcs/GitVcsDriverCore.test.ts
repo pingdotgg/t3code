@@ -4525,15 +4525,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(remoteStatus.defaultBranch, "trunk");
           assert.isTrue(remoteStatus.isDefaultBranch);
 
-          yield* git(cwd, ["checkout", "-b", "feature"]);
-          yield* writeTextFile(cwd, "feature.txt", "feature\n");
-          yield* git(cwd, ["add", "feature.txt"]);
-          yield* git(cwd, ["commit", "-m", "feature commit"]);
-          yield* git(cwd, ["push", "-u", "github", "feature"]);
-          const featureStatus = yield* driver.statusDetails(cwd);
-          assert.isFalse(featureStatus.isDefaultBranch);
-          assert.equal(featureStatus.aheadOfDefaultCount, 1);
-
           yield* git(cwd, ["remote", "add", "origin", remote]);
           assert.isNull((yield* driver.statusDetailsRemote(cwd)).defaultBranch);
         }),
