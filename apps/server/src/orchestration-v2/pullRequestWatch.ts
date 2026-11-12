@@ -210,7 +210,11 @@ export function evaluatePullRequestWatch(
       remarkIds,
       conflicting,
       wakes,
-      ...(checksBaseline && checks.length === 0 && { awaitingBaseline: "checks" as const }),
+      // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
+      ...(checksBaseline &&
+        (unread || (detail.headSha === undefined && checks.length === 0)) && {
+          awaitingBaseline: "checks" as const,
+        }),
       checksAwaitedSince,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,

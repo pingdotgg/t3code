@@ -4061,7 +4061,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watch(true, "start");
 
       let headSha = "ad70160aaa";
-      let hasChecks = false;
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -4074,7 +4073,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 at: "2026-10-02T12:00:00.000Z",
               }),
               headSha,
-              checks: (hasChecks ? ["lint", "test"] : []).map((name) => ({
+              checks: ["lint", "test"].map((name) => ({
                 name,
                 status: "success" as const,
                 description: null,
@@ -4099,24 +4098,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* reactor.sweep;
-      yield* worker.drain();
-      assert.deepEqual(yield* summaries, []);
-      assert.equal(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.awaitingBaseline,
-        "checks",
-      );
-      yield* watch(false, "stop-before-baseline");
-      yield* watch(true, "resume-before-baseline");
-      const waitingRestart = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
-      yield* waitingRestart.sweep;
-      yield* worker.drain();
-      assert.equal(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.awaitingBaseline,
-        "checks",
-      );
-      hasChecks = true;
-      yield* TestClock.adjust("10 minutes");
-      yield* waitingRestart.sweep;
       yield* worker.drain();
       assert.deepEqual(yield* summaries, []);
       const baseline = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
