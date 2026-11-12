@@ -355,7 +355,10 @@ export const layer: Layer.Layer<
             : { instanceId: modelSelection.instanceId, model });
         const staleThread = projections.getThread(childThreadId).pipe(
           Effect.map((thread) =>
-            modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) ? null : thread,
+            modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) &&
+            !(thread.modelUnreported === true && model !== null)
+              ? null
+              : thread,
           ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
@@ -372,6 +375,9 @@ export const layer: Layer.Layer<
               payload: {
                 ...thread,
                 modelSelection: reportedSelection(thread),
+                ...(model !== null && thread.modelUnreported === true
+                  ? { modelUnreported: false }
+                  : {}),
                 updatedAt: now,
               },
               occurredAt: now,
