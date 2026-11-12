@@ -289,6 +289,17 @@ describe("buildProjectGroups", () => {
     expect(groups[1]?.label).toBe("julius/t3code-fork");
   });
 
+  it("keeps a repository's shared title when a second machine links it", () => {
+    const local = makeProject("t3code", "/work/t3code");
+    const remote = { ...local, environmentId: EnvironmentId.make("remote") };
+    const groups = buildProjectGroups({
+      projects: [local, remote],
+      settings: settings("repository"),
+    });
+    expect(groups[0]?.members).toHaveLength(2);
+    expect(groups[0]?.label).toBe("t3code");
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");
