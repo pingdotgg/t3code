@@ -2056,6 +2056,35 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a failed file delivery is an error and leaves the picker answerable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const setFiles = vi
+        .fn(async (_files: unknown) => {})
+        .mockRejectedValueOnce(new Error("file delivery failed"));
+      contexts[0]!.page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => fileChooserElement(".txt"),
+        setFiles,
+      });
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
+      const answer = browser.answerFileChooser({
+        threadId: scope.thread.threadId,
+        tabId,
+        chooserId: offered.id,
+        files: [{ name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("a") }],
+      });
+      expect(Exit.isFailure(yield* Effect.exit(answer))).toBe(true);
+      expect(yield* answer).toBe(true);
+      expect(setFiles).toHaveBeenCalledTimes(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("overlapping file pickers keep the newer offer answerable", () =>
   Effect.scoped(
     Effect.gen(function* () {
