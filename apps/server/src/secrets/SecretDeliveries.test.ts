@@ -3,6 +3,7 @@ import * as ServerConfig from "../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { NodeId, RunId, ThreadId, type OrchestrationV2ServerCommand } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,9 +11,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as SecretDeliveries from "./SecretDeliveries.ts";
 
 const decodeMetadata = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
@@ -44,6 +47,8 @@ const setup = (realStore = false) =>
       : undefined;
     const dependencies = Layer.mergeAll(
       NodeServices.layer,
+      // POSIX hosts never spawn a process to check privacy.
+      Layer.mock(ProcessRunner.ProcessRunner)({}),
       real
         ? Layer.succeed(ServerSecretStore.ServerSecretStore, real)
         : Layer.mock(ServerSecretStore.ServerSecretStore)({
@@ -187,6 +192,85 @@ it.effect("rejects symlinks, public files, oversized text, invalid UTF-8 and dir
           .length,
         65536,
       );
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const userSid = "S-1-5-21-1-2-3-1001";
+const allow = (sid: string | null) => ({ type: "AccessAllowed", sid });
+const privateAcl = {
+  user: userSid,
+  owner: "S-1-5-32-544",
+  dacl: [
+    { type: "AccessDenied", sid: "S-1-1-0" },
+    allow("S-1-5-18"),
+    allow("S-1-5-32-544"),
+    allow(userSid),
+  ],
+};
+
+// A Windows host as Node reports it: every writable file is 0o666 and there is no uid. The
+// runner answers the ACL query the way Windows PowerShell does, or fails for unknown paths.
+const windowsHost = (acls: Map<string, unknown>) =>
+  Layer.mergeAll(
+    Layer.succeed(HostProcess.Platform, "win32"),
+    Layer.succeed(HostProcess.UserId, undefined),
+    Layer.succeed(
+      ProcessRunner.ProcessRunner,
+      ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          const acl = acls.get(input.env?.T3_PRIVATE_FILE ?? "");
+          return Effect.succeed({
+            stdout: acl === undefined ? "" : JSON.stringify(acl),
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(
+              input.command === "powershell.exe" && acl !== undefined ? 0 : 1,
+            ),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          });
+        },
+      }),
+    ),
+  );
+
+it.effect("publishes on Windows only from a file whose ACL is private to the server user", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { input, value, fs, dependencies } = yield* setup();
+      yield* fs.chmod(input.filePath, 0o666);
+      const acls = new Map<string, unknown>([[input.filePath, privateAcl]]);
+      const service = yield* SecretDeliveries.SecretDeliveries.pipe(
+        Effect.provide(
+          SecretDeliveries.layer.pipe(Layer.provide(Layer.merge(dependencies, windowsHost(acls)))),
+        ),
+      );
+      const receipt = yield* service.publish(input);
+      assert.equal(receipt.status, "available");
+      const target = { threadId: input.threadId, deliveryId: receipt.deliveryId };
+      assert.equal((yield* service.read(target)).value, value);
+      assert.equal((yield* service.read(target)).value, value);
+      yield* service.delete(target);
+      assert.equal((yield* service.read(target).pipe(Effect.flip)).reason, "unavailable");
+
+      const notPrivate = [
+        { ...privateAcl, dacl: [...privateAcl.dacl, allow("S-1-5-11")] },
+        { ...privateAcl, dacl: [...privateAcl.dacl, allow(null)] },
+        { ...privateAcl, owner: "S-1-5-21-1-2-3-1002" },
+        { ...privateAcl, dacl: null },
+        undefined,
+      ];
+      for (const [index, acl] of notPrivate.entries()) {
+        if (acl === undefined) acls.delete(input.filePath);
+        else acls.set(input.filePath, acl);
+        const failure = yield* service
+          .publish({ ...input, clientRequestId: `not-private-${index}` })
+          .pipe(Effect.flip);
+        assert.equal(failure.reason, "invalid_file");
+      }
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

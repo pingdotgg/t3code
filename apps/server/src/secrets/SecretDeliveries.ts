@@ -1,6 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Native open flags and descriptor stat enforce private regular-file input.
-import * as NodeFS from "node:fs";
-import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics nodeBuiltinImport:off -- Synchronous SHA-256 delivery ids and store path joins.
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 import {
@@ -28,6 +26,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as PrivateFile from "./privateFile.ts";
 
 // Value-free tombstones keep retry keys from recreating deleted or expired deliveries.
 const Stored = Schema.fromJsonString(
@@ -52,60 +51,7 @@ const unavailable = () => new SecretDeliveryError({ reason: "unavailable" });
 const nameFor = (id: string) => `secret-delivery-${id}`;
 const ID_PATTERN = /^[a-f0-9]{64}$/;
 const STORE_NAME_PATTERN = /^secret-delivery-([a-f0-9]{64})\.bin$/;
-const MAX_BYTES = 65536;
 const LIFETIME_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Reads an absolute, owner-private, singly linked regular file as exact UTF-8. Rejects
- * symlinks anywhere in the path, special files, and a file that changes during the read.
- * Fails closed where POSIX ownership is unavailable (Windows).
- */
-async function readPrivateFile(filePath: string): Promise<string> {
-  const path = NodePath.resolve(filePath);
-  if (!NodePath.isAbsolute(filePath) || (await NodeFSP.realpath(path)) !== path) throw new Error();
-  const file = await NodeFSP.open(
-    path,
-    NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
-  );
-  try {
-    const before = await file.stat();
-    if (
-      !before.isFile() ||
-      before.nlink !== 1 ||
-      (before.mode & 0o077) !== 0 ||
-      process.getuid === undefined ||
-      before.uid !== process.getuid() ||
-      before.size === 0 ||
-      before.size > MAX_BYTES
-    )
-      throw new Error();
-    // One spare byte detects a file that grew past the cap after the stat.
-    const bytes = Buffer.alloc(MAX_BYTES + 1);
-    let size = 0;
-    while (size < bytes.length) {
-      const result = await file.read(bytes, size, bytes.length - size, null);
-      if (result.bytesRead === 0) break;
-      size += result.bytesRead;
-    }
-    const after = await file.stat();
-    const linked = await NodeFSP.lstat(path);
-    if (
-      size > MAX_BYTES ||
-      after.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ctimeMs !== before.ctimeMs ||
-      linked.ino !== before.ino ||
-      linked.dev !== before.dev ||
-      (await NodeFSP.realpath(path)) !== path
-    )
-      throw new Error();
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.subarray(0, size),
-    );
-  } finally {
-    await file.close();
-  }
-}
 
 export class SecretDeliveries extends Context.Service<
   SecretDeliveries,
@@ -129,6 +75,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const fs = yield* FileSystem.FileSystem;
   const lock = yield* Semaphore.make(1);
+  const readPrivateFile = yield* PrivateFile.makeReader;
   const find = Effect.fn("SecretDeliveries.find")(function* (id: string) {
     const bytes = yield* store.get(nameFor(id));
     if (Option.isNone(bytes)) return Option.none<Stored>();
@@ -232,12 +179,7 @@ const make = Effect.gen(function* () {
       if (Option.isSome(existing)) {
         stored = yield* expire(existing.value);
       } else {
-        if (process.getuid === undefined)
-          return yield* new SecretDeliveryError({ reason: "unsupported_host" });
-        const value = yield* Effect.tryPromise({
-          try: () => readPrivateFile(input.filePath),
-          catch: () => new SecretDeliveryError({ reason: "invalid_file" }),
-        });
+        const value = yield* readPrivateFile(input.filePath);
         stored = {
           threadId: input.threadId,
           runId: input.runId,

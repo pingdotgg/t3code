@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as SecretDeliveries from "../secrets/SecretDeliveries.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { assert, it } from "@effect/vitest";
@@ -2282,6 +2283,7 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
             get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
             create: (name, bytes) => Effect.sync(() => void values.set(name, bytes)),
           }),
+          Layer.mock(ProcessRunner.ProcessRunner)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: orchestrator.getThreadRecords,
             dispatch: (command) =>
