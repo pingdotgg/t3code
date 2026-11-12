@@ -163,6 +163,18 @@ describe("GitHub media URLs", () => {
       fileName: "a.mp4",
     });
     expect(media("https://raw.githubusercontent.com/o/r/main/100%.png")?.fileName).toBe("100%.png");
+    // GitHub Enterprise Server has no `raw.` host by default; both are served only on the host itself.
+    expect(
+      media("https://ghe.example.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c")
+        ?.fetchUrl,
+    ).toBe("https://ghe.example.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c");
+    expect(
+      new URL(
+        media(
+          "https://ghe.example.com/owner/repo/blob/0123456789abcdef0123456789abcdef01234567/docs/demo.gif?raw=true",
+        )?.fetchUrl ?? "https://unclaimed.invalid",
+      ).hostname,
+    ).toBe("ghe.example.com");
   });
 
   it("marks only uploads and files at a full commit SHA as immutable", () => {
