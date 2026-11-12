@@ -11,6 +11,7 @@ import { assert, expect, it } from "@effect/vitest";
 import {
   ComposerContextId,
   EnvironmentId,
+  ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   OrchestratorMcpDelegateTaskResult,
   PreviewAutomationUnavailableError,
   ThreadId,
@@ -755,6 +756,7 @@ const casesIn = (file: string) =>
     .split("\n")
     .map((line) => decodeCase(line));
 const decodeTaskResult = Schema.decodeUnknownResult(OrchestratorMcpDelegateTaskResult);
+const EVAL_REMOTE_ENV = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const isFailureMock = (mock: unknown) =>
   typeof mock === "object" && mock !== null && "_tag" in mock;
 
@@ -810,9 +812,11 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
           invalid.push(
             `${testCase.id} ${live ? "live" : "prior"} ${tool}: ${decoded.failure.message}`,
           );
-        } else if (!("executedModel" in value)) {
-          // Optional in the contract for older linked environments; current T3 always sends it.
-          invalid.push(`${testCase.id} ${live ? "live" : "prior"} ${tool}: no executedModel`);
+        } else if (!("executedModel" in value) || !("options" in value)) {
+          // Optional in the contract; current T3 always sends both for a local child.
+          invalid.push(
+            `${testCase.id} ${live ? "live" : "prior"} ${tool}: no executedModel or options`,
+          );
         }
       }
     }
@@ -833,13 +837,116 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
       hasPendingChildRuns: true,
       latestTerminalRunId: "run-child-1",
     });
+    // T3 reads a finished task from its stored state, so a later unmocked read stays finished.
+    const later = t3Result(sample, "task_status", { taskId: "task-1" }, "default");
+    assert.deepInclude(later, { status: "completed", summary: review.summary });
+    assert.notProperty(later, "next");
 
-    // A child in a linked environment has no local thread or run, as in T3's remote task result.
+    // T3's resolveTarget: your model and options on your provider, else that provider's first
+    // model; given options override by id. A wait that does not settle times out.
+    const inherited = [{ id: "reasoningEffort", value: "high" }];
+    for (const [input, mock, expected] of [
+      [{}, "default", { providerInstanceId: "codex", model: "gpt-6.1-sol", options: inherited }],
+      [
+        { target: { providerInstanceId: "muse" } },
+        "default",
+        { model: "muse-wonder-full", options: [] },
+      ],
+      [
+        { target: { driverKind: "grok" } },
+        "default",
+        { providerInstanceId: "grok", model: "grok-4.7" },
+      ],
+      [
+        { target: { providerInstanceId: "muse", model: "muse-wonder" } },
+        "default",
+        { model: "muse-wonder" },
+      ],
+      [
+        { target: { options: { reasoningEffort: "max" } } },
+        "default",
+        { options: [{ id: "reasoningEffort", value: "max" }] },
+      ],
+      [{ target: { options: [] } }, "default", { options: [] }],
+      [
+        {},
+        { status: "running", providerInstanceId: "muse" },
+        { model: "muse-wonder-full", options: [] },
+      ],
+      [
+        { mode: "wait" },
+        "default",
+        { waitTimedOut: true, next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT },
+      ],
+      [{ mode: "wait" }, { status: "completed", summary: "Done." }, { waitTimedOut: false }],
+      [{}, { status: "waiting" }, { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT }],
+    ] as const) {
+      assert.deepInclude(
+        t3Result(sample, "delegate_task", { task: "Review.", ...input }, mock),
+        expected,
+      );
+    }
+    const asking = t3Result(
+      sample,
+      "delegate_task",
+      { task: "Review.", mode: "wait" },
+      {
+        status: "running",
+        hasPendingQuestion: true,
+      },
+    );
+    assert.deepInclude(asking, { waitTimedOut: false });
+    assert.notProperty(asking, "next");
+    // With two instances of the target's driver, T3 picks yours.
+    const providers = [
+      { providerInstanceId: "codex-other", driverKind: "codex", models: [{ id: "gpt-6-luna" }] },
+      { providerInstanceId: "codex", driverKind: "codex", models: [{ id: "gpt-6.1-sol" }] },
+    ];
+    const twoCodex = makeSample(
+      { ...stale, setup: { ...stale.setup, mocks: { orchestrator_capabilities: { providers } } } },
+      base,
+    );
+    assert.deepInclude(
+      t3Result(twoCodex, "delegate_task", { task: "Review.", target: { driverKind: "codex" } }),
+      { providerInstanceId: "codex", model: "gpt-6.1-sol" },
+    );
+
+    // A child in a linked environment has no local thread, run or options, as in T3's remote result.
     const remote = { taskId: "task-9", childThreadId: null, status: "completed", summary: "Done." };
-    assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-9" }, remote), {
+    const remoteResult = t3Result(sample, "task_status", { taskId: "task-9" }, remote);
+    assert.deepInclude(remoteResult, {
       childRunId: null,
       latestTerminalRunId: null,
       latestTerminalSummary: "Done.",
+    });
+    assert.notProperty(remoteResult, "options");
+    // A partial later mock keeps the stored finished status and result.
+    assert.deepInclude(
+      t3Result(sample, "task_status", { taskId: "task-9" }, { hasPendingChildRuns: false }),
+      { status: "completed", workState: "result_available", summary: "Done." },
+    );
+    // A later read keeps what earlier results observed of the child.
+    const observed = {
+      executedModel: "gpt-6.1-sol",
+      resultContextTransferId: "transfer-1",
+      latestTerminalRunId: "run-followup-11",
+      latestTerminalSummary: "Follow-up done.",
+    };
+    t3Result(sample, "task_status", { taskId: "task-11" }, { status: "completed", ...observed });
+    assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-11" }, "default"), observed);
+    // A running remote task links to its thread there and, as in readRemoteTask, gets no `next`.
+    const remoteChild = { environmentId: EVAL_REMOTE_ENV, threadId: "remote-1", label: "Linked" };
+    const remoteRunning = t3Result(
+      sample,
+      "task_status",
+      { taskId: "task-10" },
+      { taskId: "task-10", childThreadId: null, remoteChild, status: "running", summary: null },
+    );
+    assert.include(remoteRunning, { link: `<t3-thread://v2/${EVAL_REMOTE_ENV}/remote-1>` });
+    assert.notProperty(remoteRunning, "next");
+    assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-10" }, "default"), {
+      remoteChild,
+      link: `<t3-thread://v2/${EVAL_REMOTE_ENV}/remote-1>`,
     });
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

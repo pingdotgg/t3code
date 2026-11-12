@@ -44,6 +44,7 @@ import * as Contracts from "@t3tools/contracts";
 import {
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  OrchestratorMcpDelegatedTaskStatus,
   OrchestratorMcpTerminalDelegatedTaskStatus,
   PullRequestState,
   ThreadId,
@@ -852,7 +853,7 @@ type Sample = {
   readonly linked: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
-  /** Each task's child, model and finished result; `buildMessages` replays prior ones first. */
+  /** Each task's child, model, options, remote thread, finished status and result. */
   readonly tasks: Map<string, Readonly<Record<string, unknown>>>;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
   readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
@@ -1181,7 +1182,8 @@ export const t3Default = (
     case "delegate_task":
       return { taskId: `task-${sample.nextTask++}`, status: "running" };
     case "task_status":
-      return { taskId: input.taskId, status: "running" };
+      // The task's stored state gives the status, as T3 reads a finished task.
+      return { taskId: input.taskId };
     case "task_cancel":
       return { taskId: input.taskId, status: "cancel_requested" };
     case "link_pull_request": {
@@ -1305,6 +1307,14 @@ const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_
   | Readonly<Record<string, string>>
   | undefined;
 
+const isTaskStatus = Schema.is(OrchestratorMcpDelegatedTaskStatus);
+const isTerminalTaskStatus = Schema.is(OrchestratorMcpTerminalDelegatedTaskStatus);
+/** As in `OrchestratorMcpService`: once this holds, a wait ends and no `next` is sent. */
+const endsTaskWait = (task: Readonly<Record<string, unknown>>) =>
+  isTerminalTaskStatus(task.status) ||
+  task.hasPendingQuestion === true ||
+  isRecord(task.pendingApproval);
+
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
   if (!isRecord(value)) return value;
@@ -1330,9 +1340,24 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
     }
     case "delegate_task":
     case "task_status": {
+      // A remote task links to its thread in the other environment, and T3 sends it no `next`.
+      if (value.childThreadId === null) {
+        const { environmentId, threadId } = isRecord(value.remoteChild) ? value.remoteChild : {};
+        return typeof environmentId === "string" &&
+          typeof threadId === "string" &&
+          value.link === undefined
+          ? {
+              ...value,
+              link: formatThreadLink({
+                environmentId: EnvironmentId.make(environmentId),
+                threadId: ThreadId.make(threadId),
+              }),
+            }
+          : value;
+      }
       const task = linked(value, "childThreadId") as Record<string, unknown>;
-      const running = task.status === "running" && task.next === undefined;
-      return running ? { ...task, next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : task;
+      const unsettled = isTaskStatus(task.status) && !endsTaskWait(task) && task.next === undefined;
+      return unsettled ? { ...task, next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : task;
     }
     case "t3_thread_read":
       return { ...value, thread: linked(value.thread) };
@@ -1368,12 +1393,78 @@ const capabilities = ({ base }: Sample, value: unknown) =>
       }
     : value;
 
-const isTerminalTaskStatus = Schema.is(OrchestratorMcpTerminalDelegatedTaskStatus);
+/**
+ * The provider, model and options T3's `resolveTarget` gives a child, from the capabilities this
+ * sample shows: the result's or target's, else yours on your provider, else that provider's first
+ * model. Options follow the provider and model the result ends up with.
+ */
+const childSelection = (
+  sample: Sample,
+  target: Readonly<Record<string, unknown>>,
+  known: Readonly<Record<string, unknown>>,
+) => {
+  const mocked = sample.testCase.setup.mocks?.orchestrator_capabilities;
+  const shown = capabilities(
+    sample,
+    isRecord(mocked) ? mocked : t3Default(sample, "orchestrator_capabilities", {}),
+  );
+  const caps = isRecord(shown) ? shown : {};
+  const providers = (Array.isArray(caps.providers) ? caps.providers : PROVIDERS).filter(isRecord);
+  const caller = caps.inheritedProviderInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent");
+  const ofDriver = providers.filter(
+    (p) => (p.driverKind ?? p.providerInstanceId) === target.driverKind,
+  );
+  const providerInstanceId =
+    known.providerInstanceId ??
+    target.providerInstanceId ??
+    (ofDriver.find((p) => p.providerInstanceId === caller) ?? ofDriver[0])?.providerInstanceId ??
+    caller;
+  const models = providers.find((p) => p.providerInstanceId === providerInstanceId)?.models;
+  const first = Array.isArray(models) && isRecord(models[0]) ? models[0].id : undefined;
+  const model =
+    known.model ??
+    target.model ??
+    (providerInstanceId === caller ? sample.base.model : (first ?? sample.base.model));
+  const inherited: ReadonlyArray<unknown> =
+    providerInstanceId === caller &&
+    model === sample.base.model &&
+    Array.isArray(caps.inheritedOptions)
+      ? caps.inheritedOptions
+      : [];
+  // Given options override inherited ones by id; [] or {} clears them.
+  const given: ReadonlyArray<unknown> | undefined = isRecord(target.options)
+    ? Object.entries(target.options).map(([id, value]) => ({ id, value }))
+    : Array.isArray(target.options)
+      ? target.options
+      : undefined;
+  const options = !given
+    ? inherited
+    : given.length === 0
+      ? []
+      : [...new Map([...inherited, ...given].filter(isRecord).map((o) => [o.id, o])).values()];
+  return { providerInstanceId, model, options };
+};
+
+/** What T3 keeps of a task between reads, besides its finished status and result. */
+const STORED_TASK_FIELDS = [
+  "childThreadId",
+  "childRunId",
+  "providerInstanceId",
+  "model",
+  "options",
+  "remoteChild",
+  "executedModel",
+  "resultContextTransferId",
+  "latestTerminalRunId",
+  "latestTerminalStatus",
+  "latestTerminalSummary",
+  "latestTerminalResultContextTransferId",
+] as const;
 
 /**
  * A successful delegate_task or task_status result in full, as T3 sends it: the case's fields,
- * then the child, model and finished result earlier results gave the task, then T3's defaults.
- * Failures pass through unchanged.
+ * then the child, model and finished status and result earlier results gave the task, then T3's
+ * defaults. Failures pass through unchanged.
  */
 const delegatedTask = (
   sample: Sample,
@@ -1384,28 +1475,35 @@ const delegatedTask = (
   const taskId = valueText(value.taskId ?? input.taskId);
   const n = Number(/\d+$/.exec(taskId)?.[0] ?? 0);
   const target = isRecord(input.target) ? input.target : {};
-  const { summary: result, ...stored } = sample.tasks.get(taskId) ?? {};
-  const known = { ...stored, ...value };
+  const { status: finished, summary: result, ...stored } = sample.tasks.get(taskId) ?? {};
+  const known: Readonly<Record<string, unknown>> = {
+    ...stored,
+    ...value,
+    status: value.status ?? finished ?? "running",
+  };
   // A child in a linked environment has no local thread, so T3 reports no run for it.
   const remote = known.childThreadId === null;
-  const terminal = isTerminalTaskStatus(value.status);
-  const task = {
+  const terminal = isTerminalTaskStatus(known.status);
+  const { options: selectedOptions, ...selection } = childSelection(sample, target, known);
+  const task: Readonly<Record<string, unknown>> = {
     childThreadId: uuid(n),
     childRunId: remote ? null : `run-${n}`,
-    providerInstanceId: target.providerInstanceId ?? (sample.base.codex ? "codex" : "claudeAgent"),
-    model: target.model ?? sample.base.model,
+    ...selection,
+    // A remote task result carries no options.
+    ...(remote ? {} : { options: selectedOptions }),
     // T3 stores a finished task's result, so a later finished read returns it.
     ...(terminal && result !== undefined ? { summary: result } : {}),
     ...known,
     taskId,
   };
-  const { childThreadId, childRunId, providerInstanceId, model, summary } = task;
+  const observed = STORED_TASK_FIELDS.flatMap((key) =>
+    task[key] === undefined ? [] : [[key, task[key]]],
+  );
   sample.tasks.set(taskId, {
-    childThreadId,
-    childRunId,
-    providerInstanceId,
-    model,
-    summary: terminal ? summary : result,
+    ...Object.fromEntries(observed),
+    ...(terminal
+      ? { status: task.status, summary: task.summary }
+      : { status: finished, summary: result }),
   });
   return {
     childNodeId: taskId,
@@ -1414,12 +1512,13 @@ const delegatedTask = (
     summary: null,
     resultContextTransferId: null,
     latestTerminalRunId: terminal ? task.childRunId : null,
-    latestTerminalStatus: terminal ? value.status : null,
+    latestTerminalStatus: terminal ? task.status : null,
     latestTerminalSummary: remote && terminal ? (task.summary ?? null) : null,
     latestTerminalResultContextTransferId: null,
     hasPendingQuestion: false,
     pendingApproval: null,
-    waitTimedOut: false,
+    // The runner has no clock, so a wait that does not settle at once times out.
+    waitTimedOut: input.mode === "wait" && !endsTaskWait(task),
     executedModel: null,
     ...task,
   };
