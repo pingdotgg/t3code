@@ -26,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/tailnet-devices";
 import {
   AuthMcpClientAccess,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
@@ -233,6 +234,7 @@ function linkStatus(link: PeerLinkSummary, now: DateTime.Utc): string {
 
 const NEEDS_READD = "Needs re-adding after the update";
 const LEFT = "Left the network";
+const RECONNECTING = "Reconnecting after the update";
 /** Where the joining switch lives on this platform. */
 const ALLOW_JOINING_PATH = "Settings → Environments → Device network";
 
@@ -245,6 +247,7 @@ function machineDetails(
   openHint: ReturnType<typeof openAccessHint>,
   /** Opened in this app and its session there cannot change anything. */
   readOnlyHere: boolean,
+  reconnecting: boolean,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
   if (readd !== null) {
@@ -275,6 +278,7 @@ function machineDetails(
   );
   return [
     STATUS_LABEL[entry.status],
+    reconnecting ? RECONNECTING : null,
     machine.kind === "found" ? "Not in your network" : null,
     showAccess && access !== null && access !== "revoked" ? accessLabel(access) : null,
     ...limits,
@@ -398,6 +402,7 @@ export function DeviceMachineRow({
         readdReason,
         openAccessHint(machine, group),
         entry.inApp?.kind === "open" && !operatesHere,
+        controls.reconnecting,
       )}
       actions={
         <>
@@ -433,7 +438,11 @@ export function DeviceMachineRow({
               disabled={busy}
               onClick={() => setAdding(controls.add ? "found" : "promote")}
             >
-              Add to network
+              {machine.inOtherNetwork
+                ? "Merge networks"
+                : controls.forgotten
+                  ? "Restore"
+                  : "Add to network"}
             </Button>
           ) : null}
           {controls.readd ? (
@@ -483,6 +492,7 @@ export function DeviceMachineRow({
               entry={entry}
               authority={addVia}
               mode={adding}
+              inOtherNetwork={machine.inOtherNetwork}
               onClose={() => setAdding(null)}
               onChanged={onChanged}
             />
@@ -543,6 +553,7 @@ function AddMachineDialog({
   entry,
   authority,
   mode,
+  inOtherNetwork,
   onClose,
   onChanged,
 }: {
@@ -550,10 +561,15 @@ function AddMachineDialog({
   readonly entry: MachineEntry;
   readonly authority: EnvironmentId;
   readonly mode: AddMode;
+  readonly inOtherNetwork: boolean;
   readonly onClose: () => void;
   readonly onChanged: () => void;
 }) {
   const admit = useAtomCommand(tailnetDevices.admit, { reportFailure: false });
+  const allowJoin = useAtomCommand(deviceNetwork.allowJoin, { reportFailure: false });
+  // This app manages the machine too, so the one click is the owner's consent on both.
+  const consentsHere = useEnvironmentScope(entry.environmentId, AuthAccessWriteScope);
+  const [failure, setFailure] = useState<string | null>(null);
   const [scope, setScope] = useState<"network" | "local">("network");
   const previous = entry.member?.access;
   // Re-adding keeps the access it had before the update unless the user picks another.
@@ -566,11 +582,20 @@ function AddMachineDialog({
   const here = hostLabel(group, authority);
   const add = async () => {
     setBusy(true);
+    setFailure(null);
+    if (consentsHere) {
+      // A refusal here still lets the add below say why the machine did not join.
+      await allowJoin({ environmentId: entry.environmentId, input: {} });
+    }
     const result = await admit({
       environmentId: authority,
       input: { environmentId: entry.environmentId, access, scope },
     });
     setBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setFailure(networkFailureMessage(squashAtomCommandFailure(result)));
+      return;
+    }
     if (settle(result, `Could not add ${entry.label}`, onChanged)) {
       toastManager.add({
         type: "success",
@@ -597,12 +622,21 @@ function AddMachineDialog({
               : `Add ${entry.label}`}
           </DialogTitle>
           <DialogDescription>
-            {mode === "left"
-              ? `${entry.label} left your network. To bring it back, first open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `
-              : mode === "unbound"
-                ? `${entry.label} was in your network before the update, which now proves each machine's Tailscale identity. Until it is added again, the other machines refuse it. First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `
-                : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. It must agree first: open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `}
-            <em>Allow joining</em>.
+            {inOtherNetwork
+              ? `${entry.label} is in another of your networks. Adding it merges the two into one: every machine and app keeps the access it has now. `
+              : mode === "left"
+                ? `${entry.label} left your network. `
+                : mode === "unbound"
+                  ? `${entry.label} was in your network before the update, which now proves each machine's Tailscale identity. Until it is added again, the other machines refuse it. `
+                  : `Being on your Tailscale account is not permission. ${entry.label} gets only the access you pick now. `}
+            {consentsHere ? (
+              `This app also manages ${entry.label}, so adding it here is its agreement too.`
+            ) : (
+              <>
+                {`It must agree first: open ${ALLOW_JOINING_PATH} for ${entry.label} and choose `}
+                <em>Allow joining</em>.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -656,6 +690,11 @@ function AddMachineDialog({
                   }
                 : {})}
             />
+            {failure === null ? null : (
+              <p role="alert" className="text-xs text-destructive">
+                {failure}
+              </p>
+            )}
           </div>
         </DialogPanel>
         <DialogFooter variant="bare">
@@ -665,11 +704,15 @@ function AddMachineDialog({
           <Button disabled={busy} onClick={() => void add()}>
             {busy
               ? "Adding…"
-              : mode === "unbound" || mode === "left"
-                ? "Add again"
-                : scope === "network"
-                  ? "Add to network"
-                  : `Link to ${here}`}
+              : inOtherNetwork && scope === "network"
+                ? "Merge networks"
+                : failure !== null
+                  ? "Try again"
+                  : mode === "unbound" || mode === "left"
+                    ? "Add again"
+                    : scope === "network"
+                      ? "Add to network"
+                      : `Link to ${here}`}
           </Button>
         </DialogFooter>
       </DialogPopup>

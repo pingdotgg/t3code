@@ -120,8 +120,9 @@ Unlinking on the linking side only forgets the token.
 kind of link without a pairing code, but only between members of the user's
 device network. **Same Tailscale account is never permission.** A machine joins
 only when a full-access member adds it. It refuses to join while linked
-environments is off, on a dev server, when it belongs to another network, or
-when it revoked the machine adding it. Requests arriving through Serve come
+environments is off, on a dev server, or when it revoked the machine adding it.
+A machine in another network joins only while its owner allows joining there,
+and then the two rosters merge into one (tombstones alone are no network). Requests arriving through Serve come
 from loopback with headers any local process can forge, so nothing inbound is
 trusted:
 
@@ -139,11 +140,18 @@ trusted:
 - **A member is bound to its Tailscale node** (`StableID` from whois, `ID` in
   status). An explicit add binds or rebinds it, and a different node answering
   for the same environment id is refused. A member left unbound by the upgrade
-  rebinds only through this machine's own handshake-made link to it: proved at
-  that link's stored addresses (a MagicDNS name is whichever owner node holds it
-  now, as the link always trusted), with a live session the other side issued,
-  confirmed by challenge, at the roster's level. Otherwise it is refused until
-  the user adds it again; an inbound or first answer never binds one.
+  rebinds only through this machine's own link to it (handshake-made or paired
+  by code): proved at that link's stored addresses (a MagicDNS name is whichever
+  owner node holds it now, as the link always trusted), with a live session this
+  side issued, confirmed by challenge, at the roster's level. A code-paired
+  session's self-chosen id gains nothing, because the challenge is confirmed at
+  this machine's own stored address. Otherwise it is refused until the user adds
+  it again; an inbound or first answer never binds one.
+- **Machines linked both ways before the roster existed stay one network.**
+  Migration 022 makes such a peer (a live link here and a live session it holds
+  here) a member at the level that session grants, stamped at zero. Equal stamps
+  go to the narrower level, so those seeds converge whichever machine updates
+  first. A one-way link, a found machine or anything revoked here stays out.
 - **A machine in no network joins only while its owner allows it** there
   (`allowJoin`, ten minutes, in memory), and so do rebinding an unbound admin
   and a link to that machine alone (`local`), which may replace a code-paired

@@ -55,6 +55,7 @@ import { descriptorOf } from "./PeerLinks.testkit.ts";
 import * as TailnetDevices from "./TailnetDevices.ts";
 import * as TailnetDevicesHttp from "./tailnetDevicesHttp.ts";
 import * as TailnetIdentity from "./TailnetIdentity.ts";
+import NetworkContinuity from "../persistence/Migrations/fork/022_NetworkContinuity.ts";
 
 class DeviceTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
@@ -516,7 +517,7 @@ describe("adding a machine to the network", () => {
     }),
   );
 
-  it.live("a machine in another network keeps its own and does not join", () =>
+  it.live("a machine in another network keeps its own unless its owner allows joining", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
@@ -526,10 +527,12 @@ describe("adding a machine to the network", () => {
       yield* tailnet.join(b.url);
       yield* tailnet.join(c.url);
       yield* admit(tailnet, b, c);
+      yield* find(tailnet, a, c, tailnet.nameOf(c.url));
 
-      const refused = yield* admit(tailnet, a, c).pipe(Effect.flip);
+      const refused = yield* a.devices.admit(box.environmentId, "full-access").pipe(Effect.flip);
 
       expect(refused).toMatchObject({ reason: "forbidden" });
+      expect(refused.message).toContain("Allow joining on it to merge the two networks");
       expect(yield* a.membership.member(box.environmentId)).toEqual(Option.none());
       expect(yield* c.membership.member(laptop.environmentId)).toEqual(Option.none());
       expect(yield* c.links.get(laptop.environmentId)).toEqual(Option.none());
@@ -1562,8 +1565,6 @@ describe("crossing the upgrade without trusting a claim", () => {
       b.sql`UPDATE peer_environment_links SET urls_json = '["http://127.0.0.1:9"]'`,
     "the laptop holds no link to the studio": (a: Device) =>
       a.sql`DELETE FROM peer_environment_links`,
-    "the laptop's link to the studio was paired by code": (a: Device) =>
-      a.sql`UPDATE peer_environment_links SET origin = 'paired'`,
     "the studio no longer answers at the laptop's stored address": (a: Device) =>
       a.sql`UPDATE peer_environment_links SET urls_json = '["http://127.0.0.1:9"]'`,
   };
@@ -1611,7 +1612,8 @@ describe("crossing the upgrade without trusting a claim", () => {
     Effect.gen(function* () {
       const { tailnet, a, b, studioNode } = yield* upgradedPair;
       yield* b.sql`UPDATE peer_environment_links SET expires_at = '2000-01-01T00:00:00.000Z'`;
-      yield* b.sql`UPDATE network_members SET access = 'read-only' WHERE environment_id = ${laptop.environmentId}`;
+      // As the old policy left it: a level of its own, stamped before anything since.
+      yield* b.sql`UPDATE network_members SET access = 'read-only', stamp_json = '{"wallMs":1,"counter":0,"node":"env-studio"}' WHERE environment_id = ${laptop.environmentId}`;
       yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
       expect(yield* studioNode).toEqual(Option.some(null));
       // The studio's owner still consents there.
@@ -1633,7 +1635,7 @@ describe("crossing the upgrade without trusting a claim", () => {
   it.live("a bound member below full access is told who can add the machine", () =>
     Effect.gen(function* () {
       const { tailnet, a, b } = yield* upgradedPair;
-      yield* b.sql`UPDATE network_members SET access = 'read-only', node_id = ${tailnet.nodeIdOf(a.url)} WHERE environment_id = ${laptop.environmentId}`;
+      yield* b.sql`UPDATE network_members SET access = 'read-only', node_id = ${tailnet.nodeIdOf(a.url)}, stamp_json = '{"wallMs":1,"counter":0,"node":"env-studio"}' WHERE environment_id = ${laptop.environmentId}`;
 
       const refused = yield* admit(tailnet, a, b).pipe(Effect.flip);
 
@@ -1656,6 +1658,289 @@ describe("crossing the upgrade without trusting a claim", () => {
       const issued = (yield* sessionsFor(a)).filter((row) => !before.has(row.session_id));
       expect(issued).toHaveLength(1);
       expect(issued[0]?.scopes).not.toContain("orchestration:operate");
+    }),
+  );
+});
+
+describe("updating machines paired by code", () => {
+  const desk = descriptorOf("env-desk", "Desk");
+
+  /** `from` links to `to` with a code `to` issued, as 0.1.6 did: `to` keeps the session. */
+  const pairByCode = (
+    from: Device,
+    to: Device,
+    access: "read-only" | "full-access" = "full-access",
+  ) =>
+    Effect.gen(function* () {
+      const issued = yield* to.issueLinkSession(from.descriptor.environmentId, access);
+      const now = yield* DateTime.now;
+      yield* from.links.store(
+        {
+          environmentId: to.descriptor.environmentId,
+          label: to.descriptor.label,
+          urls: [to.url],
+          access,
+          origin: "paired",
+          linkedAt: now,
+          expiresAt: DateTime.toUtc(issued.expiresAt),
+          lastReachedAt: null,
+          lastError: null,
+        },
+        issued.token,
+      );
+    });
+
+  /** Takes the update: the migration over what 0.1.6 left, then the server's own seed. */
+  const update = (device: Device) =>
+    NetworkContinuity.pipe(Effect.provideService(SqlClient.SqlClient, device.sql));
+
+  /** Each machine's scan, in `order`, until the handshakes and syncs it starts have run. */
+  const settle = (order: ReadonlyArray<Device>) =>
+    Effect.forEach([1, 2, 3], () => Effect.forEach(order, (device) => device.devices.scan), {
+      discard: true,
+    });
+
+  const rosterOf = (device: Device) =>
+    device.membership.members.pipe(
+      Effect.map((members) =>
+        members
+          .map((member) => [member.environmentId, member.access, member.nodeId] as const)
+          .toSorted(([a], [b]) => a.localeCompare(b)),
+      ),
+    );
+
+  /** Studio and laptop paired both ways, laptop and box too; studio and box never met. */
+  const pairedMachines = Effect.gen(function* () {
+    const tailnet = yield* makeTailnet;
+    const a = yield* serveDevice(studio, tailnet);
+    const b = yield* serveDevice(laptop, tailnet);
+    const c = yield* serveDevice(box, tailnet);
+    for (const device of [a, b, c]) yield* tailnet.join(device.url);
+    yield* pairByCode(a, b);
+    yield* pairByCode(b, a);
+    yield* pairByCode(b, c);
+    yield* pairByCode(c, b);
+    return { tailnet, a, b, c };
+  });
+
+  it.live.each([
+    ["studio first", [0, 1, 2]],
+    ["box first", [2, 1, 0]],
+    ["laptop first", [1, 0, 2]],
+  ] as const)(
+    "machines paired both ways before the update come out as one bound network, %s",
+    ([, order]) =>
+      Effect.gen(function* () {
+        const { tailnet, a, b, c } = yield* pairedMachines;
+        const devices = [a, b, c];
+        const ordered = order.map((index) => devices[index]!);
+        // Each takes the update in turn; nothing is cut while the others have not.
+        for (const device of ordered) yield* update(device);
+        yield* settle(ordered);
+
+        const expected = devices
+          .map(
+            (device) =>
+              [
+                device.descriptor.environmentId,
+                "full-access",
+                tailnet.nodeIdOf(device.url),
+              ] as const,
+          )
+          .toSorted(([x], [y]) => x.localeCompare(y));
+        for (const device of devices) expect(yield* rosterOf(device)).toEqual(expected);
+
+        // Settled: another round binds and grants nothing more.
+        const grants = yield* Effect.forEach(devices, (device) => Ref.get(device.grants));
+        const stamps = yield* Effect.forEach(devices, (device) => device.membership.members);
+        yield* settle(ordered);
+        expect(yield* Effect.forEach(devices, (device) => Ref.get(device.grants))).toEqual(grants);
+        expect(yield* Effect.forEach(devices, (device) => device.membership.members)).toEqual(
+          stamps,
+        );
+
+        // Agents work across machines that never met: the studio opens the box for an app.
+        const credential = yield* a.devices.openDevice(box.environmentId, {
+          scopes: [AuthOrchestrationReadScope, AuthAccessWriteScope],
+          subject: "browser",
+        });
+        expect(credential.environmentId).toBe(box.environmentId);
+      }),
+  );
+
+  it.live("a machine waits for a peer that has not updated, cutting nothing it uses", () =>
+    Effect.gen(function* () {
+      const { tailnet, a, b } = yield* pairedMachines;
+      const sessionsOf = (device: Device) =>
+        device.issued.pipe(Effect.map((issued) => issued.map((session) => session.sessionId)));
+      const before = { a: yield* sessionsOf(a), b: yield* sessionsOf(b) };
+      yield* update(a);
+      yield* settle([a, b]);
+
+      // The laptop lists nobody yet and refuses the handshake; every link and session stays.
+      expect(yield* b.membership.members).toEqual([]);
+      expect(Option.map(yield* a.links.get(laptop.environmentId), (link) => link.origin)).toEqual(
+        Option.some("paired"),
+      );
+      expect(Option.isSome(yield* b.links.get(studio.environmentId))).toBe(true);
+      expect(yield* sessionsOf(b)).toEqual(before.b);
+      expect(yield* sessionsOf(a)).toEqual(before.a);
+
+      yield* update(b);
+      yield* settle([a, b]);
+
+      for (const device of [a, b]) {
+        const roster = (yield* rosterOf(device)).map(([id, , node]) => [id, node]);
+        expect(roster).toContainEqual([laptop.environmentId, tailnet.nodeIdOf(b.url)]);
+        expect(roster).toContainEqual([studio.environmentId, tailnet.nodeIdOf(a.url)]);
+        // The box has not updated: listed, but not bound until it does.
+        expect(roster).toContainEqual([box.environmentId, null]);
+      }
+    }),
+  );
+
+  it.live("a one-way pairing, a stranger and a forgotten machine stay out", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(studio, tailnet);
+      const b = yield* serveDevice(laptop, tailnet);
+      const stranger = yield* serveDevice(box, tailnet);
+      const forgotten = yield* serveDevice(desk, tailnet);
+      for (const device of [a, b, stranger, forgotten]) yield* tailnet.join(device.url);
+      yield* pairByCode(a, b);
+      yield* pairByCode(b, a);
+      // The studio paired with the desk both ways, then the user forgot it after updating.
+      yield* pairByCode(a, forgotten);
+      yield* pairByCode(forgotten, a);
+      yield* a.sql`
+        INSERT INTO tailnet_device_policy (environment_id, access, stamp_json, updated_by)
+        VALUES (${desk.environmentId}, 'revoked', '{"wallMs":9,"counter":0,"node":"env-studio"}', 'env-studio')
+      `;
+      // The box holds a code-paired link to the laptop, but the laptop never linked back.
+      yield* pairByCode(stranger, b);
+      // And it is on the same Tailscale account, found by every scan.
+      yield* tailnet.announce(tailnet.nameOf(stranger.url), () => [stranger.url]);
+      for (const device of [a, b, stranger, forgotten]) yield* update(device);
+      yield* settle([a, b, stranger, forgotten]);
+
+      for (const device of [a, b]) {
+        expect((yield* rosterOf(device)).map(([id]) => id)).toEqual([
+          laptop.environmentId,
+          studio.environmentId,
+        ]);
+      }
+      expect(yield* a.membership.member(desk.environmentId)).toEqual(Option.none());
+      expect(yield* stranger.membership.members).toEqual([]);
+      expect(yield* b.membership.member(box.environmentId)).toEqual(Option.none());
+    }),
+  );
+
+  it.live("a machine in another network merges into this one when it allows joining", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(studio, tailnet);
+      const b = yield* serveDevice(laptop, tailnet);
+      const c = yield* serveDevice(box, tailnet);
+      const d = yield* serveDevice(desk, tailnet);
+      for (const device of [a, b, c, d]) yield* tailnet.join(device.url);
+      // Two networks of the same owner, as the update left them: studio+laptop, box+desk.
+      yield* admit(tailnet, a, b);
+      yield* admit(tailnet, c, d);
+      const app = yield* pairApp(c, [d], { scopes: AuthStandardClientScopes, label: "Phone" });
+      yield* find(tailnet, a, c, tailnet.nameOf(c.url));
+
+      // Without its owner's agreement the box keeps its network, and says how to merge.
+      const refused = yield* a.devices.admit(box.environmentId, "full-access").pipe(Effect.flip);
+      expect(refused.message).toContain("Allow joining on it to merge the two networks");
+      expect(yield* a.membership.member(box.environmentId)).toEqual(Option.none());
+
+      yield* c.devices.allowJoin;
+      yield* a.devices.admit(box.environmentId, "full-access");
+      yield* settle([a, b, c, d]);
+
+      const everyone = [a, b, c, d]
+        .map((device) => [device.descriptor.environmentId, tailnet.nodeIdOf(device.url)] as const)
+        .toSorted(([x], [y]) => x.localeCompare(y));
+      for (const device of [a, b, c, d]) {
+        expect((yield* rosterOf(device)).map(([id, , node]) => [id, node])).toEqual(everyone);
+        // The box's app came along; nothing it had was cut.
+        expect((yield* device.membership.apps).map((known) => known.appId)).toContain(app.appId);
+      }
+    }),
+  );
+
+  it.live("a refused add again leaves the tombstone it would have replaced", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(studio, tailnet);
+      const b = yield* serveDevice(laptop, tailnet);
+      for (const device of [a, b]) yield* tailnet.join(device.url);
+      yield* admit(tailnet, a, b);
+      yield* a.devices.forget(laptop.environmentId);
+      const before = yield* a.membership.member(laptop.environmentId);
+      expect(Option.map(before, (member) => member.access)).toEqual(Option.some("revoked"));
+
+      // The laptop forgot the network too and never allowed joining, so it refuses.
+      yield* b.membership.clear;
+      yield* tailnet.announce("laptop-again", () => [b.url]);
+      yield* a.devices.scan;
+      const refused = yield* a.devices.admit(laptop.environmentId, "full-access").pipe(Effect.flip);
+      expect(refused.message).toContain("did not join");
+
+      expect(yield* a.membership.member(laptop.environmentId)).toEqual(before);
+      expect((yield* a.membership.hidden).members.has(laptop.environmentId)).toBe(true);
+    }),
+  );
+
+  it.live("a machine of tombstones alone is no other network", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(studio, tailnet);
+      const b = yield* serveDevice(laptop, tailnet);
+      for (const device of [a, b]) yield* tailnet.join(device.url);
+      // What the laptop kept of old installs: revoked entries only.
+      yield* b.membership.adopt({
+        members: [
+          {
+            environmentId: EnvironmentId.make("env-old-studio"),
+            label: "Studio",
+            nodeId: null,
+            access: "revoked",
+            updatedAt: { wallMs: 5, counter: 0, node: laptop.environmentId },
+          },
+        ],
+      });
+
+      yield* admit(tailnet, a, b);
+
+      expect(
+        Option.map(yield* b.membership.member(studio.environmentId), (member) => member.access),
+      ).toEqual(Option.some("full-access"));
+    }),
+  );
+
+  it.live("a read-only pairing stays read-only through the update and the merge", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(studio, tailnet);
+      const b = yield* serveDevice(laptop, tailnet);
+      for (const device of [a, b]) yield* tailnet.join(device.url);
+      // The studio let the laptop in read-only; the laptop gave the studio everything.
+      yield* pairByCode(b, a, "read-only");
+      yield* pairByCode(a, b, "full-access");
+      for (const device of [a, b]) yield* update(device);
+      yield* settle([a, b]);
+      // A limit the laptop keeps for the studio alone survives later syncs.
+      yield* b.membership.setLimit(studio.environmentId, "approval-required");
+      yield* settle([a, b]);
+
+      for (const device of [a, b]) {
+        expect(
+          Option.map(yield* device.membership.member(laptop.environmentId), (m) => m.access),
+        ).toEqual(Option.some("read-only"));
+      }
+      expect((yield* b.membership.limits).get(studio.environmentId)).toBe("approval-required");
+      expect(yield* a.membership.accessOf(laptop.environmentId)).toEqual(Option.some("read-only"));
     }),
   );
 });

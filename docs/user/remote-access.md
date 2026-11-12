@@ -346,13 +346,16 @@ machine in the network picks them up.
   joining** on it, then **Add again** on its row from a full-access machine.
   After that, pair with it by code.
 - After updating from a version before machines were tied to their Tailscale
-  identity, members whose existing Tailscale link still works reconnect on
-  their own, at the access they had. Any other member shows **Needs re-adding
-  after the update**, and the other machines refuse it until then. On that
-  machine, choose **Allow joining**, then choose **Add again** on its row from
-  another full-access machine. The machine you add keeps the access it gave
-  the adding machine before the update; only a full-access machine there can
-  raise it.
+  identity, machines that were linked both ways (by Tailscale or by pairing
+  code) and still hold those links reconnect on their own, at the access they
+  had, and come out as one network. Any other member shows **Needs re-adding
+  after the update**, and the other machines refuse it until then. Choose
+  **Add again** on its row from a full-access machine; if this app is not also
+  connected to that machine, first choose **Allow joining** on it.
+- A machine that is in another of your networks shows **Merge networks**.
+  Adding it makes the two networks one, and every machine and app keeps the
+  access it has. A machine you forgot shows **Restore** once it is found on
+  your tailnet again.
 - **Open** adds a member to this app without a code. Below full access, it
   opens read-only, and its row shows **Read-only in this app**. When its
   session in this app expires or is cut, **Open** shows again.

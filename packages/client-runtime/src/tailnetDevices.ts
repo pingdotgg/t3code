@@ -86,6 +86,8 @@ export interface DeviceNetworkMachine {
   readonly entry: MachineEntry;
   /** Other environments on the same node, such as the one a reinstall left behind. */
   readonly others: ReadonlyArray<MachineEntry>;
+  /** A connected host of another network shown here: adding it merges the two networks. */
+  readonly inOtherNetwork: boolean;
 }
 
 export interface DeviceNetworkGroup {
@@ -139,6 +141,9 @@ const inAppOf = (
 // The roster entry decides: the scan fills `device.nodeId` even while the server still refuses it.
 const isUnbound = (device: TailnetDevice) =>
   isLiveMember(device.member) && device.member.nodeId === null;
+
+/** Linked both ways with this host, so its next handshake binds it without the user. */
+const rebindsItself = (device: TailnetDevice) => device.outgoing !== null && device.incoming;
 
 const inNetwork = (host: DeviceNetworkHost) => isLiveMember(host.snapshot?.selfMember);
 
@@ -198,7 +203,8 @@ export function canManageNetwork(
   snapshot: Pick<TailnetDevicesSnapshot, "selfMember" | "devices">,
 ): boolean {
   if (snapshot.selfMember !== null) return snapshot.selfMember.access === "full-access";
-  return snapshot.devices.every((device) => device.member === null);
+  // Tombstones alone are no network, so this machine may start one.
+  return !snapshot.devices.some((device) => isLiveMember(device.member));
 }
 
 /** Any switched-on full-access host this client may write to, the preferred one first. */
@@ -289,7 +295,8 @@ function groupMachines(
   const takeMember = (draft: Draft, member: NetworkMember | null) => {
     if (member === null) return;
     draft.member = winner(draft.member, member, compareNetworkMembers);
-    draft.label = draft.member.label;
+    // A roster entry named before its machine was known carries its bare id.
+    if (draft.member.label !== draft.environmentId) draft.label = draft.member.label;
     draft.nodeId ??= member.nodeId;
   };
   for (const host of hosts) {
@@ -339,9 +346,33 @@ function groupMachines(
     if (current === undefined) continue;
     const kind = kindOf(current);
     if (kind === null) continue;
-    machines.push({ key, kind, entry: current, others });
+    machines.push({ key, kind, entry: current, others, inOtherNetwork: false });
   }
-  return machines.sort(
+  // A revoked environment no node was ever bound to, such as an old install from before the
+  // update, shows under the live machine of its name rather than as a machine of its own.
+  const absorbed = new Map<DeviceNetworkMachine, Array<MachineEntry>>();
+  const kept = machines.filter((machine) => {
+    const stale =
+      machine.key === machine.entry.environmentId &&
+      machine.entry.member?.access === "revoked" &&
+      !machine.entry.isHost;
+    const owner = stale
+      ? machines.find(
+          (other) =>
+            other !== machine &&
+            other.entry.label === machine.entry.label &&
+            other.entry.member?.access !== "revoked",
+        )
+      : undefined;
+    if (owner === undefined) return true;
+    absorbed.set(owner, [...(absorbed.get(owner) ?? []), machine.entry, ...machine.others]);
+    return false;
+  });
+  const merged = kept.map((machine) => {
+    const extra = absorbed.get(machine);
+    return extra === undefined ? machine : { ...machine, others: [...machine.others, ...extra] };
+  });
+  return merged.sort(
     (a, b) =>
       KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
       Number(b.entry.isHost) - Number(a.entry.isHost) ||
@@ -401,14 +432,28 @@ export function deviceNetworkView(input: {
         : [],
     ),
   );
-  return groups
+  const networkOf = new Map(
+    groups.flatMap((group) =>
+      group.inNetwork ? group.hosts.map((host) => [host.environmentId, group.key] as const) : [],
+    ),
+  );
+  const marked = groups.map((group) => ({
+    ...group,
+    machines: group.machines.map((machine) => {
+      const other = networkOf.get(machine.entry.environmentId);
+      return other === undefined || other === group.key
+        ? machine
+        : { ...machine, inOtherNetwork: true };
+    }),
+  }));
+  return marked
     .map((group) =>
       group.inNetwork
         ? group
         : {
             ...group,
             // Adding from a lone host would start a second network beside the one shown.
-            addsToNetwork: !groups.some((other) => other.inNetwork),
+            addsToNetwork: !marked.some((other) => other.inNetwork),
             machines: group.machines.filter(
               (machine) =>
                 machine.kind !== "found" ||
@@ -432,11 +477,15 @@ export interface MachineControls {
   readonly restore: boolean;
   /** Found: add it to the network, or link it to the authority only. */
   readonly add: boolean;
+  /** Found after the user forgot it here: adding it is how it is restored. */
+  readonly forgotten: boolean;
   readonly linkHere: boolean;
   /** Linked to one host only: add it to the network. */
   readonly promote: boolean;
-  /** A member from before the update that a host has not bound to a Tailscale node yet. */
+  /** A member from before the update that a host has not bound and cannot bind on its own. */
   readonly needsReadd: boolean;
+  /** Unbound on a host it is still linked with both ways: it binds when it next connects. */
+  readonly reconnecting: boolean;
   /** It left the network itself. */
   readonly left: boolean;
   /** Unbound or left: add it again through the authority, once it allows joining. */
@@ -476,8 +525,12 @@ export function machineControls(
   const { authority } = group;
   const member = machine.kind === "member";
   // The server refuses a member it holds no node for until it is added again.
-  const needsReadd =
-    member && isLiveMember(entry.member) && entry.views.some((view) => isUnbound(view.device));
+  const unbound =
+    member && isLiveMember(entry.member)
+      ? entry.views.filter((view) => isUnbound(view.device))
+      : [];
+  const needsReadd = unbound.some((view) => !rebindsItself(view.device));
+  const reconnecting = unbound.length > 0 && !needsReadd;
   const left = member && entry.member !== null && hasLeftNetwork(entry.member);
   const live = member && isLiveMember(entry.member) && !needsReadd;
   const manages = authority !== null && authority !== entry.environmentId;
@@ -502,9 +555,13 @@ export function machineControls(
     revoke: live && manages,
     restore: member && !live && !needsReadd && !left && manages,
     add: machine.kind === "found" && authority !== null && group.addsToNetwork,
+    forgotten:
+      machine.kind === "found" &&
+      entry.views.some((view) => view.device.member === null && view.device.access === "revoked"),
     linkHere: machine.kind === "found" && authority !== null,
     promote: machine.kind === "linked" && authority !== null && group.addsToNetwork,
     needsReadd,
+    reconnecting,
     left,
     readd: readdVia !== null,
     readdVia,
