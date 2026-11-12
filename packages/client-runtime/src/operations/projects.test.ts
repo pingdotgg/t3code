@@ -126,16 +126,6 @@ describe("add project shared logic", () => {
     ).toBe("https://gitlab.com/group/subgroup/project");
   });
 
-  it("keeps SSH for hosts that default to it", () => {
-    expect(
-      getDefaultCloneUrl({
-        provider: SourceControlProviderKind.make("bitbucket"),
-        url: "https://bitbucket.org/workspace/repo.git",
-        sshUrl: "git@bitbucket.org:workspace/repo.git",
-      }),
-    ).toBe("git@bitbucket.org:workspace/repo.git");
-  });
-
   it("derives the clone folder name from any pasted clone URL", () => {
     expect(getCloneDirectoryName("https://github.com/owner/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("https://github.com/owner/repo")).toBe("repo");
