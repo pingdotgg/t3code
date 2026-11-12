@@ -345,6 +345,9 @@ const countProfileCookies = Effect.fnUntraced(function* (
   if (database === undefined) return undefined;
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const table = definition.engine === "firefox" ? "moz_cookies" : "cookies";
+    const tables = yield* sql`select 1 from sqlite_master where type = 'table' and name = ${table}`;
+    if (tables.length === 0) return 0;
     const rows =
       definition.engine === "firefox"
         ? yield* sql`select count(*) as count from moz_cookies where originAttributes = ''`
