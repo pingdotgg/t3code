@@ -339,7 +339,8 @@ it("handles a disappearing portal without keeping a false registered state", asy
   );
   expect(client.state.shortcutRegistered).toBe(false);
   expect(client.state.shortcutMessage).toContain("restarted");
-  expect(bus.disconnect).toHaveBeenCalledOnce();
+  expect(client.hasSession).toBe(false);
+  expect(bus.disconnect).not.toHaveBeenCalled();
 });
 
 it("binds a new session when the portal restarts", async () => {
