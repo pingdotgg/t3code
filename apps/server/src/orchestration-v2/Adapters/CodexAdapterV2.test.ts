@@ -5136,6 +5136,94 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("unsubscribes native subagent threads when their root thread unloads", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "unload-root";
+      const nativeTurnId = "unload-root-turn";
+      const childThreadId = "unload-child";
+      const prompt = "Use a subagent.";
+      const notification = (method: string, params: unknown) =>
+        ({
+          type: "emit_inbound",
+          label: method,
+          frame: { method, params },
+        }) satisfies CodexReplay.CodexAppServerReplayEntry;
+      const unsubscribe = (id: number, threadId: string) =>
+        [
+          {
+            type: "expect_outbound",
+            label: `unsubscribe-${threadId}`,
+            frame: { id, method: "thread/unsubscribe", params: { threadId } },
+          },
+          {
+            type: "emit_inbound",
+            label: `unsubscribe-${threadId}`,
+            frame: { id, result: { status: "unsubscribed" } },
+          },
+        ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
+      const unsubscribed: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "unload-native-subagent",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            notification("item/completed", {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              item: {
+                type: "subAgentActivity",
+                id: "spawn-child",
+                kind: "started",
+                agentThreadId: childThreadId,
+                agentPath: "/root/child",
+              },
+            }),
+            notification("turn/started", {
+              threadId: childThreadId,
+              turn: makeCodexReplayTurn({ id: "child-turn", status: "inProgress" }),
+            }),
+            notification("turn/completed", {
+              threadId: childThreadId,
+              turn: makeCodexReplayTurn({ id: "child-turn", status: "completed" }),
+            }),
+            notification("turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+            }),
+            ...unsubscribe(4, nativeThreadId),
+            ...unsubscribe(5, childThreadId),
+          ],
+        }),
+        undefined,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/unsubscribe") unsubscribed.push(params);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-unload-native-subagent"),
+          text: prompt,
+        }),
+      );
+      yield* harness.firstTerminal;
+      yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      assert.deepEqual(unsubscribed, [{ threadId: nativeThreadId }, { threadId: childThreadId }]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([false, true])(
     "keeps commands interrupted after native thread closure (persistent tool: %s)",
     (retainContext) =>
