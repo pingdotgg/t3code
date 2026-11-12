@@ -125,6 +125,7 @@ export function canonicalModelFilter(
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
+  readonly sourceSessionCounts: ReadonlyMap<string, ReadonlyMap<string, number>>;
   readonly duplicatesDropped: number;
   readonly outOfWindow: number;
 }
@@ -356,10 +357,22 @@ export class UsageAggregator {
     this.#seen.clear();
     this.#supersededKeys.clear();
     const buckets: UsageBucket[] = [];
+    const sourceSessions = new Map<string, Map<string, Set<string>>>();
     for (const [key, bucket] of this.#buckets) {
       if (bucket.records === 0) continue;
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
         key.split("\u0000");
+      let providerSources = sourceSessions.get(provider);
+      if (providerSources === undefined) {
+        providerSources = new Map();
+        sourceSessions.set(provider, providerSources);
+      }
+      let sessions = providerSources.get(sourcePath);
+      if (sessions === undefined) {
+        sessions = new Set();
+        providerSources.set(sourcePath, sessions);
+      }
+      for (const sessionId of bucket.sessions) sessions.add(sessionId);
       const category = bucket.categoryCostUsd;
       const fastCostUsd = roundUsd(bucket.fastCostUsd);
       const ultrafastCostUsd = roundUsd(bucket.ultrafastCostUsd);
@@ -402,6 +415,12 @@ export class UsageAggregator {
 
     return {
       buckets,
+      sourceSessionCounts: new Map(
+        [...sourceSessions].map(([provider, paths]) => [
+          provider,
+          new Map([...paths].map(([path, sessions]) => [path, sessions.size])),
+        ]),
+      ),
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };

@@ -1417,7 +1417,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
   );
 
   it.effect(
-    "reads a positioned discussion as a thread and an open overview discussion as a finding",
+    "reads a positioned discussion at its line and an overview discussion as a thread and a finding",
     () =>
       Effect.gen(function* () {
         mockedExecute.mockReturnValueOnce(
@@ -1534,9 +1534,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
         expect(overviewFindingIds).toEqual(["4"]);
         expect(threads.map(({ id, path, line, side }) => ({ id, path, line, side }))).toEqual([
           { id: "abc123", path: "src/a.ts", line: 12, side: "right" },
+          { id: "ghi789", path: null, line: null, side: "right" },
+          { id: "jkl012", path: null, line: null, side: "right" },
           { id: "file789", path: "src/b.ts", line: null, side: "right" },
           { id: "img012", path: "logo.png", line: null, side: "right" },
         ]);
+        expect(threads[1]).toMatchObject({ isResolved: false });
+        expect(threads[1]?.comments.map(({ id }) => id)).toEqual(["4", "5"]);
+        expect(threads[2]).toMatchObject({ isResolved: true });
         expect([...diffRefsByThreadId]).toEqual([
           ["abc123", { baseSha: "base", startSha: "start", headSha: "head" }],
         ]);
