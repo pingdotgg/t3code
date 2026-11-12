@@ -15,6 +15,7 @@ const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
@@ -22,10 +23,11 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   if (homePath.length > 0) {
     return path.resolve(expandHomePath(homePath, home));
   }
-  // Inherited env vars are not shell-expanded, so a literal `~` stays literal.
+  // Inherited env vars are not shell-expanded, so a literal `~` stays literal. The spawned CLI
+  // resolves a relative value against its own cwd.
   const inherited = environment?.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (inherited.length > 0) {
-    return path.resolve(inherited);
+    return cwd ? path.resolve(cwd, inherited) : path.resolve(inherited);
   }
   return path.resolve(path.join(home, ".claude"));
 });
