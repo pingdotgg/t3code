@@ -41,7 +41,8 @@ The v2 checks pin these invariants:
   requested.
   Explicit cross-environment transcript exports preserve full tool bodies so the destination
   agent can read the context. The export rejects timeline JSON above the file attachment limit
-  before sending it; the client still applies its attachment limit to the complete file.
+  before sending it, and before decoding any row when the tool output text alone is over that
+  limit; the client still applies its attachment limit to the complete file.
 - Live command output reaches a client only through `orchestration.subscribeCommandOutput`, which
   an expanded command row opens and closes with itself. Raw output deltas are never orchestration
   events: adapters send them to the
@@ -71,8 +72,14 @@ send and caps the decoded bytes and rows of the bounded snapshot and one older p
 agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. It
 also caps the bytes and the node, subagent, plan, provider turn and checkpoint counts of the
 bounded snapshot for a thread of 40 finished runs behind one working run, so finished runs cannot
-ride along with a window. When clients gain an opt-in, add it to the test's client queries and give
-a fixture the data it saves.
+ride along with a window. The working run has a ready context handoff, so its history cannot ride
+along either. When clients gain an opt-in, add it to the test's client queries and give a fixture
+the data it saves.
+
+The server config has its own budget in `apps/server/src/ws.test.ts`. A client that asks for
+catalog digests and status deltas gets the provider list of its first config in under 1 KiB, for a
+provider with 250 slash commands and 200 skills. The lists load with the first cwd snapshot, and a
+machine refresh sends back an empty provider list.
 
 ## Event store and startup
 
