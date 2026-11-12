@@ -198,6 +198,7 @@ it.layer(NodeServices.layer)("Claude boundary saved history", (it) => {
       assert.deepEqual(yield* readTail(offset), appended);
       // A line that straddles the offset began before the handoff, so it is not re-read.
       assert.deepEqual(yield* readTail(offset - 5), appended);
+      assert.deepEqual(yield* readTail(1), appended);
       yield* fs.writeFileString(transcriptPath, `${before}${after}${torn}\n`);
       assert.deepEqual((yield* readTail(appended.nextOffset)).saved, ["late"]);
       yield* fs.writeFileString(transcriptPath, after);

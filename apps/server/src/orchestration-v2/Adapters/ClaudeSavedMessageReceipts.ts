@@ -79,7 +79,7 @@ export const readClaudeBoundaryReceiptTail = Effect.fn("readClaudeBoundaryReceip
   // Starting one byte early makes the first newline end either the previous line or a straddling one.
   const start = Math.max(offset - 1, 0);
   const decoder = new TextDecoder();
-  let skipFirstLine = start > 0;
+  let skipFirstLine = offset > 0;
   let position = start;
   let nextOffset = offset;
   let carry: Array<Uint8Array> = [];

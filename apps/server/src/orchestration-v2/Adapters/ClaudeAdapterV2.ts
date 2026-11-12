@@ -11137,16 +11137,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* flushBoundaryReceipts(batch);
                 }
                 pruneBoundaryBatches(live.boundaryBatches);
-                if (scope === "ended") {
-                  // An offer still unconfirmed here stays queued as Unconfirmed; recovery owns it.
-                  for (let index = live.boundaryBatches.length - 1; index >= 0; index--) {
-                    if (!live.boundaryBatches[index]!.accepting)
-                      live.boundaryBatches.splice(index, 1);
-                  }
-                }
               }),
             );
           },
+          (effect, live, scope) =>
+            effect.pipe(
+              Effect.ensuring(
+                scope === "ended"
+                  ? live.boundaryLock.withPermits(1)(
+                      Effect.sync(() => {
+                        // Even unreadable history leaves ended offers Unconfirmed; only recovery may retry them.
+                        for (let index = live.boundaryBatches.length - 1; index >= 0; index--) {
+                          if (!live.boundaryBatches[index]!.accepting)
+                            live.boundaryBatches.splice(index, 1);
+                        }
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
           Effect.catchTags({
             PlatformError: (cause) =>
               Effect.logWarning("orchestration-v2.claude-boundary-history-read-failed", { cause }),

@@ -1131,7 +1131,6 @@ it.effect.each([
                 commandId: CommandId.make("user-retry-unconfirmed"),
                 threadId: task.childThreadId!,
                 runId: queued.id,
-                requestedBy: "user",
               });
             } else yield* orchestrator.resumeQueuedRuns;
             yield* worker.drain();

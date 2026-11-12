@@ -3333,6 +3333,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
 
   const makeWakeHarnessWithOptions = (options?: {
+    readonly fileSystem?: FileSystem.FileSystem;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
@@ -3365,7 +3366,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly promptSuggestions?: boolean;
   }) =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
+      const fileSystem = options?.fileSystem ?? (yield* FileSystem.FileSystem);
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-claude-v2-wake-",
@@ -3852,6 +3853,226 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           deliveryEvents.slice(1).flatMap((event) => event.offers.map((offer) => offer.id)),
           offers.map((offer) => offer.id),
         );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["rewritten", "unconfirmed", "unreadable", "separate-files"] as const)(
+    "reconciles boundary transcript receipts without retaining ended offers: %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boundary-tail-" });
+        const projects = path.join(home, "projects");
+        const paths = ["first", "second"].map((project) =>
+          path.join(projects, project, `${WAKE_NATIVE_SESSION}.jsonl`),
+        );
+        const padding = "{}\n".repeat(256);
+        for (const transcript of paths) {
+          yield* fs.makeDirectory(path.dirname(transcript), { recursive: true });
+          yield* fs.writeFileString(transcript, padding);
+        }
+        const unreadable = path.join(home, "not-a-directory");
+        yield* fs.writeFileString(unreadable, "");
+        const reads: Array<{ readonly path: string; readonly offset: number }> = [];
+        let historyReads = 0;
+        let failHistory = false;
+        const fileSystem: FileSystem.FileSystem = {
+          ...fs,
+          stream: (file, options) => {
+            if (paths.includes(file))
+              reads.push({
+                path: file,
+                offset: options?.offset === undefined ? 0 : Number(options.offset),
+              });
+            return fs.stream(file, options);
+          },
+          readDirectory: (directory, options) => {
+            if (directory === projects) historyReads++;
+            return fs.readDirectory(
+              directory === projects && failHistory ? unreadable : directory,
+              options,
+            );
+          },
+        };
+        const offers: ProviderContinuationRequests.AgentMessageOffer[] = [0, 1].map((index) => ({
+          id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          queuedRunId: RunId.make(`queued-tail-${index}`),
+          messageId: MessageId.make(`message-tail-${index}`),
+          text: `Follow-up ${index}`,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        }));
+        let claimed = 0;
+        const withdrawals: string[] = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          fileSystem,
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+          claimAgentMessages: () => Effect.sync(() => [offers[claimed++]!]),
+          withdrawAgentMessages: ({ offers }) =>
+            Effect.sync(() => {
+              withdrawals.push(...offers.map((offer) => offer.id));
+            }),
+        });
+        const turn = (attempt: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe("2026-11-12T00:00:00Z"),
+            attemptId: RunAttemptId.make(attempt),
+            text: "Work with tools.",
+            attachments: [],
+          });
+        yield* harness.runtime.startTurn(turn("receipt-tail-first"));
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            capabilities: ["interrupt_cancel_queued_v1"],
+            user_message_uuid: harness.promptUuid(0),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const queryOptions = harness.getOpenedOptions();
+        const hook = queryOptions?.hooks?.PostToolBatch?.[0]?.hooks[0];
+        assert.isDefined(hook);
+        if (hook === undefined) return;
+        const signal = yield* Effect.abortSignal;
+        const batchCount = scenario === "separate-files" ? 2 : 1;
+        for (const transcript of paths.slice(0, batchCount)) {
+          yield* Effect.promise(() =>
+            hook(
+              {
+                hook_event_name: "PostToolBatch",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: transcript,
+                cwd: "/repo",
+                tool_calls: [],
+              },
+              undefined,
+              { signal },
+            ),
+          );
+        }
+        const receipt = (index: number) =>
+          `${JSON.stringify({
+            type: "attachment",
+            sessionId: WAKE_NATIVE_SESSION,
+            isSidechain: false,
+            attachment: { type: "queued_command", source_uuid: offers[index]!.id },
+          })}\n`;
+        const received = () =>
+          harness.events.flatMap((event) =>
+            event.type === "boundary_messages.updated" && event.step === "receipt"
+              ? event.offers.map((offer) => offer.id)
+              : [],
+          );
+        const root = Effect.fnUntraced(function* (text: string) {
+          yield* harness.offerAndWait(makeAssistantTextFrame({ uuid: text, text }));
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text.includes(text),
+            ),
+          );
+        });
+        if (scenario === "rewritten") yield* fs.writeFileString(paths[0]!, receipt(0) + padding);
+        for (const offer of offers.slice(0, batchCount)) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "command_lifecycle",
+              command_uuid: offer.id,
+              state: "started",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (scenario === "separate-files") {
+          yield* harness.until(
+            () =>
+              harness.events.filter(
+                (event) => event.type === "boundary_messages.updated" && event.step === "reserve",
+              ).length === batchCount,
+          );
+          for (let index = 0; index < batchCount; index++)
+            yield* fs.writeFileString(paths[index]!, receipt(index), { flag: "a" });
+        }
+        yield* root("mid-turn receipt check");
+        if (scenario === "separate-files") {
+          assert.deepEqual(
+            received(),
+            offers.map((offer) => offer.id),
+          );
+          assert.isTrue(
+            paths.every((transcript) => reads.some((read) => read.path === transcript)),
+          );
+          assert.equal(historyReads, 0);
+          return;
+        }
+        assert.deepEqual(received(), []);
+        assert.equal(historyReads, 0);
+        const previousOffset = reads.at(-1)?.offset;
+        yield* fs.writeFileString(paths[0]!, "{}\n", { flag: "a" });
+        yield* root("advancing the receipt cursor");
+        yield* root("checking the advanced receipt cursor");
+        const advancedOffset = reads.at(-1)?.offset;
+        failHistory = scenario === "unreadable";
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "receipt-tail-result", result: "Finished." }),
+        );
+        yield* harness.awaitTerminal(1);
+        failHistory = false;
+        if (scenario === "rewritten") {
+          assert.deepEqual(received(), [offers[0]!.id]);
+          assert.equal(historyReads, 1);
+          return;
+        }
+        assert.deepEqual(received(), []);
+        const readsAtEnd = reads.length;
+        const historyReadsAtEnd = historyReads;
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "late-root", text: "Late root output" }),
+        );
+        yield* harness.runtime.startTurn(turn("receipt-tail-later"));
+        assert.strictEqual(harness.getOpenedOptions(), queryOptions);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: null,
+            user_message_uuid: harness.promptUuid(2),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* root("later turn receipt check");
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "receipt-tail-later-result", result: "Later work." }),
+        );
+        yield* harness.awaitTerminal(2);
+        assert.equal(reads.length, readsAtEnd);
+        assert.equal(historyReads, historyReadsAtEnd);
+        assert.equal(historyReads, 1);
+        assert.isAbove(Number(advancedOffset), Number(previousOffset));
+        assert.deepEqual(received(), []);
+        assert.deepEqual(
+          harness.offeredMessages
+            .filter((message) => message.uuid === offers[0]!.id)
+            .map((message) => message.priority),
+          ["next"],
+        );
+        assert.deepEqual(withdrawals, []);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
