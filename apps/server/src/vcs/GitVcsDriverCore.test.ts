@@ -6636,6 +6636,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("commits a selected file while an unselected file's clean filter fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["config", "filter.broken.clean", "cat"]);
+        yield* git(cwd, ["config", "filter.broken.required", "true"]);
+        yield* writeTextFile(cwd, ".gitattributes", "other.txt filter=broken\n");
+        yield* writeTextFile(cwd, "other.txt", "base\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "Add other"]);
+        yield* writeTextFile(cwd, "README.md", "selected\n");
+        yield* writeTextFile(cwd, "other.txt", "changed\n");
+        yield* git(cwd, ["config", "filter.broken.clean", "false"]);
+
+        yield* driver.commit(cwd, "Selected", "", { stage: { filePaths: ["README.md"] } });
+
+        assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "README.md");
+      }),
+    );
+
     it.effect("commits a selected file beside more than 1 MB of conflicted path names", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

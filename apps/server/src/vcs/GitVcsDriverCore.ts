@@ -2535,7 +2535,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const unmergedPaths = yield* runGitStdoutWithOptions(
           "GitVcsDriver.commit.unmergedPaths",
           cwd,
-          ["-c", "diff.relative=false", "diff", "--name-only", "--diff-filter=U", "-z"],
+          ["-c", "diff.relative=false", "diff", "--cached", "--name-only", "--diff-filter=U", "-z"],
           { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
         );
         // Reset drops every conflict stage, so keep the index while unselected files are conflicted.
