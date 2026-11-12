@@ -713,7 +713,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerPortScanner),
   Layer.provideMerge(
     Layer.mergeAll(
-      AntigravityInstallation.AntigravityInstallation.layer,
+      AntigravityInstallation.AntigravityInstallation.layer.pipe(
+        Layer.provide(layerServerSettings),
+      ),
       CodexInstallation.CodexInstallation.layer,
     ),
   ),
