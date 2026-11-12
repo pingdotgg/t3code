@@ -289,10 +289,11 @@ export default function PdfViewer(props: {
     }
     saveView(node, anchor !== null);
   });
+  const firstMatch = matches[0];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
-    if (matches.length) jumpToPage(matches[0]!);
-  }, [matches]);
+    if (firstMatch !== undefined) jumpToPage(firstMatch);
+  }, [firstMatch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce pdf.js text extraction and cancel obsolete searches when the query or document changes.
   useEffect(() => {
     if (!pdf || !query.trim()) {
@@ -311,18 +312,23 @@ export default function PdfViewer(props: {
         const sizes: number[] = [];
         let size = 0;
         for (let index = 0; index < pdf.numPages; index++) {
-          if (cancelled) return;
           const page = await pdf.getPage(index + 1);
           const pageSize = page.getViewport({ scale: 1 });
           sizes.push(pageSize.height / pageSize.width);
           const content = await page.getTextContent();
+          if (cancelled) return;
           const text = pdfPageText(content.items);
           size += text.length;
           if (size > MAX_FIND_TEXT)
             throw new Error(
               "This PDF has too much text to search. Save it to search in another app.",
             );
-          if (pdfFindIncludes(text, query)) found.push(index);
+          if (!pdfFindIncludes(text, query)) continue;
+          found.push(index);
+          if (found.length > 1) continue;
+          // Pages up to the first hit are measured, so its jump lands before the scan finishes.
+          setRatios((old) => [...sizes, ...old.slice(sizes.length)]);
+          setMatches([index]);
         }
         if (cancelled) return;
         setRatios(sizes);
