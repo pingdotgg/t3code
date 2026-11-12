@@ -58,6 +58,7 @@ async function mountScrolledToRow30() {
     content,
     scroller,
     rowTop,
+    rowBottom: (index: number) => query(`[data-row="row-${index}"]`).getBoundingClientRect().bottom,
     held: () => -Number(/^translateY\((-?[\d.]+)px\)$/.exec(content().style.transform)?.[1] ?? 0),
     async growRow28By(extra: number) {
       heights = heights.map((height, index) => (index === 28 ? height + extra : height));
@@ -126,5 +127,36 @@ describe("LegendList size corrections during an iOS touch scroll", () => {
 
     expect(list.scroller().scrollTop).toBe(scrollTop + 120);
     expect(list.content().style.transform).toBe("");
+  });
+
+  it("reaches the first row while a correction is held", async () => {
+    await using list = await mountScrolledToRow30();
+    list.touch("touchstart");
+    list.scroller().dispatchEvent(new Event("scroll"));
+    await list.growRow28By(300);
+    await vi.waitFor(() => expect(list.held()).toBeGreaterThanOrEqual(300));
+
+    const viewportTop = list.scroller().getBoundingClientRect().top;
+    list.scroller().scrollTop = 0;
+    await vi.waitFor(() => expect(list.content().style.transform).toBe(""));
+    list.scroller().scrollTop = 0;
+
+    await vi.waitFor(() => expect(list.rowTop(0)).toBe(viewportTop));
+  });
+
+  it("reaches the last row while a correction is held, without a jump when it settles", async () => {
+    await using list = await mountScrolledToRow30();
+    list.touch("touchstart");
+    list.scroller().dispatchEvent(new Event("scroll"));
+    await list.growRow28By(300);
+    await vi.waitFor(() => expect(list.held()).toBeGreaterThanOrEqual(300));
+
+    const viewportBottom = list.scroller().getBoundingClientRect().bottom;
+    list.scroller().scrollTop = list.scroller().scrollHeight;
+    await vi.waitFor(() => expect(list.rowBottom(59)).toBeCloseTo(viewportBottom, 0));
+
+    list.touch("touchend");
+    list.scroller().dispatchEvent(new Event("scrollend"));
+    expect(list.rowBottom(59)).toBeCloseTo(viewportBottom, 0);
   });
 });

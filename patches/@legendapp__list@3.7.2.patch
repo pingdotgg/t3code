@@ -79,7 +79,7 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55
    const state = ctx.state;
    const { idsInView, positions, props } = state;
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..8ecfca5bdc057c81c726db66a31d5866dd12d3bd 100644
+index 515545471e08426fc90856256db9491db0ca4b92..3165b5112af97212b16177640db2108945edb770 100644
 --- a/react.js
 +++ b/react.js
 @@ -6921,8 +6921,8 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
@@ -139,7 +139,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ecfca5bdc057c81c726db66a31d5866
          const isExternal = ctx.state.props.hasExternalScroll;
          const currentScroll = (_b = isExternal ? (_a3 = scroller == null ? void 0 : scroller.getCurrentScrollOffset) == null ? void 0 : _a3.call(scroller) : void 0) != null ? _b : parentScroll;
          const isOutsideList = ((_c = scroller == null ? void 0 : scroller.isScrollInRange) == null ? void 0 : _c.call(scroller)) === false;
-@@ -7473,7 +7489,10 @@ function ScrollAdjust() {
+@@ -7473,7 +7489,11 @@ function ScrollAdjust() {
          const shouldScroll = !isOutsideList && Math.abs(scrollDelta) > 0.01;
          const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
          contentNodeRef.current = contentNode;
@@ -147,11 +147,12 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ecfca5bdc057c81c726db66a31d5866
 +        if (shouldScroll && contentNode && (touchScrollHold == null ? void 0 : touchScrollHold.active)) {
 +          touchScrollHold.held += scrollDelta;
 +          contentNode.style.transform = `translateY(${-touchScrollHold.held}px)`;
++          touchScrollHold.settleAtEdge();
 +        } else if (shouldScroll && contentNode) {
            const totalSize = isExternal ? el[axis.contentSizeKey] : contentNode[axis.contentSizeKey];
            const viewportSize = el[axis.viewportSizeKey];
            const nextScroll = parentScroll + scrollDelta;
-@@ -7514,6 +7533,91 @@ function ScrollAdjust() {
+@@ -7514,6 +7534,102 @@ function ScrollAdjust() {
        lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
      }
    }, [clearTemporaryScrollAdjust, ctx]);
@@ -172,6 +173,16 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ecfca5bdc057c81c726db66a31d5866
 +        if (target && Math.abs(held) > 0.01) {
 +          target.scrollElement.scrollTo({ behavior: "instant", top: target.scrollElement.scrollTop + held });
 +        }
++      }
++    };
++    // The held content sits off its scroll position, so at an edge it would hide rows or show
++    // blank space. Settle there: before the offset clamps, so the content does not move.
++    hold.settleAtEdge = () => {
++      const scrollTop = el.scrollTop;
++      const logical = scrollTop + hold.held;
++      const max = el.scrollHeight - el.clientHeight;
++      if (hold.held !== 0 && (Math.min(scrollTop, logical) <= 0 || Math.max(scrollTop, logical) >= max)) {
++        hold.flush();
 +      }
 +    };
 +    ctx.state.touchScrollHold = hold;
@@ -217,6 +228,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ecfca5bdc057c81c726db66a31d5866
 +      hold.active = true;
 +    };
 +    const onScroll = () => {
++      hold.settleAtEdge();
 +      if (!hold.active) return;
 +      scrolled = true;
 +      if (touchTargets.size === 0) {
@@ -244,7 +256,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ecfca5bdc057c81c726db66a31d5866
    useValueListener$("scrollAdjustUserOffset", callback);
    React3__namespace.useLayoutEffect(() => {
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..a717e8d52146ff84786a164220f0ca61fd437a4c 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..18fa1392d00c395008d4243d43c31b8a7c2c3e50 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -6900,8 +6900,8 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
@@ -304,7 +316,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..a717e8d52146ff84786a164220f0ca61
          const isExternal = ctx.state.props.hasExternalScroll;
          const currentScroll = (_b = isExternal ? (_a3 = scroller == null ? void 0 : scroller.getCurrentScrollOffset) == null ? void 0 : _a3.call(scroller) : void 0) != null ? _b : parentScroll;
          const isOutsideList = ((_c = scroller == null ? void 0 : scroller.isScrollInRange) == null ? void 0 : _c.call(scroller)) === false;
-@@ -7452,7 +7468,10 @@ function ScrollAdjust() {
+@@ -7452,7 +7468,11 @@ function ScrollAdjust() {
          const shouldScroll = !isOutsideList && Math.abs(scrollDelta) > 0.01;
          const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
          contentNodeRef.current = contentNode;
@@ -312,11 +324,12 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..a717e8d52146ff84786a164220f0ca61
 +        if (shouldScroll && contentNode && (touchScrollHold == null ? void 0 : touchScrollHold.active)) {
 +          touchScrollHold.held += scrollDelta;
 +          contentNode.style.transform = `translateY(${-touchScrollHold.held}px)`;
++          touchScrollHold.settleAtEdge();
 +        } else if (shouldScroll && contentNode) {
            const totalSize = isExternal ? el[axis.contentSizeKey] : contentNode[axis.contentSizeKey];
            const viewportSize = el[axis.viewportSizeKey];
            const nextScroll = parentScroll + scrollDelta;
-@@ -7493,6 +7512,91 @@ function ScrollAdjust() {
+@@ -7493,6 +7513,102 @@ function ScrollAdjust() {
        lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
      }
    }, [clearTemporaryScrollAdjust, ctx]);
@@ -337,6 +350,16 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..a717e8d52146ff84786a164220f0ca61
 +        if (target && Math.abs(held) > 0.01) {
 +          target.scrollElement.scrollTo({ behavior: "instant", top: target.scrollElement.scrollTop + held });
 +        }
++      }
++    };
++    // The held content sits off its scroll position, so at an edge it would hide rows or show
++    // blank space. Settle there: before the offset clamps, so the content does not move.
++    hold.settleAtEdge = () => {
++      const scrollTop = el.scrollTop;
++      const logical = scrollTop + hold.held;
++      const max = el.scrollHeight - el.clientHeight;
++      if (hold.held !== 0 && (Math.min(scrollTop, logical) <= 0 || Math.max(scrollTop, logical) >= max)) {
++        hold.flush();
 +      }
 +    };
 +    ctx.state.touchScrollHold = hold;
@@ -382,6 +405,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..a717e8d52146ff84786a164220f0ca61
 +      hold.active = true;
 +    };
 +    const onScroll = () => {
++      hold.settleAtEdge();
 +      if (!hold.active) return;
 +      scrolled = true;
 +      if (touchTargets.size === 0) {
