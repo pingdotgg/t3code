@@ -100,6 +100,9 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
+// quitAndInstall fails with the errors emitted during its call, so `on` listeners skip them.
+let installing = false;
+
 /** @public */
 export const make = ElectronUpdater.of({
   setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (options) {
@@ -174,16 +177,26 @@ export const make = ElectronUpdater.of({
     return Effect.suspend(() => {
       const channel = autoUpdater.channel;
       if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
-      return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
-        catch: (cause) =>
-          new ElectronUpdaterQuitAndInstallError({
-            channel,
-            isSilent,
-            isForceRunAfter,
-            cause,
-          }),
-      });
+      const fail = (cause: unknown) =>
+        Effect.fail(
+          new ElectronUpdaterQuitAndInstallError({ channel, isSilent, isForceRunAfter, cause }),
+        );
+      // electron-updater reports most install failures by emitting `error` and returning.
+      const emitted: Array<unknown> = [];
+      const capture = (error: unknown) => {
+        emitted.push(error);
+      };
+      autoUpdater.on("error", capture);
+      installing = true;
+      try {
+        autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+      } catch (cause) {
+        return fail(cause);
+      } finally {
+        installing = false;
+        autoUpdater.removeListener("error", capture);
+      }
+      return emitted.length > 0 ? fail(emitted[0]) : Effect.void;
     });
   }),
   on: Effect.fn("ElectronUpdater.on")(function (eventName, listener) {
@@ -192,13 +205,19 @@ export const make = ElectronUpdater.of({
       removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
     };
     const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
+    const registeredListener =
+      eventName === "error"
+        ? (...args: Array<unknown>) => {
+            if (!installing) untypedListener(...args);
+          }
+        : untypedListener;
     return Effect.acquireRelease(
       Effect.sync(() => {
-        eventTarget.on(eventName, untypedListener);
+        eventTarget.on(eventName, registeredListener);
       }),
       () =>
         Effect.sync(() => {
-          eventTarget.removeListener(eventName, untypedListener);
+          eventTarget.removeListener(eventName, registeredListener);
         }),
     ).pipe(Effect.asVoid);
   }),
