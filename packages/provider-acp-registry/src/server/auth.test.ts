@@ -318,6 +318,32 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect(
+  "opens a terminal for legacy _meta terminal-auth methods instead of calling authenticate",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        id: "login",
+        name: "Login with Kimi account",
+        description: "Run `kimi login` command in the terminal",
+        _meta: {
+          "terminal-auth": {
+            type: "terminal",
+            label: "Kimi Code Login",
+            command: "/managed/agent",
+            args: ["login"],
+            env: {},
+          },
+        },
+      });
+      yield* h.controller.start("owner", Effect.void, "login");
+      const waiting = yield* h.phase("waiting");
+      assert.deepEqual(h.authenticated, []);
+      assert.strictEqual(waiting.interaction?.type, "terminal");
+      assert.deepEqual(h.terminalSpawn()?.args, ["login"]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("cancels the login PTY and rejects further terminal input", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness(terminalMethod);
