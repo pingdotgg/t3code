@@ -207,13 +207,16 @@ function antigravityEnvironment(
     if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
   }
   // Put the GCP pair in settings.json because GOOGLE_API_KEY takes precedence in the environment.
+  const credentialsFile =
+    auth.credentialsFile ||
+    (auth.authMethod === "agent-platform" ? baseEnv.GOOGLE_APPLICATION_CREDENTIALS : undefined);
   const credential =
     auth.authMethod === "gemini-api-key" && auth.apiKey
       ? { GEMINI_API_KEY: auth.apiKey }
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
-        : auth.authMethod === "agent-platform" && auth.credentialsFile
-          ? { GOOGLE_APPLICATION_CREDENTIALS: auth.credentialsFile }
+        : auth.authMethod === "agent-platform" && credentialsFile
+          ? { GOOGLE_APPLICATION_CREDENTIALS: credentialsFile }
           : {};
   // Each launch unpacks about 1 GB; use T3-owned temp so the driver can reclaim files after force-kill.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
