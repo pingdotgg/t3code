@@ -143,11 +143,14 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
 }
 
-/** External clients must opt in: older CLIs treat every non-timeout as a terminal run. */
+/**
+ * Client callers opt in: older CLIs and linked peers' followers read every
+ * non-timeout as a terminal run.
+ */
 export const threadWaitReturnsOnInput = (
   scope: McpInvocationScope,
   returnOnInput: boolean | undefined,
-): boolean => returnOnInput ?? (scope.thread !== undefined || scope.client?.linked === true);
+): boolean => returnOnInput ?? scope.thread !== undefined;
 
 /**
  * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so

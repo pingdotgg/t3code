@@ -267,8 +267,14 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
     assert.deepStrictEqual(
       calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [
-        { threadId, runId, timeoutMs: 15_000 },
-        { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
+        { threadId, runId, timeoutMs: 15_000, returnOnInput: true },
+        {
+          threadId,
+          runId,
+          timeoutMs: 15_000,
+          returnOnInput: true,
+          untilDelegatedWorkSettled: true,
+        },
       ],
     );
     assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
@@ -377,6 +383,30 @@ it.effect("--wait stops when the thread waits for an answer instead of polling f
       calls.map((call) => call.tool),
       ["t3_thread_wait"],
     );
+  }),
+);
+
+it.effect("--wait stops when the run background work woke waits for an answer", () =>
+  Effect.gen(function* () {
+    const wakeRun = RunId.make("run-2");
+    const { tools } = scriptedTools({
+      t3_thread_wait: [
+        { threadId, runId, status: "completed", timedOut: false },
+        {
+          threadId,
+          runId,
+          status: "completed",
+          timedOut: false,
+          hasPendingQuestion: true,
+          pendingApproval: null,
+        },
+      ],
+      t3_thread_read: laterRunReads(wakeRun, []),
+    });
+
+    assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
+      type: "needs_input",
+    });
   }),
 );
 

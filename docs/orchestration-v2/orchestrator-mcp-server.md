@@ -475,8 +475,9 @@ Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time. An idle thread returns immediately.
 
-Thread-scoped and linked callers return on blocking input by default. Unlinked
-external MCP callers enable this behavior with `returnOnInput: true`. Setting
+Agents in a T3 thread return on blocking input by default. Other MCP clients,
+including linked environments, opt in with `returnOnInput: true`, because older
+clients read any wait that did not time out as a finished run. Setting
 `returnOnInput: false` keeps the wait terminal-only.
 
 An input-aware wait returns `timedOut: false` and `hasPendingQuestion` or

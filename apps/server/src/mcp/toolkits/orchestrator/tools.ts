@@ -290,7 +290,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
-    "Wait. External input: returnOnInput=true. t3_pending_request or user. Timeout+next: end turn.",
+    "Wait for a thread's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.",
   parameters: OrchestratorMcpThreadWaitInput,
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,

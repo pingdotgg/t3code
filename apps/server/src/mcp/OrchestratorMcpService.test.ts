@@ -44,6 +44,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -4102,6 +4103,7 @@ describe("OrchestratorMcpService thread lookup", () => {
   it.effect.each([
     { name: "legacy client", returnOnInput: undefined, agent: false, pending: false },
     { name: "updated client", returnOnInput: true, agent: false, pending: true },
+    { name: "older linked peer", returnOnInput: undefined, linked: true, pending: false },
     { name: "thread caller", returnOnInput: undefined, agent: true, pending: true },
     { name: "terminal-only thread caller", returnOnInput: false, agent: true, pending: false },
   ])("preserves wait semantics for $name", (scenario) =>
@@ -4147,6 +4149,16 @@ describe("OrchestratorMcpService thread lookup", () => {
           .waitForThread(
             {
               ...client,
+              ...(scenario.linked
+                ? {
+                    client: {
+                      sessionId: "link-compat",
+                      label: "A",
+                      access: "full-access",
+                      linked: true,
+                    },
+                  }
+                : {}),
               ...(scenario.agent
                 ? {
                     thread: {

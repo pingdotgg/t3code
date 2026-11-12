@@ -583,7 +583,11 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   const pendingOnOlderServer = (waited: typeof CliThreadWaitResult.Type) =>
     waited.hasPendingQuestion === undefined
       ? tools
-          .call("t3_thread_read", { threadId, limit: 1, runLimit: 1 }, OrchestratorMcpThreadReadResult)
+          .call(
+            "t3_thread_read",
+            { threadId, limit: 1, runLimit: 1 },
+            OrchestratorMcpThreadReadResult,
+          )
           .pipe(Effect.map(({ thread }) => thread.pendingRequestCount > 0))
       : Effect.succeed(false);
   const ended = (waited: typeof CliThreadWaitResult.Type) =>
