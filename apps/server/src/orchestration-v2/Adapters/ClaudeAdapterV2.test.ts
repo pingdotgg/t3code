@@ -16158,6 +16158,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             subtype: "task_progress",
             task_id: TASK_ID,
             description: "Reading the last commits",
+            usage: { total_tokens: 8707, tool_uses: 1, duration_ms: 2053 },
             uuid: "00000000-0000-4000-8000-000000000956",
             session_id: WAKE_NATIVE_SESSION,
           }),
@@ -16174,6 +16175,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.type === "subagent.updated" &&
               event.subagent.progress === "Reading the last commits",
           ),
+        );
+        const progressed = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.progress === "Reading the last commits",
+        );
+        const progressedSubagent =
+          progressed?.type === "subagent.updated" ? progressed.subagent : undefined;
+        assert.include(
+          JSON.stringify(
+            progressedSubagent !== undefined && "usage" in progressedSubagent
+              ? progressedSubagent.usage
+              : null,
+          ),
+          "8707",
         );
         const routing = subagentRouting(harness.events, [STRADDLING_BASH, IDLE_BASH]);
         assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["Still auditing."]);
