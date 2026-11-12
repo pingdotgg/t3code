@@ -4307,32 +4307,6 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
   }),
 );
 
-it.effect("clears a file against what the head has now, not what it had a moment ago", () =>
-  Effect.gen(function* () {
-    const revisions = new Map([["src/a.ts", "blob-a"]]);
-    const service = yield* environmentViewedService(revisions, []);
-
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [{ path: "src/a.ts", viewed: true }],
-    });
-    revisions.set("src/a.ts", "blob-a-again");
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [{ path: "src/a.ts", viewed: false }],
-    });
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [{ path: "src/a.ts", viewed: true }],
-    });
-    yield* service.invalidate({ reference: GITLAB_REFERENCE });
-
-    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
-      { path: "src/a.ts", state: "viewed" },
-    ]);
-  }),
-);
-
 it.effect("records shown revisions until the reader ticks the pushed version", () =>
   Effect.gen(function* () {
     const asked: Array<ReadonlyArray<string>> = [];

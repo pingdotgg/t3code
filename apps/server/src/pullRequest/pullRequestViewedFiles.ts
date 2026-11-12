@@ -133,9 +133,10 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
     return Effect.flatMap(Clock.currentTimeMillis, (now) => {
       const key = fileRevisionsKey(project, ref);
       const held = heldFileRevisionsFor(key, paths, now);
-      if (held === null || freshness === "fresh") return fetch;
+      if (held === null) return fetch;
       if (now - held.at <= Duration.toMillis(FILE_REVISIONS_CACHE_TTL))
         return Effect.succeed(held.revisions);
+      if (freshness === "fresh") return fetch;
       if (refreshingFileRevisions.has(key)) return Effect.succeed(held.revisions);
       // Refresh independently; it outlives the answered caller.
       return Effect.sync(() => {
