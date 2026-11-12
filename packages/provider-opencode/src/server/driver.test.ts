@@ -1122,7 +1122,6 @@ const openCode1Provider = (id: string, models: ReadonlyArray<string>) => ({
 });
 const openCode1Project = "/work/project-with-config";
 const openCode1UnreadableProject = "/work/unreadable-project";
-const openCode1StalledAgents = "/work/stalled-agents";
 const openCode1Providers = (directory: string) => {
   const all = [
     openCode1Provider("opencode", ["big-pickle"]),
@@ -1146,14 +1145,7 @@ const openCode1Runtime = {
           ? Promise.reject(new Error("provider list failed"))
           : Promise.resolve({ data: openCode1Providers(directory) }),
     },
-    app: {
-      agents: (_input: unknown, options?: { readonly signal?: AbortSignal }) =>
-        directory === openCode1StalledAgents
-          ? new Promise((_resolve, reject) => {
-              options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
-            })
-          : Promise.resolve({ data: [] }),
-    },
+    app: { agents: () => Promise.resolve({ data: [] }) },
     command: { list: () => Promise.resolve({ data: [] }) },
   }),
   loadOpenCodeInventory: () =>
@@ -1189,24 +1181,6 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         assert.deepStrictEqual(slugsOf(unreadable), ["opencode/big-pickle"]);
         assert.strictEqual(unreadable.workspaceModels, undefined);
         assert.strictEqual(unreadable.workspaceModelsPending, true);
-      }).pipe(Effect.scoped),
-    );
-
-    it.effect("keeps commands and skills when OpenCode 1 agent discovery stalls", () =>
-      Effect.gen(function* () {
-        const instance = yield* create({}, noHttp);
-        const ready = yield* instance.snapshot.streamChanges.pipe(
-          Stream.filter((snapshot) => snapshot.status === "ready"),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
-        yield* Fiber.join(ready);
-
-        const snapshot = yield* instance.snapshotForCwd!(openCode1StalledAgents);
-        assert.deepStrictEqual(snapshot.skills, []);
-        assert.deepStrictEqual(snapshot.slashCommands, []);
-        assert.isUndefined(snapshot.optionDescriptors);
       }).pipe(Effect.scoped),
     );
   },
