@@ -543,7 +543,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
           },
         ],
       );
-      assert.include(JSON.stringify(sent.prompt), documentPath);
+      assert.include(JSON.stringify(sent.prompt), JSON.stringify(documentPath).slice(1, -1));
       if (readTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file requests");
       }
@@ -1163,45 +1163,61 @@ describe("AntigravityAdapterV2 runtime permissions", () => {
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
-  it.effect("applies both permission transitions in the same live session", () =>
-    Effect.gen(function* () {
-      const fixture = yield* openModeSession();
-      const now = yield* DateTime.now;
-      const policies = [
-        { runtimeMode: "approval-required", interactionMode: "default" },
-        { runtimeMode: "full-access", interactionMode: "default" },
-        { runtimeMode: "approval-required", interactionMode: "default" },
-        { runtimeMode: "approval-required", interactionMode: "plan" },
-        { runtimeMode: "approval-required", interactionMode: "plan", nativeMode: "yolo" },
-        { runtimeMode: "full-access", interactionMode: "default" },
-        { runtimeMode: "full-access", interactionMode: "default", nativeMode: "default" },
-      ] as const;
-      for (const [index, policy] of policies.entries()) {
-        if ("nativeMode" in policy) yield* fixture.setNativeMode(policy.nativeMode);
-        const { runtimeMode, interactionMode } = policy;
-        yield* fixture.session.startTurn(
-          makeTurnInput({
-            ...fixture,
-            now,
-            ordinal: index + 1,
-            runtimePolicy: { ...fixture.runtimePolicy, runtimeMode, interactionMode },
-          }),
-        );
-        yield* fixture.session.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runDrain,
-        );
-      }
-      assert.deepEqual(fixture.promptModes, [
-        "default",
-        "yolo",
-        "default",
-        "default",
-        "default",
-        "yolo",
-        "yolo",
-      ]);
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  it.effect(
+    "preserves permissions across subsequent turns and both transitions in the same live session",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* openModeSession();
+        const now = yield* DateTime.now;
+        const policies = [
+          { runtimeMode: "approval-required", interactionMode: "default" },
+          { runtimeMode: "approval-required", interactionMode: "default" },
+          { runtimeMode: "full-access", interactionMode: "default" },
+          { runtimeMode: "full-access", interactionMode: "default" },
+          { runtimeMode: "approval-required", interactionMode: "default" },
+          { runtimeMode: "approval-required", interactionMode: "default" },
+          { runtimeMode: "approval-required", interactionMode: "plan" },
+          { runtimeMode: "approval-required", interactionMode: "plan" },
+          { runtimeMode: "approval-required", interactionMode: "plan", nativeMode: "yolo" },
+          { runtimeMode: "approval-required", interactionMode: "plan" },
+          { runtimeMode: "full-access", interactionMode: "default" },
+          { runtimeMode: "full-access", interactionMode: "default" },
+          { runtimeMode: "full-access", interactionMode: "default", nativeMode: "default" },
+          { runtimeMode: "full-access", interactionMode: "default" },
+        ] as const;
+        for (const [index, policy] of policies.entries()) {
+          if ("nativeMode" in policy) yield* fixture.setNativeMode(policy.nativeMode);
+          const { runtimeMode, interactionMode } = policy;
+          yield* fixture.session.startTurn(
+            makeTurnInput({
+              ...fixture,
+              now,
+              ordinal: index + 1,
+              runtimePolicy: { ...fixture.runtimePolicy, runtimeMode, interactionMode },
+            }),
+          );
+          yield* fixture.session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+        }
+        assert.deepEqual(fixture.promptModes, [
+          "default",
+          "default",
+          "yolo",
+          "yolo",
+          "default",
+          "default",
+          "default",
+          "default",
+          "default",
+          "default",
+          "yolo",
+          "yolo",
+          "yolo",
+          "yolo",
+        ]);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
   it.effect.each([

@@ -22,6 +22,10 @@ internal class VoiceTranscriptionException(
   cause: Throwable? = null
 ) : Exception(message, cause)
 
+// ML Kit reports every mode UNAVAILABLE for tags with Unicode extensions, which Android adds
+// for regional preferences such as the temperature unit (en-US-u-mu-celsius).
+internal fun speechLocale(systemLocale: Locale): Locale = systemLocale.stripExtensions()
+
 private val recognitionModes = listOf(
   SpeechRecognizerOptions.Mode.MODE_ADVANCED,
   SpeechRecognizerOptions.Mode.MODE_BASIC
@@ -155,6 +159,17 @@ internal class MlKitSpeechClient(context: Context, locale: Locale, mode: Int) : 
         // Stop inference before closing the SDK-owned descriptor, including cancellation.
         withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
       }
+    }
+  }
+
+  suspend fun transcribeLive(capture: LivePcmCapture, pipe: PcmPipe): String = pipe.use {
+    val request = speechRecognizerRequest { audioSource = pipe.source }
+    try {
+      collectGoogleVoiceTranscript(
+        livePcmResponses(capture, pipe) { recognizer.startRecognition(request) }
+      )
+    } finally {
+      withContext(NonCancellable) { runCatching { recognizer.stopRecognition() } }
     }
   }
 

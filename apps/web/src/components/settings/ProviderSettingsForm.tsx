@@ -42,6 +42,8 @@ export interface ProviderSettingsFieldModel {
   /** Typed `SettingsSecretValue`: may name a secret provider reference instead of a value. */
   readonly acceptsSecretReference?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
+  /** Whether the field's schema decodes a typed string; one it rejects is never stored. */
+  readonly accepts?: ((value: string) => boolean) | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
@@ -87,6 +89,13 @@ function readFieldBooleanDefault(
   const decodeDefault = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
   const decoded = decodeDefault(undefined);
   return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
+}
+
+function fieldAcceptsString(
+  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
+): (value: string) => boolean {
+  const decode = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
+  return (value) => Option.isSome(decode(value));
 }
 
 export function deriveProviderSettingsFields(
@@ -142,6 +151,7 @@ export function deriveProviderSettingsFields(
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
+          accepts: fieldAcceptsString(fieldSchema),
           ...(formAnnotation.control === "select" && formAnnotation.options
             ? { options: formAnnotation.options }
             : {}),
@@ -322,7 +332,7 @@ export function nextProviderConfigWithFieldValue(
   const trimmed = value.trim();
   if (field.clearWhenEmpty === "omit" && trimmed.length === 0) {
     delete base[field.key];
-  } else {
+  } else if (field.accepts?.(value) !== false) {
     base[field.key] = value;
   }
   return Object.keys(base).length > 0 ? base : undefined;
@@ -434,6 +444,50 @@ function ProviderSettingsSelect({
   );
 }
 
+function ProviderSettingsTextInput({
+  field,
+  value,
+  inputId,
+  descriptionId,
+  onChange,
+}: {
+  readonly field: ProviderSettingsFieldModel;
+  readonly value: unknown;
+  readonly inputId: string;
+  readonly descriptionId: string | undefined;
+  readonly onChange: ProviderSettingsFormProps["onChange"];
+}) {
+  const [rejected, setRejected] = useState<string | null>(null);
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
+      <DraftInput
+        id={inputId}
+        aria-describedby={descriptionId}
+        size="sm"
+        className="w-full max-w-full"
+        type={field.control === "password" ? "password" : undefined}
+        autoComplete={field.control === "password" ? "off" : undefined}
+        value={rejected ?? readProviderConfigString(value, field.key)}
+        placeholder={field.placeholder}
+        onCommit={(next) => {
+          const clears = field.clearWhenEmpty === "omit" && next.trim().length === 0;
+          if (!clears && field.accepts?.(next) === false) {
+            setRejected(next);
+            return;
+          }
+          setRejected(null);
+          onChange(nextProviderConfigWithFieldValue(value, field, next));
+        }}
+        aria-invalid={rejected !== null || undefined}
+        spellCheck={false}
+      />
+      {rejected !== null ? (
+        <p className="text-2xs text-destructive">Enter a valid value. It was not saved.</p>
+      ) : null}
+    </div>
+  );
+}
+
 function FieldFrame(props: {
   readonly variant: ProviderSettingsFormProps["variant"];
   readonly children: ReactNode;
@@ -541,19 +595,12 @@ function ProviderSettingsFieldRow({
           ) : null}
         </div>
       ) : (
-        <DraftInput
-          id={inputId}
-          aria-describedby={descriptionId}
-          size="sm"
-          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
-          type={field.control === "password" ? "password" : undefined}
-          autoComplete={field.control === "password" ? "off" : undefined}
-          value={readProviderConfigString(value, field.key)}
-          placeholder={field.placeholder}
-          onCommit={(next) => {
-            onChange(nextProviderConfigWithFieldValue(value, field, next));
-          }}
-          spellCheck={false}
+        <ProviderSettingsTextInput
+          field={field}
+          value={value}
+          inputId={inputId}
+          descriptionId={descriptionId}
+          onChange={onChange}
         />
       );
 
