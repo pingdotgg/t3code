@@ -10,13 +10,16 @@ import type {
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
-import { BranchToolbar } from "../BranchToolbar";
+import { BranchToolbar, type BranchToolbarHandle } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { memo, useState, type ComponentProps } from "react";
+import { memo, useImperativeHandle, useRef, useState, type ComponentProps, type Ref } from "react";
+import { flushSync } from "react-dom";
+import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
@@ -36,10 +39,15 @@ import { Menu, MenuItemLabel, MenuPopup } from "../ui/menu";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
+export interface ThreadDetailsPanelHandle {
+  openBranch: (presentation: "inline" | "popover") => void;
+}
+
 interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
   "anchor" | "handle"
 > {
+  ref?: Ref<ThreadDetailsPanelHandle>;
   forceNewWorktree?: boolean;
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -83,8 +91,35 @@ interface ThreadDetailsPanelProps extends Pick<
   compactUnavailableReason?: string | null;
 }
 
-export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const branchToolbarRef = useRef<BranchToolbarHandle>(null);
+  const focusBranchOnOpen = useRef(false);
+  const focusBranch = () => {
+    if (props.isGitRepo) branchToolbarRef.current?.focusBranchPicker();
+    else requestWorkspaceFocus({ area: "details" });
+  };
+  useImperativeHandle(ref, () => ({
+    openBranch: (presentation) => {
+      focusBranchOnOpen.current =
+        presentation === "popover" &&
+        !selectThreadPanelOpen(
+          useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+          { environmentId: props.environmentId, threadId: props.threadId },
+          presentation,
+        );
+      flushSync(() => {
+        useRightPanelStore
+          .getState()
+          .setThreadPanelOpen(
+            { environmentId: props.environmentId, threadId: props.threadId },
+            presentation,
+            true,
+          );
+      });
+      focusBranch();
+    },
+  }));
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
@@ -124,6 +159,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor}
       handle={props.handle}
+      onFocusRequest={() => {
+        if (!focusBranchOnOpen.current) return false;
+        focusBranchOnOpen.current = false;
+        focusBranch();
+        return true;
+      }}
       onContextMenu={(event) => {
         // Popups the card opens bubble here through React; they, fields, links, and selected text
         // keep their own menus.
@@ -205,6 +246,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                             <BranchToolbar
                               layout="panel"
                               panelSection="branch"
+                              ref={branchToolbarRef}
                               panelPrRowsContainer={prRowsContainer}
                               {...branchToolbarProps}
                             />
