@@ -243,7 +243,7 @@ export function DiffFileTree({
   }, [model, presented, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", className)}>
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
@@ -305,7 +305,7 @@ export function DiffFileTree({
             );
           if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
-        className="min-h-0 flex-1 overflow-hidden"
+        className="min-h-0 min-w-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
         {...(onReviewFiles
           ? {
