@@ -394,6 +394,22 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("thread-session commands reach the workspace snapshot opened before them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        // The thread adapter reports the session with its cwd, then forwards the
+        // agent's later available_commands_update through onSessionEvent without one.
+        yield* harness.provider.onSessionStarted(started, "/workspace");
+        yield* harness.provider.onAvailableCommands(commands);
+        expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
+          expectedCommands,
+        );
+      }),
+    ),
+  );
+
   it.effect("clears all account metadata on sign-out and authentication failure", () =>
     Effect.scoped(
       Effect.gen(function* () {
