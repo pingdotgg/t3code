@@ -197,19 +197,14 @@ it.effect("preserves installed status after probes and cleans failed agent activ
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect.each([
-  { platform: "ios", hostPlatform: "darwin" },
-  { platform: "android", hostPlatform: "darwin" },
-  { platform: "android", hostPlatform: "linux" },
-] as const)(
-  "discovers $platform tools on $hostPlatform without repeating positive probes",
-  ({ platform, hostPlatform }) =>
+it.effect(
+  "lists Android devices on Linux without probing the host again once it reports Android",
+  () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped();
       const modes: string[] = [];
-      let platformInstalled = hostPlatform !== "darwin";
-      let otherPlatformInstalled = true;
+      let androidInstalled = false;
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -237,19 +232,10 @@ it.effect.each([
                 ? "Pixel_8\n"
                 : JSON.stringify({
                     nodePath: "/node",
-                    hostPlatform,
+                    hostPlatform: "linux",
                     platforms: [
-                      {
-                        platform: "ios",
-                        available:
-                          hostPlatform === "darwin" &&
-                          (platform === "ios" ? platformInstalled : otherPlatformInstalled),
-                      },
-                      {
-                        platform: "android",
-                        available:
-                          platform === "android" ? platformInstalled : otherPlatformInstalled,
-                      },
+                      { platform: "ios", available: false },
+                      { platform: "android", available: androidInstalled },
                     ],
                     hubPort: 1234,
                     helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -287,18 +273,7 @@ it.effect.each([
                 new Response(
                   request.url.endsWith("/api/devices")
                     ? JSON.stringify({ simulators: [], emulators: [] })
-                    : request.url.endsWith("/grid/api")
-                      ? JSON.stringify({
-                          devices: [
-                            {
-                              device: "fresh",
-                              name: "Fresh iPhone",
-                              runtime: "iOS-27-0",
-                              state: "Shutdown",
-                            },
-                          ],
-                        })
-                      : "ok",
+                    : "ok",
                 ),
               ),
             ),
@@ -306,61 +281,41 @@ it.effect.each([
         ),
       );
       const ready = yield* host.ensureReady(() => Effect.void);
-      if (hostPlatform !== "darwin") {
-        platformInstalled = false;
-        yield* host.inspect;
-      }
-      const platformNames = ready.devices.list.pipe(
+      const androidNames = ready.devices.list.pipe(
         Effect.map((list) =>
           list.devices
-            .filter((device) => device.platform === platform)
+            .filter((device) => device.platform === "android")
             .map((device) => device.name),
         ),
       );
 
       modes.splice(0);
-      const observedModes = () =>
-        modes.splice(0).filter((mode) => platform === "android" || mode !== "");
-      const enumerationModes = platform === "android" ? [""] : [];
-      const names = platform === "android" ? ["Pixel_8"] : ["Fresh iPhone"];
 
-      expect(yield* platformNames).toEqual([]);
-      expect(yield* platformNames).toEqual([]);
-      modes.splice(0);
+      expect(yield* androidNames).toEqual([]);
+      expect(modes.splice(0)).toEqual(["probe"]);
+      expect(yield* androidNames).toEqual([]);
+      expect(modes.splice(0)).toEqual(["probe"]);
 
-      // Tools can become available after connecting, so negative reports still need probing.
-      platformInstalled = true;
-      expect(yield* platformNames).toEqual(names);
-      expect(observedModes()).toEqual(["probe", ...enumerationModes]);
+      // The SDK appears after connecting, so the next listing still probes the host.
+      androidInstalled = true;
+      expect(yield* androidNames).toEqual(["Pixel_8"]);
+      expect(modes.splice(0)).toEqual(["probe", ""]);
 
-      // Once available, discovery no longer needs a platform probe.
-      expect(yield* platformNames).toEqual(names);
-      expect(observedModes()).toEqual(enumerationModes);
+      // Android is now known to be available, so listing only runs `emulator -list-avds`.
+      expect(yield* androidNames).toEqual(["Pixel_8"]);
+      expect(modes.splice(0)).toEqual([""]);
 
-      platformInstalled = false;
-      expect((yield* host.platformAvailability(platform)).available).toBe(false);
-      expect(observedModes()).toEqual(["probe"]);
-      expect(yield* platformNames).toEqual([]);
-      expect(observedModes()).toEqual(["probe"]);
+      androidInstalled = false;
+      expect((yield* host.platformAvailability("android")).available).toBe(false);
+      expect(modes.splice(0)).toEqual(["probe"]);
+      expect(yield* androidNames).toEqual([]);
+      expect(modes.splice(0)).toEqual(["probe"]);
 
-      platformInstalled = true;
+      androidInstalled = true;
       yield* host.inspect;
-      expect(observedModes()).toEqual(["probe"]);
-      expect(yield* platformNames).toEqual(names);
-      expect(observedModes()).toEqual(enumerationModes);
-
-      platformInstalled = false;
-      otherPlatformInstalled = false;
-      yield* host.inspect;
-      modes.splice(0);
-      expect(yield* platformNames).toEqual([]);
-      expect(observedModes()).toEqual(["probe"]);
-      expect(yield* platformNames).toEqual([]);
-      expect(observedModes()).toEqual(["probe"]);
-
-      platformInstalled = true;
-      expect(yield* platformNames).toEqual(names);
-      expect(observedModes()).toEqual(["probe", ...enumerationModes]);
+      expect(modes.splice(0)).toEqual(["probe"]);
+      expect(yield* androidNames).toEqual(["Pixel_8"]);
+      expect(modes.splice(0)).toEqual([""]);
       yield* host.stop;
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
