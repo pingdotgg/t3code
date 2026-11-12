@@ -157,8 +157,8 @@ export const make = Effect.gen(function* () {
   >();
 
   // A route or host check hands its descriptor to the connect it leads to, once,
-  // so the connect skips a round trip. Not for a plain LAN address, which can
-  // belong to another machine after a network change.
+  // so the connect skips a round trip. Only over HTTPS or loopback: any other
+  // plain http address can belong to another machine after a network change.
   const checkedDescriptors = new Map<
     string,
     { readonly descriptor: ExecutionEnvironmentDescriptor; readonly at: bigint }

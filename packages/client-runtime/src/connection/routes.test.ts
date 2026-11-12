@@ -87,10 +87,12 @@ describe("connection routes", () => {
       profile: Option.some(new BearerConnectionProfile({ ...profile, network: "tailscale" })),
     };
     expect(routeKeepsItsHost(PUBLIC)).toBe(true);
+    expect(routeKeepsItsHost(direct("ts-tls", "https://desk.tail1234.ts.net/"))).toBe(true);
     expect(routeKeepsItsHost(direct("lo", "http://127.0.0.1:3773/"))).toBe(true);
-    expect(routeKeepsItsHost(direct("ts", "http://desk.tail1234.ts.net:3773/"))).toBe(true);
-    expect(routeKeepsItsHost(marked)).toBe(true);
-    // 100.64.0.0/10 is shared with other VPNs unless the server reports it as its tailnet.
+    // With Tailscale down, a plain http tailnet address can reach another host:
+    // carrier networks use 100.64.0.0/10 too, and nothing proves who answers.
+    expect(routeKeepsItsHost(direct("ts", "http://desk.tail1234.ts.net:3773/"))).toBe(false);
+    expect(routeKeepsItsHost(marked)).toBe(false);
     expect(routeKeepsItsHost(tailnetIp)).toBe(false);
     expect(routeKeepsItsHost(LAN)).toBe(false);
     expect(routeKeepsItsHost(direct("http", "http://desk.example.com/"))).toBe(false);

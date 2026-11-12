@@ -376,11 +376,11 @@ describe("RemoteEnvironmentAuthorization", () => {
         yield* authorize;
         // Plain HTTP is no reason to read again where the address keeps its host.
         yield* remote.rememberCheckedDescriptor(
-          "http://100.101.102.103:3773",
+          "http://127.0.0.1:3773",
           Option.some(descriptor),
           true,
         );
-        yield* authorizeAt("http://100.101.102.103:3773");
+        yield* authorizeAt("http://127.0.0.1:3773");
         // After a network change, a plain LAN address can belong to another machine.
         yield* remote.rememberCheckedDescriptor(
           "http://192.168.1.2:3773",

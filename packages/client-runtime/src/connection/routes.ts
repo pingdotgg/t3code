@@ -108,14 +108,14 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
 }
 
 /**
- * Whether the route's address reaches the same machine on every network: HTTPS,
- * loopback, or the tailnet. A plain LAN address can belong to another machine
- * after a network change, so an answer from it is not kept.
+ * Whether the route's address reaches the same machine on every network: TLS
+ * proves who answers, and loopback cannot move. Any other plain http address,
+ * a tailnet one too once Tailscale is down, can belong to another machine after
+ * a network change, so an answer from it is not kept.
  */
 export function routeKeepsItsHost(route: ConnectionRoute): boolean {
   if (routeHttpBaseUrl(route)?.startsWith("https:") === true) return true;
-  const kind = connectionRouteKind(route);
-  return kind === "loopback" || kind === "tailnet";
+  return connectionRouteKind(route) === "loopback";
 }
 
 /** A loopback or LAN host answers within a few seconds or is not there. */
