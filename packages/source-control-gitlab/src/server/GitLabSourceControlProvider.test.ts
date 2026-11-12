@@ -189,12 +189,13 @@ it("parses authenticated GitLab auth status hosts with ports and single-label na
   assert.deepStrictEqual(
     parseGitLabAuthStatusHosts(`localhost:8080
   ✓ Logged in to localhost:8080 as local-user
+  ✓ REST API Endpoint: https://gitlab.localtest/api/v4/
 selfhosted
   ✓ Logged in to selfhosted as single-label-user
 `),
     [
-      { host: "localhost:8080", account: "local-user" },
-      { host: "selfhosted", account: "single-label-user" },
+      { host: "localhost:8080", account: "local-user", apiHost: "gitlab.localtest" },
+      { host: "selfhosted", account: "single-label-user", apiHost: null },
     ],
   );
 });

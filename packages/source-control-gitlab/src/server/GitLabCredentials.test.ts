@@ -8,13 +8,18 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCredentials from "./GitLabCredentials.ts";
 
-/** A scripted glab: `config get <key> --host <host>` reads `config`, `api` refreshes. */
-function harness(config: Record<string, Record<string, string>>, refreshed?: string) {
+/**
+ * A scripted glab: `config get <key> --host <host>` reads `config`, `api` refreshes, and
+ * `auth status` prints `status`.
+ */
+function harness(config: Record<string, Record<string, string>>, refreshed?: string, status = "") {
   const runs: Array<SourceControlHost.SourceControlProcessInput> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       runs.push(input);
       const host = input.args[input.args.indexOf("--host") + 1] ?? "";
+      if (input.args[0] === "auth")
+        return TestSourceControlHost.processOutput("", { stderr: status });
       if (input.args[0] === "api") {
         if (refreshed !== undefined) config[input.args[2]!]!.token = refreshed;
         return TestSourceControlHost.processOutput("{}");
@@ -54,10 +59,24 @@ describe("GitLabCredentials", () => {
   });
 
   it.effect("has nothing for a host glab holds no login for", () => {
-    const { layer, runs } = harness({});
+    const { layer } = harness(
+      { "gitlab.example.com": { token: "stored" } },
+      undefined,
+      "gitlab.example.com\n  ✓ REST API Endpoint: https://gitlab.example.com/api/v4/\n",
+    );
     return Effect.gen(function* () {
       expect(yield* token("attacker.example")).toEqual(Option.none());
-      expect(runs).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads the login whose api_host is the host", () => {
+    const { layer } = harness(
+      { "gitlab-ssh.example.com": { token: "aliased" } },
+      undefined,
+      "gitlab-ssh.example.com\n  ✓ REST API Endpoint: https://gitlab.example.com/api/v4/\n",
+    );
+    return Effect.gen(function* () {
+      expect(yield* token("gitlab.example.com")).toEqual(Option.some("aliased"));
     }).pipe(Effect.provide(layer));
   });
 
