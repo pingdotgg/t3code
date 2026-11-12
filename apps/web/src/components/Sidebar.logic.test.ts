@@ -415,6 +415,13 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
+  it("does not claim Working for cached running work while its environment reconnects", () => {
+    const thread = { ...baseThread, connectionPhase: "reconnecting" as const };
+    expect(resolveSidebarThreadStatus(thread)).not.toBe("working");
+    expect(resolveThreadStatusPill({ thread })).not.toMatchObject({ label: "Working" });
+    expect(resolveSidebarThreadStatus({ ...thread, connectionPhase: "connected" })).toBe("working");
+  });
+
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
     const blocked = { ...baseThread, blockedOnThreadWait: true };
     expect(resolveSidebarThreadStatus(blocked)).toBe("waiting");

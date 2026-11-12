@@ -150,6 +150,24 @@ describe("layoutThreadListV2RowMenuActions", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("does not claim Working for cached running work while its environment reconnects", () => {
+    const running = presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          status: "running",
+          activeRunId: RunId.make("run-offline"),
+          latestRunId: RunId.make("run-offline"),
+        }),
+      ),
+    );
+    const reconnecting = { ...running, connectionPhase: "reconnecting" as const };
+    expect(resolveThreadListV2Status(reconnecting)).not.toBe("working");
+    expect(resolveThreadListV2Status({ ...reconnecting, connectionPhase: "connected" })).toBe(
+      "working",
+    );
+  });
+
   it("presents decoded thread waits as Waiting while preserving requests and older servers", () => {
     const raw = makeRawThreadShell({
       status: "running",
