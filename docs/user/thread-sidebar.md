@@ -12,6 +12,10 @@ your model and mode selections, unless the destination project has its own model
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
+To move an existing thread into a new worktree, ask the agent to hand off to a
+worktree with a continuation prompt. Work resumes automatically there with the
+conversation preserved.
+
 On mobile, **New thread** starts in the current thread's project, or else in the
 last project you opened or chose on that device. If neither is available, the
 project picker opens. Turn off **Settings → General → Use last project** to

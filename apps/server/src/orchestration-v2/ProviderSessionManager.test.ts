@@ -2,6 +2,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
@@ -32,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
@@ -64,6 +66,8 @@ import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
 } from "@t3tools/provider-core/server/failure";
+
+vi.mock("effect/Queue", { spy: true });
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -1759,6 +1763,134 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
 
     assert.equal((yield* Ref.get(state)).closeCount, 1);
   }),
+);
+
+it.effect.each(["pending", "running"] as const)(
+  "orders detach after a selected %s turn and interrupts it before ending the subscription",
+  (status) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const milestones: Array<string> = [];
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("thread:detach-buffer-order");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        const now = yield* DateTime.now;
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* sink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!(threadId);
+        const event: ProviderAdapter.ProviderAdapterV2Event = {
+          type: "provider_turn.updated",
+          driver: CODEX_DRIVER,
+          providerTurn: {
+            id: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: "buffered-turn",
+            }),
+            providerThreadId: providerThread.id,
+            nodeId: idAllocator.derive.rootNode({ runId: RunId.make("buffered-run") }),
+            runAttemptId: null,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status,
+            startedAt: now,
+            completedAt: null,
+          },
+        };
+        const selected = yield* Deferred.make<void>();
+        const releaseOffer = yield* Deferred.make<void>();
+        const detaching = yield* Deferred.make<void>();
+        const { offer } = yield* Effect.promise(() =>
+          vi.importActual<typeof import("effect/Queue")>("effect/Queue"),
+        );
+        using _offer = vi.spyOn(Queue, "offer").mockImplementation(((
+          queue: Queue.Enqueue<unknown, unknown>,
+          signal: unknown,
+        ) => {
+          const waiting =
+            typeof signal === "object" &&
+            signal !== null &&
+            "event" in signal &&
+            signal.event === event;
+          return waiting
+            ? Deferred.succeed(selected, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseOffer)),
+                Effect.andThen(offer(queue, signal)),
+              )
+            : offer(queue, signal);
+        }) as typeof Queue.offer);
+        const received: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const reading = yield* subscription.events.pipe(
+          Stream.tap((event) => Effect.sync(() => received.push(event))),
+          Stream.runDrain,
+          Effect.exit,
+          Effect.tap(() => Effect.sync(() => milestones.push("detached"))),
+          Effect.forkScoped,
+        );
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        yield* Queue.offer(queue, event);
+        yield* Deferred.await(selected);
+        const tracer = Tracer.make({
+          span: (options) => {
+            if (options.name === "ProviderSessionManager.failSubscribers")
+              Deferred.doneUnsafe(detaching, Effect.void);
+            return new Tracer.NativeSpan(options);
+          },
+        });
+        const detach = yield* manager
+          .detach({ providerSessionId, threadId, reason: "workspace_changed" })
+          .pipe(Effect.withTracer(tracer), Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(detaching);
+        yield* Deferred.succeed(releaseOffer, undefined);
+        yield* Fiber.join(detach);
+        const exit = yield* Fiber.join(reading);
+        assert.isTrue(Exit.isFailure(exit));
+        assert.deepEqual(received, [event]);
+        assert.deepEqual(milestones, ["interrupt", "detached"]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            interruptTurn: Effect.sync(() => {
+              milestones.push("interrupt");
+            }),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(

@@ -2895,60 +2895,113 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
-it.effect("interrupts open tool items but preserves completed tools on a planned detach", () =>
-  Effect.gen(function* () {
-    const key = "workspace-detach-open-tools";
-    const ids = backgroundScenarioIds(key);
-    const runningId = TurnItemId.make(`${ids.itemId}:running`);
-    const completedId = TurnItemId.make(`${ids.itemId}:completed`);
-    const now = yield* DateTime.now;
-    const { ingested, observed } = yield* captureRootRunTermination({
-      key,
-      shouldFinalizeRun: () => Effect.succeed(true),
-      readAhead: true,
-      events: (ids) =>
-        Stream.concat(
-          Stream.fromIterable([
-            backgroundTurnItemEvent(ids, "dynamic_tool", "pending", 1),
-            backgroundTurnItemEvent(ids, "dynamic_tool", "running", 2, runningId),
-            backgroundTurnItemEvent(ids, "dynamic_tool", "running", 3, completedId),
-            {
-              type: "provider_turn.updated" as const,
-              driver,
-              providerTurn: {
-                id: ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
-                providerThreadId: ids.providerThreadId,
-                nodeId: ids.rootNodeId,
-                runAttemptId: ids.attemptId,
-                nativeTurnRef: null,
-                ordinal: 2,
-                status: "running" as const,
-                startedAt: now,
-                completedAt: null,
+it.effect.each(["pending", "running"] as const)(
+  "interrupts open tools and the buffered %s native turn before detach settles",
+  (status) =>
+    Effect.gen(function* () {
+      const key = "workspace-detach-open-tools";
+      const ids = backgroundScenarioIds(key);
+      const runningId = TurnItemId.make(`${ids.itemId}:running`);
+      const completedId = TurnItemId.make(`${ids.itemId}:completed`);
+      const now = yield* DateTime.now;
+      const interrupted = yield* Ref.make<ReadonlyArray<ProviderTurnId | "terminal">>([]);
+      const node = (id: TurnItemId, status: "running" | "completed") => ({
+        type: "node.updated" as const,
+        driver,
+        node: {
+          id: NodeId.make(`node:${id}`),
+          threadId: ids.threadId,
+          runId: ids.runId,
+          parentNodeId: ids.rootNodeId,
+          rootNodeId: ids.rootNodeId,
+          kind: "tool_call" as const,
+          status,
+          countsForRun: true,
+          providerThreadId: ids.providerThreadId,
+          providerTurnId: ids.rootProviderTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: status === "completed" ? now : null,
+        },
+      });
+      const { ingested, observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        readAhead: true,
+        interruptTurn: ({ providerTurnId }) =>
+          Ref.update(interrupted, (current) => [...current, providerTurnId]),
+        beforeTerminalWrite: () =>
+          Ref.update(interrupted, (current) => [...current, "terminal"]).pipe(Effect.as(true)),
+        events: (ids) =>
+          Stream.concat(
+            Stream.fromIterable([
+              node(ids.itemId, "running"),
+              node(runningId, "running"),
+              node(completedId, "running"),
+              ...[ids.itemId, runningId, completedId].map((id, index) => {
+                const event = backgroundTurnItemEvent(
+                  ids,
+                  "dynamic_tool",
+                  "running",
+                  index + 1,
+                  id,
+                );
+                return event.type === "turn_item.updated"
+                  ? { ...event, turnItem: { ...event.turnItem, nodeId: NodeId.make(`node:${id}`) } }
+                  : event;
+              }),
+              {
+                type: "provider_turn.updated" as const,
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+                  providerThreadId: ids.providerThreadId,
+                  nodeId: ids.rootNodeId,
+                  runAttemptId: ids.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: 2,
+                  status,
+                  startedAt: now,
+                  completedAt: null,
+                },
               },
-            },
-            backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedId),
-          ]),
-          Stream.fail(
-            new ProviderAdapter.ProviderAdapterSessionDetached({
-              driver,
-              providerSessionId: ProviderSessionId.make(`session:${key}`),
-              threadId: ids.threadId,
-              reason: "workspace_changed",
-            }),
+              node(completedId, "completed"),
+              backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedId),
+            ]),
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterSessionDetached({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                threadId: ids.threadId,
+                reason: "workspace_changed",
+              }),
+            ),
           ),
+      });
+      assert.deepEqual(
+        ingested.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.status === "interrupted"
+            ? [event.turnItem.id]
+            : [],
         ),
-    });
-    assert.deepEqual(
-      ingested.flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.status === "interrupted"
-          ? [event.turnItem.id]
-          : [],
-      ),
-      [ids.itemId, runningId],
-    );
-    assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
-  }),
+        [ids.itemId, runningId],
+      );
+      assert.deepEqual(yield* Ref.get(interrupted), [
+        ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+        "terminal",
+      ]);
+      assert.deepEqual(
+        ingested.flatMap((event) =>
+          event.type === "node.updated" && event.node.status === "interrupted"
+            ? [event.node.id]
+            : [],
+        ),
+        [NodeId.make(`node:${ids.itemId}`), NodeId.make(`node:${runningId}`)],
+      );
+      assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    }),
 );
 
 it.effect("flushes the latest buffered assistant message on a planned detach", () =>

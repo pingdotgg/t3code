@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -705,6 +706,26 @@ it.live("Stop during a restart interrupts the turn the restart could not stop", 
           runId,
         });
         yield* worker.drain();
+        const beforeHandoff = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(beforeHandoff.runs[0]?.status, "interrupted");
+        const rejected = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("command:selection-restart-stop:late-handoff"),
+            threadId,
+            worktreePath: `${cwd}-handoff`,
+            expectedWorktreePath: cwd,
+            worktreeContinuation: {
+              messageId: MessageId.make("message:selection-restart-stop:late-handoff"),
+              text: "handoff continuation",
+            },
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(rejected), "Stop must reject a late masked handoff");
+        const afterHandoff = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(afterHandoff.thread.worktreePath, cwd);
+        assert.deepEqual(afterHandoff.runs, beforeHandoff.runs);
+        assert.deepEqual(afterHandoff.messages, beforeHandoff.messages);
         return {
           projection: yield* orchestrator.getThreadProjection(threadId),
           captured: yield* Ref.get(state),

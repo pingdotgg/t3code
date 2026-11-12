@@ -3949,6 +3949,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (command.type === "thread.metadata.update" && command.worktreeContinuation !== undefined) {
+      const { runs } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"])
+        .pipe(mapDispatchError(command));
+      const latest = latestExecutedRun(runs);
+      if (latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id))) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The source run was stopped before the workspace handoff could be applied.",
+        });
+      }
       if (isProviderNativeSubagentThread(thread)) {
         return yield* new OrchestratorSubagentThreadReadOnlyError({
           commandId: command.commandId,

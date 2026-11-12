@@ -1045,6 +1045,7 @@ export const layer: Layer.Layer<
         const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         // A planned detach closes ingestion before the adapter can end its open root items.
         const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
+        const openRootNodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
         const streamingRootMessages = new Map<MessageId, OrchestrationV2ConversationMessage>();
         // Later root turns in one attempt are provider continuations, such as Codex goal turns.
         let firstRootProviderTurnId: ProviderTurnId | undefined;
@@ -1601,6 +1602,17 @@ export const layer: Layer.Layer<
             yield* Ref.set(latestRootProviderTurn, event.providerTurn);
           }
           if (
+            event.type === "node.updated" &&
+            event.node.threadId === input.run.threadId &&
+            event.node.runId === input.run.id &&
+            event.node.id !== input.rootNode.id &&
+            event.node.kind !== "subagent"
+          ) {
+            if (isOpenExecutionNodeStatus(event.node.status))
+              openRootNodes.set(event.node.id, event.node);
+            else openRootNodes.delete(event.node.id);
+          }
+          if (
             event.type === "message.updated" &&
             event.message.threadId === input.run.threadId &&
             event.message.runId === input.run.id &&
@@ -1714,6 +1726,25 @@ export const layer: Layer.Layer<
           yield* Ref.set(interruptionMessage, "Run interrupted because the workspace changed");
           const routing = yield* Ref.get(eventRouting);
           const providerTurn = yield* Ref.get(latestRootProviderTurn);
+          if (
+            !rootFinalized &&
+            providerTurn !== null &&
+            isOrchestrationV2WorkActive(providerTurn.status)
+          ) {
+            yield* input.session
+              .interruptTurn({
+                providerThread: yield* Ref.get(latestProviderThread),
+                providerTurnId: providerTurn.id,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "orchestration V2 failed to interrupt a detached provider turn",
+                    { runId: input.run.id, cause },
+                  ),
+                ),
+              );
+          }
           const completedAt = yield* DateTime.now;
           const terminal = {
             type: "turn.terminal",
@@ -1745,6 +1776,11 @@ export const layer: Layer.Layer<
               : state,
           );
           const settlement: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
+            ...[...openRootNodes.values()].map((node) => ({
+              type: "node.updated" as const,
+              driver: input.providerThread.driver,
+              node: { ...node, status: "interrupted" as const, completedAt },
+            })),
             ...[...openRootTurnItems.values()].map((turnItem) => ({
               type: "turn_item.updated" as const,
               driver: input.providerThread.driver,

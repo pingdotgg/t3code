@@ -9,6 +9,7 @@ import {
   OrchestrationV2ProviderSession,
   type OrchestrationV2PromptSuggestion,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
@@ -275,6 +276,7 @@ interface LiveSessionEntry {
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventSubscriber>>;
   readonly requestEventPermit: Semaphore.Semaphore;
+  readonly activeProviderTurns: Map<ProviderTurnId, OrchestrationV2ProviderTurn>;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
@@ -610,44 +612,54 @@ export const layerWithOptions = (
               ),
             );
 
-      const publishToSubscribers = (
-        subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventSubscriber>>,
-        signal: ProviderSessionEventSignal,
-      ) =>
-        Ref.get(subscribers).pipe(
-          Effect.flatMap((current) =>
-            Effect.forEach(current.values(), ({ queue }) => Queue.offer(queue, signal), {
-              discard: true,
-            }),
-          ),
-        );
-
-      const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
-        entry: LiveSessionEntry,
-        error: ProviderAdapter.ProviderAdapterV2Error,
-        threadId?: ThreadId,
-      ) {
-        const subscribers = yield* Ref.modify(entry.eventSubscribers, (current) => {
-          const failed: Array<ProviderSessionEventSubscriber> = [];
-          const remaining = new Map(current);
-          for (const [id, subscriber] of current) {
-            if (threadId === undefined || subscriber.threadId === threadId) {
-              failed.push(subscriber);
-              remaining.delete(id);
-            }
+      // Per-event fanout shares the pump's span; unbounded queues cannot wait for capacity.
+      const publishToSubscribers = Effect.fnUntraced(
+        function* (entry: LiveSessionEntry, signal: ProviderSessionEventSignal) {
+          if (signal.type === "event" && signal.event.type === "provider_turn.updated") {
+            const turn = signal.event.providerTurn;
+            if (isOrchestrationV2WorkActive(turn.status))
+              entry.activeProviderTurns.set(turn.id, turn);
+            else entry.activeProviderTurns.delete(turn.id);
           }
-          return [failed, remaining] as const;
-        });
-        yield* Effect.forEach(
-          subscribers,
-          ({ queue }) =>
-            Queue.offer(queue, {
-              type: "failure",
-              cause: Cause.fail(error),
-            }),
-          { discard: true },
-        );
-      });
+          const current = yield* Ref.get(entry.eventSubscribers);
+          yield* Effect.forEach(current.values(), ({ queue }) => Queue.offer(queue, signal), {
+            discard: true,
+          });
+        },
+        (effect, entry) => effect.pipe(entry.requestEventPermit.withPermits(1)),
+      );
+
+      const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(
+        function* (
+          entry: LiveSessionEntry,
+          error: ProviderAdapter.ProviderAdapterV2Error,
+          threadId?: ThreadId,
+          beforeFailure: Effect.Effect<void> = Effect.void,
+        ) {
+          yield* beforeFailure;
+          const subscribers = yield* Ref.modify(entry.eventSubscribers, (current) => {
+            const failed: Array<ProviderSessionEventSubscriber> = [];
+            const remaining = new Map(current);
+            for (const [id, subscriber] of current) {
+              if (threadId === undefined || subscriber.threadId === threadId) {
+                failed.push(subscriber);
+                remaining.delete(id);
+              }
+            }
+            return [failed, remaining] as const;
+          });
+          yield* Effect.forEach(
+            subscribers,
+            ({ queue }) =>
+              Queue.offer(queue, {
+                type: "failure",
+                cause: Cause.fail(error),
+              }),
+            { discard: true },
+          );
+        },
+        (effect, entry) => effect.pipe(entry.requestEventPermit.withPermits(1)),
+      );
 
       // Server shutdown interrupts subscribers rather than ending them: a
       // cleanly ended stream without a terminal fails its run, while an
@@ -2638,7 +2650,7 @@ export const layerWithOptions = (
                     yield* releaseLiveOutput;
                     return;
                   }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  yield* publishToSubscribers(entry, { type: "event", event });
                   yield* releaseLiveOutput;
                 }),
               ),
@@ -2673,7 +2685,7 @@ export const layerWithOptions = (
                         cause: "Provider event stream ended unexpectedly.",
                       }),
                     );
-              yield* publishToSubscribers(entry.eventSubscribers, {
+              yield* publishToSubscribers(entry, {
                 type: "failure",
                 cause,
               });
@@ -2863,6 +2875,7 @@ export const layerWithOptions = (
                 exposedRuntime,
                 eventSubscribers,
                 requestEventPermit: yield* Semaphore.make(1),
+                activeProviderTurns: new Map(),
                 scope: sessionScope,
                 idleGeneration: 0,
                 busyTurns: new Set(),
@@ -3030,30 +3043,40 @@ export const layerWithOptions = (
                 );
                 detachedProviderThreads = [...providerThreads.values()];
                 const activeTurns = projection.value.providerTurns.filter(
-                  (turn) => turn.status === "running" && providerThreads.has(turn.providerThreadId),
-                );
-                interruptActiveTurns = Effect.forEach(
-                  activeTurns,
                   (turn) =>
-                    currentEntry.exposedRuntime
-                      .interruptTurn({
-                        providerThread: providerThreads.get(turn.providerThreadId)!,
-                        providerTurnId: turn.id,
-                      })
-                      .pipe(
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "orchestration-v2.driver-session.detach-interrupt-failed",
-                            {
-                              providerSessionId: input.providerSessionId,
-                              threadId: input.threadId,
-                              providerTurnId: turn.id,
-                              cause,
-                            },
+                    (turn.status === "running" || turn.status === "pending") &&
+                    providerThreads.has(turn.providerThreadId),
+                );
+                interruptActiveTurns = Effect.suspend(() =>
+                  Effect.forEach(
+                    [
+                      ...new Map(
+                        [...activeTurns, ...currentEntry.activeProviderTurns.values()].map(
+                          (turn) => [turn.id, turn],
+                        ),
+                      ).values(),
+                    ].filter((turn) => providerThreads.has(turn.providerThreadId)),
+                    (turn) =>
+                      currentEntry.exposedRuntime
+                        .interruptTurn({
+                          providerThread: providerThreads.get(turn.providerThreadId)!,
+                          providerTurnId: turn.id,
+                        })
+                        .pipe(
+                          Effect.catchCause((cause) =>
+                            Effect.logWarning(
+                              "orchestration-v2.driver-session.detach-interrupt-failed",
+                              {
+                                providerSessionId: input.providerSessionId,
+                                threadId: input.threadId,
+                                providerTurnId: turn.id,
+                                cause,
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                  { concurrency: 1, discard: true },
+                    { concurrency: 1, discard: true },
+                  ),
                 );
               }
             }
@@ -3125,9 +3148,11 @@ export const layerWithOptions = (
                   reason: input.reason,
                 }),
                 input.threadId,
+                interruptActiveTurns,
               );
+            } else {
+              yield* interruptActiveTurns;
             }
-            yield* interruptActiveTurns;
             if (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
