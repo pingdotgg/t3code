@@ -663,57 +663,142 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+const boundProjectId = ProjectId.make("project:test");
+
+const boundTaskLayer = (
+  threadManagement: Pick<
+    ThreadManagementService.ThreadManagementService["Service"],
+    "sendToThread" | "getThreadShell"
+  >,
+) =>
+  ScheduledTaskService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ManagedPolicy.layerTest(),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)(threadManagement),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        NodeCrypto.layer,
+        Scheduler.layer,
+      ),
+    ),
+  );
+
+const boundTaskInput = (threadId: string): ScheduledTaskUpsertInput => ({
+  id: ScheduledTaskId.make("task:bound"),
+  title: "Check progress",
+  prompt: "Check progress",
+  enabled: true,
+  schedule: { type: "interval", everyMs: 60_000 },
+  projectId: boundProjectId,
+  threadId: ThreadId.make(threadId),
+  workspaceStrategy: { type: "root" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+});
+
 it.effect("a bound task whose thread was archived stops scheduling instead of retrying", () =>
   Effect.gen(function* () {
-    const projectId = ProjectId.make("project:test");
     const archived = yield* Ref.make(false);
-    const layer = ScheduledTaskService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            sendToThread: (input) =>
-              Effect.fail(
-                new ThreadManagementService.ThreadManagementThreadArchivedError({
-                  threadId: input.threadId,
-                }),
-              ),
-            getThreadShell: () =>
-              Effect.map(Ref.get(archived), (isArchived) =>
-                threadShell(projectId, isArchived ? { archivedAt: "2026-11-03T00:00:00Z" } : {}),
-              ),
+    const layer = boundTaskLayer({
+      sendToThread: (input) =>
+        Effect.fail(
+          new ThreadManagementService.ThreadManagementThreadArchivedError({
+            threadId: input.threadId,
           }),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
-          Scheduler.layer,
         ),
-      ),
-    );
+      getThreadShell: () =>
+        Effect.map(Ref.get(archived), (isArchived) =>
+          threadShell(boundProjectId, isArchived ? { archivedAt: "2026-11-03T00:00:00Z" } : {}),
+        ),
+    });
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const { task } = yield* service.upsert({
-        id: ScheduledTaskId.make("task:archived-destination"),
-        title: "Check progress",
-        prompt: "Check progress",
-        enabled: true,
-        schedule: { type: "interval", everyMs: 60_000 },
-        projectId,
-        threadId: ThreadId.make("thread:archived"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-      });
+      const { task } = yield* service.upsert(boundTaskInput("thread:archived"));
       yield* Ref.set(archived, true);
       yield* Effect.exit(service.runNow({ id: task.id }));
       const [current] = (yield* service.list()).tasks;
       assert.equal(current?.enabled, false);
       assert.isNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an archived error does not stop a task rebound to another thread mid-dispatch", () =>
+  Effect.gen(function* () {
+    const sending = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const layer = boundTaskLayer({
+      sendToThread: (input) =>
+        Deferred.succeed(sending, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(
+            Effect.fail(
+              new ThreadManagementService.ThreadManagementThreadArchivedError({
+                threadId: input.threadId,
+              }),
+            ),
+          ),
+        ),
+      getThreadShell: () => Effect.succeed(threadShell(boundProjectId)),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(boundTaskInput("thread:a"));
+      const run = yield* Effect.forkChild(Effect.exit(service.runNow({ id: task.id })));
+      yield* Deferred.await(sending);
+      yield* service.upsert(boundTaskInput("thread:b"));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(run);
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(current?.threadId, "thread:b");
+      assert.equal(current?.enabled, true);
+      assert.isNotNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("repeated delivery failures pause a task, and a success resets the count", () =>
+  Effect.gen(function* () {
+    const failing = yield* Ref.make(true);
+    const layer = boundTaskLayer({
+      sendToThread: (input) =>
+        Effect.flatMap(Ref.get(failing), (fail) =>
+          fail
+            ? Effect.fail(
+                new ThreadManagementService.ThreadManagementProjectionLoadError({
+                  projectId: input.projectId,
+                  threadId: input.threadId,
+                  cause: new Error("database busy"),
+                }),
+              )
+            : Effect.succeed({} as never),
+        ),
+      getThreadShell: () => Effect.succeed(threadShell(boundProjectId)),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(boundTaskInput("thread:flaky"));
+      const runTimes = (count: number) =>
+        Effect.repeat(Effect.exit(service.runNow({ id: task.id })), { times: count - 1 });
+      yield* runTimes(4);
+      yield* Ref.set(failing, false);
+      yield* runTimes(1);
+      yield* Ref.set(failing, true);
+      yield* runTimes(4);
+      const [afterFour] = (yield* service.list()).tasks;
+      assert.equal(afterFour?.enabled, true);
+      assert.isNotNull(afterFour?.nextRunAt);
+      yield* runTimes(1);
+      const [paused] = (yield* service.list()).tasks;
+      assert.equal(paused?.enabled, false);
+      assert.isNull(paused?.nextRunAt);
+      assert.match(paused?.lastRunError ?? "", /^Paused after 5 failed runs in a row\./);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

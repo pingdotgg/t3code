@@ -229,6 +229,7 @@ interface ScheduledTaskRow {
   readonly last_run_status: string;
   readonly last_run_error: string | null;
   readonly run_count: number;
+  readonly consecutive_failures: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
 }
@@ -308,6 +309,8 @@ function iso(value: DateTime.DateTime): string {
 }
 
 const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
+// Transient delivery failures retry this many times in a row before the task pauses.
+const MAX_CONSECUTIVE_FAILED_RUNS = 5;
 const UNSUCCESSFUL_RUN_ERRORS = {
   failed: "The run failed.",
   interrupted: "The run was stopped.",
@@ -576,6 +579,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        consecutive_failures,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -778,11 +782,13 @@ export const layer = Layer.effect(
       readonly error: string | null;
       readonly startedAtIso: string;
       readonly disable: boolean;
+      readonly consecutiveFailures: number;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
             enabled = CASE WHEN ${input.disable ? 1 : 0} = 1 THEN 0 ELSE enabled END,
+            consecutive_failures = ${input.consecutiveFailures},
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
@@ -1116,20 +1122,29 @@ export const layer = Layer.effect(
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
+          // A destination edited mid-dispatch is not the archived one.
+          const archived = destinationArchived && current?.threadId === active.threadId;
+          const consecutiveFailures = runSucceeded ? 0 : (row?.consecutive_failures ?? 0) + 1;
+          const exhausted = consecutiveFailures >= MAX_CONSECUTIVE_FAILED_RUNS;
+          const stop = archived || exhausted;
+          const recordedError =
+            exhausted && !archived
+              ? `Paused after ${MAX_CONSECUTIVE_FAILED_RUNS} failed runs in a row. ${lastRunError}`
+              : lastRunError;
           const completed: ScheduledTask = {
             ...scheduleSource,
-            ...(destinationArchived ? { enabled: false } : {}),
+            ...(stop ? { enabled: false } : {}),
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
-            nextRunAt: destinationArchived
+            nextRunAt: stop
               ? null
               : nextRunAt(
                   scheduleSource,
                   scheduleSource.schedule.type === "once" ? startedAt : completedAt,
                 ),
             lastRunStatus,
-            lastRunError,
+            lastRunError: recordedError,
             runCount: scheduleSource.runCount + 1,
           };
           if (current === null) return { recorded: completed, written: false };
@@ -1141,9 +1156,10 @@ export const layer = Layer.effect(
             completedAtIso: completed.updatedAt,
             nextRunAtIso: completed.nextRunAt,
             status: lastRunStatus,
-            error: lastRunError,
+            error: recordedError,
             startedAtIso,
-            disable: destinationArchived,
+            disable: stop,
+            consecutiveFailures,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;
@@ -1600,6 +1616,7 @@ export const layer = Layer.effect(
       const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
+              consecutive_failures = 0,
               next_run_at = ${next},
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
