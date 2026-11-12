@@ -622,6 +622,7 @@ export interface ClaudeAgentSdkQuerySession {
   readonly setPermissionMode: (
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly renameSession: (title: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly backgroundTasks: (
     toolUseId: string,
@@ -812,7 +813,7 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
 async function sendClaudeControlRequest(
   queryRuntime: ClaudeQuery,
   request: {
-    readonly subtype: "mcp_call" | "list_permission_rules";
+    readonly subtype: "mcp_call" | "list_permission_rules" | "rename_session";
     readonly [key: string]: unknown;
   },
 ): Promise<unknown> {
@@ -1031,6 +1032,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.set_permission_mode";
         readonly mode: PermissionMode;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.rename_session";
+        readonly title: string;
       };
     }
   | {
@@ -1604,6 +1613,27 @@ export const layerQueryRunner: Layer.Layer<
                     payload: {
                       type: "query.set_permission_mode",
                       mode,
+                    },
+                  }),
+                ),
+              ),
+            renameSession: (title) =>
+              Effect.tryPromise({
+                try: () =>
+                  sendClaudeControlRequest(queryRuntime, {
+                    subtype: "rename_session",
+                    title,
+                    source: "host",
+                  }),
+                catch: (cause) => queryRunnerError(cause, "renameSession"),
+              }).pipe(
+                Effect.tap(() =>
+                  logProtocolEvent({
+                    direction: "outgoing",
+                    stage: "decoded",
+                    payload: {
+                      type: "query.rename_session",
+                      title,
                     },
                   }),
                 ),
@@ -5510,6 +5540,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           new Map<string, OrchestrationV2ProviderThread>(),
         );
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
+        // The title T3 last applied to each native session, so a turn renames it only when the
+        // thread title changed. A native `/rename` T3 never applied survives later turns.
+        const appliedSessionTitles = new Map<string, string>();
         const goalCheckedTurns = new Set<string>();
         // Background subagents can finish after root settlement; retain their registry for wake evidence and hydration.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
@@ -11839,6 +11872,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             updated.add(nativeThreadId);
             return updated;
           });
+          // A new session's spawn applied this turn's title. A resume keeps the session's stored
+          // title, so the last applied one stays authoritative until a turn compares again.
+          if (!shouldResume) {
+            appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title);
+          }
           yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
             status: "active",
           });
@@ -12054,6 +12092,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(Path.Path, path),
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            // Only the spawn applies the `title` option; on resume the session's stored title wins
+            // (sdk.d.ts). Send the CLI's rename so `claude --resume` follows the thread title.
+            if (appliedSessionTitles.get(nativeThreadId) !== turnInput.appThread.title) {
+              yield* querySession.query.renameSession(turnInput.appThread.title).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() =>
+                    appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title),
+                  ),
+                ),
+                Effect.ignore,
+              );
+            }
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,
