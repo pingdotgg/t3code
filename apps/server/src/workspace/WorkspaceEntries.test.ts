@@ -482,14 +482,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           const result = yield* searchWorkspaceEntries({ cwd, query, limit: 10 });
           expect(result.entries.map((entry) => entry.path)).toContain("src/foo{bar}.ts");
         }
-        const alternation = yield* searchWorkspaceEntries({
-          cwd,
-          query: "src/foo{bar,baz}.ts",
-          limit: 10,
-        });
-        expect(alternation.entries.map((entry) => entry.path)).toEqual(
-          expect.arrayContaining(["src/foobar.ts", "src/foobaz.ts"]),
-        );
+        for (const query of ["src/foo{bar,baz}.ts", "src/foo{{bar,baz}}.ts"]) {
+          const result = yield* searchWorkspaceEntries({ cwd, query, limit: 10 });
+          expect(result.entries.map((entry) => entry.path)).toEqual(
+            expect.arrayContaining(["src/foobar.ts", "src/foobaz.ts"]),
+          );
+        }
       }),
     );
 

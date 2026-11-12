@@ -122,28 +122,11 @@ export class WorkspaceSearchIndex extends Context.Service<
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
 // fff globs any word containing "[" or "{" and has no escape. Fuzzy matching is
-// subsequence-based, so dropping "[" and every "{" that does not open a comma
-// alternation (the only brace glob fff expands) makes literal names like "[id]"
-// and "foo{bar}" findable while "foo{bar,baz}" keeps working.
+// subsequence-based, so dropping "[" keeps "[id]" findable. Braces only alternate
+// with a comma, so without one "{" is dropped too and "foo{bar}" matches literally.
 function toFffQuery(rawQuery: string): string {
-  const groups: Array<{ index: number; alternation: boolean }> = [];
-  const keptBraces = new Set<number>();
-  for (let index = 0; index < rawQuery.length; index++) {
-    const char = rawQuery[index];
-    if (char === "{") groups.push({ index, alternation: false });
-    else if (char === "," && groups.length > 0) groups[groups.length - 1]!.alternation = true;
-    else if (char === "}") {
-      const group = groups.pop();
-      if (group?.alternation) keptBraces.add(group.index);
-    }
-  }
-  let query = "";
-  for (let index = 0; index < rawQuery.length; index++) {
-    const char = rawQuery[index];
-    if (char === "[" || (char === "{" && !keptBraces.has(index))) continue;
-    query += char;
-  }
-  return query;
+  const query = rawQuery.replaceAll("[", "");
+  return query.includes(",") ? query : query.replaceAll("{", "");
 }
 
 function toPosixPath(input: string): string {
