@@ -467,12 +467,21 @@ idempotent retries.
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
-time; an idle thread returns immediately. A pending live question or approval on
-the selected run, or an earlier unfinished run blocking it, also returns with
-`timedOut: false` and `hasPendingQuestion` or `pendingApproval`. The run's status
-does not change. Message-based asynchronous questions do not end the wait.
-Read the fresh request before responding; the result grants no approval authority.
-A timeout reports the latest durable status and does not cancel work.
+time. An idle thread returns immediately.
+
+Thread-scoped and linked callers return on blocking input by default. Unlinked
+external MCP callers enable this behavior with `returnOnInput: true`. Setting
+`returnOnInput: false` keeps the wait terminal-only.
+
+An input-aware wait returns `timedOut: false` and `hasPendingQuestion` or
+`pendingApproval` for live input on the selected run or an earlier unfinished run
+blocking it. The run keeps its current status. Asynchronous message-based
+questions leave the wait active. Read a fresh question with `t3_pending_request`.
+Secret cards appear in thread activity. Ask the user to answer secret cards and
+approvals in the thread. The result grants no approval authority.
+
+A timeout reports the latest durable status and leaves the work running. A `next`
+hint on a timed-out wait tells the caller to end its turn.
 
 ### `t3_thread_interrupt`
 
