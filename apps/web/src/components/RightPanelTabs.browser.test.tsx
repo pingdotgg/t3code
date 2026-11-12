@@ -145,14 +145,6 @@ function panel(activeSurface: RightPanelSurface) {
   const props: RightPanelTabsProps = {
     mode: "inline",
     keybindings: [],
-    getShortcutContext: () => ({
-      terminalFocus: false,
-      terminalOpen: false,
-      previewFocus: false,
-      previewOpen: true,
-      isWeb: true,
-      isDesktop: false,
-    }),
     surfaces: [BROWSER_SURFACE, DIFF_SURFACE],
     environmentId: EnvironmentId.make("environment-local"),
     activeSurfaceId: activeSurface.id,
