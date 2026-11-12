@@ -341,6 +341,21 @@ describe("createChangeRequest", () => {
         bodyFile: "/tmp/body.md",
       });
       assert.ok(tg.calls[1]?.includes("--source-repo"));
+      // A DID source cannot be named to `tg`, which would otherwise use the target as the source.
+      const error = yield* provider
+        .createChangeRequest({
+          cwd: "/repo",
+          context: REMOTE,
+          target: { refName: "main", repository: "alice.example/repo" },
+          source: { refName: "feature", repository: "did:plc:bobfork" },
+          baseRefName: "main",
+          headSelector: "feature",
+          title: "Add a thing",
+          bodyFile: "/tmp/body.md",
+        })
+        .pipe(Effect.flip);
+      assert.match(error.detail, /--source-repo handle\/repo/u);
+      assert.strictEqual(tg.calls.filter((call) => call.includes("create")).length, 1);
     }).pipe(serve(tg));
   });
 
