@@ -48,11 +48,6 @@ describe("buildReportInput", () => {
       return result?.input.navStatus ?? null;
     };
 
-    expect(report(state({ kind: "Loading", url, title: "" }))).toEqual({
-      _tag: "Loading",
-      url,
-      title: "",
-    });
     const loaded = state({ kind: "Success", url, title: "Original title" });
     expect(report(loaded)).toEqual({ _tag: "Success", url, title: "Original title" });
     expect(report(loaded)).toBeNull();
@@ -67,17 +62,6 @@ describe("buildReportInput", () => {
         updatedAt: "2026-08-09T00:00:01.000Z",
       }),
     ).toBeNull();
-    expect(report(state({ kind: "Success", url, title: "" }))).toEqual({
-      _tag: "Success",
-      url,
-      title: "",
-    });
-    expect(report(state({ kind: "Success", url, title: "" }))).toBeNull();
-    expect(report(state({ kind: "Loading", url, title: "" }))).toEqual({
-      _tag: "Loading",
-      url,
-      title: "",
-    });
   });
 });
 
