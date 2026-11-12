@@ -152,6 +152,51 @@ it.each([
 });
 
 it.each([
+  { mark: "bold", key: "b", marker: "**" },
+  { mark: "italic", key: "i", marker: "*" },
+])("toggles $mark with Mod+$key at a collapsed cursor", async ({ mark, key, marker }) => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  const chord = `{${mod}>}${key}{/${mod}}`;
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  await userEvent.keyboard(" ");
+  await userEvent.keyboard(chord);
+  await userEvent.keyboard("now");
+  await userEvent.keyboard(chord);
+  await userEvent.keyboard(" done");
+  await vi.waitFor(() =>
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`ship it ${marker}now${marker} done`),
+  );
+  expect(textWithMark(editor, mark)).toEqual(["now"]);
+});
+
+it.each([
+  { key: "i", caret: 10, expected: "ship it **n*X*ow** done" },
+  { key: "i", caret: 9, expected: "ship it *X***now** done" },
+  { key: "e", caret: "{ArrowLeft>5/}", expected: "ship it **now**`X` done" },
+])(
+  "Mod+$key at $caret in a bold word styles the next typed text",
+  async ({ key, caret, expected }) => {
+    await using screen = await mountEditor("ship it **now** done");
+    const { editor } = screen;
+    const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await act(async () => {
+      if (typeof caret === "number") editor.commands.focus(caret);
+      else editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    if (typeof caret === "string") await userEvent.keyboard(caret);
+    await userEvent.keyboard(`{${mod}>}${key}{/${mod}}`);
+    await userEvent.keyboard("X");
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+  },
+);
+
+it.each([
   { word: "ship", prefix: "", source: ["**ship**"] },
   { word: "path\\", prefix: "", source: [] },
   { word: "2*3", prefix: "", source: [] },
@@ -169,7 +214,7 @@ it.each([
     code: ["path\\"],
   },
 ])(
-  "bolds $word after '$prefix' with Mod+B only when text is selected",
+  "bolds $word after '$prefix' with Mod+B over a selection",
   async ({ word, prefix, prefixText = prefix, source, code = [] }) => {
     const value = `${prefix}${word} it`;
     await using screen = await mountEditor(value);
@@ -179,10 +224,6 @@ it.each([
       editor.commands.focus("end");
     });
     await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
-    await userEvent.keyboard(modB);
-    // Without the guard, Tiptap stores bold for the next typed text.
-    expect(editor.state.storedMarks).toBeNull();
-
     await act(async () => {
       editor.commands.setTextSelection({
         from: prefixText.length + 1,
