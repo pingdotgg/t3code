@@ -444,14 +444,16 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   return `${organizationId.toLowerCase()}_${accountId.toLowerCase()}`;
 });
 
-/** Plugin folders Claude Code loads inline from CLAUDE_CODE_PLUGIN_DIRS, always enabled. */
+/** Plugin folders Claude Code loads inline from CLAUDE_CODE_PLUGIN_DIRS, and their plugin names. */
 const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots")(function* (
   pluginDirectories: string | undefined,
+  enabledPlugins: ReadonlyMap<string, boolean>,
 ) {
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
   const platform = yield* HostProcess.Platform;
   const roots: Array<ClaudeSkillRoot> = [];
+  const names = new Set<string>();
   const seen = new Set<string>();
   for (const entry of (pluginDirectories ?? "").split(platform === "win32" ? ";" : ":")) {
     const directory = expandHomePath(entry.trim(), home);
@@ -462,15 +464,19 @@ const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots
     seen.add(installPath);
     const manifest = yield* readPluginManifest(installPath);
     const prefix = manifest?.name ?? path.basename(installPath);
+    // Inline plugins are on unless a settings file sets `<name>@inline` to false.
+    if (enabledPlugins.get(`${prefix}@inline`) === false) continue;
+    names.add(pluginNameKey(prefix));
     roots.push(...(yield* pluginSkillRoots(installPath, "user", prefix, manifest)));
   }
-  return roots;
+  return { roots, names };
 });
 
 const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
   configDirPath: string,
   cwd: string | undefined,
   enabledPlugins: ReadonlyMap<string, boolean>,
+  inlinePluginNames: ReadonlySet<string>,
   syncedBucket: string | undefined,
   environment: NodeJS.ProcessEnv,
 ) {
@@ -488,7 +494,8 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
       Effect.orElseSucceed(() => undefined),
     );
   const roots: Array<ClaudeSkillRoot> = [];
-  const claimedPluginNames = new Set<string>();
+  // An enabled inline plugin replaces installed and synced plugins of the same name.
+  const claimedPluginNames = new Set(inlinePluginNames);
   // The CLI's process.cwd() resolves symlinks; registry projectPath values remain lexical.
   const workspace =
     cwd === undefined
@@ -528,7 +535,7 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     const installPath = path.resolve(cwd ?? ".", install.installPath);
     const manifest = yield* readPluginManifest(installPath);
     const prefix = manifest?.name ?? key.split("@")[0];
-    if (!prefix) continue;
+    if (!prefix || inlinePluginNames.has(pluginNameKey(prefix))) continue;
     // A registry record whose install is gone loads nothing and claims no namespace.
     if (Option.isSome(existing)) claimedPluginNames.add(pluginNameKey(prefix));
     roots.push(...(yield* pluginSkillRoots(installPath, scope, prefix, manifest)));
@@ -691,6 +698,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const inlinePluginDirectories =
     (yield* readClaudeSettingsEnv(config, cwd, env)).CLAUDE_CODE_PLUGIN_DIRS ??
     env.CLAUDE_CODE_PLUGIN_DIRS;
+  const inlinePlugins = yield* discoverInlinePluginSkillRoots(
+    inlinePluginDirectories,
+    enabledPlugins,
+  );
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
     ...(managedDirectory
@@ -704,8 +715,15 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         directory: path.join(path.resolve(cwd ?? ".", directory), ".claude", "skills"),
         scope: "project" as const,
       })),
-    ...(yield* discoverInlinePluginSkillRoots(inlinePluginDirectories)),
-    ...(yield* discoverPluginSkillRoots(configDirPath, cwd, enabledPlugins, syncedBucket, env)),
+    ...inlinePlugins.roots,
+    ...(yield* discoverPluginSkillRoots(
+      configDirPath,
+      cwd,
+      enabledPlugins,
+      inlinePlugins.names,
+      syncedBucket,
+      env,
+    )),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

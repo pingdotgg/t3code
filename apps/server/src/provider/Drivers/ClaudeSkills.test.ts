@@ -587,7 +587,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("discovers inline plugins from CLAUDE_CODE_PLUGIN_DIRS without enabling them", () =>
+  it.effect("discovers inline plugins from CLAUDE_CODE_PLUGIN_DIRS over installed namesakes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -597,21 +597,30 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const named = path.join(workspace, "named");
       const unnamed = path.join(workspace, "unnamed");
       const inherited = path.join(workspace, "inherited");
+      const muted = path.join(workspace, "muted");
+      const installed = path.join(workspace, "installed-acme");
       yield* fs.makeDirectory(path.join(named, ".claude-plugin"), { recursive: true });
       yield* fs.writeFileString(
         path.join(named, ".claude-plugin", "plugin.json"),
-        '{"name":"ddm"}',
+        '{"name":"acme"}',
       );
       yield* writeSkill(path.join(named, "skills"), "qa", "---\ndescription: QA a ticket\n---\n");
+      yield* writeSkill(path.join(installed, "skills"), "old", "# Old");
       yield* writeSkill(path.join(unnamed, "skills"), "lint", "# Lint");
+      yield* writeSkill(path.join(muted, "skills"), "hidden", "# Hidden");
       yield* writeSkill(path.join(inherited, "skills"), "stale", "# Stale");
       yield* writeSkill(path.join(workspace, "relative", "skills"), "skipped", "# Skipped");
-      yield* fs.makeDirectory(configDir);
+      yield* fs.makeDirectory(path.join(configDir, "plugins"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({ plugins: { "acme@shop": [{ scope: "user", installPath: installed }] } }),
+      );
       yield* fs.writeFileString(
         path.join(configDir, "settings.json"),
         JSON.stringify({
+          enabledPlugins: { "acme@shop": true, "muted@inline": false },
           env: {
-            CLAUDE_CODE_PLUGIN_DIRS: [named, "relative", ` ${unnamed} `].join(
+            CLAUDE_CODE_PLUGIN_DIRS: [named, "relative", ` ${unnamed} `, muted].join(
               platform === "win32" ? ";" : ":",
             ),
           },
@@ -624,7 +633,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(
         skills.map(({ name, scope, description }) => ({ name, scope, description })),
         [
-          { name: "ddm:qa", scope: "user", description: "QA a ticket" },
+          { name: "acme:qa", scope: "user", description: "QA a ticket" },
           { name: "unnamed:lint", scope: "user", description: undefined },
         ],
       );
