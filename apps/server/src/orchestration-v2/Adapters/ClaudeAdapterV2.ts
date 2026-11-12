@@ -9210,7 +9210,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const latch = (yield* Ref.get(requestedContinuations)).get(nativeThreadId);
           if (latch?.token !== token) return;
-          const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages;
+          const messages = buffered ?? [];
           const endIndex =
             latch.end === undefined ? messages.length - 1 : messages.indexOf(latch.end);
           const retired = messages.slice(0, endIndex + 1);
@@ -9233,7 +9234,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
             ...later,
           ];
-          yield* replaceWakeBuffer(nativeThreadId, kept, retiredTaskIds);
+          if (!(yield* replaceWakeBuffer(nativeThreadId, buffered, kept, retiredTaskIds))) return;
           if (latch.end === undefined) {
             // A lifecycle result closes the root frames before it without opening the wake's turn.
             const sinceLifecycleResult = retired.slice(
@@ -9258,18 +9259,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...latch, retired });
           });
 
+        // Compare-and-set: a process reset clears the buffer without the SDK message lock, and must not be undone.
         const replaceWakeBuffer = Effect.fnUntraced(function* (
           nativeThreadId: string,
+          expected: ReadonlyArray<SDKMessage> | undefined,
           messages: ReadonlyArray<SDKMessage>,
           droppedTaskIds: ReadonlySet<string>,
         ) {
-          yield* Ref.update(wakeBuffers, (current) => {
+          const replaced = yield* Ref.modify(wakeBuffers, (current) => {
+            if (current.get(nativeThreadId)?.messages !== expected)
+              return [false, current] as const;
             const updated = new Map(current);
             if (messages.length === 0) updated.delete(nativeThreadId);
             else
               updated.set(nativeThreadId, { messages, detail: claudeWakeBufferDetail(messages) });
-            return updated;
+            return [true, updated] as const;
           });
+          if (!replaced) return false;
           yield* Ref.update(wakeReportsByNativeThread, ({ userTurns, reports }) => {
             const threadReports = reports.get(nativeThreadId);
             if (threadReports === undefined) return { userTurns, reports };
@@ -9281,6 +9287,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             else updatedReports.set(nativeThreadId, remaining);
             return { userTurns, reports: updatedReports };
           });
+          return true;
         });
 
         // A retired wake's dropped tool results still settle the subagents it kept for later frames.
@@ -9289,7 +9296,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           settledToolUseIds: ReadonlySet<string>,
         ) {
           if (settledToolUseIds.size === 0) return;
-          const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages;
+          const messages = buffered ?? [];
           const settledTaskIds = new Set(
             messages.flatMap((entry) =>
               entry.type === "system" &&
@@ -9308,21 +9316,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           });
           if (kept.length === messages.length) return;
-          yield* replaceWakeBuffer(nativeThreadId, kept, settledTaskIds);
+          yield* replaceWakeBuffer(nativeThreadId, buffered, kept, settledTaskIds);
         });
 
         // After a retired wake releases its latch, a wake buffered behind it has had no offer of its own.
         const offerBufferedWake = Effect.fnUntraced(function* (nativeThreadId: string) {
           const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
           const reports = (yield* Ref.get(wakeReportsByNativeThread)).reports.get(nativeThreadId);
-          const hasWake = messages.some(
-            (entry) =>
-              isClaudeRootTurnFrame(entry) ||
-              entry.type === "result" ||
-              (entry.type === "system" &&
-                entry.subtype === "task_notification" &&
-                reports?.get(entry.task_id)?.report.kind === "subagent"),
-          );
+          // A lifecycle result ends no turn, and closes the root frames before it.
+          const hasWake =
+            messages
+              .slice(messages.findLastIndex(isClaudeEmptyTaskNotificationSuccess) + 1)
+              .some(isClaudeRootTurnFrame) ||
+            messages.some(
+              (entry) =>
+                (entry.type === "result" && !isClaudeEmptyTaskNotificationSuccess(entry)) ||
+                (entry.type === "system" &&
+                  entry.subtype === "task_notification" &&
+                  reports?.get(entry.task_id)?.report.kind === "subagent"),
+            );
           if (hasWake) yield* offerWakeContinuation(nativeThreadId);
         });
 
