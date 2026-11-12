@@ -159,6 +159,32 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect("publishes a theme with CSS and refuses one that loads remote files", () =>
+    withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const css = "[data-chat-header] { border-bottom: 1px solid red; }";
+        yield* themes.publish("agent-look", { ...NIGHTFALL_THEME, css });
+        assert.deepEqual(yield* themes.current, [{ id: "agent-look", ...NIGHTFALL_THEME, css }]);
+
+        const leaky = yield* themes
+          .publish("leaky", {
+            ...NIGHTFALL_THEME,
+            css: 'input[value^="a"] { background: url(https://example.com/a); }',
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(leaky.reason, "remote-css");
+        const reserved = yield* themes.publish("dark", NIGHTFALL_THEME).pipe(Effect.flip);
+        assert.strictEqual(reserved.reason, "invalid-id");
+        assert.deepEqual(
+          (yield* themes.current).map((theme) => theme.id),
+          ["agent-look"],
+        );
+      }),
+    ),
+  );
+
   it.effect("does not charge skipped files against the total size limit", () =>
     withEnvironmentThemes(
       {

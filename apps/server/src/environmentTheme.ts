@@ -8,6 +8,8 @@ import {
   EnvironmentThemeId,
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
 import { UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -29,6 +31,9 @@ import * as ServerConfig from "./config.ts";
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
 );
+const encodeEnvironmentThemeFileJson = Schema.encodeEffect(
+  fromJsonStringPretty(EnvironmentThemeFile),
+);
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
 const THEME_FILE_SUFFIX = ".json";
@@ -43,10 +48,45 @@ interface PublishedThemes {
   readonly themes: ReadonlyArray<EnvironmentTheme>;
 }
 
+const PUBLISH_FAILURES = {
+  "invalid-id":
+    "is not a valid theme id. Use lowercase letters, digits, and hyphens, and not a built-in name.",
+  "no-colors": "has no colors. Give canvas and accent, or at least one color role.",
+  "remote-css":
+    "has CSS that loads files. Remove @import, image-set(), and url() that is not data: or #id.",
+  "too-large": `is larger than ${MAX_THEME_FILE_BYTES} bytes.`,
+  "not-published": "could not be published. The themes directory may be full or not writable.",
+} as const;
+
+export class EnvironmentThemePublishError extends Schema.TaggedError<EnvironmentThemePublishError>()(
+  "EnvironmentThemePublishError",
+  {
+    themeId: Schema.String,
+    reason: Schema.Literals([
+      "invalid-id",
+      "no-colors",
+      "remote-css",
+      "too-large",
+      "not-published",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Theme "${this.themeId}" ${PUBLISH_FAILURES[this.reason]}`;
+  }
+}
+
 export class EnvironmentThemeService extends Context.Service<
   EnvironmentThemeService,
   {
     readonly current: Effect.Effect<ReadonlyArray<EnvironmentTheme>>;
+
+    /** Writes the theme file under `themeId`, replacing one already there. */
+    readonly publish: (
+      themeId: string,
+      file: EnvironmentThemeFile,
+    ) => Effect.Effect<void, EnvironmentThemePublishError>;
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -197,8 +237,45 @@ const make = Effect.gen(function* () {
     Effect.asVoid,
   );
 
+  const publish = Effect.fn("EnvironmentThemeService.publish")(function* (
+    themeId: string,
+    file: EnvironmentThemeFile,
+  ) {
+    const fail = (reason: EnvironmentThemePublishError["reason"], cause?: unknown) =>
+      new EnvironmentThemePublishError({ themeId, reason, cause });
+    if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
+      return yield* fail("invalid-id");
+    }
+    if (!environmentThemeFileHasColors(file)) return yield* fail("no-colors");
+    if (file.css !== undefined && themeCssLoadsRemoteFiles(file.css)) {
+      return yield* fail("remote-css");
+    }
+    const contents = yield* encodeEnvironmentThemeFileJson(file).pipe(
+      Effect.mapError((cause) => fail("not-published", cause)),
+    );
+    if (Buffer.byteLength(contents) > MAX_THEME_FILE_BYTES) return yield* fail("too-large");
+
+    const destination = `${environmentThemesDir}/${themeId}${THEME_FILE_SUFFIX}`;
+    // The watcher reads only .json names, so it never sees a half-written file.
+    const staging = `${destination}.staging-${process.pid}`;
+    yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
+      Effect.andThen(fs.writeFileString(staging, contents)),
+      Effect.andThen(fs.rename(staging, destination)),
+      Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
+      Effect.mapError((cause) => fail("not-published", cause)),
+    );
+    // The reader skips files past its count and size limits, so confirm this one is served.
+    const { themes } = yield* refresh;
+    if (!themes.some((theme) => theme.id === themeId)) {
+      yield* fs.remove(destination, { force: true }).pipe(Effect.ignore);
+      yield* refresh;
+      return yield* fail("not-published");
+    }
+  });
+
   return {
     current: Effect.map(refresh, (state) => state.themes),
+    publish,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {
