@@ -7,6 +7,8 @@ type AppVariant = "development" | "preview" | "production";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
+// Expo's TypeScript setup otherwise installs `typescript` on every start; we typecheck with tsrs.
+process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
@@ -116,6 +118,8 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
+const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -191,7 +195,12 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         displayName: "Agent Activity",
         description: "Shows the current state of active T3 Code agents.",
         android: null,
-        ios: { supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"] },
+        ios: {
+          supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+          // Embeds the layout so the gallery preview and a new widget render
+          // before the app has run once; the app replaces it on publish.
+          initialLayout: "./src/widgets/AgentActivityWidget.tsx",
+        },
       },
     ],
   },
@@ -228,7 +237,7 @@ const config: ExpoConfig = {
   slug: "t3-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.2.0",
+  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.3.0",
   runtimeVersion: {
     // Skip costly fingerprinting on dev launches; preview and production OTAs require matching native projects.
     policy: runtimeVersionPolicy,
@@ -252,6 +261,7 @@ const config: ExpoConfig = {
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
+      `applinks:${HOSTED_APP_HOST}`,
     ],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
@@ -302,13 +312,20 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
+    intentFilters: [
+      {
+        action: "VIEW",
+        autoVerify: true,
+        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
+    ],
   },
   web: {
     favicon: variant.assets.appIcon,
   },
   plugins: [
     "expo-asset",
-    "react-native-pdf-jsi",
     [
       "expo-font",
       {
@@ -367,7 +384,7 @@ const config: ExpoConfig = {
       "expo-audio",
       {
         microphonePermission: "Allow T3 Code to use your microphone for voice input.",
-        recordAudioAndroid: false,
+        recordAudioAndroid: true,
         enableBackgroundPlayback: false,
         enableBackgroundRecording: false,
       },
@@ -381,7 +398,14 @@ const config: ExpoConfig = {
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        // `false` makes this plugin add RECORD_AUDIO to blockedPermissions, breaking Android dictation.
+        microphonePermission: "Allow T3 Code to use your microphone for voice input.",
+      },
+    ],
     [
       "expo-splash-screen",
       {
@@ -433,11 +457,16 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
+    // MainActivity mods run in reverse order; extend the tablet-orientation override.
+    "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
     ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
+    secretsFeatureEnabled: ["1", "true"].includes(
+      process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
+    ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
