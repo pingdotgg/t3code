@@ -1,4 +1,5 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { rebaseComposerFileLinks } from "@t3tools/shared/composerInlineTokens";
 import {
   MessageId,
   type ModelSelection,
@@ -401,6 +402,13 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          // The session's cwd is where the agent resolves the message's file links.
+          const { thread, providerSessions } = yield* projections.getThreadRecords(input.threadId, [
+            "providerSessions",
+          ]);
+          const agentCwd = providerSessions.find(
+            (session) => session.id === loaded.providerThread.providerSessionId,
+          )?.cwd;
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -413,7 +421,10 @@ export const layer: Layer.Layer<
               message: {
                 messageId: message.id,
                 text: projectComposerContextForProvider({
-                  text: message.text,
+                  text: rebaseComposerFileLinks(message.text, {
+                    checkoutRoot: thread.worktreePath,
+                    agentCwd,
+                  }),
                   records: message.context?.records ?? [],
                 }),
                 attachments: message.attachments,

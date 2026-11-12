@@ -1,4 +1,6 @@
+import { serializeComposerFileLink } from "./composerTrigger.ts";
 import { markdownMathRanges } from "./markdownMath.ts";
+import { isAbsolutePath, resolveWorkspaceFilePath, workspaceRelativeFilePath } from "./path.ts";
 
 export type ComposerInlineToken =
   | {
@@ -163,4 +165,33 @@ export function collectComposerInlineTokens(
       (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
     )
     .sort((left, right) => left.start - right.start);
+}
+
+/**
+ * Composer file links are relative to the thread's checkout. When the agent runs in a
+ * subdirectory of it, links inside that subdirectory become relative to the agent and the rest
+ * absolute, so the agent finds the same files.
+ */
+export function rebaseComposerFileLinks(
+  text: string,
+  input: { readonly checkoutRoot: string | null; readonly agentCwd: string | null | undefined },
+): string {
+  const { checkoutRoot, agentCwd } = input;
+  if (!checkoutRoot || !agentCwd) return text;
+  const subdirectory = workspaceRelativeFilePath(agentCwd, checkoutRoot);
+  if (subdirectory === null || subdirectory === ".") return text;
+  let rebased = "";
+  let cursor = 0;
+  // Tokens need trailing whitespace; the padding lets a link that ends the message match.
+  for (const token of collectComposerInlineTokens(`${text} `)) {
+    if (token.type !== "mention" || !token.source.startsWith("[") || isAbsolutePath(token.value))
+      continue;
+    if (token.value.startsWith("~/") || token.value.startsWith("~\\")) continue;
+    const target = token.value.startsWith(`${subdirectory}/`)
+      ? token.value.slice(subdirectory.length + 1)
+      : resolveWorkspaceFilePath(token.value, checkoutRoot);
+    rebased += text.slice(cursor, token.start) + serializeComposerFileLink(target);
+    cursor = token.end;
+  }
+  return cursor === 0 ? text : rebased + text.slice(cursor);
 }

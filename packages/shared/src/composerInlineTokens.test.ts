@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens, composerMathRanges } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  composerMathRanges,
+  rebaseComposerFileLinks,
+} from "./composerInlineTokens.ts";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
 
 describe("collectComposerInlineTokens", () => {
@@ -218,5 +222,24 @@ describe("collectComposerInlineTokens", () => {
     expect(composerMathRanges(`${link} sets $x_i$`).map((formula) => formula.source)).toEqual([
       "$x_i$",
     ]);
+  });
+});
+
+describe("rebaseComposerFileLinks", () => {
+  it("points checkout-relative file links at the same files from the agent's subdirectory", () => {
+    const text = `Edit ${serializeComposerFileLink("ios/App.swift")} and ${serializeComposerFileLink(
+      "other/b.txt",
+    )} like ${serializeComposerFileLink("/abs/c.txt")}`;
+    expect(
+      rebaseComposerFileLinks(text, { checkoutRoot: "/worktree", agentCwd: "/worktree/ios" }),
+    ).toBe(
+      `Edit ${serializeComposerFileLink("App.swift")} and ${serializeComposerFileLink(
+        "/worktree/other/b.txt",
+      )} like ${serializeComposerFileLink("/abs/c.txt")}`,
+    );
+    expect(
+      rebaseComposerFileLinks(text, { checkoutRoot: "/worktree", agentCwd: "/worktree" }),
+    ).toBe(text);
+    expect(rebaseComposerFileLinks(text, { checkoutRoot: null, agentCwd: "/repo/ios" })).toBe(text);
   });
 });

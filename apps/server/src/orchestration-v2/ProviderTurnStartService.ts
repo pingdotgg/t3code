@@ -1,5 +1,6 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { rebaseComposerFileLinks } from "@t3tools/shared/composerInlineTokens";
 import {
   CommandId,
   latestProviderTurnForAttempt,
@@ -856,7 +857,10 @@ export const layer: Layer.Layer<
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
       const userText = projectComposerContextForProvider({
-        text: message.text,
+        text: rebaseComposerFileLinks(message.text, {
+          checkoutRoot: projection.thread.worktreePath,
+          agentCwd: resolvedRuntimePolicy.cwd,
+        }),
         records: message.context?.records ?? [],
       });
       // Native goal commands go verbatim; handoff history waits a turn.
