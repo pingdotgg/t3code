@@ -6796,6 +6796,68 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #17270 assistant reply text streams from text_delta before the snapshot arrives
+  it.effect("streams Claude assistant text deltas before the completed snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("text-stream-attempt"),
+          text: "Write two paragraphs",
+          attachments: [],
+        }),
+      );
+      const stream = (event: unknown) =>
+        claudeSdkFrame({
+          type: "stream_event",
+          event,
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "text-stream-frame",
+        });
+      for (const frame of [
+        stream({ type: "message_start", message: { id: "text-message" } }),
+        stream({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }),
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "First paragraph.\n\nSecond " },
+        }),
+      ]) {
+        yield* harness.offerAndWait(frame);
+      }
+      yield* TestClock.adjust(1_000);
+      const streamedText = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message.text]
+            : [],
+      );
+      assert.isTrue(
+        streamedText.some((text) => text.includes("First paragraph.")),
+        "assistant text should be visible while the text block is still streaming",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
   it.effect.each(["cancelled", "interrupted", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
