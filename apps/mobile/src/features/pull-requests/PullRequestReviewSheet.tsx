@@ -1,4 +1,3 @@
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { AsyncResult } from "effect/reactivity";
 import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { useAtomRefresh } from "@effect/atom-react";
@@ -8,7 +7,7 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Pressable, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
 import { clearSubmittedReview } from "./pullRequestReviewDrafts";
 import {
   PullRequestPendingBadge,
@@ -33,7 +32,10 @@ import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
 function useActionSubmission(params: PullRequestParams) {
   const navigation = useNavigation();
-  const refreshDetail = useAtomRefresh(composerPullRequests.detail(pullRequestTarget(params)));
+  const target = pullRequestTarget(params);
+  const refreshDetail = useAtomRefresh(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(pullRequestTarget(params)));
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -77,7 +79,9 @@ export function PullRequestReviewSheet({
 }: StaticScreenProps<PullRequestParams & { readonly mode: "review" | "comment" }>) {
   const params = route.params;
   const target = pullRequestTarget(params);
-  const result = useEnvironmentQuery(composerPullRequests.detail(target));
+  const result = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
   const { refresh: refreshDetail } = result;
   useFocusEffect(refreshDetail);
   const permissions = usePullRequestPermissions(params, result.data);
@@ -108,7 +112,8 @@ export function PullRequestReviewSheet({
     store.ready &&
     !uploading &&
     !store.busy &&
-    (!reviewing || (!stale && canSubmitComments)) &&
+    (!reviewing ||
+      (store.activityLoaded && store.activityError === null && !stale && canSubmitComments)) &&
     (reviewing
       ? verdict !== undefined &&
         (summaryRequired
@@ -221,15 +226,49 @@ export function PullRequestReviewSheet({
         </View>
       }
     >
-      {reviewing && offered.length > 1 ? (
-        <SegmentedControl
-          options={offered.map((option) => ({ value: option.value, label: option.title }))}
-          selected={verdict?.value ?? "comment"}
-          onSelect={(value) => {
-            if (!submission.busy) setRequestedVerdict(value);
-          }}
-          size="compact"
-        />
+      {store.legacyDraftAvailable ? (
+        <View className="gap-2 rounded-2xl bg-grouped-card p-4">
+          <Text className="text-sm text-foreground-muted">
+            Earlier drafts on this device have no account information. Restore them only if you
+            wrote them for {store.scope.viewer}.
+          </Text>
+          <Button
+            tone="text"
+            label="Restore my earlier drafts"
+            disabled={submission.busy || store.busy}
+            onPress={() =>
+              Alert.alert(
+                `Restore drafts for ${store.scope.viewer}?`,
+                "Only continue if you wrote these earlier drafts for this account. They will become available to this account on this device.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "I wrote these drafts",
+                    onPress: () => {
+                      void store.recoverLegacyDraft().then((saved) => {
+                        if (!saved)
+                          Alert.alert(
+                            "Could not restore the drafts",
+                            "The earlier drafts are kept on this device. Try again.",
+                          );
+                      });
+                    },
+                  },
+                ],
+              )
+            }
+          />
+        </View>
+      ) : null}
+      {reviewing && store.activityError ? (
+        <View className="gap-2">
+          <Text className="text-sm text-danger-foreground">{store.activityError}</Text>
+          <Button
+            label="Retry loading pending review"
+            tone="text"
+            onPress={store.refreshActivity}
+          />
+        </View>
       ) : null}
       <Text className="px-4 text-xs text-foreground-muted">
         {reviewing ? "Summary" : "Comment"}

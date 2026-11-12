@@ -339,6 +339,10 @@ describe("ReviewService", () => {
       assert.deepStrictEqual(mutations, ["restore"]);
       assert.deepStrictEqual(invalidations, [workspaceRoot]);
       assert.strictEqual(error._tag, "GitCommandError");
+      assert.strictEqual(
+        "operation" in error ? error.operation : undefined,
+        "ReviewService.revert.untracked",
+      );
       assert.include("detail" in error ? error.detail : "", "partially completed");
       assert.strictEqual("cause" in error ? error.cause : undefined, failure);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),

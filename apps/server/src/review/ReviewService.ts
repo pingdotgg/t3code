@@ -304,31 +304,46 @@ export const make = Effect.gen(function* () {
       .map((file) => `:(top,literal)${file}`);
     yield* Effect.gen(function* () {
       if (trackedPaths.length > 0)
-        yield* git.execute({
-          operation: "ReviewService.revert.restore",
-          cwd: input.cwd,
-          args: ["restore", "--worktree", "--", ...trackedPaths],
-        });
-      // Clean only the explicit selection. Indexed files (including staged additions) are kept.
-      yield* git.execute({
-        operation: "ReviewService.revert.untracked",
-        cwd: input.cwd,
-        args: ["clean", "-f", "--", ...paths],
-      });
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GitCommandError({
-            operation: "ReviewService.revert",
+        yield* git
+          .execute({
+            operation: "ReviewService.revert.restore",
             cwd: input.cwd,
-            command: "git restore / git clean",
-            detail:
-              "Revert may have partially completed. Some selected files could not be reverted.",
-            cause,
-          }),
-      ),
-      Effect.ensuring(workflow.invalidateLocalStatus(input.cwd)),
-    );
+            args: ["restore", "--worktree", "--", ...trackedPaths],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "ReviewService.revert.restore",
+                  cwd: input.cwd,
+                  command: "git restore",
+                  detail:
+                    "Revert may have partially completed. Some selected files could not be restored.",
+                  cause,
+                }),
+            ),
+          );
+      // Clean only the explicit selection. Indexed files (including staged additions) are kept.
+      yield* git
+        .execute({
+          operation: "ReviewService.revert.untracked",
+          cwd: input.cwd,
+          args: ["clean", "-f", "--", ...paths],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "ReviewService.revert.untracked",
+                cwd: input.cwd,
+                command: "git clean",
+                detail:
+                  "Revert may have partially completed. Some selected untracked files could not be removed.",
+                cause,
+              }),
+          ),
+        );
+    }).pipe(Effect.ensuring(workflow.invalidateLocalStatus(input.cwd)));
   });
   return ReviewService.of({
     getBranchCommits,

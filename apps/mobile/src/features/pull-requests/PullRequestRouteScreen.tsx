@@ -797,7 +797,11 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                           <View style={{ height: 44 }} />
                         )}
                       </View>
-                      <PullRequestDiffContent params={{ ...params, path: "" }} embedded />
+                      <PullRequestDiffContent
+                        params={{ ...params, path: "" }}
+                        embedded
+                        parentToolbarHeight={toolbarHeight}
+                      />
                     </View>
                   ) : (
                     <AnimatedLegendList
@@ -1079,10 +1083,12 @@ export function PullRequestDiffContent({
   params,
   embedded = false,
   onlyPaths,
+  parentToolbarHeight = 0,
 }: {
   params: PullRequestFileParams;
   embedded?: boolean;
   onlyPaths?: ReadonlyArray<string>;
+  parentToolbarHeight?: number;
 }) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
@@ -2098,7 +2104,12 @@ export function PullRequestDiffContent({
           pointerEvents="box-none"
           className="absolute right-4 left-4 flex-row items-center justify-end gap-2"
           style={{
-            bottom: (Platform.OS === "android" && !embedded ? toolbarHeight : insets.bottom) + 16,
+            bottom:
+              (Platform.OS === "android"
+                ? embedded
+                  ? parentToolbarHeight
+                  : toolbarHeight
+                : insets.bottom) + 16,
           }}
         >
           {canCommentOnDiff ? (

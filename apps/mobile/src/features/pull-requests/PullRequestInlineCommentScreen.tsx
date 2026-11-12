@@ -36,7 +36,6 @@ export type InlineCommentParams = PullRequestParams & {
   readonly startPosition?: PullRequestReviewPosition;
   readonly headSha: string;
   readonly code: string;
-  readonly body?: string;
 };
 export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<InlineCommentParams>) {
   const params = route.params;
@@ -49,7 +48,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const [commentId] = useState(() => params.draftId ?? uuidv4());
   const saved = store.comments.find((draft) => draft.id === commentId);
   const [editedBody, setBody] = useState<string | null>(null);
-  const body = editedBody ?? saved?.body ?? params.body ?? "";
+  const body = store.ready && !accountChanged ? (editedBody ?? saved?.body ?? "") : "";
   const pendingActions = usePendingReviewCommentActions(params);
   const updateComment = useAtomCommand(composerPullRequests.updateComment, {
     reportFailure: false,
@@ -63,7 +62,10 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         thread.comments.some((comment) => comment.id === saved.hostedComment?.commentId),
       )
     : undefined;
-  const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
+  const target = pullRequestTarget(params);
+  const detail = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const permissions = usePullRequestPermissions(params, detail.data);
@@ -76,7 +78,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       pending.current ||
       uploading ||
       store.busy ||
-      !store.ready ||
+      !store.isReady() ||
       accountChanged ||
       !body.trim() ||
       detail.isPending ||
@@ -105,7 +107,6 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         throw new Error("Wait for the pending comment to finish saving.");
       locked = true;
       if (hostedComment && saved && body !== saved.body) {
-        const target = pullRequestTarget(params);
         const result = await updateComment({
           ...target,
           input: {
@@ -132,9 +133,8 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         ...draft,
         comments: [...draft.comments.filter((comment) => comment.id !== commentId), comment],
       }));
-      await store.flush();
+      if (!(await store.flush())) throw new Error("Could not save the draft on this device.");
       if (!hostedComment && detail.data?.capabilities.review.draftComment === true) {
-        const target = pullRequestTarget(params);
         const result = await saveDraftComment({
           ...target,
           input: { ...target.input, comment },
@@ -146,7 +146,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
             entry.id === comment.id ? { ...entry, hostedComment: result.value } : entry,
           ),
         }));
-        await store.flush();
+        if (!(await store.flush())) throw new Error("Could not save the draft on this device.");
       }
       detail.refresh();
       navigation.goBack();
@@ -165,7 +165,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   };
   const agent = usePullRequestThreads(params, detail.data, params.path);
   const addToComposer = async () => {
-    if (accountChanged || !detail.data || !body.trim()) return;
+    if (!store.isReady() || accountChanged || !detail.data || !body.trim()) return;
     const added = await agent.addToComposer({
       context: pendingCommentComposerContext(detail.data, {
         path: params.path,
@@ -251,7 +251,9 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           editable={store.ready && !accountChanged && !busy && !store.busy}
           autoFocus
           value={body}
-          onChangeText={setBody}
+          onChangeText={(body) => {
+            if (store.ready && !accountChanged) setBody(body);
+          }}
           busy={busy}
           onBusyChange={setUploading}
           minimumHeight={72}

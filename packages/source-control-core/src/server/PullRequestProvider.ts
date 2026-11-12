@@ -538,11 +538,7 @@ export interface PullRequestProviderApi {
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 
-  /**
-   * Sends a whole review at once. Only called for a verdict the host declared in
-   * `capabilities.review.verdicts`, and with line comments only where it declared
-   * `inlineComment`.
-   */
+  /** Saves one pending comment privately on hosts with `capabilities.review.draftComment`. */
   readonly saveDraftComment?: (
     input: ProviderRepositoryRef & {
       readonly number: number;
@@ -553,6 +549,11 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number } & PullRequestDraftCommentLink,
   ) => Effect.Effect<void, PullRequestProviderError>;
 
+  /**
+   * Sends a whole review at once. Only called for a verdict the host declared in
+   * `capabilities.review.verdicts`, and with line comments only where it declared
+   * `inlineComment`.
+   */
   readonly submitReview: (
     input: ProviderRepositoryRef & {
       readonly number: number;

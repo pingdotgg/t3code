@@ -35,12 +35,29 @@ const removedHostComments = Atom.make<Readonly<Record<string, ReadonlyArray<stri
 
 const NO_RETIRED_COMMENTS: ReadonlyArray<string> = [];
 
-export function useRetiredReviewDraftCommentIds(params: PullRequestParams) {
-  const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
+function strictReviewDetailAtom(params: PullRequestParams) {
+  const target = pullRequestTarget(params);
+  return composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } });
+}
+
+function isCurrentReviewDraftScope(scope: ReviewDraftScope) {
+  const viewer = scope.viewer?.trim().toLowerCase();
+  if (!viewer) return false;
+  const result = appAtomRegistry.get(strictReviewDetailAtom(scope));
   return (
-    useAtomValue(removedHostComments)[pullRequestReviewKey(params, detail.data?.viewer ?? null)] ??
-    NO_RETIRED_COMMENTS
+    result._tag === "Success" &&
+    !result.waiting &&
+    result.value.viewer?.trim().toLowerCase() === viewer
   );
+}
+
+export function useRetiredReviewDraftCommentIds(params: PullRequestParams) {
+  const detail = useEnvironmentQuery(strictReviewDetailAtom(params));
+  const retired = useAtomValue(removedHostComments);
+  const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() : null;
+  return viewer
+    ? (retired[pullRequestReviewKey(params, viewer)] ?? NO_RETIRED_COMMENTS)
+    : NO_RETIRED_COMMENTS;
 }
 
 /** Keep a successful removal from reappearing in an older activity snapshot. */
@@ -66,6 +83,7 @@ export function retireReviewDraftComments(
 }
 
 export function setReviewDraftBusy(params: ReviewDraftScope, busy: boolean) {
+  if (busy && !isCurrentReviewDraftScope(params)) return false;
   const key = pullRequestReviewKey(params, params.viewer);
   const current = appAtomRegistry.get(operations);
   if (busy && current.has(key)) return false;
@@ -77,6 +95,7 @@ export function setReviewDraftBusy(params: ReviewDraftScope, busy: boolean) {
 }
 
 export function readReviewDraft(params: ReviewDraftScope) {
+  if (!isCurrentReviewDraftScope(params)) return EMPTY_REVIEW_DRAFT;
   return (
     appAtomRegistry.get(state).drafts[pullRequestReviewKey(params, params.viewer)] ??
     EMPTY_REVIEW_DRAFT
@@ -145,7 +164,7 @@ function updateReviewDraft(
 ) {
   const key = pullRequestReviewKey(params, params.viewer);
   const current = appAtomRegistry.get(state);
-  if (!current.ready) return;
+  if (!current.ready || !isCurrentReviewDraftScope(params)) return;
   appAtomRegistry.set(state, {
     ...current,
     drafts: { ...current.drafts, [key]: transform(current.drafts[key] ?? EMPTY_REVIEW_DRAFT) },
@@ -154,12 +173,66 @@ function updateReviewDraft(
   timer = setTimeout(() => void persist(), 200);
 }
 
+function appendRecoveredText(current: string, recovered: string) {
+  return current && recovered && !current.includes(recovered)
+    ? `${current}\n\n${recovered}`
+    : current || recovered;
+}
+
+async function recoverLegacyDraft(scope: ReviewDraftScope) {
+  if (!isCurrentReviewDraftScope(scope) || !setReviewDraftBusy(scope, true)) return false;
+  try {
+    const key = pullRequestReviewKey(scope, scope.viewer);
+    const legacyKey = pullRequestReviewKey(scope);
+    const current = appAtomRegistry.get(state);
+    const legacy = current.drafts[legacyKey];
+    if (!current.ready || !legacy) return false;
+    const draft = current.drafts[key] ?? EMPTY_REVIEW_DRAFT;
+    appAtomRegistry.set(state, {
+      ...current,
+      drafts: {
+        ...current.drafts,
+        [key]: {
+          summary: appendRecoveredText(draft.summary, legacy.summary),
+          comment: appendRecoveredText(draft.comment, legacy.comment),
+          comments: [
+            ...draft.comments,
+            ...legacy.comments.filter(
+              (comment) =>
+                !draft.comments.some(
+                  (existing) =>
+                    existing.id === comment.id ||
+                    (comment.hostedComment &&
+                      existing.hostedComment?.commentId === comment.hostedComment.commentId),
+                ),
+            ),
+          ],
+        },
+      },
+    });
+    if (!(await persist())) return false;
+    const saved = appAtomRegistry.get(state);
+    if (saved.drafts[legacyKey] === legacy) {
+      const { [legacyKey]: _legacy, ...drafts } = saved.drafts;
+      appAtomRegistry.set(state, { ...saved, drafts });
+      return await persist();
+    }
+    return true;
+  } finally {
+    setReviewDraftBusy(scope, false);
+  }
+}
+
 /** Comment menu actions subscribe without installing another app-state persistence listener. */
 export function usePullRequestReviewDraftCommands(params: ReviewDraftScope) {
+  const detail = useEnvironmentQuery(strictReviewDetailAtom(params));
+  const viewer =
+    !detail.isPending && !detail.error ? detail.data?.viewer?.trim().toLowerCase() : null;
   const snapshot = useAtomValue(state);
   const busyOperations = useAtomValue(operations);
   return {
-    ready: snapshot.ready,
+    ready: snapshot.ready && Boolean(viewer) && viewer === params.viewer?.trim().toLowerCase(),
+    isReady: () => appAtomRegistry.get(state).ready && isCurrentReviewDraftScope(params),
     busy: busyOperations.has(pullRequestReviewKey(params, params.viewer)),
     update: (transform: (current: ReviewDraft) => ReviewDraft) =>
       updateReviewDraft(params, transform),
@@ -171,16 +244,18 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
   const snapshot = useAtomValue(state);
   const busyOperations = useAtomValue(operations);
   const target = pullRequestTarget(params);
-  const detail = useEnvironmentQuery(composerPullRequests.detail(target));
-  const scope = { ...params, viewer: detail.data?.viewer ?? null };
+  const detail = useEnvironmentQuery(strictReviewDetailAtom(params));
+  const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() || null : null;
+  const scope = { ...params, viewer };
   const key = pullRequestReviewKey(scope, scope.viewer);
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const retiredIds = useAtomValue(removedHostComments)[key];
-  const draft = snapshot.drafts[key] ?? EMPTY_REVIEW_DRAFT;
+  const draft = viewer ? (snapshot.drafts[key] ?? EMPTY_REVIEW_DRAFT) : EMPTY_REVIEW_DRAFT;
+  const activityThreads = viewer ? activity.data?.reviewThreads : undefined;
   const headSha = detail.data?.headSha;
   const comments = useMemo(() => {
     const retired = new Set(retiredIds);
-    for (const thread of activity.data?.reviewThreads ?? []) {
+    for (const thread of activityThreads ?? []) {
       for (const comment of thread.comments)
         if (!comment.pendingReviewId || thread.line === null) retired.add(comment.id);
     }
@@ -188,17 +263,17 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
       (comment) => !comment.hostedComment || !retired.has(comment.hostedComment.commentId),
     );
     const localIds = new Set(local.map((comment) => comment.hostedComment?.commentId));
-    const remote = pendingReviewCommentsFromThreads(activity.data?.reviewThreads ?? [])
+    const remote = pendingReviewCommentsFromThreads(activityThreads ?? [])
       .filter((comment) => !localIds.has(comment.id) && !retired.has(comment.id))
       .map((comment) => ({ ...comment, headSha: headSha ?? "", code: "" }));
     return remote.length ? [...local, ...remote] : local;
-  }, [draft.comments, activity.data?.reviewThreads, headSha, retiredIds]);
+  }, [draft.comments, activityThreads, headSha, retiredIds]);
   const grouped = useMemo(
-    () => groupPendingReviewComments(activity.data?.reviewThreads ?? [], comments),
-    [activity.data?.reviewThreads, comments],
+    () => groupPendingReviewComments(activityThreads ?? [], comments),
+    [activityThreads, comments],
   );
   const threads = grouped.threads;
-  const identity = pendingReviewIdentityFromThreads(activity.data?.reviewThreads ?? [], retiredIds);
+  const identity = pendingReviewIdentityFromThreads(activityThreads ?? [], retiredIds);
   const pendingReviewId =
     comments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
     identity.pendingReviewId;
@@ -218,16 +293,19 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
   return {
     scope,
     draft,
+    legacyDraftAvailable: Boolean(scope.viewer && snapshot.drafts[pullRequestReviewKey(params)]),
+    recoverLegacyDraft: () => recoverLegacyDraft(scope),
     comments,
     ungroupedComments: grouped.pendingComments,
     threads,
-    activityLoaded: activity.data !== null,
+    activityLoaded: Boolean(viewer) && activity.data !== null,
     activityError: activity.error,
     refreshActivity: activity.refresh,
     pendingReviewId,
     outdatedComments: identity.outdatedComments,
     busy: busyOperations.has(key),
-    ready: snapshot.ready && detail.data !== null && detail.error === null,
+    ready: snapshot.ready && Boolean(viewer),
+    isReady: () => appAtomRegistry.get(state).ready && isCurrentReviewDraftScope(scope),
     error: snapshot.error,
     update,
     flush: persist,

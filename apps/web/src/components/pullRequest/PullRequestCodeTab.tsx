@@ -194,6 +194,7 @@ const REPLACE_FILE_COUNTS_CSS = `
 
 /** Nothing loaded yet, as one identity, so the memos below do not see a new array every render. */
 const NO_SLICES: ReadonlyArray<DiffSlice> = [];
+const NO_PENDING_COMMENTS: ReadonlyArray<PendingReviewComment> = [];
 
 // Query results outlive the panel's slices, so their parses survive closing and reopening
 // without retaining anything beyond the query cache's lifetime.
@@ -600,8 +601,18 @@ function PullRequestCodeTab({
     }),
   );
   const reviewKey = usePullRequestReviewKey(environmentId, reference);
-  const pendingComments = usePendingReviewComments(reviewKey, detail.reviewThreads);
-  const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
+  const [editingReviewKey, setEditingReviewKey] = useState(reviewKey);
+  if (editingReviewKey !== reviewKey) {
+    setEditingReviewKey(reviewKey);
+    setDraft(null);
+    setSelectedLines(null);
+  }
+  const storedPendingComments = usePendingReviewComments(reviewKey, detail.reviewThreads);
+  const { add: addComment, ready: reviewReady } = usePendingReviewCommentActions(
+    environmentId,
+    reference,
+  );
+  const pendingComments = reviewReady ? storedPendingComments : NO_PENDING_COMMENTS;
   const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
     reportFailure: false,
   });
@@ -636,10 +647,10 @@ function PullRequestCodeTab({
   })();
   // A comment is posted against the pull request's head diff, so a line number taken from one
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
-  const canCommentOnLines = review.inlineComment && commit === null;
+  const canCommentOnLines = reviewReady && review.inlineComment && commit === null;
   const rangeComments = detail.capabilities.review.rangeComment === true;
   const canSelectLines =
-    commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
+    commit === null && (canCommentOnLines || onAddToAgentSelection !== undefined);
   const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
     loadedSlices,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${groupByType}`,
@@ -1071,11 +1082,11 @@ function PullRequestCodeTab({
   const answeredReveal = useRef<number | null>(null);
   const answerReveal = useEffectEvent(() => {
     if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
-    if (diffQuery.isPending && files.length === 0) return;
+    if (diffQuery.isPending || diffQuery.error !== null) return;
     if (
       revealRequest.threadId &&
       !placedThreadIds.has(revealRequest.threadId) &&
-      !canLoadNextSlice
+      nextCursor === null
     ) {
       setOrphansOpen(true);
       scrollElement.current?.scrollTo({ top: 0 });
@@ -1103,8 +1114,17 @@ function PullRequestCodeTab({
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- A reveal may open its conversation or advance the diff cursor.
     answerReveal();
+  }, [
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-check the external reveal as its files and conversations load.
-  }, [canLoadNextSlice, diffQuery.isPending, files, filteredFiles, placedThreadIds, revealRequest]);
+    canLoadNextSlice,
+    diffQuery.isPending,
+    diffQuery.error,
+    nextCursor,
+    files,
+    filteredFiles,
+    placedThreadIds,
+    revealRequest,
+  ]);
 
   const toggleAllFiles = () => {
     // Held as an override of the default rather than as the file keys on screen: a diff that is
@@ -1262,8 +1282,8 @@ function PullRequestCodeTab({
     themeType: resolvedTheme,
     stickyHeaders: true,
     loadDiffFiles,
-    enableGutterUtility: canCommentOnLines && draft === null,
-    enableLineSelection: canCommentOnLines && draft === null,
+    enableGutterUtility: canSelectLines && draft === null,
+    enableLineSelection: canSelectLines && draft === null,
     // Two gestures reach the same place: dragging the line numbers selects a range, and the
     // gutter's own button comments on the one line it sits on. They are separate callbacks in
     // the viewer, so a reader who only ever presses the button gets nothing unless both are
@@ -1373,7 +1393,11 @@ function PullRequestCodeTab({
   const renderAnnotation = (...[annotation]: CodeViewAnnotationArgs<ReviewAnnotationGroup>) => (
     // Folded resolved conversations alone add no row, so the code reads straight through.
     <div className="relative font-sans text-foreground has-[>:not([data-resolved-threads])]:py-1">
-      <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />
+      <InlineReviewThreads
+        threads={annotation.metadata.threads}
+        renderThread={renderThreadCard}
+        revealedThreadId={revealRequest?.threadId}
+      />
       {annotation.metadata.pending.map((comment) => (
         <PendingReviewCommentCard
           key={comment.id}
@@ -1390,7 +1414,7 @@ function PullRequestCodeTab({
         <DiffCommentAnnotation
           environmentId={environmentId}
           projectId={reference.projectId}
-          ownerKey={JSON.stringify([environmentId, pullRequestReviewKey(reference), draft])}
+          ownerKey={JSON.stringify([reviewKey, draft])}
           kind="draft"
           renderAttachments={(onTextChange, onBusyChange, textarea) => (
             <PullRequestAttachments

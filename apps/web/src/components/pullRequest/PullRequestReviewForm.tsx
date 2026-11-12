@@ -1,5 +1,5 @@
 import { pendingReviewIdentityFromThreads } from "@t3tools/client-runtime/review-editing";
-import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
+import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import { PullRequestAttachments } from "./PullRequestAttachments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -96,7 +96,10 @@ export function PullRequestReviewForm({
   const { busy: draftBusy } = usePendingReviewCommentActions(environmentId, reference);
   const [uploading, setUploading] = useState(false);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
-  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const { key: reviewKey, ready: reviewReady } = usePullRequestReviewScope(
+    environmentId,
+    reference,
+  );
   const comments = usePendingReviewComments(reviewKey, reviewThreads);
   const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
   const remoteIdentity = pendingReviewIdentityFromThreads(reviewThreads, removedIds);
@@ -106,17 +109,21 @@ export function PullRequestReviewForm({
   // The panel stays mounted while the selected pull request changes. Keeping summaries beside
   // the keyed line-comment drafts makes the selected pull request's body correct on the first
   // render, before an effect could reset state left behind by the previous one.
-  const body = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
+  const storedBody = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
+  const body = reviewReady ? storedBody : "";
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
+  const updateSummary = (text: string) => {
+    if (reviewReady) setSummary(reviewKey, text);
+  };
   const speech = useTextFieldSpeech({
     environmentId,
     projectId: reference.projectId,
     ownerKey: JSON.stringify(["pr-review", environmentId, reviewKey]),
     text: body,
     textareaRef,
-    onTextChange: (text) => setSummary(reviewKey, text),
-    disabled: !active || pending,
+    onTextChange: updateSummary,
+    disabled: !reviewReady || !active || pending,
   });
   const { cancel } = speech;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards a recording when the hidden form can no longer be submitted
@@ -147,6 +154,7 @@ export function PullRequestReviewForm({
       submittedComments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
       identity.pendingReviewId;
     if (
+      !reviewReady ||
       pending ||
       uploading ||
       draftBusy ||
@@ -230,13 +238,13 @@ export function PullRequestReviewForm({
       <PullRequestMarkdownTextarea
         ref={textareaRef}
         completionScope={completionScope}
-        disabled={pending || uploading || draftBusy}
+        disabled={!reviewReady || pending || uploading || draftBusy}
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
-        onValueChange={(next) => setSummary(reviewKey, next)}
+        onValueChange={updateSummary}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
           if (
@@ -252,17 +260,17 @@ export function PullRequestReviewForm({
       <PullRequestAttachments
         environmentId={environmentId}
         reference={reference}
-        disabled={pending}
+        disabled={!reviewReady || pending}
         onBusyChange={setUploading}
         textareaRef={textareaRef}
-        onTextChange={(text) => setSummary(reviewKey, text)}
+        onTextChange={updateSummary}
       />
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} disabled={pending} />
+        <TextFieldSpeechControls speech={speech} disabled={!reviewReady || pending} />
         {offered.length > 1 ? (
           <Select
             value={selectedVerdict?.value ?? null}
-            disabled={pending || uploading || draftBusy}
+            disabled={!reviewReady || pending || uploading || draftBusy}
             onValueChange={(value) => {
               if (value !== null) setRequestedVerdict(value);
             }}
@@ -288,6 +296,7 @@ export function PullRequestReviewForm({
         <Button
           size="xs"
           disabled={
+            !reviewReady ||
             speech.preparing ||
             pending ||
             uploading ||

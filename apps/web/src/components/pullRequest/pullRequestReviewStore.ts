@@ -15,6 +15,7 @@ import type {
 import { create } from "zustand";
 
 export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
+export type PendingReviewDiscardTarget = Pick<PendingReviewComment, "id" | "hostedComment">;
 
 // Content-derived ids can collide across comments; use a counter.
 let pendingCommentSequence = 0;
@@ -47,6 +48,7 @@ interface PullRequestReviewStoreState {
     id: string,
     hosted: NonNullable<PendingReviewComment["hostedComment"]>,
   ) => void;
+  readonly updateHostedCommentBody: (key: string, commentId: string, body: string) => void;
   readonly summaries: Readonly<Record<string, string>>;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
   readonly removeComment: (key: string, commentId: string) => void;
@@ -82,6 +84,15 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
         ...state.drafts,
         [key]: (state.drafts[key] ?? []).map((comment) =>
           comment.id === id ? { ...comment, hostedComment } : comment,
+        ),
+      },
+    })),
+  updateHostedCommentBody: (key, commentId, body) =>
+    set((state) => ({
+      drafts: {
+        ...state.drafts,
+        [key]: (state.drafts[key] ?? []).map((comment) =>
+          comment.hostedComment?.commentId === commentId ? { ...comment, body } : comment,
         ),
       },
     })),
@@ -183,4 +194,36 @@ export function mergePendingReviewComments(
     (comment) => !retired.has(comment.id) && !localHostIds.has(comment.id),
   );
   return remote.length ? [...remaining, ...remote] : remaining;
+}
+
+export function pendingReviewDiscardTargets(
+  comments: ReadonlyArray<PendingReviewComment>,
+  threads: ReadonlyArray<PullRequestReviewThread>,
+  removedIds: ReadonlyArray<string> = [],
+): ReadonlyArray<PendingReviewDiscardTarget> {
+  const represented = new Set([
+    ...removedIds,
+    ...comments.flatMap((comment) =>
+      comment.hostedComment ? [comment.hostedComment.commentId] : [],
+    ),
+  ]);
+  return [
+    ...comments,
+    ...threads.flatMap((thread) =>
+      thread.comments.flatMap((comment) => {
+        if (!comment.pendingReviewId || !comment.url || represented.has(comment.id)) return [];
+        represented.add(comment.id);
+        return [
+          {
+            id: comment.id,
+            hostedComment: {
+              reviewId: comment.pendingReviewId,
+              commentId: comment.id,
+              url: comment.url,
+            },
+          },
+        ];
+      }),
+    ),
+  ];
 }

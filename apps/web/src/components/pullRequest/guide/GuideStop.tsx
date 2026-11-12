@@ -80,25 +80,27 @@ export function GuideStop({
 }) {
   const { resolvedTheme } = useTheme();
   const { byExcerpt } = letterStopNotes(stop);
-  const otherFiles = stopFilePaths(stop).map((path) => ({
-    path,
-    note: stop.files.find((file) => file.path === path)?.note,
-  }));
+  const excerptPaths = new Set(stop.excerpts.map((excerpt) => excerpt.path));
+  const otherFiles = stopFilePaths(stop)
+    .filter((path) => !excerptPaths.has(path))
+    .map((path) => ({ path, note: stop.files.find((file) => file.path === path)?.note }));
 
   const [filePanels, setFilePanels] = useState<Record<string, { viewed: boolean; open: boolean }>>(
     {},
   );
 
   const reviewCheckboxPrefix = useId();
-  const fileRows = useRef(new Map<string, HTMLLIElement>());
+  const fileRows = useRef(new Map<string, HTMLElement>());
   useImperativeHandle(
     navigationRef,
     () => ({
       revealFile: (path) => {
-        setFilePanels((current) => ({
-          ...current,
-          [path]: { viewed: isViewed(path), open: true },
-        }));
+        if (!excerptPaths.has(path)) {
+          setFilePanels((current) => ({
+            ...current,
+            [path]: { viewed: isViewed(path), open: true },
+          }));
+        }
         requestAnimationFrame(() => {
           const row = fileRows.current.get(path);
           const scroller = row?.closest("[data-guide-diff-scroll]");
@@ -111,7 +113,7 @@ export function GuideStop({
         });
       },
     }),
-    [isViewed],
+    [isViewed, excerptPaths],
   );
 
   return (
@@ -131,22 +133,33 @@ export function GuideStop({
         <div className="flex min-w-0 flex-col gap-4">
           <DiffWorkerPoolProvider>
             {stop.excerpts.map((excerpt, excerptIndex) => (
-              <GuideExcerpt
+              <div
                 key={`${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}`}
-                excerpt={excerpt}
-                file={files.get(excerpt.path) ?? null}
-                loading={diffLoading}
-                notes={byExcerpt[excerptIndex] ?? []}
-                commenting={commenting}
-                loadDiffFiles={loadDiffFiles}
-                onOpenFile={onOpenFile}
-                viewed={isViewed(excerpt.path)}
-                onSetViewed={
-                  onSetViewed && files.get(excerpt.path)?.newObjectId
-                    ? (value) => onSetViewed([excerpt.path], value)
-                    : null
-                }
-              />
+                ref={(node) => {
+                  if (
+                    stop.excerpts.findIndex((entry) => entry.path === excerpt.path) !== excerptIndex
+                  )
+                    return;
+                  if (node !== null) fileRows.current.set(excerpt.path, node);
+                  else fileRows.current.delete(excerpt.path);
+                }}
+              >
+                <GuideExcerpt
+                  excerpt={excerpt}
+                  file={files.get(excerpt.path) ?? null}
+                  loading={diffLoading}
+                  notes={byExcerpt[excerptIndex] ?? []}
+                  commenting={commenting}
+                  loadDiffFiles={loadDiffFiles}
+                  onOpenFile={onOpenFile}
+                  viewed={isViewed(excerpt.path)}
+                  onSetViewed={
+                    onSetViewed && files.get(excerpt.path)?.newObjectId
+                      ? (value) => onSetViewed([excerpt.path], value)
+                      : null
+                  }
+                />
+              </div>
             ))}
           </DiffWorkerPoolProvider>
         </div>
@@ -297,10 +310,12 @@ export function GuideStop({
 
       <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 p-4">
         {nextTitle !== null ? (
-          <Button className="min-w-0" onClick={() => onStep(1)}>
-            <span className="min-w-0 truncate">Next: {nextTitle}</span>
-            <ArrowRightIcon aria-hidden />
-          </Button>
+          <div className="min-w-0 [&>button]:max-w-full">
+            <Button onClick={() => onStep(1)}>
+              <span className="min-w-0 truncate">Next: {nextTitle}</span>
+              <ArrowRightIcon aria-hidden />
+            </Button>
+          </div>
         ) : onFinish !== null ? (
           <Button onClick={onFinish}>
             <MessageSquareIcon aria-hidden />

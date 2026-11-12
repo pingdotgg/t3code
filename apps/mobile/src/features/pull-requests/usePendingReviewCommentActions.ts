@@ -17,8 +17,11 @@ import {
 /** A copied link saves a private GitHub draft; discard and submit retain that host identity. */
 export function usePendingReviewCommentActions(params: PullRequestParams) {
   const target = pullRequestTarget(params);
-  const detail = useEnvironmentQuery(composerPullRequests.detail(target));
-  const scope = { ...params, viewer: detail.data?.viewer ?? null };
+  const detail = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
+  const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() || null : null;
+  const scope = { ...params, viewer };
   const store = usePullRequestReviewDraftCommands(scope);
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const canSave = useAtomValue(
@@ -30,7 +33,7 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
   const save = useAtomCommand(composerPullRequests.saveDraftComment, { reportFailure: false });
   const remove = useAtomCommand(composerPullRequests.discardDraftComment, { reportFailure: false });
   const copyLink = async (given: PendingReviewComment) => {
-    if (!store.ready || detail.data === null || detail.error) return;
+    if (!store.isReady() || detail.data === null || detail.error) return;
     const comment = readReviewDraft(scope).comments.find((entry) => entry.id === given.id) ?? given;
     if (comment.hostedComment) {
       await Clipboard.setStringAsync(comment.hostedComment.url);
@@ -62,7 +65,7 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
       });
   };
   const discard = async (given: PendingReviewComment) => {
-    if (!store.ready || detail.data === null || detail.error) return false;
+    if (!store.isReady() || detail.data === null || detail.error) return false;
     const comment = readReviewDraft(scope).comments.find((entry) => entry.id === given.id) ?? given;
     if (!setReviewDraftBusy(scope, true)) return false;
     return await (async () => {
@@ -107,7 +110,7 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
   return {
     busy: store.busy,
     canSave: store.ready && canSave && detail.data?.capabilities.review.draftComment === true,
-    canDiscard,
+    canDiscard: store.ready && canDiscard,
     copyLink,
     discard,
   };
