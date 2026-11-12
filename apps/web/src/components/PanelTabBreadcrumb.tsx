@@ -11,6 +11,8 @@ export interface PanelTabSlots {
   readonly breadcrumb: HTMLElement | null;
   readonly actions: HTMLElement | null;
   readonly registerActions: () => () => void;
+  /** The breadcrumb sits on the pane's bar beside the tabs, not in the tab. */
+  readonly breadcrumbOnBar?: boolean;
 }
 
 export const PanelTabSlotsContext = createContext<PanelTabSlots | null>(null);
@@ -21,6 +23,11 @@ export const PanelTabSlotsContext = createContext<PanelTabSlots | null>(null);
  */
 export function useInPanelTabBar(): boolean {
   return useContext(PanelTabSlotsContext) !== null;
+}
+
+/** The breadcrumb shares the pane's bar with its tabs, so it gives up room first. */
+export function usePanelTabBreadcrumbOnBar(): boolean {
+  return useContext(PanelTabSlotsContext)?.breadcrumbOnBar === true;
 }
 
 export function usePanelTabActionsHost(): {
