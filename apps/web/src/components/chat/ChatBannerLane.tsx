@@ -20,7 +20,6 @@ export function ChatBannerLane(props: {
   environmentId: EnvironmentId;
   providerStatus: ServerProvider | null;
   providerStatusDismissalKey: string | null;
-  setProviderStatusBannerDismissTick: Dispatch<SetStateAction<number>>;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   threadId: ThreadId;
   threadError: string | null;
@@ -33,7 +32,6 @@ export function ChatBannerLane(props: {
   const {
     providerStatus,
     providerStatusDismissalKey,
-    setProviderStatusBannerDismissTick,
     onOpenProviderSetup,
     threadId,
     threadError,
@@ -48,10 +46,7 @@ export function ChatBannerLane(props: {
       <ProviderStatusBanner
         environmentId={props.environmentId}
         status={providerStatus}
-        onDismiss={() => {
-          dismissProviderStatusBannerForSession(providerStatusDismissalKey);
-          setProviderStatusBannerDismissTick((tick) => tick + 1);
-        }}
+        onDismiss={() => dismissProviderStatusBannerForSession(providerStatusDismissalKey)}
         onOpenProviderSetup={onOpenProviderSetup}
       />
       <ThreadErrorBanner

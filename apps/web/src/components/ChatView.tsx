@@ -309,8 +309,8 @@ import {
 } from "./BranchToolbar.logic";
 import {
   getProviderStatusDismissalKey,
-  isProviderStatusBannerDismissedForSession,
   shouldShowProviderStatusBanner,
+  useProviderStatusBannerDismissed,
 } from "./chat/ProviderStatusBanner";
 import {
   getThreadErrorBannerKey,
@@ -1708,13 +1708,13 @@ export default function ChatView(props: ChatViewProps) {
     providerEnvironmentId,
     activeProviderStatus,
   );
+  const providerStatusDismissed = useProviderStatusBannerDismissed(providerStatusDismissalKey);
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
-    isProviderStatusBannerDismissedForSession(providerStatusDismissalKey),
+    providerStatusDismissed,
   )
     ? activeProviderStatus
     : null;
-  const [, setProviderStatusBannerDismissTick] = useState(0);
   const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
@@ -3377,7 +3377,6 @@ export default function ChatView(props: ChatViewProps) {
               environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}
               providerStatusDismissalKey={providerStatusDismissalKey}
-              setProviderStatusBannerDismissTick={setProviderStatusBannerDismissTick}
               onOpenProviderSetup={openProviderSetupStable}
               threadId={activeThread.id}
               threadError={timelineThreadError}
