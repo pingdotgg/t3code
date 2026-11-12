@@ -59,6 +59,20 @@ describe("parseCodexLine", () => {
         info: { last_token_usage: last, total_token_usage: total, ...extra },
       },
     });
+  const usage = (input: number, cached: number, output: number, reasoning = 0) => ({
+    input_tokens: input,
+    cached_input_tokens: cached,
+    cache_write_input_tokens: 0,
+    output_tokens: output,
+    reasoning_output_tokens: reasoning,
+    total_tokens: input + output,
+  });
+  // A snapshot from a session whose compaction rewound the cumulative counters.
+  const rewound = (
+    timestamp: string,
+    last: readonly [number, number, number, number],
+    total: readonly [number, number, number, number],
+  ) => counted(usage(...last), usage(...total)).replace("2026-08-01T05:17:49.919Z", timestamp);
 
   it("attributes usage to the model from the preceding turn context", () => {
     const state = initialCodexScanState();
@@ -591,6 +605,104 @@ describe("parseCodexLine", () => {
       processed: [120, 120, 120, 35],
       skipped: 0,
     });
+  });
+
+  // Both records below are taken from sessions that dropped one request each after compaction.
+  const compactedSep06 = [
+    // 2026-09-06T20:38:24.552Z: 4,280,396 tokens before the session compacted.
+    rewound("2026-09-06T20:38:24.552Z", [73869, 72448, 456, 13], [4252914, 3953024, 27482, 2045]),
+    // 2026-09-06T21:10:04.346Z: the snapshot rewinds to 3,621,978 and still counts this request.
+    rewound("2026-09-06T21:10:04.346Z", [77213, 74240, 121, 0], [3597853, 3370880, 24125, 1750]),
+    // 2026-09-06T21:10:15.589Z: the next snapshot reconciles against the rewound baseline.
+    rewound("2026-09-06T21:10:15.589Z", [77371, 77056, 202, 0], [3675224, 3447936, 24327, 1750]),
+  ];
+
+  it("bills the request a compaction's counter rewind reports", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const processed = compactedSep06.map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [74325, 77334, 77573], skipped: 0 });
+  });
+
+  // A later turn continues from an earlier snapshot in the same rollout.
+  it("bills a request that rewinds to a snapshot from a previous turn", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const lines = [
+      ["2026-11-02T10:00:01.000Z", counters(1000, 200), counters(1000, 200)],
+      ["2026-11-02T10:00:02.000Z", counters(100, 20), counters(1100, 220)],
+      ["2026-11-02T10:00:03.000Z", counters(300, 50), counters(1400, 270)],
+      // Continues from the 10:00:02 snapshot: 1,560 cumulative minus 240 reports 1,320.
+      ["2026-11-02T12:00:00.000Z", counters(200, 40), counters(1300, 260)],
+    ] as const;
+    const processed = lines.map(([timestamp, last, total]) => {
+      const record = parseCodexLine(
+        counted(last, total).replace("2026-08-01T05:17:49.919Z", timestamp),
+        state,
+      );
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [1200, 120, 350, 240], skipped: 0 });
+  });
+
+  it("bills a second rewind in the same session and survives a rescan", () => {
+    const scan = () => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      const processed = [
+        counted(counters(100, 20), counters(100, 20)),
+        counted(counters(30, 5), counters(60, 10)),
+        counted(counters(10, 2), counters(20, 4)),
+        counted(counters(5, 1), counters(25, 5)),
+      ].map((line) => {
+        const record = parseCodexLine(line, state);
+        return record === null ? 0 : totalTokens(record.totals);
+      });
+      return { processed, skipped: codexUsageFormat.readMalformedRecords?.(state) };
+    };
+
+    expect(scan()).toEqual({ processed: [120, 35, 12, 6], skipped: 0 });
+    expect(scan()).toEqual(scan());
+  });
+
+  it("bills a rewound request only when its snapshot contains it", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    // The snapshot is behind the request it reports, so it cannot be a baseline for that request.
+    expect(parseCodexLine(counted(counters(30, 5), counters(10, 2)), state)).toBeNull();
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+  });
+
+  it("does not bill a stale snapshot whose timestamp goes back", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    // A replayed request from before the current baseline, not a rewind.
+    expect(
+      parseCodexLine(
+        counted(counters(30, 5), counters(50, 10)).replace(
+          "2026-08-01T05:17:49.919Z",
+          "2026-08-01T05:16:49.919Z",
+        ),
+        state,
+      ),
+    ).toBeNull();
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(
+      parseCodexLine(counted(counters(10, 2), counters(60, 12)), state)?.totals.outputTokens,
+    ).toBe(2);
   });
 
   it.each([

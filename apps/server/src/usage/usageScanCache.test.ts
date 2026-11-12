@@ -268,6 +268,42 @@ describe("scan cache round trip", () => {
     });
   });
 
+  it("re-parses a v14 Codex transcript whose cached rewind was counted as malformed", () => {
+    const entry: CachedFile = {
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords: 1,
+      position: position({ state: initialCodexScanState() }),
+    };
+    const clean = { ...entry, malformedRecords: 0 };
+    const original: ScanCache = new Map([
+      ["/codex.jsonl", entry],
+      ["/clean-codex.jsonl", clean],
+    ]);
+    const v14 = { ...parse(makeScanCacheWriter()(original, {})), version: 14 };
+
+    // A malformed Codex entry from the current released version re-parses the whole file once.
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v14)), TEST_FORMAT_MAP);
+    expect(restored.get("/codex.jsonl")).toEqual({
+      ...entry,
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    // A clean v14 entry stays warm.
+    expect(restored.get("/clean-codex.jsonl")).toEqual(clean);
+
+    // The repaired entry keeps its position, so the next start resumes instead of re-parsing.
+    const repaired: ScanCache = new Map([["/codex.jsonl", { ...entry, malformedRecords: 0 }]]);
+    const next = decodeScanCache(
+      JSON.parse(JSON.stringify(parse(makeScanCacheWriter()(repaired, {})))),
+      TEST_FORMAT_MAP,
+    );
+    expect(next.get("/codex.jsonl")).toEqual({ ...entry, malformedRecords: 0 });
+  });
+
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
     const cache = cacheWith([
