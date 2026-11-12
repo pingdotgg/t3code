@@ -9,6 +9,7 @@ import { NativeLayoutObserver } from "./NativeLayoutObserver";
 export function NativeColumnContent(props: {
   readonly children: ReactNode;
   readonly primary?: boolean;
+  readonly insetTop?: boolean;
   readonly insetHorizontally?: boolean;
   readonly backgroundColor?: ColorValue;
 }) {
@@ -22,17 +23,23 @@ export function NativeColumnContent(props: {
     >
       <SafeAreaProvider style={{ flex: 1 }}>
         <SafeAreaView
-          edges={props.insetHorizontally === false ? [] : ["left", "right"]}
+          edges={{
+            top: props.insetTop === false ? "off" : "additive",
+            left: props.insetHorizontally === false ? "off" : "additive",
+            right: props.insetHorizontally === false ? "off" : "additive",
+          }}
           style={{ flex: 1 }}
         >
-          {/* Observe the inset body. UIKit can reserve other columns in its safe area. */}
-          <View style={{ flex: 1 }}>
-            <NativeLayoutObserver onChange={setMetrics} />
-            <NativeColumnLayoutMetricsContext value={metrics}>
-              <HeaderHeightContext value={metrics?.safeArea.top ?? undefined}>
-                {props.children}
-              </HeaderHeightContext>
-            </NativeColumnLayoutMetricsContext>
+          <View className="flex-1 overflow-hidden">
+            {/* Descendants measure the inset body so they don't reserve the native bar twice. */}
+            <SafeAreaProvider style={{ flex: 1 }}>
+              <NativeLayoutObserver onChange={setMetrics} />
+              <NativeColumnLayoutMetricsContext value={metrics}>
+                <HeaderHeightContext value={metrics?.safeArea.top ?? undefined}>
+                  {props.children}
+                </HeaderHeightContext>
+              </NativeColumnLayoutMetricsContext>
+            </SafeAreaProvider>
           </View>
         </SafeAreaView>
       </SafeAreaProvider>
