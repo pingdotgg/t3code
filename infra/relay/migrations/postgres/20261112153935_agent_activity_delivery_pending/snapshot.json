@@ -1,0 +1,37 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "349f2f8d-d3fa-4ced-b816-182ab68e79b3",
+  "prevIds": ["2610035a-6d8b-403c-8e02-7a174c4dd0f2"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_agent_activity_rows", "delivery_pending"],
+      "writes": [
+        "s|col|public.relay_agent_activity_rows.delivery_pending",
+        "n|col|public.relay_agent_activity_rows.delivery_pending",
+        "e|col|public.relay_agent_activity_rows.delivery_pending"
+      ],
+      "reads": ["n|tbl|public.relay_agent_activity_rows", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_agent_activity_rows",
+        "name": "delivery_pending",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

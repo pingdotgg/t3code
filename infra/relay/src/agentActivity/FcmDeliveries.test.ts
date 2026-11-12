@@ -133,6 +133,7 @@ function harness() {
       upsert: () => Effect.succeed(true),
       remove: () => Effect.void,
       pruneTerminal: () => Effect.void,
+      acknowledgeDelivery: () => Effect.void,
       listForUser: () =>
         Effect.sync(() =>
           current.linked
@@ -298,17 +299,17 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect.each(["completed", "waiting_for_approval", "waiting_for_input", "failed"] as const)(
-    "deleting one thread preserves another thread's %s alert",
-    (phase) => {
+  it.effect.each([false, true])(
+    "deletion or replay preserves another thread's completion alert: replay=%s",
+    (replay) => {
       const h = harness();
       h.current.otherStates = [secondState];
       return Effect.gen(function* () {
         const delivery = yield* FcmDeliveries.FcmDeliveries;
         yield* delivery.process(h.job);
         h.current.otherStates = [];
-        h.current.state = { ...state, phase };
-        yield* delivery.enqueue({ target, state: null });
+        h.current.state = { ...state, phase: "completed" };
+        yield* delivery.enqueue({ target, state: replay ? secondState : null, replay });
         yield* delivery.process(h.queued[0]);
         expect(h.sent.at(-1)?.alert).toBe(false);
         yield* delivery.process({ ...h.job, state: h.current.state });
@@ -319,19 +320,23 @@ describe("Android delivery routing", () => {
     },
   );
 
-  it.effect("registration replay establishes a baseline without alerting", () => {
-    const h = harness();
-    h.current.state = { ...state, phase: "waiting_for_approval" };
-    h.current.otherStates = [{ ...secondState, phase: "waiting_for_input" }];
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.enqueue({ target, state: null, replay: true });
-      yield* delivery.process(h.queued[0]);
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent.every((message) => !message.alert)).toBe(true);
-      expect(h.marked[0]?.aggregate?.activities).toHaveLength(2);
-    }).pipe(Effect.provide(h.layer));
-  });
+  it.effect.each([false, true])(
+    "registration replay only acknowledges work present when queued: completion=%s",
+    (completeWhileQueued) => {
+      const h = harness();
+      h.current.state = { ...state, phase: "waiting_for_approval" };
+      h.current.otherStates = [{ ...secondState, phase: "waiting_for_input" }];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.enqueue({ target, state: null, replay: true });
+        if (completeWhileQueued) h.current.state = { ...state, phase: "completed" };
+        yield* delivery.process(h.queued[0]);
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(completeWhileQueued ? 1 : 0);
+        expect(h.marked[0]?.aggregate?.activities).toHaveLength(2);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect.each(["mutedEnvironments", "revokedEnvironments"] as const)(
     "excludes %s when forming cross-environment groups",

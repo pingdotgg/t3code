@@ -693,13 +693,19 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-b"), "user-b");
       }
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
-        expect.objectContaining({ activeCount: 0, activities: [] }),
+        expect.objectContaining({
+          activeCount: transition === "account switch" ? null : 0,
+          activities: [],
+        }),
       );
       finishPreferences({ liveActivitiesEnabled: true } as Preferences);
       await preferenceCallbackDrained;
 
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
-        expect.objectContaining({ activeCount: 0, activities: [] }),
+        expect.objectContaining({
+          activeCount: transition === "account switch" ? null : 0,
+          activities: [],
+        }),
       );
       expect(widgetMocks.start).not.toHaveBeenCalled();
     },
@@ -735,7 +741,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect.any(Date),
     );
     expect(publishAgentActivityWidget).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ activeCount: 0, activities: [] }),
+      expect.objectContaining({ activeCount: null, activities: [] }),
     );
   });
 
@@ -2213,7 +2219,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
                 }
               : {
                   ...activeAgentActivitySnapshot,
-                  liveActivityAggregate: disabled ? null : activeAgentActivitySnapshot.aggregate,
+                  liveActivityAggregate: disabled
+                    ? null
+                    : {
+                        ...activeAgentActivitySnapshot.aggregate,
+                        activeCount: 6,
+                        workingCount: 4,
+                        attentionCount: 2,
+                        totalCount: 7,
+                      },
                 },
           );
         });
@@ -2224,6 +2238,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           expect(widgetMocks.start).toHaveBeenCalledWith(
             expect.objectContaining({
               activities: activeAgentActivitySnapshot.aggregate.activities,
+              workingCount: 4,
+              attentionCount: 2,
+              totalCount: 7,
             }),
             expect.any(Date),
           );
@@ -2423,7 +2440,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         expect(agentWidgetToken).toHaveBeenCalledWith("user-b");
         if (transition === "account switch") expect(clearAgentWidgetRefresh).toHaveBeenCalledOnce();
         expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
-          expect.objectContaining({ activeCount: 0, activities: [] }),
+          expect.objectContaining({ activeCount: null, activities: [] }),
         );
         backgroundRuntime.pending.length = 0;
         yield* refreshActiveLiveActivityRemoteRegistration().pipe(
@@ -2440,7 +2457,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           ),
         );
         expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
-          expect.objectContaining({ activeCount: 0, activities: [] }),
+          expect.objectContaining({ activeCount: null, activities: [] }),
         );
       }),
   );
@@ -2684,22 +2701,31 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
   });
 
-  it.effect("does not expire a fresh direct observation because an empty relay read is old", () =>
-    Effect.gen(function* () {
-      const now = Date.parse("2026-10-02T12:00:00.000Z");
-      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
-      addLiveEnvironment();
-      setLiveShell("running");
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
-      yield* refreshActiveLiveActivityRemoteRegistration().pipe(
-        Effect.provide(snapshotRelayLayer(() => Effect.succeed({ aggregate: null }))),
-      );
-      clock.mockReturnValue(now + AGENT_ACTIVITY_FRESHNESS_MS + 59_000);
-      setLiveShell("running");
-      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
-        now + AGENT_ACTIVITY_FRESHNESS_MS * 2 + 59_000,
-      );
-    }),
+  it.effect.each([
+    null,
+    {
+      ...activeAgentActivitySnapshot.aggregate,
+      activeCount: 0,
+      activities: [{ ...activeAgentActivityRow, phase: "completed" as const }],
+    },
+  ])(
+    "does not expire fresh direct work because an empty or terminal relay read is old: %s",
+    (aggregate) =>
+      Effect.gen(function* () {
+        const now = Date.parse("2026-10-02T12:00:00.000Z");
+        const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+        addLiveEnvironment();
+        setLiveShell("running");
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+          Effect.provide(snapshotRelayLayer(() => Effect.succeed({ aggregate }))),
+        );
+        clock.mockReturnValue(now + AGENT_ACTIVITY_FRESHNESS_MS + 59_000);
+        setLiveShell("running");
+        expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
+          now + AGENT_ACTIVITY_FRESHNESS_MS * 2 + 59_000,
+        );
+      }),
   );
 
   it.effect("renews unchanged confirmed relay content, but not a failed read", () =>
@@ -2906,7 +2932,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* Deferred.succeed(finishRead, undefined);
       yield* Fiber.join(refresh);
 
-      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(1);
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(2);
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
           subtitle: "No active agents",

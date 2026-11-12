@@ -7,7 +7,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -69,6 +69,10 @@ export class AgentActivityRows extends Context.Service<
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
     }) => Effect.Effect<boolean, AgentActivityRowUpsertPersistenceError>;
+    readonly acknowledgeDelivery: (input: {
+      readonly environmentPublicKey: string;
+      readonly state: RelayAgentActivityState;
+    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
     }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
@@ -141,8 +145,9 @@ const make = Effect.gen(function* () {
           set: {
             stateJson,
             updatedAt: input.state.updatedAt,
+            deliveryPending: true,
           },
-          setWhere: sql`${relayAgentActivityRows.stateJson} is distinct from excluded.state_json`,
+          setWhere: sql`${relayAgentActivityRows.stateJson} is distinct from excluded.state_json OR ${relayAgentActivityRows.deliveryPending} = true`,
         })
         .returning({ threadId: relayAgentActivityRows.threadId })
         .pipe(
@@ -157,6 +162,32 @@ const make = Effect.gen(function* () {
         );
       return changed.length > 0;
     }),
+
+    acknowledgeDelivery: Effect.fn("relay.agent_activity_rows.acknowledge_delivery")(
+      function* (input) {
+        yield* db
+          .update(relayAgentActivityRows)
+          .set({ deliveryPending: false })
+          .where(
+            and(
+              eq(relayAgentActivityRows.environmentId, input.state.environmentId),
+              eq(relayAgentActivityRows.environmentPublicKey, input.environmentPublicKey),
+              eq(relayAgentActivityRows.threadId, input.state.threadId),
+              eq(relayAgentActivityRows.stateJson, input.state),
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new AgentActivityRowUpsertPersistenceError({
+                  environmentId: input.state.environmentId,
+                  threadId: input.state.threadId,
+                  cause,
+                }),
+            ),
+          );
+      },
+    ),
 
     remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -193,7 +224,10 @@ const make = Effect.gen(function* () {
         .where(
           and(
             sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
-            sql`COALESCE(${relayAgentActivityRows.stateJson} ->> 'retained', 'false') != 'true'`,
+            or(
+              sql`COALESCE(${relayAgentActivityRows.stateJson} ->> 'retained', 'false') != 'true'`,
+              sql`NOT EXISTS (SELECT 1 FROM ${relayEnvironmentLinks} WHERE ${relayEnvironmentLinks.environmentId} = ${relayAgentActivityRows.environmentId} AND ${relayEnvironmentLinks.environmentPublicKey} = ${relayAgentActivityRows.environmentPublicKey} AND ${relayEnvironmentLinks.revokedAt} IS NULL)`,
+            ),
             lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
           ),
         )

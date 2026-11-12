@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Tracer from "effect/Tracer";
 import * as Layer from "effect/Layer";
 
 import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
@@ -45,6 +46,14 @@ describe("ManagedRelayClient", () => {
     "keeps global reads compatible and signs the filtered request (legacy=%s)",
     (legacy) => {
       const requests: URL[] = [];
+      const spans: Tracer.NativeSpan[] = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
       const excludedEnvironmentIds = [EnvironmentId.make("local-1"), EnvironmentId.make("local-2")];
       const fetchFn = ((input, init) => {
         const url = new URL(String(input));
@@ -78,6 +87,14 @@ describe("ManagedRelayClient", () => {
           ...input,
           excludedEnvironmentIds,
         });
+        expect(
+          spans
+            .filter((span) => span.name === "clientRuntime.managedRelay.authorize")
+            .map((span) => span.attributes.get("url.full")),
+        ).toEqual([
+          "https://relay.example.test/v1/mobile/agent-activity",
+          "https://relay.example.test/v1/mobile/agent-activity",
+        ]);
         expect(requests[0]?.search).toBe("");
         expect(requests[1]?.searchParams.getAll("excludedEnvironmentIds")).toEqual(
           excludedEnvironmentIds,
@@ -86,7 +103,7 @@ describe("ManagedRelayClient", () => {
         expect(filtered.excludedEnvironmentIds).toEqual(
           legacy ? undefined : excludedEnvironmentIds,
         );
-      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)), Effect.withTracer(tracer));
     },
   );
   it.effect("rejects unsafe relay URLs before sending credentials", () => {

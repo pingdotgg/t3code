@@ -188,6 +188,7 @@ function layerFor(input: {
           upsert: () => Effect.succeed(true),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
+          acknowledgeDelivery: () => Effect.void,
           listForUser: () =>
             input.activityStates !== undefined
               ? Effect.succeed([...input.activityStates])

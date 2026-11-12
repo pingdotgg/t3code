@@ -11,6 +11,7 @@ import type {
   RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import { EnvironmentId } from "@t3tools/contracts";
+import * as SqlError from "effect/sql/SqlError";
 import * as RelayDb from "../db.ts";
 import * as RelayConfiguration from "../Config.ts";
 import {
@@ -93,8 +94,23 @@ const make = Effect.gen(function* () {
   return AgentWidgetRefresh.of({
     revoke: Effect.fn("relay.agent_widget.revoke")(function* ({ token }) {
       if (!/^[a-f0-9]{64}$/.test(token)) return yield* new WidgetRefreshUnauthorized();
-      if (!(yield* revocationLimiter.allow)) return yield* new WidgetRefreshRateLimited();
       const tokenHash = NodeCrypto.createHash("sha256").update(token).digest("hex");
+      const [revoked] = yield* db
+        .select()
+        .from(relayWidgetRevocations)
+        .where(eq(relayWidgetRevocations.tokenHash, tokenHash))
+        .limit(1)
+        .pipe(persistenceError("revoke"));
+      if (revoked) return;
+      const [device] = yield* db
+        .select()
+        .from(relayMobileDevices)
+        .where(eq(relayMobileDevices.widgetAccessTokenHash, tokenHash))
+        .limit(1)
+        .pipe(persistenceError("revoke"));
+      // Unknown tokens need tombstones for late registration, but cannot block a registered owner's sign-out.
+      if (!device && !(yield* revocationLimiter.allow))
+        return yield* new WidgetRefreshRateLimited();
       yield* db
         .insert(relayWidgetRevocations)
         .values({ tokenHash })
@@ -133,23 +149,60 @@ const make = Effect.gen(function* () {
         pushToken !== device.widgetPushToken &&
         (pushToken === "" || /^[a-f0-9]{1,512}$/.test(pushToken))
       ) {
-        // WidgetKit tokens are exclusive to an install, including account changes.
-        yield* db
-          .update(relayMobileDevices)
-          .set({ widgetPushToken: null })
-          .where(eq(relayMobileDevices.widgetPushToken, pushToken))
-          .pipe(persistenceError("claim-push-token"));
-        yield* db
-          .update(relayMobileDevices)
-          .set({ widgetPushToken: pushToken || null })
-          .where(
-            and(
-              eq(relayMobileDevices.userId, device.userId),
-              eq(relayMobileDevices.deviceId, device.deviceId),
-              eq(relayMobileDevices.widgetAccessTokenHash, tokenHash),
-            ),
+        yield* db.$client
+          .withTransaction(
+            Effect.gen(function* () {
+              const [owner] = yield* db
+                .select()
+                .from(relayMobileDevices)
+                .where(
+                  and(
+                    eq(relayMobileDevices.userId, device.userId),
+                    eq(relayMobileDevices.deviceId, device.deviceId),
+                    eq(relayMobileDevices.widgetAccessTokenHash, tokenHash),
+                  ),
+                )
+                .limit(1)
+                .for("update")
+                .pipe(persistenceError("authorize-push-token"));
+              if (!owner) return yield* new WidgetRefreshUnauthorized();
+              const [revoked] = yield* db
+                .select()
+                .from(relayWidgetRevocations)
+                .where(eq(relayWidgetRevocations.tokenHash, tokenHash))
+                .limit(1)
+                .pipe(persistenceError("authorize-push-token"));
+              if (revoked) return yield* new WidgetRefreshUnauthorized();
+              yield* db
+                .update(relayMobileDevices)
+                .set({ widgetPushToken: null })
+                .where(eq(relayMobileDevices.widgetPushToken, pushToken))
+                .pipe(persistenceError("claim-push-token"));
+              const updated = yield* db
+                .update(relayMobileDevices)
+                .set({ widgetPushToken: pushToken || null })
+                .where(
+                  and(
+                    eq(relayMobileDevices.userId, device.userId),
+                    eq(relayMobileDevices.deviceId, device.deviceId),
+                    eq(relayMobileDevices.widgetAccessTokenHash, tokenHash),
+                  ),
+                )
+                .returning({ deviceId: relayMobileDevices.deviceId })
+                .pipe(persistenceError("register-push-token"));
+              if (updated.length === 0) return yield* new WidgetRefreshUnauthorized();
+            }),
           )
-          .pipe(persistenceError("register-push-token"));
+          .pipe(
+            Effect.mapError((cause) =>
+              SqlError.isSqlError(cause)
+                ? new WidgetRefreshPersistenceError({
+                    stage: "claim-push-token-transaction",
+                    cause,
+                  })
+                : cause,
+            ),
+          );
       }
       const coveredEnvironments = yield* db
         .select({ environmentId: relayEnvironmentLinks.environmentId })

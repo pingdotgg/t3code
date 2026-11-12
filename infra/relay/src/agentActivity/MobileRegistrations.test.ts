@@ -100,6 +100,7 @@ function makeAgentActivityRows(
     upsert: () => Effect.succeed(true),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
+    acknowledgeDelivery: () => Effect.void,
     listForUser: () => {
       const activeState: RelayAgentActivityState = {
         environmentId: "env-1" as RelayAgentActivityState["environmentId"],

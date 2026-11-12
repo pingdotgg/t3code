@@ -98,7 +98,11 @@ export const layerSigner = <E, R>(options: {
         ),
         createProof: Effect.fn("managedRelayDpopSigner.createProof")(function* (input) {
           const creationError = (cause: unknown) =>
-            new ManagedRelayDpopProofCreationError({ method: input.method, url: input.url, cause });
+            new ManagedRelayDpopProofCreationError({
+              method: input.method,
+              url: normalizeDpopHtu(input.url) ?? "invalid URL",
+              cause,
+            });
           const loaded = yield* loadKey.pipe(Effect.mapError(creationError));
           return yield* createProof({ ...input, key: loaded.key }).pipe(
             Effect.provideService(SecureRandom.SecureRandom, random),

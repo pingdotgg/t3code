@@ -77,6 +77,10 @@ describe("EnvironmentLinks", () => {
       ).toEqual([
         { userId: "widget-only", notificationsEnabled: false, liveActivitiesEnabled: false },
       ]);
+      expect(queries[0]?.sql).toBe(
+        '(("relay_environment_links"."environment_id" = $1) and (("relay_environment_links"."revoked_at" is null)) and ((("relay_environment_links"."notifications_enabled" = $2) or ("relay_environment_links"."live_activities_enabled" = $3))) and ("relay_environment_links"."environment_public_key" = $4))',
+      );
+      expect(queries[0]?.params).toEqual(["env", true, true, "key"]);
       expect(queries[1]?.sql).toContain('"revoked_at" is null');
       expect(queries[1]?.params).toEqual(["env", "key"]);
     }).pipe(

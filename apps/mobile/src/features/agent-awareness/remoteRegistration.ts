@@ -270,7 +270,11 @@ export function setAgentAwarenessRelayTokenProvider(
     // work; a cold JS runtime cannot otherwise identify the previous account.
     if (identity) agentWidgetToken(identity);
     publishedWidgetContent = null;
-    publishRegularWidget(idleWidgetProps());
+    publishRegularWidget({
+      ...idleWidgetProps(),
+      activeCount: null,
+      subtitle: "Activity count unavailable",
+    });
   }
   ensurePushTokenListener();
   ensureAppStateListener();
@@ -551,6 +555,9 @@ function widgetPropsFromAggregate(
     title: aggregate.title,
     subtitle: aggregate.subtitle,
     activeCount: aggregate.activeCount,
+    workingCount: aggregate.workingCount,
+    attentionCount: aggregate.attentionCount,
+    totalCount: aggregate.totalCount,
     updatedAt: aggregate.updatedAt,
     activities: aggregate.activities,
   };
@@ -589,12 +596,9 @@ function publishReconciledWidget(): void {
   if (relayWidgetSnapshot === null && observedWidgetActivities.size === 0) return;
   const result = reconcileWidgetActivity(observedWidgetActivities, relayWidgetSnapshot);
   const confirmations = [...observedWidgetActivities.entries()]
-    .filter(([, rows]) => rows.length > 0)
+    .filter(([, rows]) => rows.some((row) => row.phase !== "completed" && row.phase !== "failed"))
     .map(([id]) => widgetShellConfirmedAt.get(id) ?? 0);
-  if (
-    relayWidgetConfirmedAt !== null &&
-    (relayWidgetSnapshot?.aggregate?.activities.length ?? 0) > 0
-  )
+  if (relayWidgetConfirmedAt !== null && (relayWidgetSnapshot?.aggregate?.activeCount ?? 0) > 0)
     confirmations.push(relayWidgetConfirmedAt);
   const confirmedAt =
     confirmations.length > 0 ? Math.min(...confirmations) : (relayWidgetConfirmedAt ?? Date.now());
