@@ -1186,10 +1186,11 @@ const make = Effect.gen(function* () {
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
     ) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
+      const url = snapshot.navStatus.url;
       tab.initialNavigation = settleOnAuth(tab, () =>
-        ((desktop || adopted) && page.url() === snapshot.navStatus.url
+        ((desktop || adopted) && page.url() === url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(url, options)
         ).catch((cause: unknown) => {
           throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
         }),
