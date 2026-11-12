@@ -463,14 +463,6 @@ describe("CursorAdapterV2", () => {
       cancelCalls: 0,
     },
     {
-      reason: "a cancelled wait without streamed text",
-      updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
-      wait: Effect.succeed({ id: "native-cursor-run", status: "cancelled" as const }),
-      failure: null,
-      status: "cancelled",
-      cancelCalls: 0,
-    },
-    {
       reason: "a cancelled wait released by idle cancellation",
       updates: [
         { type: "text-delta", text: "Done." },
@@ -2307,30 +2299,36 @@ describe("CursorAdapterV2", () => {
                 agentId: "native-cursor-steer",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
-                send: () =>
-                  Effect.succeed({
-                    agentId: "native-cursor-steer",
-                    runId: "native-cursor-steer-run",
-                    wait: Deferred.await(finished),
-                    cancel: Effect.sync(() => {
-                      cancelled += 1;
-                    }).pipe(
-                      Effect.andThen(
-                        Deferred.succeed(finished, {
-                          id: "native-cursor-steer-run",
-                          requestId: "native-request",
-                          status: "cancelled" as const,
-                          model: { id: "composer-2.5" },
-                          durationMs: 1,
-                        }),
+                send: (input) =>
+                  Effect.gen(function* () {
+                    yield* input.onDelta!({ type: "text-delta", text: "Done." });
+                    yield* input.onDelta!({ type: "turn-ended" });
+                  }).pipe(
+                    Effect.orDie,
+                    Effect.as({
+                      agentId: "native-cursor-steer",
+                      runId: "native-cursor-steer-run",
+                      wait: Deferred.await(finished),
+                      cancel: Effect.sync(() => {
+                        cancelled += 1;
+                      }).pipe(
+                        Effect.andThen(
+                          Deferred.succeed(finished, {
+                            id: "native-cursor-steer-run",
+                            requestId: "native-request",
+                            status: "cancelled" as const,
+                            model: { id: "composer-2.5" },
+                            durationMs: 1,
+                          }),
+                        ),
                       ),
-                    ),
-                    steer: (text) =>
-                      Effect.sync(() => {
-                        steered.push(text);
-                        return outcome;
-                      }),
-                  }),
+                      steer: (text) =>
+                        Effect.sync(() => {
+                          steered.push(text);
+                          return outcome;
+                        }),
+                    }),
+                  ),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -2411,6 +2409,8 @@ describe("CursorAdapterV2", () => {
           },
         });
         assert.deepEqual(steered, ["/review Look at the tests instead."]);
+        // The delivered steer is new work, so the ended turn is not cancelled as idle.
+        yield* TestClock.adjust("1 second");
         assert.equal(cancelled, 0);
         yield* runtime.steerTurn({
           threadId,

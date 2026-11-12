@@ -2871,11 +2871,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   detail: "Cursor steer requires non-empty text.",
                 });
               }
+              // A run being cancelled for idleness cannot take more input.
               const outcome =
-                context.run.steer === undefined
+                context.run.steer === undefined || context.idleCancelResult !== null
                   ? "revert_to_followup"
                   : yield* context.run.steer(text);
               if (outcome === "complete_delivered") {
+                context.turnEnded = false;
+                context.idleFinalizeGeneration += 1;
                 return;
               }
               if (context.interrupted) {
