@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
+  isClearComposerCommand,
+  isRecapComposerCommand,
   parseSideChatCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
@@ -109,5 +111,18 @@ describe("parseSideChatCommand", () => {
     expect(parseSideChatCommand("/sidebar")).toBeNull();
     expect(parseSideChatCommand("/btwx")).toBeNull();
     expect(parseSideChatCommand("ask /side later")).toBeNull();
+  });
+});
+
+describe("fresh session slash commands", () => {
+  it("recognizes bare /clear and /recap", () => {
+    expect(isClearComposerCommand("/clear")).toBe(true);
+    expect(isClearComposerCommand("  /CLEAR  ")).toBe(true);
+    expect(isClearComposerCommand("/clear keep notes")).toBe(false);
+    expect(isRecapComposerCommand("/recap")).toBe(true);
+    expect(isRecapComposerCommand("  /RECAP  ")).toBe(true);
+    expect(isRecapComposerCommand("/recap keep notes")).toBe(false);
+    expect(isRecapComposerCommand("/clear")).toBe(false);
+    expect(isClearComposerCommand("/recap")).toBe(false);
   });
 });

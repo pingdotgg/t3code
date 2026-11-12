@@ -46,6 +46,7 @@ import {
   EraserIcon,
   GitForkIcon,
   MessageSquareIcon,
+  NotebookPenIcon,
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -598,9 +599,14 @@ function EnvironmentHandoffRow({
   return <HandoffRow {...props} environmentId={environmentId} providers={providers} />;
 }
 
-/** Marks where `/clear` or an automation started a new provider session in this thread. */
-export function FreshSessionRow() {
-  return <TimelineSystemDivider label="New session" icon={EraserIcon} />;
+/** Marks where `/clear`, `/recap`, or an automation started a new provider session in this thread. */
+export function FreshSessionRow(props?: { readonly withRecap?: boolean }) {
+  return (
+    <TimelineSystemDivider
+      label={props?.withRecap === true ? "New session with recap" : "New session"}
+      icon={props?.withRecap === true ? NotebookPenIcon : EraserIcon}
+    />
+  );
 }
 
 /** A same-harness model or effort change. Shows only what changed. */

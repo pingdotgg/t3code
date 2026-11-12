@@ -740,6 +740,11 @@ export const OrchestrationV2Run = Schema.Struct({
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  /**
+   * With `freshContext`, also prepare a full-thread portable handoff of earlier history so the new
+   * session keeps a durable written recap. Ignored unless `freshContext` is true.
+   */
+  contextHandoffOnFresh: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1701,6 +1706,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     freshContext: OrchestrationV2Run.fields.freshContext,
+    contextHandoffOnFresh: OrchestrationV2Run.fields.contextHandoffOnFresh,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     /** Same as the text of message `messageId`. */
@@ -2564,6 +2570,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     freshContext: OrchestrationV2Run.fields.freshContext,
+    contextHandoffOnFresh: OrchestrationV2Run.fields.contextHandoffOnFresh,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),
@@ -3383,6 +3390,11 @@ export const OrchestrationV2Command = Schema.Union([
      * `app_owned` follow-up task on a finished delegated child.
      */
     consult: Schema.optional(Schema.Boolean),
+    /**
+     * With `freshContext`, hand the seat to the new session with a durable full-thread recap.
+     * Ignored unless `freshContext` is true. Unlike `/clear`, earlier history is summarized in.
+     */
+    contextHandoffOnFresh: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,

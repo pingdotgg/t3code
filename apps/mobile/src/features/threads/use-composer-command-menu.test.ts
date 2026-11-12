@@ -105,6 +105,26 @@ describe("mobile slash commands", () => {
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
   });
+
+  it("offers /recap for Start fresh with recap when fresh sessions are available", () => {
+    const items = buildComposerSlashCommandItems({
+      query: "rec",
+      atMessageStart: true,
+      hasThread: true,
+      offersFreshSession: true,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        slashCommands: [],
+      },
+    });
+    expect(items.map((item) => item.id)).toEqual(["cmd:recap"]);
+    expect(items[0]).toMatchObject({
+      type: "slash-command",
+      command: "recap",
+      label: "/recap",
+      description: "Start fresh with recap",
+    });
+  });
 });
 
 describe("mobile model mentions", () => {

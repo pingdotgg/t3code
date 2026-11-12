@@ -200,6 +200,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly freshContext?: boolean;
   /** Defaults to true. Callers with their own retry queue opt out so a dead socket fails fast. */
   readonly resendAfterSocketLoss?: boolean;
+  /** With `freshContext`, deliver a durable full-thread recap into the new session. */
+  readonly contextHandoffOnFresh?: boolean;
 }
 
 export interface InterruptThreadTurnInput extends ThreadCommandInput {
@@ -823,6 +825,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
           ? {}
           : { sourcePlanRef: input.sourceProposedPlan }),
         ...(input.freshContext ? { freshContext: true } : {}),
+        ...(input.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
         dispatchMode: { type: "start_immediately" },
       },
       resendAfterSocketLoss,
@@ -853,6 +856,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ? {}
         : { sourcePlanRef: input.sourceProposedPlan }),
       ...(input.freshContext ? { freshContext: true } : {}),
+      ...(input.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
       ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
       dispatchMode,
     },

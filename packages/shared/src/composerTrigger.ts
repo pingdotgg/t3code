@@ -175,6 +175,14 @@ export function isClearComposerCommand(text: string): boolean {
   return /^\/clear\s*$/i.test(text.trim());
 }
 
+/**
+ * `/recap` as the whole message arms a fresh session that keeps a durable written handoff
+ * of earlier history (Start fresh with recap). Distinct from `/clear` and `/compact`.
+ */
+export function isRecapComposerCommand(text: string): boolean {
+  return /^\/recap\s*$/i.test(text.trim());
+}
+
 /** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
 export function parseSideChatCommand(text: string): { prompt: string } | null {
   const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());

@@ -3815,6 +3815,7 @@ const make = Effect.gen(function* () {
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
           ...(input.consult === true ? { consult: true } : {}),
+          ...(input.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
           createdBy: "agent",
           creationSource: "mcp",
         })

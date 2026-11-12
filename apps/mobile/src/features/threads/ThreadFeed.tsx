@@ -3578,8 +3578,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.freshContext ? (
             <ThreadContextDivider
-              label="New session"
-              icon="arrow.clockwise"
+              label={
+                info.item.message.projectedItem.item.contextHandoffOnFresh === true
+                  ? "New session with recap"
+                  : "New session"
+              }
+              icon={
+                info.item.message.projectedItem.item.contextHandoffOnFresh === true
+                  ? "doc.text"
+                  : "arrow.clockwise"
+              }
               iconColor={iconSubtleColor}
             />
           ) : null}

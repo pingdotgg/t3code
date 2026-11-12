@@ -654,8 +654,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   freshContext: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
+      description: "Fresh session without earlier context like /clear.",
     }),
   ),
   consult: Schema.optional(
@@ -664,6 +663,8 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
         "Message without owned follow-up work. A send to a finished child then stays a message and does not create a fresh taskId.",
     }),
   ),
+  /** With `freshContext`, include a written recap (`/recap`) in the new session. */
+  contextHandoffOnFresh: Schema.optional(Schema.Boolean),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;

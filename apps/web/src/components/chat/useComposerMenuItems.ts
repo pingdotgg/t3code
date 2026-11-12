@@ -263,7 +263,15 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "clear",
                 label: "/clear",
-                description: "Start a fresh session; earlier messages stay visible",
+                description: "Start a fresh session without earlier context",
+              },
+              {
+                id: "slash:recap",
+                type: "slash-command",
+                command: "recap",
+                label: "/recap",
+                description:
+                  "Start fresh with recap: new session, written handoff of earlier messages",
               },
             ] as const)
           : []),

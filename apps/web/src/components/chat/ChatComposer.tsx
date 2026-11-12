@@ -379,8 +379,11 @@ export interface ChatComposerProps {
   onUsageLimitsCommand?: (() => void) | undefined;
   sideChatAvailable?: boolean;
   sideChatDisabledReason?: string | null;
-  /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
-  onFreshSession?: (() => void) | undefined;
+  /**
+   * Arms a fresh session for the next message; absent where `/clear` / `/recap` are unavailable.
+   * Pass `{ withRecap: true }` for Start fresh with recap.
+   */
+  onFreshSession?: ((options?: { readonly withRecap?: boolean }) => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1899,13 +1902,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
-      if (item.command === "clear") {
+      if (item.command === "clear" || item.command === "recap") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
         if (applied) {
           setComposerHighlightedItemId(null);
-          props.onFreshSession?.();
+          props.onFreshSession?.(item.command === "recap" ? { withRecap: true } : undefined);
         }
         return;
       }

@@ -464,6 +464,7 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
       ...(queuedMessage.freshContext ? { freshContext: true } : {}),
+      ...(queuedMessage.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
@@ -953,6 +954,7 @@ export function createThreadOutboxDelivery(): {
         dispatchMode: queuedMessage.dispatchMode ?? "start",
         ...(queuedMessage.freshContext ? { freshContext: true } : {}),
         resendAfterSocketLoss: false,
+        ...(queuedMessage.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
       },
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

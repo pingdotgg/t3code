@@ -60,6 +60,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   compactBeforeSend: Schema.optional(Schema.Boolean),
   freshContext: Schema.optional(Schema.Boolean),
+  contextHandoffOnFresh: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -95,8 +96,10 @@ export interface QueuedThreadMessage {
   readonly dispatchMode?: ComposerDispatchMode;
   /** Sends "When you return"'s `/compact` ahead of the message, which queues behind it. */
   readonly compactBeforeSend?: boolean;
-  /** Starts a new provider session (`/clear`). */
+  /** Starts a new provider session (`/clear` or `/recap`). */
   readonly freshContext?: boolean;
+  /** With `freshContext`, deliver a durable written recap (`/recap`). */
+  readonly contextHandoffOnFresh?: boolean;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }

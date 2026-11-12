@@ -151,6 +151,8 @@ export interface ThreadManagementSendInput {
   readonly freshContext?: boolean;
   /** Skip owned follow-up task binding on a finished delegated child. */
   readonly consult?: boolean;
+  /** With `freshContext`, deliver a durable full-thread recap into the new session. */
+  readonly contextHandoffOnFresh?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -873,6 +875,7 @@ const make = Effect.gen(function* () {
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
       ...(input.consult === true ? { consult: true } : {}),
+      ...(input.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
