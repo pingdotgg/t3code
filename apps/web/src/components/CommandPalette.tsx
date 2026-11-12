@@ -78,6 +78,7 @@ import {
   PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
+  UsersIcon,
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -99,6 +100,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { openAddSpecialistsFromTemplate } from "./AddSpecialistsFromTemplateDialog";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
@@ -712,6 +714,18 @@ function OpenCommandPaletteDialog(props: {
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
+  const specialistTemplateProjectRef = defaultProjectRef;
+  const specialistTemplateEnvironmentId = specialistTemplateProjectRef?.environmentId ?? null;
+  const supportsTeamTemplates =
+    specialistTemplateEnvironmentId !== null &&
+    environments.find(
+      (environment) => environment.environmentId === specialistTemplateEnvironmentId,
+    )?.serverConfig?.environment.capabilities.teamTemplates === true;
+  const canAddSpecialistsPermission = useAtomValue(
+    threadEnvironment.addSpecialistsFromTemplate.permissionAtom(specialistTemplateEnvironmentId),
+  );
+  const canAddSpecialistsFromTemplate =
+    specialistTemplateProjectRef !== null && supportsTeamTemplates && canAddSpecialistsPermission;
   const currentProject = resolveCommandPaletteProject(
     projectByKey,
     currentProjectEnvironmentId,
@@ -1341,6 +1355,34 @@ function OpenCommandPaletteDialog(props: {
       description: "An agent investigates a T3 Code problem and helps file an issue",
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  if (specialistTemplateProjectRef !== null && canAddSpecialistsFromTemplate) {
+    actionItems.push({
+      kind: "action",
+      value: "action:add-specialists-from-template",
+      searchTerms: [
+        "workshop",
+        "specialist",
+        "team",
+        "template",
+        "starter",
+        "contributor",
+        "bundle",
+        "lead",
+        "builder",
+        "qa",
+        "reviewer",
+        "multi agent",
+        "openrig",
+      ],
+      title: "Add specialists from template…",
+      description: "Workshop or repo t3.contributor-bundle.json, with a preview first",
+      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openAddSpecialistsFromTemplate({ projectRef: specialistTemplateProjectRef });
+      },
     });
   }
 

@@ -87,6 +87,12 @@ import {
   PermissionRoutingApprover,
 } from "./permissionRouting.ts";
 import {
+  OrchestrationV2AddSpecialistsFromTemplateInput,
+  OrchestrationV2AddSpecialistsFromTemplateResult,
+  OrchestrationV2PreviewSpecialistTemplateInput,
+  OrchestrationV2PreviewSpecialistTemplateResult,
+} from "./teamTemplates.ts";
+import {
   TurnTokenUsage,
   ToolActivitySurface,
   ToolActivityIcon,
@@ -3824,6 +3830,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
+  previewSpecialistTemplate: "orchestration.previewSpecialistTemplate",
+  addSpecialistsFromTemplate: "orchestration.addSpecialistsFromTemplate",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
@@ -4533,6 +4541,14 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  previewSpecialistTemplate: {
+    input: OrchestrationV2PreviewSpecialistTemplateInput,
+    output: OrchestrationV2PreviewSpecialistTemplateResult,
+  },
+  addSpecialistsFromTemplate: {
+    input: OrchestrationV2AddSpecialistsFromTemplateInput,
+    output: OrchestrationV2AddSpecialistsFromTemplateResult,
   },
   subscribeShell: {
     input: OrchestrationV2SubscribeShellInput,

@@ -39,6 +39,8 @@ export * from "./pullRequestReviewGuide.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
+export * from "./contributorBundle.ts";
+export * from "./teamTemplates.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";
 export * from "./ownedWork.ts";

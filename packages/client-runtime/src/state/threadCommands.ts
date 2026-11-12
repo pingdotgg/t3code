@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
@@ -340,6 +341,24 @@ export function createThreadEnvironmentAtoms<R, E>(
       execute: startThreadTurn,
       scheduler,
       concurrency,
+    }),
+    previewSpecialistTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:preview-specialist-template",
+      tag: ORCHESTRATION_V2_WS_METHODS.previewSpecialistTemplate,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.source]),
+      },
+    }),
+    addSpecialistsFromTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:add-specialists-from-template",
+      tag: ORCHESTRATION_V2_WS_METHODS.addSpecialistsFromTemplate,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.source]),
+      },
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",

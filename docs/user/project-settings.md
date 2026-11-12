@@ -187,6 +187,14 @@ resolve in one order: a project override, then the environment setting, then `t3
 built-in default. Leave a setting on **Inherit** to let the next tier decide.
 Browser access changes apply when an agent session next starts.
 
+## Specialist templates
+
+Use **Add specialists from template…** in the command palette to create durable specialist
+bindings in the current project. Built-in **Workshop** adds lead, builder, QA, and reviewer.
+Maintainers can also ship `t3.contributor-bundle.json` at the repository root with a specialist
+roster plus a project map; the same action previews and installs that bundle when the file is
+present. Specialists stay idle until you send — no paid turns start automatically.
+
 New worktrees initialize git submodules recursively. If that step is slow because the repository
 declares many nested submodules, set **Submodules** in **Settings → Worktrees** under Advanced (with the project
 selected to override it there) to **Top level only** to stop at the ones the repository declares

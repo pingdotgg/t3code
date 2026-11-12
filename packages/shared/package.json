@@ -543,6 +543,10 @@
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
     },
+    "./contributorBundle": {
+      "types": "./src/contributorBundle.ts",
+      "import": "./src/contributorBundle.ts"
+    },
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"

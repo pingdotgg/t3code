@@ -235,6 +235,10 @@ import {
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
+  OrchestrationV2AddSpecialistsFromTemplateError,
+  OrchestrationV2PreviewSpecialistTemplateError,
+} from "./teamTemplates.ts";
+import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
   ProjectCreateFromThreadInput,
@@ -1911,6 +1915,30 @@ const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.la
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2PreviewSpecialistTemplateRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.previewSpecialistTemplate,
+  {
+    payload: OrchestrationV2RpcSchemas.previewSpecialistTemplate.input,
+    success: OrchestrationV2RpcSchemas.previewSpecialistTemplate.output,
+    error: Schema.Union([
+      OrchestrationV2PreviewSpecialistTemplateError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
+const WsOrchestrationV2AddSpecialistsFromTemplateRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.addSpecialistsFromTemplate,
+  {
+    payload: OrchestrationV2RpcSchemas.addSpecialistsFromTemplate.input,
+    success: OrchestrationV2RpcSchemas.addSpecialistsFromTemplate.output,
+    error: Schema.Union([
+      OrchestrationV2AddSpecialistsFromTemplateError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
 const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {
   payload: OrchestrationV2RpcSchemas.subscribeShell.input,
   success: OrchestrationV2RpcSchemas.subscribeShell.output,
@@ -2279,6 +2307,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2PreviewSpecialistTemplateRpc,
+  WsOrchestrationV2AddSpecialistsFromTemplateRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
