@@ -748,7 +748,7 @@ function codexReplayPreamble(input: {
   ];
 }
 
-/** Every turn/start follows a config/read; inserts that exchange and shifts later client ids. */
+/** Every turn/start follows a config/read; inserts any missing exchange and shifts later client ids. */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
@@ -766,7 +766,9 @@ function withConfigReadBeforeTurnStart(
         offset = 0;
         clientIds = new Map();
       }
-      if (frame.method === "turn/start") {
+      const previous = result.at(-1);
+      const hasConfigRead = previous?.type === "emit_inbound" && previous.label === "config/read";
+      if (frame.method === "turn/start" && !hasConfigRead) {
         const id = frame.id + offset;
         const params = Predicate.isObject(frame.params) ? frame.params : {};
         result.push(
@@ -1761,9 +1763,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect.each(["darwin", "win32"] as const)(
-    "resolves the Codex workspace per platform (%s) without changing the registered path",
-    (platform) =>
+  it.effect.each([
+    { platform: "darwin", runtimeMode: "auto", resolves: true },
+    { platform: "darwin", runtimeMode: "full-access", resolves: false },
+    { platform: "win32", runtimeMode: "auto", resolves: false },
+  ] as const)(
+    "runs $platform $runtimeMode Codex turns in the physical workspace: $resolves",
+    ({ platform, runtimeMode, resolves }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-symlink-" });
@@ -1771,8 +1777,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const alias = `${root}/alias`;
         yield* fs.makeDirectory(target);
         yield* fs.symlink(target, alias);
-        const expectedCwd = platform === "win32" ? alias : yield* fs.realPath(target);
-        const policy = { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" as const, cwd: alias };
+        const turnCwd = resolves ? yield* fs.realPath(target) : alias;
+        const policy = { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode, cwd: alias };
+        const turnDefaults =
+          runtimeMode === "auto"
+            ? {
+                approvalPolicy: "on-request",
+                approvalsReviewer: "auto_review",
+                sandboxPolicy: { type: "workspaceWrite" },
+              }
+            : {
+                approvalPolicy: "never",
+                approvalsReviewer: "user",
+                sandboxPolicy: { type: "dangerFullAccess" },
+              };
         const requests: Array<unknown> = [];
         const preamble = codexReplayPreamble({
           nativeThreadId: "physical-workspace",
@@ -1802,20 +1820,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               result: { thread: { id: "physical-workspace", updatedAt: 1782622440 } },
             },
           },
+          // Config reads keep the registered path, as the thread requests do.
+          {
+            type: "expect_outbound",
+            label: "config/read",
+            frame: {
+              id: 4,
+              method: "config/read",
+              params: { cwd: "/workspace", includeLayers: false },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "config/read",
+            frame: { id: 4, result: { config: {}, origins: {} } },
+          },
           {
             type: "expect_outbound",
             label: "turn/start",
             frame: {
-              id: 4,
+              id: 5,
               method: "turn/start",
               params: {
                 threadId: "physical-workspace",
                 input: [{ type: "text", text: "Inspect the workspace." }],
-                cwd: "/workspace",
+                cwd: "/turn-workspace",
                 model: "gpt-5.4",
-                approvalPolicy: "on-request",
-                approvalsReviewer: "auto_review",
-                sandboxPolicy: { type: "workspaceWrite" },
+                ...turnDefaults,
                 summary: "auto",
                 collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
               },
@@ -1825,20 +1856,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             .slice(6)
             .map((entry) =>
               entry.type !== "runtime_exit" && Predicate.hasProperty(entry.frame, "id")
-                ? withReplayRequestId(entry, 4)
+                ? withReplayRequestId(entry, 5)
                 : entry,
             ),
         ];
         const transcript = yield* decodeReplayTranscriptJson(
           (yield* encodeReplayTranscriptJson(
             makeCodexReplayTranscript({
-              scenario: `physical-workspace-${platform}`,
+              scenario: `physical-workspace-${platform}-${runtimeMode}`,
               entries,
             }),
-          )).replaceAll(
-            yield* encodeStringJson("/workspace"),
-            yield* encodeStringJson(expectedCwd),
-          ),
+          ))
+            .replaceAll(yield* encodeStringJson("/workspace"), yield* encodeStringJson(alias))
+            .replaceAll(
+              yield* encodeStringJson("/turn-workspace"),
+              yield* encodeStringJson(turnCwd),
+            ),
         );
         const harness = yield* makeCodexReplayHarness(
           transcript,
@@ -1861,7 +1894,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           modelSelection: CODEX_TEST_MODEL_SELECTION,
         });
         assert.lengthOf(requests, 2);
-        for (const request of requests) assert.propertyVal(request, "cwd", expectedCwd);
+        // Codex keys project trust and config on the thread cwd, so thread requests keep the alias.
+        for (const request of requests) assert.propertyVal(request, "cwd", alias);
         yield* harness.runtime.startTurn({
           ...makeCodexTestTurnInput({
             threadId: harness.threadId,
@@ -1886,85 +1920,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
-  );
-
-  it.effect("follows a workspace alias retargeted between Codex turns", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-retarget-" });
-      const alias = `${root}/alias`;
-      const targets = [`${root}/first`, `${root}/second`];
-      for (const target of targets) yield* fs.makeDirectory(target);
-      yield* fs.symlink(targets[0]!, alias);
-      const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [];
-      for (const [index, target] of targets.entries()) {
-        const preamble = codexReplayPreamble({
-          nativeThreadId: "retargeted-workspace",
-          nativeTurnId: `retargeted-turn-${index}`,
-          prompt: `Inspect workspace ${index}.`,
-        });
-        const transcript = yield* decodeReplayTranscriptJson(
-          (yield* encodeReplayTranscriptJson(
-            makeCodexReplayTranscript({
-              scenario: "retargeted-workspace",
-              entries:
-                index === 0
-                  ? preamble
-                  : preamble
-                      .slice(5)
-                      .map((entry) =>
-                        entry.type !== "runtime_exit" && Predicate.hasProperty(entry.frame, "id")
-                          ? withReplayRequestId(entry, 4)
-                          : entry,
-                      ),
-            }),
-          )).replaceAll(
-            yield* encodeStringJson("/workspace"),
-            yield* encodeStringJson(yield* fs.realPath(target)),
-          ),
-        );
-        entries.push(...transcript.entries);
-      }
-      const policy = { ...CODEX_TEST_RUNTIME_POLICY, cwd: alias };
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({ scenario: "retargeted-workspace", entries }),
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        policy,
-      );
-      for (const [index, target] of targets.entries()) {
-        yield* fs.remove(alias);
-        yield* fs.symlink(target, alias);
-        yield* harness.runtime.startTurn({
-          ...makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`retargeted-attempt-${index}`),
-            text: `Inspect workspace ${index}.`,
-          }),
-          runtimePolicy: policy,
-        });
-      }
-      assert.equal(policy.cwd, alias);
-    }).pipe(
-      Effect.scoped,
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
-      ),
-    ),
   );
 
   it.effect("adds the session MCP server without replacing launch-argument servers", () =>
@@ -4126,9 +4081,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
         if (outcome === "recover") {
           const fs = yield* FileSystem.FileSystem;
-          const cwd = yield* fs.realPath(
-            yield* fs.makeTempDirectoryScoped({ prefix: "t3-capacity-retry-" }),
-          );
+          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-capacity-retry-" });
           const localTranscript = yield* decodeReplayTranscriptJson(
             (yield* encodeReplayTranscriptJson(
               makeCodexReplayTranscript({ scenario, entries }),
@@ -5763,9 +5716,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const cwd = yield* fs.realPath(
-          yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stop-workspace-" }),
-        );
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stop-workspace-" });
         const localTranscript = yield* decodeReplayTranscriptJson(
           (yield* encodeReplayTranscriptJson(transcript)).replaceAll(
             yield* encodeStringJson("/workspace"),
@@ -5892,9 +5843,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const cwd = yield* fs.realPath(
-          yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stale-workspace-" }),
-        );
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stale-workspace-" });
         const staleTranscript = makeCodexReplayTranscript({
           scenario: "codex-bg-stop-untracked",
           entries: [

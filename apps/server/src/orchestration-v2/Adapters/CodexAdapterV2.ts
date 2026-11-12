@@ -95,6 +95,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1777,17 +1778,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
 
-  const resolveCodexRuntimePolicy = Effect.fn("CodexAdapterV2.resolveCodexRuntimePolicy")(
-    function* (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) {
-      const cwd = policy.cwd;
-      // Windows realpath can rewrite mapped drives to network paths; preserve that platform's cwd.
-      if (cwd === null || (yield* HostProcess.Platform) === "win32") return policy;
-      return {
-        ...policy,
-        cwd: yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd)),
-      };
-    },
-  );
+  // macOS Seatbelt refuses a symlinked writable root, so workspace-write turns run in the physical
+  // directory. Thread requests keep the registered path for Codex's project trust and config.
+  const resolveCodexTurnCwd = Effect.fn("CodexAdapterV2.resolveCodexTurnCwd")(function* (
+    policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) {
+    const cwd = policy.cwd;
+    const sandboxPolicy =
+      policy.sandboxPolicy ?? codexRuntimeModeTurnDefaults(policy.runtimeMode).sandboxPolicy;
+    if (
+      cwd === null ||
+      (yield* HostProcess.Platform) !== "darwin" ||
+      !Predicate.hasProperty(sandboxPolicy, "type") ||
+      sandboxPolicy.type !== "workspaceWrite"
+    )
+      return policy;
+    return {
+      ...policy,
+      cwd: yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd)),
+    };
+  });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -7281,7 +7291,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
               nativeThreadId: threadId,
               codexInput,
-              runtimePolicy: turnInput.runtimePolicy,
+              runtimePolicy: yield* resolveCodexTurnCwd(turnInput.runtimePolicy),
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
@@ -7601,9 +7611,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
-          ensureThread: Effect.fn("CodexAdapterV2.ensureThread")(function* (threadInput) {
-            const runtimePolicy = yield* resolveCodexRuntimePolicy(threadInput.runtimePolicy);
-            return yield* ensureInitialized.pipe(
+          ensureThread: (threadInput) =>
+            ensureInitialized.pipe(
               Effect.andThen(mcpSessions.read(threadInput.threadId)),
               Effect.flatMap((mcpSession) =>
                 client.request(
@@ -7612,7 +7621,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     threadId: threadInput.threadId,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
-                    runtimePolicy,
+                    runtimePolicy: threadInput.runtimePolicy,
                   }),
                 ),
               ),
@@ -7634,8 +7643,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     cause,
                   }),
               ),
-            );
-          }),
+            ),
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
@@ -7650,9 +7658,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     : { modelSelection: threadInput.modelSelection }),
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
-                    : {
-                        runtimePolicy: yield* resolveCodexRuntimePolicy(threadInput.runtimePolicy),
-                      }),
+                    : { runtimePolicy: threadInput.runtimePolicy }),
                 }),
               });
               const response = yield* ensureInitialized.pipe(
@@ -7749,47 +7755,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
             ),
           ),
-          // Resolved once per turn so capacity retries and goal continuations reuse the physical cwd.
-          startTurn: (requestedTurnInput) =>
-            Effect.flatMap(
-              resolveCodexRuntimePolicy(requestedTurnInput.runtimePolicy),
-              (runtimePolicy) => {
-                const turnInput = { ...requestedTurnInput, runtimePolicy };
-                const goalCommand =
-                  turnInput.restartContinuationOfRunId === undefined
-                    ? parseGoalCommand(turnInput.message)
-                    : null;
-                if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
-                const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
-                return Effect.gen(function* () {
-                  if (
-                    turnInput.restartContinuationOfRunId === undefined &&
-                    nativeThreadId != null &&
-                    goalsPausedForWake.has(nativeThreadId) &&
-                    goalsByNativeThread.get(nativeThreadId)?.status === "paused"
-                  ) {
-                    return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
-                  }
-                  yield* startNativeTurn(
-                    turnInput,
-                    turnInput.restartContinuationOfRunId === undefined
-                      ? yield* toCodexInput(turnInput)
-                      : [],
-                  );
-                }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderAdapter.ProviderAdapterTurnStartError({
-                        driver: CODEX_PROVIDER,
-                        threadId: turnInput.threadId,
-                        providerThreadId: turnInput.providerThread.id,
-                        runId: turnInput.runId,
-                        cause,
-                      }),
-                  ),
-                );
-              },
-            ),
+          startTurn: (turnInput) => {
+            const goalCommand =
+              turnInput.restartContinuationOfRunId === undefined
+                ? parseGoalCommand(turnInput.message)
+                : null;
+            if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
+            const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
+            return Effect.gen(function* () {
+              if (
+                turnInput.restartContinuationOfRunId === undefined &&
+                nativeThreadId != null &&
+                goalsPausedForWake.has(nativeThreadId) &&
+                goalsByNativeThread.get(nativeThreadId)?.status === "paused"
+              ) {
+                return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
+              }
+              yield* startNativeTurn(
+                turnInput,
+                turnInput.restartContinuationOfRunId === undefined
+                  ? yield* toCodexInput(turnInput)
+                  : [],
+              );
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: CODEX_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    cause,
+                  }),
+              ),
+            );
+          },
           steerTurn: Effect.fn("CodexAdapterV2.steerTurn")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
@@ -8447,7 +8447,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     threadId: threadInput.providerThread.appThreadId,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
-                    runtimePolicy: yield* resolveCodexRuntimePolicy(input.runtimePolicy),
+                    runtimePolicy: input.runtimePolicy,
                   }),
                 });
               }
@@ -8501,9 +8501,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     : { modelSelection: threadInput.modelSelection }),
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
-                    : {
-                        runtimePolicy: yield* resolveCodexRuntimePolicy(threadInput.runtimePolicy),
-                      }),
+                    : { runtimePolicy: threadInput.runtimePolicy }),
                 }),
               });
               const response = yield* ensureInitialized.pipe(
