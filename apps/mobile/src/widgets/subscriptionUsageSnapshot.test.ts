@@ -89,11 +89,18 @@ describe("subscription widget snapshots", () => {
             windows: [{ ...window, id: "seven_day", kind: "weekly", label: "Weekly" }],
           },
         }),
+        claude("rex", {
+          usageLimits: {
+            checkedAt,
+            windows: [{ ...window, resetsAt: "2026-09-05T11:50:00.000Z" }],
+          },
+        }),
       ]),
       deepLink,
     );
     const session = snapshot.providers[0]?.windows.find((w) => w.kind === "session");
     expect(session?.accounts).toStrictEqual([
+      { name: "RE", remaining: 60, refill: 0 },
       {
         name: "smol",
         color: "#4c6ef5",
@@ -103,7 +110,7 @@ describe("subscription widget snapshots", () => {
         reset: expect.any(String),
         durationMs: 300 * 60_000,
       },
-      { name: "RE" },
+      { name: "RE2" },
     ]);
     expect(JSON.stringify(snapshot)).not.toContain("example.com");
   });

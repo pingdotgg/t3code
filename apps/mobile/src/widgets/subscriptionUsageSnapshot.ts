@@ -86,20 +86,27 @@ function clockLabel(at: number, from: number) {
 }
 
 function widgetAccounts(window: LimitPoolWindow): WidgetLimitAccount[] {
+  const seen = new Map<string, number>();
   return window.columns.map((column) => {
+    // Redacted initials can collide, and the widget keys segments by name.
+    const base = accountName(column.account);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
     const color = normalizeProviderAccentColor(column.account.accentColor);
     // expo-widgets cannot convert an explicit undefined into a Kotlin value.
-    const account = { name: accountName(column.account), ...(color && { color }) };
+    const account = { name: count > 1 ? `${base}${count}` : base, ...(color && { color }) };
     if (column.window === null) return account;
+    const checkedAt = Date.parse(column.account.limits.checkedAt);
     const resetsAt = column.window.resetsAt ? Date.parse(column.window.resetsAt) : NaN;
-    const reset = Number.isFinite(resetsAt);
+    // A reset at or before the observation already happened.
+    const reset = resetsAt > checkedAt;
     return {
       ...account,
       remaining: remainingPercent(column.window),
       refill: reset ? column.refillPercent : 0,
       ...(reset && {
         resetsAt,
-        reset: clockLabel(resetsAt, Date.parse(column.account.limits.checkedAt)),
+        reset: clockLabel(resetsAt, checkedAt),
       }),
       ...(column.window.windowDurationMins && {
         durationMs: column.window.windowDurationMins * 60_000,
