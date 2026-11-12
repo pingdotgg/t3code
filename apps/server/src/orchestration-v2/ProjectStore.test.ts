@@ -52,6 +52,46 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
       }),
     );
 
+    it.effect("finds a Windows workspace root spelled with different letter case", () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const at = "2026-03-24T00:00:00.000Z";
+        const create = (id: string, workspaceRoot: string, sequence: number) => {
+          const projectId = ProjectId.make(id);
+          return projects.apply({
+            sequence,
+            eventId: EventId.make(`event-${id}`),
+            aggregateKind: "project",
+            aggregateId: projectId,
+            occurredAt: at,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.created",
+            payload: {
+              projectId,
+              title: id,
+              workspaceRoot,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: at,
+              updatedAt: at,
+            },
+          });
+        };
+        yield* create("project-windows-case", "C:\\Work\\Repo", 1);
+        yield* create("project-posix-case", "/tmp/Work/Repo", 2);
+
+        const found = (root: string) =>
+          projects
+            .findActiveByWorkspaceRoot(root)
+            .pipe(Effect.map((row) => Option.getOrNull(row)?.projectId ?? null));
+        assert.strictEqual(yield* found("c:\\work\\repo"), "project-windows-case");
+        assert.strictEqual(yield* found("/tmp/work/repo"), null);
+      }),
+    );
+
     it.effect("keeps pin and archive times across later updates", () =>
       Effect.gen(function* () {
         const projects = yield* ProjectStore.ProjectStoreV2;
