@@ -788,6 +788,26 @@ const make = Effect.gen(function* () {
     clearTimeout(timeout);
   };
 
+  const unloadingTabs = new WeakMap<ServerTab, Promise<void>>();
+  yield* manager.registerBeforeClose((snapshots) =>
+    Effect.promise(async () => {
+      await Promise.all(
+        snapshots.map((snapshot) => {
+          const tab = tabs.get(tabKey(snapshot.threadId, snapshot.tabId));
+          if (!tab) return;
+          void tab.control.close().catch(constVoid);
+          if (!tab.desktop || tab.dialog !== null) return;
+          const pending = unloadingTabs.get(tab);
+          if (pending) return pending;
+          tab.closing = true;
+          const unloading = unloadDesktopPage(tab.page);
+          unloadingTabs.set(tab, unloading);
+          return unloading;
+        }),
+      );
+    }),
+  );
+
   const dropTab = (tab: ServerTab, closeSession: boolean) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
@@ -1515,10 +1535,13 @@ const make = Effect.gen(function* () {
   // The desktop app renders every server tab, so idle desktop agent tabs would otherwise
   // hold the server's budget forever. Hidden ones give up their slots, longest idle first,
   // only when an agent needs one and has room for it.
-  const freeIdleAgentSlot = (agentSessionId: string) => {
+  const freeIdleAgentSlot = async (agentSessionId: string) => {
     if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
     const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
-    if (longestIdle) dropTab(longestIdle, true);
+    if (longestIdle) {
+      await runPromise(manager.close({ threadId: longestIdle.threadId, tabId: longestIdle.tabId }));
+      dropTab(longestIdle, false);
+    }
   };
 
   // A Playwright launch must settle before its capacity can be released.
@@ -1529,10 +1552,10 @@ const make = Effect.gen(function* () {
     let key: string = NodeCrypto.randomUUID();
     const reservation = { agentId: input.automationOwner ?? null };
     return yield* Effect.acquireUseRelease(
-      Effect.try({
-        try: () => {
+      Effect.tryPromise({
+        try: async () => {
           if (input.automationOwner !== undefined) {
-            if (options.reclaimIdleSlot) freeIdleAgentSlot(input.automationOwner);
+            if (options.reclaimIdleSlot) await freeIdleAgentSlot(input.automationOwner);
             assertTabCapacity(input.automationOwner);
           }
           pendingTabs.set(key, reservation);
@@ -2284,11 +2307,6 @@ const make = Effect.gen(function* () {
           message: "A human controls this tab.",
           reason: "humanControl",
         });
-      void tab.control.close().catch(constVoid);
-      if (tab.desktop && tab.dialog === null) {
-        tab.closing = true;
-        await unloadDesktopPage(tab.page);
-      }
       await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
       dropTab(tab, false);
       return {};
