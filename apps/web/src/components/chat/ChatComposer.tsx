@@ -151,7 +151,7 @@ import {
   useEnvironmentSpeechInput,
   useSpeechUnavailableReason,
 } from "../../speech/useEnvironmentSpeechInput";
-import { ComposerSpeechButton } from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechCancelButton } from "./ComposerSpeechButton";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -3972,6 +3972,15 @@ export function ChatComposer(props: ChatComposerProps) {
                       cancelShortcutLabel="Esc"
                       onRetry={() => void speechInput.start()}
                       onDismiss={() => speechInput.cancel()}
+                    />
+                  ) : null}
+                  {speechInput.available &&
+                  speechInput.state.phase !== "idle" &&
+                  speechInput.state.phase !== "error" ? (
+                    <ComposerSpeechCancelButton
+                      state={speechInput.state}
+                      shortcutLabel="Esc"
+                      onCancel={() => speechInput.cancel()}
                     />
                   ) : null}
                   <VoiceInputSetup
