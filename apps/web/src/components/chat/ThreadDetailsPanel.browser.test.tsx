@@ -135,7 +135,6 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         lane: { padding: 48, minChatWidth: 640 },
         layout: resolveChatCanvasLayout({ container, preview: null }),
         previewKey: null,
-        registerTimeline: noop,
         measureDetailsCard: noop,
         detailsCardTopInset: 0,
         preferredDetailsCard: placement,

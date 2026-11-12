@@ -416,12 +416,19 @@ export const OpenInPicker = memo(function OpenInPicker({
           <TooltipPopup>{primaryLabel}</TooltipPopup>
         </Tooltip>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-          <MenuTrigger
-            disabled={isHostEditorDenied}
-            render={<ThreadDetailsControl part="icon" aria-label="Choose editor" />}
-          >
-            <ChevronDownIcon />
-          </MenuTrigger>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <MenuTrigger
+                  disabled={isHostEditorDenied}
+                  render={<ThreadDetailsControl part="icon" aria-label="Choose editor" />}
+                />
+              }
+            >
+              <ChevronDownIcon />
+            </TooltipTrigger>
+            <TooltipPopup>Choose editor</TooltipPopup>
+          </Tooltip>
           <MenuPopup side="bottom" align="end">
             {editorItems}
           </MenuPopup>
