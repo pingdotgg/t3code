@@ -1,0 +1,40 @@
+import type * as rekognition from "@distilled.cloud/aws/rekognition";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `rekognition:StopStreamProcessor` — stop a running stream processor.
+ *
+ * The binding takes no arguments and grants the function
+ * `rekognition:StopStreamProcessor` on `*` (Rekognition data-plane resources such
+ * as collections, users, and jobs are routinely created at runtime, so
+ * their identifiers are unknown at deploy time). Provide the
+ * implementation with `Effect.provide(AWS.Rekognition.StopStreamProcessorHttp)`.
+ *
+ * ### Stream Processors
+ * **Example:** Stop a Stream Processor
+ * ```typescript
+ * // init
+ * const stopStreamProcessor = yield* AWS.Rekognition.StopStreamProcessor();
+ *
+ * // runtime
+ * yield* stopStreamProcessor({ Name: "lobby-camera" });
+ * ```
+ *
+ * @binding
+ */
+export interface StopStreamProcessor extends Binding.Service<
+  StopStreamProcessor,
+  "AWS.Rekognition.StopStreamProcessor",
+  () => Effect.Effect<
+    (
+      request: rekognition.StopStreamProcessorRequest,
+    ) => Effect.Effect<
+      rekognition.StopStreamProcessorResponse,
+      rekognition.StopStreamProcessorError
+    >
+  >
+> {}
+export const StopStreamProcessor = Binding.Service<StopStreamProcessor>(
+  "AWS.Rekognition.StopStreamProcessor",
+);

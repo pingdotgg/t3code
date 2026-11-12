@@ -1,16 +1,15 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as resourcemanager from "@distilled.cloud/gcp/cloudresourcemanager_v3";
 import * as cloudrun from "@distilled.cloud/gcp/run_v2";
-import { describe, expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -22,11 +21,7 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // The project comes from the same credential the deploy uses.
 const currentProject = GCP.GcpEnvironment.current.pipe(
@@ -34,13 +29,8 @@ const currentProject = GCP.GcpEnvironment.current.pipe(
   Effect.provide(GCP.fromCredentials().pipe(Layer.provide(GcpHttp))),
 );
 
-// The service is built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
-
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-vertex-ai", () => {
+describe("gcp-vertex-ai", () => {
   const stack = beforeAll(deploy(Stack), { timeout: 900_000 });
 
   const serviceState = (name: string) =>
@@ -74,9 +64,7 @@ describe.skipIf(!dockerAvailable)("gcp-vertex-ai", () => {
       yield* destroy(Stack);
       // Nothing is left behind: the service is gone and its grant revoked.
       expect(yield* serviceState(serviceName)).toEqual("gone");
-      expect(yield* aiplatformUsers).not.toContain(
-        `serviceAccount:${serviceAccount}`,
-      );
+      expect(yield* aiplatformUsers).not.toContain(`serviceAccount:${serviceAccount}`);
     }),
     { timeout: 600_000 },
   );
@@ -88,18 +76,14 @@ describe.skipIf(!dockerAvailable)("gcp-vertex-ai", () => {
 
   const chat = (baseUrl: string, body: Record<string, unknown>) =>
     HttpClient.execute(
-      HttpClientRequest.post(`${baseUrl}/chat`).pipe(
-        HttpClientRequest.bodyJsonUnsafe(body),
-      ),
+      HttpClientRequest.post(`${baseUrl}/chat`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
     );
 
   test(
     "grants the runtime service account roles/aiplatform.user",
     Effect.gen(function* () {
       const { serviceAccount } = yield* stack;
-      expect(yield* aiplatformUsers).toContain(
-        `serviceAccount:${serviceAccount}`,
-      );
+      expect(yield* aiplatformUsers).toContain(`serviceAccount:${serviceAccount}`);
     }),
     { timeout: 60_000 },
   );

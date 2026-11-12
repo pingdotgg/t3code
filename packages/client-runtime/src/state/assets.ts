@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -29,6 +30,7 @@ import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
+export const ASSET_URL_MAX_IN_FLIGHT = 6;
 
 export class InvalidAssetCollectionKeyError extends Schema.TaggedError<InvalidAssetCollectionKeyError>()(
   "InvalidAssetCollectionKeyError",
@@ -99,7 +101,8 @@ export function blockedAssetUrlState(
     fileAccess.canReadFiles ||
     (resource._tag !== "workspace-file" &&
       resource._tag !== "media-file" &&
-      resource._tag !== "draft-workspace-file")
+      resource._tag !== "draft-workspace-file" &&
+      !(resource._tag === "native-app-icon" && resource.app._tag === "app-path"))
   ) {
     return null;
   }
@@ -129,6 +132,113 @@ export function assetUrlStateFromResult(
   };
 }
 
+type AssetUrlTarget = {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly resource: AssetResource };
+};
+
+const decodeRevisionedAssetUrlKey = Schema.decodeUnknownSync(
+  Schema.Tuple([EnvironmentId, AssetResource, Schema.NullOr(Schema.String)]),
+);
+
+const isSettled = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
+  !AsyncResult.isInitial(result) && !result.waiting;
+
+const KEEP_URL_MIN_LIFE_MS = 5 * 60_000;
+
+/**
+ * A re-mint signs a new URL even when the file is unchanged, and a new URL reloads the image.
+ * Keep the shown URL while the server reports the same file revision and it has time left.
+ */
+function keepUnchangedFile(
+  shown: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
+  next: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
+  now: number,
+) {
+  if (
+    shown._tag !== "Success" ||
+    next._tag !== "Success" ||
+    next.value.fileRevision === undefined ||
+    next.value.fileRevision !== shown.value.fileRevision ||
+    shown.value.expiresAt - now <= KEEP_URL_MIN_LIFE_MS
+  ) {
+    return next;
+  }
+  const kept = AsyncResult.success(shown.value);
+  return next.waiting ? AsyncResult.waiting(kept) : kept;
+}
+
+/**
+ * The URL is minted per resource and shared across revisions, so reading a
+ * different revision (even an earlier one after a revert) re-mints it. An
+ * in-flight mint is shared only on first read; after an edit the server must
+ * re-read the file, so the re-mint waits for that mint to settle.
+ */
+export function makeRevisionedAssetUrlFamily(
+  createUrl: (
+    target: AssetUrlTarget,
+  ) => Atom.Atom<AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>,
+  now: () => number = Date.now,
+) {
+  // Outside the nodes: a node is dropped once unmounted, and the next read of
+  // its revision must still see the revisions minted since. Never pruned on
+  // purpose: pruning would forget the revision and re-mint on the next mount.
+  // It holds one short entry per file shown, and goes with the registry.
+  const mintedUnder = new WeakMap<AtomRegistry.AtomRegistry, Map<string, string | null>>();
+  // Also per resource: a new revision builds a new node, which must keep the URL on screen.
+  const shownUnder = new WeakMap<
+    AtomRegistry.AtomRegistry,
+    Map<string, AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>
+  >();
+  const family = Atom.family((key: string) => {
+    const [environmentId, resource, revision] = decodeRevisionedAssetUrlKey(JSON.parse(key));
+    const resourceKey = JSON.stringify([environmentId, resource]);
+    const query = createUrl({ environmentId, input: { resource } });
+    return Atom.transform(
+      query,
+      (get) => {
+        let minted = mintedUnder.get(get.registry);
+        if (minted === undefined) {
+          minted = new Map();
+          mintedUnder.set(get.registry, minted);
+        }
+        const firstRead = !minted.has(resourceKey);
+        let pending = minted.get(resourceKey) !== revision;
+        const current = get.once(query);
+        if (pending && (firstRead || isSettled(current))) {
+          pending = false;
+          minted.set(resourceKey, revision);
+          if (isSettled(current)) get.refresh(query);
+        }
+        let shownByResource = shownUnder.get(get.registry);
+        if (shownByResource === undefined) {
+          shownByResource = new Map();
+          shownUnder.set(get.registry, shownByResource);
+        }
+        const show = (value: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>) => {
+          const previous = shownByResource.get(resourceKey);
+          const shown = previous === undefined ? value : keepUnchangedFile(previous, value, now());
+          shownByResource.set(resourceKey, shown);
+          return shown;
+        };
+        get.subscribe(query, (value) => {
+          get.setSelf(show(value));
+          if (!pending || !isSettled(value)) return;
+          pending = false;
+          minted.set(resourceKey, revision);
+          get.refresh(query);
+        });
+        return show(get.once(query));
+      },
+      { initialValueTarget: query },
+      // No idle TTL: each mount rebuilds the node, so a revision read again after
+      // another one is compared against the record instead of a cached node.
+    ).pipe(Atom.setIdleTTL(0));
+  });
+  return (target: AssetUrlTarget & { readonly revision: string | null }) =>
+    family(JSON.stringify([target.environmentId, target.input.resource, target.revision]));
+}
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
   localMediaEnvironment?: Atom.Atom<{
@@ -136,15 +246,27 @@ export function createAssetEnvironmentAtoms<R, E>(
     readonly httpBaseUrl: string;
   } | null>,
 ) {
+  // A thread with hundreds of images asks for hundreds of URLs at once. Over a slow remote
+  // they would all wait on one socket and read as stalled, so each environment gets a few
+  // at a time. A query that is interrupted, such as by a new session, gives its slot back.
+  const mintLimits = new Map<EnvironmentId, Semaphore.Semaphore>();
+  const mint = (environmentId: EnvironmentId, input: AssetCreateUrlInput) => {
+    let limit = mintLimits.get(environmentId);
+    if (limit === undefined) {
+      limit = Semaphore.makeUnsafe(ASSET_URL_MAX_IN_FLIGHT);
+      mintLimits.set(environmentId, limit);
+    }
+    return request(WS_METHODS.assetsCreateUrl, input).pipe(limit.withPermit);
+  };
   const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
-    const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const result = yield* mint(supervisor.target.environmentId, input).pipe(Effect.result);
     if (Result.isSuccess(result)) return result.success;
     const error = result.failure;
     const resource = input.resource;
     const local = localMediaEnvironment
       ? (yield* AtomRegistry.AtomRegistry).get(localMediaEnvironment)
       : null;
-    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     if (
       !local ||
       local.environmentId === supervisor.target.environmentId ||
@@ -154,6 +276,7 @@ export function createAssetEnvironmentAtoms<R, E>(
         error._tag === "AssetWorkspaceContextNotFoundError"
       ) ||
       resource._tag !== "media-file" ||
+      resource.hostOnly ||
       !(resource.path.startsWith("/") || isWindowsAbsolutePath(resource.path)) ||
       mediaMimeTypeFromExtension(resource.path.slice(resource.path.lastIndexOf("."))) === null
     )
@@ -161,7 +284,7 @@ export function createAssetEnvironmentAtoms<R, E>(
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     // Map the full cause so retry defects and interruption survive.
     const asset = yield* registry
-      .run(local.environmentId, request(WS_METHODS.assetsCreateUrl, input))
+      .run(local.environmentId, mint(local.environmentId, input))
       .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => error))));
     return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
   });
@@ -200,6 +323,14 @@ export function createAssetEnvironmentAtoms<R, E>(
   };
 }
 
+/**
+ * The resource a project's icon URL is minted for. Refreshing the `createUrl` query for it makes
+ * the server resolve the icon again instead of serving a cached answer.
+ */
+export function projectFaviconResource(cwd: string, path: string | null | undefined) {
+  return { _tag: "project-favicon" as const, cwd, ...(path ? { path } : {}) };
+}
+
 export function createProjectFaviconUrlAtomFamily(input: {
   readonly imageCache?: ProjectFaviconCache;
   readonly createUrl: (target: {
@@ -219,8 +350,10 @@ export function createProjectFaviconUrlAtomFamily(input: {
   const projectClones = input.projectClones;
   const family = Atom.family((key: string) => {
     const [environmentId, cwd, path] = decodeKey(JSON.parse(key));
-    const resource = { _tag: "project-favicon" as const, cwd, ...(path ? { path } : {}) };
-    const query = input.createUrl({ environmentId, input: { resource } });
+    const query = input.createUrl({
+      environmentId,
+      input: { resource: projectFaviconResource(cwd, path) },
+    });
     // A cloned project exists before its files do, and the server reports its
     // icon missing until the clone lands. Ask again whenever the clone's phase
     // changes: the first list a client sees may already say done.

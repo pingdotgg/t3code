@@ -1,4 +1,3 @@
-import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import type { AnyRouter } from "@tanstack/react-router";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -7,11 +6,13 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, stubGlobal } from "../../test/render";
+import { RELEASED_COMPLETION_GRACE_MS } from "./ThreadNotificationCoordinator.logic";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
   toast: vi.fn(),
+  closeToast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
   navigate: vi.fn(),
   sound: vi.fn(),
@@ -20,7 +21,14 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock(import("./ui/toast"), async (original) => {
   const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: state.toast as never } };
+  return {
+    ...actual,
+    toastManager: {
+      ...actual.toastManager,
+      add: state.toast as never,
+      close: state.closeToast as never,
+    },
+  };
 });
 vi.mock(import("../state/shell"), async (original) => {
   const actual = await original();
@@ -107,6 +115,7 @@ const thread = {
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
+  pendingRequestId: "request-1",
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
@@ -145,9 +154,9 @@ function toV2ThreadShell(input: typeof thread) {
           ? "failed"
           : "running",
     pendingRuntimeRequest: input.hasPendingUserInput
-      ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
+      ? { id: input.pendingRequestId, kind: "user_input", createdAt: SHELL_NOW }
       : input.hasPendingApprovals
-        ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
+        ? { id: input.pendingRequestId, kind: "command", createdAt: SHELL_NOW }
         : null,
     latestVisibleMessage: null,
     latestUserMessageAt: null,
@@ -205,15 +214,25 @@ function setup() {
       .spyOn(document, "visibilityState", "get")
       .mockImplementation(() => visibility as DocumentVisibilityState),
   );
+  const routeListeners = new Set<() => void>();
+  const route = { params: {} as Record<string, string> };
   const router = {
-    state: { matches: [{ params: {} }] },
+    state: { matches: [route] },
     navigate: state.navigate,
+    subscribe: (_event: string, listener: () => void) => {
+      routeListeners.add(listener);
+      return () => routeListeners.delete(listener);
+    },
   } as unknown as AnyRouter;
   return {
     start: () => {
       stack.defer(startThreadNotifications(testRegistry, router));
     },
     setEnvironmentIds: (ids: ReadonlyArray<string>) => testRegistry.set(environmentIdsAtom, ids),
+    openThread: (environmentId: string, threadId: string) => {
+      route.params = { environmentId, threadId };
+      for (const listener of routeListeners) listener();
+    },
     changeSettings: () => {
       for (const listener of state.settingsListeners) listener();
     },
@@ -241,22 +260,196 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   },
 );
 
-it("holds a completion through a continuation gap and notifies once it settles", async () => {
+it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+  "notifies once per %s request, not again as queued runs start behind it",
+  async (flag) => {
+    await using app = setup();
+    app.start();
+    const waiting = (turnId: string, pendingRequestId: string) =>
+      shell({
+        [flag]: true,
+        pendingRequestId,
+        latestTurn: { turnId, state: "running", completedAt: null },
+      });
+    state.shells.set("one", waiting("turn-1", "request-1"));
+    state.shells.set("one", waiting("turn-2", "request-1"));
+    state.shells.set("one", waiting("turn-2", "request-2"));
+    const title = flag === "hasPendingApprovals" ? "Approval needed" : "Input needed";
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([title, title]);
+  },
+);
+
+it("presents completion notifications and sound as soon as the shell completes", async () => {
   await using app = setup();
+  state.mode = "notifications-and-sound";
   app.start();
-  using _timers = fakeTimers();
-  const finished = (turnId: string, completedAt: string) => ({
-    latestTurn: { turnId, state: "completed", completedAt },
-  });
-  state.shells.set("one", shell(finished("turn-1", "2026-09-13T07:00:01.000Z")));
   state.shells.set(
     "one",
-    shell({ latestTurn: { turnId: "turn-2", state: "running", completedAt: null } }),
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
   );
-  state.shells.set("one", shell(finished("turn-2", "2026-09-13T07:00:02.000Z")));
-  expect(TestNotification.sent).toEqual([]);
-  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS - 1);
-  expect(TestNotification.sent).toEqual([]);
-  await vi.advanceTimersByTimeAsync(1);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
+  expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it.each([false, true])(
+  "presents one completion when a monitor ends with a final wake (disconnected: %s)",
+  async (disconnect) => {
+    await using app = setup();
+    using _timers = fakeTimers();
+    state.mode = "notifications-and-sound";
+    app.start();
+    const watching = (
+      turnId: string,
+      turnState: string,
+      completedAt: string | null,
+      latestRunBackgroundWake: boolean,
+      pendingBackgroundTasks: ReadonlyArray<{ taskId: string; kind: "monitor" }>,
+    ) => ({
+      status: "live",
+      snapshot: Option.some({
+        threads: [
+          {
+            ...toV2ThreadShell({
+              ...thread,
+              latestTurn: { turnId, state: turnState, completedAt },
+            }),
+            latestRunBackgroundWake,
+            pendingBackgroundTasks,
+          },
+        ],
+      }),
+    });
+    const monitor = [{ taskId: "watch", kind: "monitor" as const }];
+    const titles = () => TestNotification.sent.map(({ title }) => title);
+    state.shells.set(
+      "one",
+      watching("turn", "completed", "2026-09-13T07:00:01.000Z", false, monitor),
+    );
+    expect(titles()).toEqual(["Thread completed"]);
+
+    state.shells.set("one", watching("wake", "running", null, true, monitor));
+    state.shells.set(
+      "one",
+      watching("wake", "completed", "2026-09-13T07:00:09.000Z", true, monitor),
+    );
+    expect(titles()).toEqual(["Thread completed"]);
+
+    // The adapter drains the roster before the final wake starts.
+    state.shells.set("one", watching("wake", "completed", "2026-09-13T07:00:09.000Z", true, []));
+    expect(titles()).toEqual(["Thread completed"]);
+    if (disconnect) {
+      state.shells.set("one", {
+        ...watching("wake", "completed", "2026-09-13T07:00:09.000Z", true, []),
+        status: "cached",
+      });
+      vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+      expect(titles()).toEqual(["Thread completed"]);
+    }
+
+    state.shells.set("one", watching("final", "running", null, false, []));
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    state.shells.set("one", watching("final", "completed", "2026-09-13T07:00:11.000Z", false, []));
+    expect(titles()).toEqual(["Thread completed", "Thread completed"]);
+    expect(state.sound).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+  "notifies for offline completion and %s once across reconnects",
+  async (flag) => {
+    await using app = setup();
+    const asking = { id: "asking", hasPendingApprovals: true };
+    const offline = { id: "offline", [flag]: true };
+    const done = {
+      id: "done",
+      latestTurn: {
+        turnId: "done-turn",
+        state: "completed",
+        completedAt: "2026-09-13T07:00:00.000Z",
+      },
+    };
+    state.shells.set("one", shell({ id: "working" }, { id: "asking" }, { id: "offline" }, done));
+    app.start();
+    state.shells.set("one", shell({ id: "working" }, asking, { id: "offline" }, done));
+    state.shells.set("one", {
+      ...shell({ id: "working" }, asking, { id: "offline" }, done),
+      status: "cached",
+    });
+
+    const completed = {
+      id: "working",
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    };
+    state.shells.set("one", {
+      ...shell(completed, asking, offline, done),
+      status: "synchronizing",
+    });
+    state.shells.set("one", shell(completed, asking, offline, done));
+
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+      "Approval needed",
+      "Thread completed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+    ]);
+    state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
+    state.shells.set("one", shell(completed, asking, offline, done));
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+      "Approval needed",
+      "Thread completed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+    ]);
+  },
+);
+
+it.each([false, true])(
+  "does not replay a notified completion after reconnect (continued: %s)",
+  async (continued) => {
+    await using app = setup();
+    app.start();
+    const completed = shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    });
+    state.shells.set("one", completed);
+    state.shells.set("one", { ...completed, status: "cached" });
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+    state.shells.set("one", continued ? shell() : completed);
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+  },
+);
+
+it("opening a thread closes only its in-app toasts, and disabling notifications closes the rest", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  state.toast
+    .mockReturnValueOnce("one-completed")
+    .mockReturnValueOnce("one-approval")
+    .mockReturnValueOnce("one-other")
+    .mockReturnValueOnce("two-completed");
+  state.shells.set("one", shell({}, { id: "other" }));
+  app.start();
+  const completed = {
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:01:00Z" },
+  };
+  state.shells.set("one", shell(completed, { id: "other" }));
+  state.shells.set("one", shell({ ...completed, hasPendingApprovals: true }, { id: "other" }));
+  state.shells.set(
+    "one",
+    shell({ ...completed, hasPendingApprovals: true }, { ...completed, id: "other" }),
+  );
+  state.shells.set("two", shell(completed));
+  expect(state.toast).toHaveBeenCalledTimes(4);
+
+  app.openThread("one", "thread");
+  expect(state.closeToast.mock.calls).toEqual([["one-completed"], ["one-approval"]]);
+
+  state.mode = "off";
+  state.inApp = false;
+  app.changeSettings();
+  expect(state.closeToast.mock.calls.slice(2).flat().toSorted()).toEqual([
+    "one-other",
+    "two-completed",
+  ]);
 });
