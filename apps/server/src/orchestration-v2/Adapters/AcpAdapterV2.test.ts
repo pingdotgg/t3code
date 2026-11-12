@@ -24,6 +24,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
@@ -683,6 +684,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   let sessionUpdate:
     | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
     | undefined;
+  let rejectLoad = false;
   yield* (yield* McpProviderSessions.McpProviderSessions).set({
     environmentId: EnvironmentId.make("environment-acp-instruction-compaction"),
     threadId,
@@ -710,6 +712,10 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
             sessionUpdate = handler;
             return runtime.handleSessionUpdate(handler);
           },
+          loadSession: (sessionId, options) =>
+            rejectLoad
+              ? Effect.fail(EffectAcpErrors.AcpRequestError.internalError("Mock load failure"))
+              : runtime.loadSession(sessionId, options),
           // Make compaction during prompt completion deterministic at the adapter boundary.
           prompt: (payload, options) =>
             runtime
@@ -816,8 +822,10 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     }
     if (reopen === "resume-compact-reopen") {
       if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
-      const sessionId = providerThread.nativeThreadRef?.nativeId;
-      if (sessionId == null) return yield* Effect.die("Missing native session");
+      const stored = providerThread;
+      const nativeRef = stored.nativeThreadRef;
+      if (nativeRef?.nativeId == null) return yield* Effect.die("Missing native session");
+      const sessionId = nativeRef.nativeId;
       yield* sessionUpdate({
         sessionId,
         update: {
@@ -834,6 +842,24 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       providerThread = Option.getOrThrow(updated).providerThread;
       assert.isNull(providerThread.nativeMetadata?.acpInstructions);
       assert.deepEqual(pendingInvalidations, [providerThread]);
+      yield* session.runtime.resumeThread({
+        providerThread: {
+          ...stored,
+          id: ProviderThreadId.make("acp-alternate-thread"),
+          nativeThreadRef: { ...nativeRef, nativeId: "mock-session-2" },
+          nativeMetadata: null,
+        },
+      });
+      rejectLoad = true;
+      const failedResume = yield* Effect.exit(
+        session.runtime.resumeThread({ providerThread: stored }),
+      );
+      rejectLoad = false;
+      assert.isTrue(Exit.isFailure(failedResume));
+      const afterFailure = yield* session.runtime.readInstructionInvalidations!;
+      assert.isNull(
+        afterFailure.find((thread) => thread.id === stored.id)?.nativeMetadata?.acpInstructions,
+      );
       yield* resume();
     }
     const { runtime } = session;
