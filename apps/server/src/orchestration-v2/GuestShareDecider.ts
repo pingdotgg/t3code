@@ -1,6 +1,4 @@
 import {
-  GUEST_PENDING_ATTACHMENT_BYTES_LIMIT,
-  GUEST_PENDING_MESSAGE_LIMIT,
   GUEST_RESOLVED_MESSAGE_LIMIT,
   type GuestMessageAttribution,
   type GuestMessageId,
@@ -16,25 +14,9 @@ import * as Result from "effect/Result";
 export type GuestShareCommand = Extract<
   OrchestrationV2ServerCommand,
   {
-    readonly type:
-      | "thread.guest-share.open"
-      | "thread.guest-share.redeem"
-      | "thread.guest-share.close"
-      | "thread.guest-message.submit"
-      | "thread.guest-message.dismiss";
+    readonly type: "thread.guest-share.close" | "thread.guest-message.dismiss";
   }
 >;
-
-/** Failures a guest may be told about. Any other dispatch failure reaches them as "rejected". */
-export const GUEST_FAILURE = {
-  inactive: "This guest link is no longer active.",
-  used: "This guest link was already used.",
-  busy: "Wait for the owner to answer your earlier messages.",
-  filesBusy: "Wait for the owner to answer your earlier messages before you attach more files.",
-} as const;
-
-const isExpired = (share: ThreadGuestShare, now: DateTime.Utc) =>
-  DateTime.toEpochMillis(now) >= Date.parse(share.expiresAt);
 
 const pendingAttachments = (share: ThreadGuestShare | null) =>
   share?.messages.flatMap((message) =>
@@ -96,10 +78,7 @@ const resolveMessage = (
   });
 };
 
-/**
- * Applies a guest share command to the thread. The orchestrator runs commands one at a time, so
- * checking state here is what makes a link redeem once and a message send once.
- */
+/** Applies an owner's guest share command to a share stored before guest links were removed. */
 export function decideGuestShareCommand(input: {
   readonly thread: OrchestrationV2AppThread;
   readonly command: GuestShareCommand;
@@ -111,74 +90,8 @@ export function decideGuestShareCommand(input: {
     Result.succeed({ ...thread, guestShare, updatedAt: now });
 
   switch (command.type) {
-    case "thread.guest-share.open": {
-      if (thread.archivedAt !== null) return Result.fail("Archived threads cannot be shared.");
-      return withShare({
-        id: command.shareId,
-        host: command.host,
-        createdAt: DateTime.formatIso(now),
-        expiresAt: command.expiresAt,
-        guestName: null,
-        messages: [],
-      });
-    }
     case "thread.guest-share.close":
       return share === null ? Result.succeed(thread) : withShare(null);
-    case "thread.guest-share.redeem": {
-      if (share === null || share.id !== command.shareId || isExpired(share, now)) {
-        return Result.fail(GUEST_FAILURE.inactive);
-      }
-      if (share.guestName !== null) return Result.fail(GUEST_FAILURE.used);
-      return withShare({ ...share, guestName: command.guestName });
-    }
-    case "thread.guest-message.submit": {
-      if (
-        share === null ||
-        share.id !== command.shareId ||
-        share.guestName === null ||
-        isExpired(share, now)
-      ) {
-        return Result.fail(GUEST_FAILURE.inactive);
-      }
-      if (
-        share.messages.filter((message) => message.status === "pending").length >=
-        GUEST_PENDING_MESSAGE_LIMIT
-      ) {
-        return Result.fail(GUEST_FAILURE.busy);
-      }
-      const attachments = command.attachments ?? [];
-      const pendingBytes = [...pendingAttachments(share), ...attachments].reduce(
-        (total, attachment) => total + attachment.sizeBytes,
-        0,
-      );
-      if (attachments.length > 0 && pendingBytes > GUEST_PENDING_ATTACHMENT_BYTES_LIMIT) {
-        return Result.fail(GUEST_FAILURE.filesBusy);
-      }
-      const guestShare: ThreadGuestShare = {
-        ...share,
-        messages: trimResolved([
-          ...share.messages,
-          {
-            id: command.guestMessageId,
-            text: command.text,
-            status: "pending",
-            submittedAt: DateTime.formatIso(now),
-            ...(attachments.length === 0 ? {} : { attachments }),
-          },
-        ]),
-      };
-      // A request needs the owner, so a settled thread comes back as a new message brings it.
-      return thread.settledOverride === "settled"
-        ? Result.succeed({
-            ...thread,
-            guestShare,
-            settledOverride: null,
-            settledAt: null,
-            unsettledAt: now,
-            updatedAt: now,
-          })
-        : withShare(guestShare);
-    }
     case "thread.guest-message.dismiss": {
       if (share === null) return Result.fail("This thread has no guest link.");
       return Result.map(resolveMessage(share, command.guestMessageId, "dismissed"), (next) => ({

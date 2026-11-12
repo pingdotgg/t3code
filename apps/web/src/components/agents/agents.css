@@ -645,19 +645,13 @@
   flex-direction: column;
   gap: 12px;
 }
-.agent-appearance-preview {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 .agent-appearance input[type="color"] {
   width: 64px;
   height: 38px;
   padding: 3px;
   cursor: pointer;
 }
-.agent-color-options,
-.agent-icon-options {
+.agent-color-options {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -666,11 +660,6 @@
   width: 26px;
   height: 26px;
   border-radius: 50%;
-}
-.agent-icon-options button {
-  padding: 5px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
 }
 .agent-appearance button[aria-pressed="true"] {
   outline: 2px solid var(--foreground);
@@ -983,23 +972,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-filter-description {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 1.35;
-}
-.agent-filter-model {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted-foreground);
-  font:
-    10px ui-monospace,
-    monospace;
-}
 .agent-filter-count {
   flex-shrink: 0;
   color: var(--muted-foreground);
@@ -1015,26 +987,6 @@
 .agents-filters .agent-custom-icon {
   width: 22px;
   height: 22px;
-}
-.agent-filter-row {
-  display: flex;
-  align-items: flex-start;
-  border-bottom: 1px solid var(--border);
-}
-.agent-filter-row:has(> .agent-filter[aria-pressed="true"]) {
-  background: var(--accent);
-  border-bottom-color: transparent;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px var(--ring);
-}
-.agent-filter-row > .agent-filter {
-  flex: 1;
-}
-.agent-filter-row > .agent-icon-button {
-  flex-shrink: 0;
-  border: 0;
-  padding: 5px;
-  margin: 4px 2px 0 0;
 }
 .agents-threads {
   width: var(--agents-threads-width, 360px);
@@ -1720,4 +1672,193 @@
   .agent-start-options {
     grid-template-columns: 1fr;
   }
+}
+
+/* Agent rail: compact icon-over-name tiles; details and actions live in each tile's card. */
+.agent-rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.agent-rail-group > h3 {
+  padding: 6px 6px 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.agent-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 4px;
+}
+.agent-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 4px 8px;
+  border-radius: 10px;
+  text-align: center;
+}
+.agent-tile:hover,
+.agent-tile[data-popup-open] {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.agent-tile[aria-current="true"] {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+.agent-tile:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.agent-tile > .agent-orb,
+.agent-tile > .agent-custom-icon {
+  width: 28px;
+  height: 28px;
+}
+.agent-tile > svg {
+  margin: 4px;
+}
+.agent-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.agent-tile-count {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.agent-card > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.agent-card > header strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.agent-card-model {
+  color: var(--muted-foreground);
+  font:
+    10px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.agent-card > p {
+  color: var(--muted-foreground);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.agent-card > dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+}
+.agent-card dt {
+  color: var(--muted-foreground);
+}
+.agent-card dd {
+  overflow-wrap: anywhere;
+}
+
+/* Agent editor: icon beside the name, role chips, and the folded Advanced section. */
+.agent-name-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.agent-name-row > label {
+  flex: 1;
+  min-width: 0;
+}
+.agent-icon-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+}
+.agent-icon-trigger:hover,
+.agent-icon-trigger[data-popup-open] {
+  background: var(--accent);
+}
+.agent-icon-trigger > .agent-orb,
+.agent-icon-trigger > .agent-custom-icon {
+  width: 24px;
+  height: 24px;
+}
+.agent-icon-option {
+  --agent-color: var(--muted-foreground);
+  display: inline-flex;
+}
+.agent-icon-option > .agent-orb,
+.agent-icon-option > .agent-custom-icon {
+  width: 20px;
+  height: 20px;
+}
+.agent-tag-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.agent-tag-options button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.agent-tag-options button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--ring);
+}
+.agent-tag-options button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.agent-form .agent-tag-options input {
+  flex: 1 1 8rem;
+  width: auto;
+  min-width: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.agent-advanced > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.agent-advanced > summary:hover {
+  color: var(--foreground);
+}
+.agent-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 14px;
 }

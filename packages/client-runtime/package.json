@@ -95,6 +95,10 @@
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"
     },
+    "./scheduled-task-time-zone": {
+      "types": "./src/scheduledTaskTimeZone.ts",
+      "default": "./src/scheduledTaskTimeZone.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
@@ -139,6 +143,10 @@
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"
     },
+    "./operations/agentLibrary": {
+      "types": "./src/operations/agentLibrary.ts",
+      "default": "./src/operations/agentLibrary.ts"
+    },
     "./operations/projects": {
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
@@ -162,10 +170,6 @@
     "./t3ToolSummary": {
       "types": "./src/t3ToolSummary.ts",
       "default": "./src/t3ToolSummary.ts"
-    },
-    "./relay": {
-      "types": "./src/relay/index.ts",
-      "default": "./src/relay/index.ts"
     },
     "./state/auth": {
       "types": "./src/state/auth.ts",
@@ -255,9 +259,17 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/network-members": {
+      "types": "./src/state/networkMembers.ts",
+      "default": "./src/state/networkMembers.ts"
+    },
     "./state/tailnetDevices": {
       "types": "./src/state/tailnetDevices.ts",
       "default": "./src/state/tailnetDevices.ts"
+    },
+    "./state/deviceNetwork": {
+      "types": "./src/state/deviceNetwork.ts",
+      "default": "./src/state/deviceNetwork.ts"
     },
     "./state/environmentHttpAuth": {
       "types": "./src/state/environmentHttpAuth.ts",
@@ -290,10 +302,6 @@
     "./state/project-grouping": {
       "types": "./src/state/projectGrouping.ts",
       "default": "./src/state/projectGrouping.ts"
-    },
-    "./state/relay": {
-      "types": "./src/state/relayDiscovery.ts",
-      "default": "./src/state/relayDiscovery.ts"
     },
     "./state/review": {
       "types": "./src/state/review.ts",
@@ -443,6 +451,10 @@
       "types": "./src/work-log/commandLabel.ts",
       "default": "./src/work-log/commandLabel.ts"
     },
+    "./work-log/embedded-scripts": {
+      "types": "./src/work-log/embeddedScripts.ts",
+      "default": "./src/work-log/embeddedScripts.ts"
+    },
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
@@ -510,6 +522,10 @@
     "./state/agents": {
       "types": "./src/state/agents.ts",
       "default": "./src/state/agents.ts"
+    },
+    "./state/agentIdentity": {
+      "types": "./src/state/agentIdentity.ts",
+      "default": "./src/state/agentIdentity.ts"
     },
     "./state/child-status-counts": {
       "types": "./src/state/childStatusCounts.ts",
@@ -603,7 +619,8 @@
     "effect": "catalog:",
     "fflate": "0.8.3",
     "jszip": "3.10.1",
-    "three": "0.180.0"
+    "three": "0.180.0",
+    "unbash": "^5.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

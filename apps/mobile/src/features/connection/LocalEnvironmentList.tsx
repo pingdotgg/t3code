@@ -1,10 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { networkMembers } from "../../state/networkMembers";
 import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
+import { NetworkMemberRow } from "./NetworkMemberRow";
 
 type EnvironmentRowProps = ComponentProps<typeof ConnectionEnvironmentRow>;
 
@@ -21,6 +24,7 @@ export function LocalEnvironmentList({
   readonly expandedId: EnvironmentId | null;
   readonly onToggle: (environmentId: EnvironmentId) => void;
 }) {
+  const unopened = useAtomValue(networkMembers.unopenedAtom);
   if (environments.length === 0) {
     return (
       <View
@@ -54,6 +58,16 @@ export function LocalEnvironmentList({
             {...rowActions}
           />
         </View>
+      ))}
+      {unopened.map((member) => (
+        <NetworkMemberRow
+          key={member.environmentId}
+          member={member}
+          viaLabel={
+            environments.find((environment) => environment.environmentId === member.via)
+              ?.environmentLabel ?? null
+          }
+        />
       ))}
     </View>
   );

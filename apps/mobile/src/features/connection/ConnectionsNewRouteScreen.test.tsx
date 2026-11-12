@@ -33,7 +33,6 @@ vi.mock("@react-navigation/native", () => ({
   useRoute: () => ({ name: "ConnectionsNew" }),
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
-vi.mock("@clerk/expo", () => ({ useAuth: () => ({ isLoaded: false, isSignedIn: false }) }));
 vi.mock("expo-camera", () => ({
   CameraView: () => null,
   useCameraPermissions: () => [null, vi.fn()],
@@ -62,11 +61,6 @@ vi.mock("../settings/settings-navigation", () => ({
 }));
 vi.mock("../layout/workspace/workspace-selection-store", () => ({
   workspaceHasColumns: () => false,
-}));
-vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
-vi.mock("./CloudEnvironmentRows", () => ({ CloudEnvironmentRows: () => null }));
-vi.mock("./environmentSections", () => ({
-  splitEnvironmentSections: () => ({ connectedCloudEnvironments: [] }),
 }));
 vi.mock("./devAutoConnect", () => ({
   autoConnectReport: () => ({ connecting: false, error: null }),

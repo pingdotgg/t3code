@@ -34,7 +34,6 @@ import {
   markNativeShowcaseReady,
   type ShowcaseScene,
 } from "./nativeShowcaseScene";
-import { buildShowcaseAgentActivity } from "./showcaseAgentActivity";
 import {
   isShowcaseThemeApplied,
   SHOWCASE_THREAD_ID,
@@ -53,7 +52,6 @@ import {
   subscribeToShowcaseRenderSignal,
 } from "./showcaseRenderSignal";
 import { retryShowcaseOperation } from "./showcaseRetry";
-import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
 import { settingsNavigationState } from "../settings/settings-navigation";
 import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
 
@@ -99,8 +97,6 @@ function showcaseNavigationAction(
   switch (scene) {
     case "threads":
       return StackActions.popToTop();
-    case "agent-activity":
-      return CommonActions.reset({ index: 0, routes: [{ name: "Home" }] });
     case "environments":
       return CommonActions.reset(settingsNavigationState(rootState, "SettingsEnvironments"));
     case "terminal":
@@ -128,7 +124,6 @@ export function installShowcaseCapture(
   let orientationSettled = false;
   let requestedScene: ShowcaseScene | null = null;
   let pendingTasks: Run | null = null;
-  let agentActivity: Run | null = null;
   let lastNavigation: ShowcaseNavigationTarget | null = null;
   let readiness: { key: string; cancel: () => void } | null = null;
   const isCancelled = (run?: Run) => () => disposed || run?.cancelled === true;
@@ -187,7 +182,6 @@ export function installShowcaseCapture(
       requestedScene = scene;
       // Draws belong to their scene request; revisiting review must wait for its new surface.
       clearShowcaseRenderSignal();
-      agentActivity = cancelRun(agentActivity);
     }
   };
 
@@ -212,37 +206,6 @@ export function installShowcaseCapture(
       ),
     ).then((results) => {
       if (run.cancelled || !results.every(Boolean)) return;
-      run.done = true;
-      evaluate();
-    });
-  };
-
-  const stageAgentActivity = () => {
-    const run: Run = { cancelled: false, done: false };
-    agentActivity = run;
-    let lastOutcome: string | null = null;
-    void retryShowcaseOperation(
-      async () => {
-        const now = Date.now();
-        const activity = buildShowcaseAgentActivity(
-          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
-          appAtomRegistry.get(environmentProjects.projectsAtom),
-          now,
-        );
-        const outcome =
-          activity === null
-            ? "fixture threads not loaded"
-            : await stageShowcaseAgentActivity(activity, now);
-        if (outcome === true) return true;
-        if (outcome !== lastOutcome) {
-          console.warn(`[showcase] agent activity not staged: ${outcome}`);
-        }
-        lastOutcome = outcome;
-        return false;
-      },
-      { isCancelled: isCancelled(run), attemptTimeoutMs: 60_000 },
-    ).then((staged) => {
-      if (run.cancelled || !staged) return;
       run.done = true;
       evaluate();
     });
@@ -305,9 +268,7 @@ export function installShowcaseCapture(
 
     const navigationReady = rootNavigationRef.isReady();
     const rootState = navigationReady ? rootNavigationRef.getRootState() : undefined;
-    const scene = rootState
-      ? showcaseSceneOnScreen(requestedScene, pathnameFromState(rootState))
-      : null;
+    const scene = rootState ? showcaseSceneOnScreen(pathnameFromState(rootState)) : null;
 
     if (requestedScene !== null && hasFixture && showcaseThread && rootState) {
       const navigation = { requestedScene, scene, thread: showcaseThread };
@@ -327,12 +288,6 @@ export function installShowcaseCapture(
       }
     }
 
-    if (scene === "agent-activity" && hasFixture) {
-      if (agentActivity === null) stageAgentActivity();
-    } else if (agentActivity?.done === false) {
-      agentActivity = cancelRun(agentActivity);
-    }
-
     const render = getShowcaseRenderSnapshot();
     updateReadiness(
       showcaseReadinessKey({
@@ -341,7 +296,6 @@ export function installShowcaseCapture(
         hasFixture,
         orientationSettled,
         themeApplied,
-        agentActivityStaged: agentActivity?.done === true,
         themeId,
         renderSignal: render.signal,
         renderReports: render.reports,
@@ -391,7 +345,6 @@ export function installShowcaseCapture(
     appearanceSubscription.remove();
     for (const unsubscribe of unsubscribers) unsubscribe();
     pendingTasks = cancelRun(pendingTasks);
-    agentActivity = cancelRun(agentActivity);
     readiness?.cancel();
     readiness = null;
     setReadyScene(null);

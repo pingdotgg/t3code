@@ -48,8 +48,6 @@ const AGENTS_ASSETS = {
   androidAdaptiveBackgroundImage: undefined,
   androidSplashIcon: "./assets/agents/android-splash-icon.png",
   androidMonochromeIcon: "./assets/agents/android-icon-monochrome.png",
-  androidNotificationIcon: "./assets/agents/android-notification-icon.png",
-  androidNotificationColor: AGENTS_NAVY,
 } as const;
 
 const VARIANT_CONFIG = {
@@ -58,7 +56,6 @@ const VARIANT_CONFIG = {
     scheme: "t3code-personal-dev",
     iosBundleIdentifier: "com.jayleaton.t3code.dev",
     androidPackage: "com.jayleaton.t3code.dev",
-    relyingParty: "clerk.t3.codes",
     assets: AGENTS_ASSETS,
   },
   preview: {
@@ -66,7 +63,6 @@ const VARIANT_CONFIG = {
     scheme: "t3code-personal-preview",
     iosBundleIdentifier: "com.jayleaton.t3code.preview",
     androidPackage: "com.jayleaton.t3code.preview",
-    relyingParty: "clerk.t3.codes",
     assets: AGENTS_ASSETS,
   },
   production: {
@@ -74,7 +70,6 @@ const VARIANT_CONFIG = {
     scheme: "t3code-personal",
     iosBundleIdentifier: "com.jayleaton.t3code",
     androidPackage: "com.jayleaton.t3code",
-    relyingParty: "clerk.t3.codes",
     assets: AGENTS_ASSETS,
   },
 } as const;
@@ -110,7 +105,6 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   {
     bundleIdentifier: `${iosBundleIdentifier}.widgets`,
     groupIdentifier: `group.${iosBundleIdentifier}`,
-    enablePushNotifications: true,
     // Frequent updates need the iOS entitlement to avoid early throttling.
     frequentUpdates: true,
     enableAndroid: true,
@@ -165,19 +159,6 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
           initialLayout: "./src/widgets/SubscriptionUsage.android.tsx",
         },
       },
-      {
-        name: "AgentActivity",
-        displayName: "Agent Activity",
-        description: "Shows the current state of active agents.",
-        // Live Activity companion; there is no Android presentation for it.
-        android: null,
-        ios: {
-          supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
-          // Embeds the layout so the gallery preview and a new widget render
-          // before the app has run once; the app replaces it on publish.
-          initialLayout: "./src/widgets/AgentActivityWidget.tsx",
-        },
-      },
     ],
   },
 ];
@@ -213,7 +194,7 @@ const config: ExpoConfig = {
   slug: "t3-code-personal",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.2.0",
+  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.3.0",
   runtimeVersion: {
     // Skip costly fingerprinting on dev launches; preview and production OTAs require matching native projects.
     policy: runtimeVersionPolicy,
@@ -294,7 +275,6 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-asset",
-    "react-native-pdf-jsi",
     [
       "expo-font",
       {
@@ -324,14 +304,6 @@ const config: ExpoConfig = {
     ...(isIosPersonalTeamBuild
       ? [sharingPlugin]
       : ["./plugins/withShareExtensionDisplayName.cjs", sharingPlugin]),
-    [
-      "expo-notifications",
-      {
-        icon: variant.assets.androidNotificationIcon,
-        color: variant.assets.androidNotificationColor,
-        mode: APP_VARIANT === "development" ? "development" : "production",
-      },
-    ],
     "expo-web-browser",
     [
       "expo-quick-actions",
@@ -440,13 +412,6 @@ const config: ExpoConfig = {
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
-    relay: { url: null },
-    clerk: { publishableKey: null, jwtTemplate: null },
-    observability: {
-      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
-      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
-      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
-    },
   },
   owner: "jayleaton",
   experiments: {

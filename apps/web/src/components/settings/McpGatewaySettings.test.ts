@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { MCP_GATEWAY_BASELINE_SCOPES } from "../../mcpGatewayState";
-import { toggleMcpGatewayGrantForAll, updateMcpGatewayGrant } from "./McpGatewaySettings";
+import {
+  MCP_GATEWAY_BASELINE_SCOPES,
+  MCP_GATEWAY_CONFIGURABLE_SCOPES,
+} from "../../mcpGatewayState";
+import type { McpGatewayRelayPreview } from "@t3tools/contracts";
+
+import {
+  mcpGrantCeilings,
+  toggleMcpGatewayGrantForAll,
+  updateMcpGatewayGrant,
+} from "./McpGatewaySettings";
 
 const primary = "a534b83f-a352-44d8-aedc-c4230c179390";
 const macbook = "2549ba75-2a91-4554-8baa-88e6ae0efa48";
@@ -56,5 +65,55 @@ describe("MCP environment grants", () => {
     );
     expect(next["hidden-env"]).toEqual(["read"]);
     expect(next[primary]).toContain("read");
+  });
+});
+
+describe("MCP grant ceiling", () => {
+  const preview = (serverId: string, fields: Partial<McpGatewayRelayPreview>) => ({
+    serverId,
+    preview: { grants: {}, refusals: {}, ...fields },
+  });
+  const all = [...MCP_GATEWAY_CONFIGURABLE_SCOPES];
+
+  it.each([
+    ["no server answered", [], undefined, undefined],
+    [
+      "a server relays everything",
+      [preview("laptop", { grants: { [macbook]: all } })],
+      undefined,
+      undefined,
+    ],
+    [
+      "a server refuses it, in its own words",
+      [preview("laptop", { refusals: { [macbook]: "Revoked." } })],
+      [],
+      "Revoked.",
+    ],
+    [
+      "a server caps it at reading",
+      [preview("laptop", { grants: { [macbook]: ["read"] }, limit: "Only reads." })],
+      ["read"],
+      "Only reads.",
+    ],
+    [
+      "another server relays what one refuses",
+      [
+        preview("laptop", { refusals: { [macbook]: "Revoked." } }),
+        preview("studio", { grants: { [macbook]: all } }),
+      ],
+      undefined,
+      undefined,
+    ],
+    // A server's answer about itself is not what other servers relay.
+    [
+      "only the machine itself answered",
+      [preview(macbook, { refusals: { [macbook]: "No." } })],
+      undefined,
+      undefined,
+    ],
+  ] as const)("shows what servers relay when %s", (_label, previews, scopes, reason) => {
+    const ceiling = mcpGrantCeilings(previews, [macbook])[macbook];
+    expect(ceiling?.scopes).toEqual(scopes);
+    expect(ceiling?.reason).toEqual(reason);
   });
 });

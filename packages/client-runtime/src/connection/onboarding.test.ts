@@ -31,6 +31,7 @@ import {
   ConnectionBlockedError,
   PrimaryConnectionTarget,
 } from "./model.ts";
+import { NetworkMembers, makeNetworkMembers } from "./networkMembers.ts";
 import * as Onboarding from "./onboarding.ts";
 import {
   prepareBearerConnectionUpdate,
@@ -291,14 +292,15 @@ describe("connection onboarding", () => {
     return Effect.gen(function* () {
       const onboarding = yield* Onboarding.ConnectionOnboarding;
 
-      const environmentId = yield* onboarding.registerDevice({
+      const opened = yield* onboarding.openDevice({
         environmentId: PAIRED_ENVIRONMENT_ID,
         urls: ["https://down.example.test", "https://remote.example.test"],
         credential: "pairing-token",
         expiresAt: DateTime.makeUnsafe(0),
       });
 
-      expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
+      // The saved session ends `expires_in` after it was issued; nothing extends it.
+      expect(opened).toEqual({ environmentId: PAIRED_ENVIRONMENT_ID, sessionExpiresAt: 3_600_000 });
       expect(
         calls.filter((call) => call.url.endsWith("/oauth/token")).map((call) => call.url),
       ).toEqual(["https://remote.example.test/oauth/token"]);
@@ -393,7 +395,30 @@ describe("connection onboarding", () => {
       expect(entry === undefined ? [] : connectionRoutes(entry).map(routeHttpBaseUrl)).toEqual(
         expect.arrayContaining(["https://remote.example.test/", "https://lan.example.test/"]),
       );
-    }).pipe(Effect.provide(layerPairingOnboarding())),
+      // Paired by hand, so the network no longer manages it or may forget its credential.
+      expect(yield* (yield* NetworkMembers).read).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding().pipe(
+          Layer.provideMerge(
+            Layer.effect(
+              NetworkMembers,
+              makeNetworkMembers({
+                read: Effect.succeed([
+                  {
+                    environmentId: PAIRED_ENVIRONMENT_ID,
+                    label: "Paired environment",
+                    via: EnvironmentId.make("environment-host"),
+                    opener: { kind: "app", appId: "app-phone" },
+                  },
+                ]),
+                write: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect(

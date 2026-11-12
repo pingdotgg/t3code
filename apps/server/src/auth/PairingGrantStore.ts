@@ -3,11 +3,13 @@ import {
   type AuthEnvironmentScope,
   type AuthMcpClientAccess,
   type AuthPairingLink,
+  type EnvironmentId,
   mcpApprovalCode,
   PAIRING_CODE_ALPHABET,
   PAIRING_CODE_LENGTH,
   parseMcpApprovalCode,
   type ServerAuthBootstrapMethod,
+  withoutRetiredScopes,
 } from "@t3tools/contracts";
 import {
   DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
@@ -29,12 +31,22 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
+/**
+ * The desktop app's own session on its bundled server. Only the desktop bootstrap secret, which
+ * the Electron app holds, mints it.
+ */
+export const DESKTOP_APP_SUBJECT = "desktop-bootstrap";
+
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
+  /** The member that asked for this credential on an app's behalf. */
+  readonly brokeredBy?: EnvironmentId;
+  /** The app of the network this credential pairs again for. */
+  readonly replacesAppId?: string;
   readonly expiresAt: DateTime.DateTime;
 }
 
@@ -222,6 +234,8 @@ export class PairingGrantStore extends Context.Service<
       readonly purpose?: "startup";
       /** Issues a hidden `<LEVEL>-` code that only an agent sign-in at this level can spend. */
       readonly mcpApproval?: AuthMcpClientAccess;
+      readonly brokeredBy?: EnvironmentId;
+      readonly replacesAppId?: string;
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
     readonly listActive: () => Effect.Effect<
       ReadonlyArray<AuthPairingLink>,
@@ -333,7 +347,7 @@ const make = Effect.gen(function* () {
     yield* seedGrant(config.desktopBootstrapToken, {
       method: "desktop-bootstrap",
       scopes: AuthStandardClientScopes,
-      subject: "desktop-bootstrap",
+      subject: DESKTOP_APP_SUBJECT,
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),
@@ -414,6 +428,7 @@ const make = Effect.gen(function* () {
       ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
       expiresAt,
     };
+    const scopes = withoutRetiredScopes(input?.scopes ?? AuthStandardClientScopes);
     const subject = mcpApproval
       ? `${AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX}${mcpApproval}`
       : (input?.subject ?? "one-time-token");
@@ -422,12 +437,14 @@ const make = Effect.gen(function* () {
         id,
         credential,
         method: "one-time-token",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes,
         subject,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         createdAt: now,
         expiresAt: expiresAt,
+        ...(input?.brokeredBy === undefined ? {} : { brokeredBy: input.brokeredBy }),
+        ...(input?.replacesAppId === undefined ? {} : { replacesAppId: input.replacesAppId }),
       })
       .pipe(
         Effect.mapError(
@@ -444,7 +461,7 @@ const make = Effect.gen(function* () {
     if (!mcpApproval) {
       yield* emitUpsert({
         id,
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes,
         subject,
         ...(input?.label ? { label: input.label } : {}),
         createdAt: now,
@@ -461,7 +478,7 @@ const make = Effect.gen(function* () {
         return {
           method: "desktop-bootstrap",
           scopes: AuthStandardClientScopes,
-          subject: "desktop-bootstrap",
+          subject: DESKTOP_APP_SUBJECT,
           expiresAt: DateTime.add(now, {
             milliseconds: DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
           }),
@@ -596,6 +613,8 @@ const make = Effect.gen(function* () {
           ...(consumed.value.proofKeyThumbprint
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
             : {}),
+          ...(consumed.value.brokeredBy ? { brokeredBy: consumed.value.brokeredBy } : {}),
+          ...(consumed.value.replacesAppId ? { replacesAppId: consumed.value.replacesAppId } : {}),
           expiresAt: consumed.value.expiresAt,
         } satisfies BootstrapGrant;
       }

@@ -1,3 +1,4 @@
+import { withinModes } from "@t3tools/client-runtime/gateway";
 import { GatewayError } from "@t3tools/mcp-gateway";
 import {
   failure,
@@ -22,6 +23,7 @@ import * as ThreadManagementService from "../../orchestration-v2/ThreadManagemen
 import * as ThreadTaskService from "../../threadTask/ThreadTaskService.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccess from "../McpToolAccess.ts";
+import { loadCaller } from "../threadAccess.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
 import { assignRemoteChild, gatewayToolContext } from "./remoteThreads.ts";
 
@@ -98,6 +100,9 @@ export const agentsToolRefusal = (error: unknown, args: Record<string, unknown>)
     ),
   );
 
+const modeRefusal = (message: string) =>
+  new GatewayError({ code: "scope_required", message, retryable: false });
+
 /** Whether this server hosts the Agents tools; servers without the in-process port host none. */
 export const hostsAgentsTools = Effect.map(Effect.serviceOption(LocalGatewayPort), Option.isSome);
 
@@ -138,7 +143,19 @@ export const layer = McpToolAccess.toLayer(
             invocation.thread === undefined
               ? undefined
               : { environmentId: local.environmentId, threadId: invocation.thread.threadId };
-          const run = Effect.promise(() => runGatewayTool(context, name, args, { caller })).pipe(
+          // A relayed call runs there as the app's user, and a local one as this server's own
+          // client, so neither end sees the calling chat's modes; they are enforced here.
+          // Refused here first; the app answering a relayed call applies the same limits to the
+          // target as it reads it, since this server only sees what that app reports.
+          const limits = READ_TOOL.test(name) ? undefined : (yield* loadCaller()).limits;
+          const relayed = limits === undefined ? context : local.contextFor(limits);
+          const toolContext =
+            limits === undefined
+              ? relayed
+              : { ...relayed, port: withinModes(relayed.port, limits, modeRefusal) };
+          const run = Effect.promise(() =>
+            runGatewayTool(toolContext, name, args, { caller }),
+          ).pipe(
             Effect.flatMap((run) => {
               const created = run.ok ? (run.value as { threadId?: unknown }) : undefined;
               const isNamedRemoteChild =

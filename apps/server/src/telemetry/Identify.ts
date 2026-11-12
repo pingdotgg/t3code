@@ -11,8 +11,6 @@ import * as Schema from "effect/Schema";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { hashTelemetryId } from "@t3tools/shared/telemetryId";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 
 /**
@@ -48,9 +46,9 @@ const IdTokenClaims = Schema.Struct({
 const decodeIdTokenClaims = Schema.decodeUnknownOption(Schema.fromJsonString(IdTokenClaims));
 
 /**
- * Who an install belongs to, from strongest to weakest. `connect` is the T3
- * Connect account. `openai` and `claude` are provider accounts. `device` is a
- * client device that connected.
+ * Who an install belongs to, from strongest to weakest. `connect` was the T3
+ * Connect account, which older clients may still report. `openai` and `claude`
+ * are provider accounts. `device` is a client device that connected.
  */
 export const TelemetryOwnerSource = Schema.Literals(["connect", "openai", "claude", "device"]);
 export type TelemetryOwnerSource = typeof TelemetryOwnerSource.Type;
@@ -300,26 +298,15 @@ export const getTelemetryIdentity = Effect.flatMap(
 );
 
 /**
- * Owners the server can read without a client: the linked T3 Connect account
- * and the provider logins under `homeDirectory`. Clients add `connect` and
- * `device` owners when they connect.
+ * Owners the server can read without a client: the provider logins under
+ * `homeDirectory`. Clients add `device` owners when they connect.
  */
 export const getServerOwnersForHome = Effect.fn("getServerOwnersForHome")(function* (
   homeDirectory: string,
 ) {
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const connectUser = yield* secrets.get(CLOUD_LINKED_USER_ID).pipe(
-    Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes))),
-    Effect.catch((cause) =>
-      Effect.logWarning("Failed to read the linked T3 Connect account for telemetry", {
-        errorTag: cause._tag,
-      }).pipe(Effect.as(Option.none<string>())),
-    ),
-  );
   const { codexTokens, claudeJson } = yield* readProviderLogins(homeDirectory);
 
   const raw: ReadonlyArray<readonly [TelemetryOwnerSource, Option.Option<string>]> = [
-    ["connect", connectUser],
     [
       "openai",
       Option.flatMap(codexTokens, (tokens) =>

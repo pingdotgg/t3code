@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the gateway is a plain Node process outside the Effect runtime.
+import { profileFields } from "./profileInput.ts";
 import { skillFields } from "./skillInput.ts";
 import { z } from "zod";
 import * as NodeCrypto from "node:crypto";
@@ -187,31 +188,7 @@ export const handoffInputSchema = z.object({
   files: z.array(z.string().min(1)).max(10).optional(),
 });
 
-const profileInput = z.object({
-  name: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(280).optional(),
-  providerLabel: z.string().trim().min(1),
-  modelLabel: z.string().trim().min(1),
-  color: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/)
-    .optional(),
-  icon: z
-    .enum(["orb", "bot", "code", "pen", "search", "shield", "sparkles", "terminal"])
-    .optional(),
-  skillIds: z.array(z.string().trim().min(1)).optional(),
-  systemPrompt: z.string().max(32_000).optional(),
-  reasoningEffort: z.string().trim().min(1).optional(),
-  runtimeMode: z.enum([
-    "approval-required",
-    "auto-accept-edits",
-    "auto",
-    "full-access",
-    "read-only",
-  ]),
-  interactionMode: z.enum(["default", "plan"]),
-  environmentIds: z.array(z.string().trim().min(1)).optional(),
-});
+const profileInput = z.object(profileFields);
 
 const skillInput = z.object(skillFields);
 

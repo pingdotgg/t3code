@@ -6,22 +6,19 @@ import { ThreadCard } from "./ThreadCard";
 import { useAgentThreadContextMenu, useAgentThreadSettleAction } from "./useAgentThreadContextMenu";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
-import { AgentIcon } from "./AgentIcon";
+import { AgentRailTile } from "./AgentRailTile";
+import { groupAgentsByRole } from "@t3tools/client-runtime/state/agentIdentity";
 import { Link, Outlet, useLocation, useNavigate, type LinkProps } from "@tanstack/react-router";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import {
   PlusIcon,
-  MoreHorizontalIcon,
   ArrowLeftIcon,
-  ArrowRightIcon,
   SettingsIcon,
-  PencilIcon,
-  Trash2Icon,
   SearchIcon,
+  TagsIcon,
   XIcon,
   LayoutGridIcon,
   CalendarClockIcon,
@@ -189,14 +186,26 @@ export function AgentsBoard() {
   const orderedProfiles = profiles.toSorted(
     (a, b) => (ranks.get(a.profileId) ?? order.length) - (ranks.get(b.profileId) ?? order.length),
   );
-  const moveAgent = (index: number, direction: -1 | 1) => {
+  const [groupByRole, setGroupByRole] = useLocalStorage(
+    "t3code:agents:group-by-role",
+    false,
+    Schema.Boolean,
+  );
+  const railGroups = groupByRole
+    ? groupAgentsByRole(orderedProfiles)
+    : [{ tag: null, label: "Agents", profiles: orderedProfiles }];
+  /** Swaps two agents in the saved order, so a move within a role group follows what is shown. */
+  const swapAgents = (first: string, second: string | undefined) => {
+    if (second === undefined) return;
     const ids = orderedProfiles.map((profile) => profile.profileId);
-    const target = index + direction;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    const a = ids.indexOf(first);
+    const b = ids.indexOf(second);
+    if (a < 0 || b < 0) return;
+    [ids[a], ids[b]] = [second, first];
     setOrder(ids);
   };
   const { environments } = useEnvironments();
+  const machineLabels = new Map(environments.map((env) => [env.environmentId, env.label]));
   const providersByEnvironment = useEnvironmentProviders();
   const navigate = useNavigate();
   const toggleWorkspaceView = useToggleWorkspaceView();
@@ -252,6 +261,24 @@ export function AgentsBoard() {
   // The page reads every connected server, so one offering pull requests is enough.
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
+  const allTile = (
+    <button
+      type="button"
+      className="agent-tile"
+      aria-current={filter === null ? "true" : undefined}
+      aria-label={`All agents, ${activeCount(allThreads)} active`}
+      onClick={() => {
+        setFilter(null);
+        setShowFilters(false);
+      }}
+    >
+      <LayoutGridIcon size={20} aria-hidden="true" />
+      <span className="agent-tile-name">All</span>
+      <span className="agent-tile-count" aria-hidden="true">
+        {activeCount(allThreads)}
+      </span>
+    </button>
   );
   return (
     <div className="agents-page" data-thread-selected={selected} data-show-filters={showFilters}>
@@ -346,6 +373,19 @@ export function AgentsBoard() {
         <aside className="agents-filters" aria-label="Agent filters">
           <header className="agents-filters-heading">
             <h2>Agents</h2>
+            {profiles.length > 0 && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<button type="button" className="agent-icon-button" />}
+                  aria-label="Group by role"
+                  aria-pressed={groupByRole}
+                  onClick={() => setGroupByRole(!groupByRole)}
+                >
+                  <TagsIcon size={14} />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Group by role</TooltipPopup>
+              </Tooltip>
+            )}
             <button
               className="agent-primary agents-new-agent"
               disabled={!available}
@@ -355,106 +395,56 @@ export function AgentsBoard() {
               New agent
             </button>
           </header>
-          <button
-            className="agent-filter"
-            aria-pressed={filter === null}
-            onClick={() => {
-              setFilter(null);
-              setShowFilters(false);
-            }}
-          >
-            <LayoutGridIcon size={22} />
-            <span className="agent-filter-body">
-              <span className="agent-filter-name">All</span>
-            </span>
-            <span className="agent-filter-count">{activeCount(allThreads)}</span>
-          </button>
-          {orderedProfiles.map((profile, index) => (
-            <div
-              key={profile.profileId}
-              className="agent-filter-row"
-              style={
-                {
-                  "--agent-color": agentColorFor(profile, profiles),
-                } as CSSProperties
-              }
+          {groupByRole && <div className="agent-rail">{allTile}</div>}
+          {railGroups.map((group) => (
+            <section
+              key={group.tag === null ? "untagged" : `tag:${group.tag}`}
+              className="agent-rail-group"
+              aria-label={groupByRole ? group.label : undefined}
             >
-              <button
-                className="agent-filter"
-                aria-pressed={filter === profile.profileId}
-                onClick={() => {
-                  setFilter(profile.profileId);
-                  setShowFilters(false);
-                }}
-              >
-                <AgentIcon icon={profile.icon} />
-                <span className="agent-filter-body">
-                  <span className="agent-filter-name">{profile.name}</span>
-                  {profile.description && (
-                    <span className="agent-filter-description">{profile.description}</span>
-                  )}
-                  {(profile.providerLabel || profile.modelLabel) && (
-                    <span className="agent-filter-model">
-                      {profile.providerLabel && profile.modelLabel
-                        ? `${profile.providerLabel} · ${profile.modelLabel}`
-                        : (profile.providerLabel ?? profile.modelLabel)}
-                    </span>
-                  )}
-                </span>
-                <span className="agent-filter-count">
-                  {activeCount(groups.get(profile.profileId) ?? [])}
-                </span>
-              </button>
-              <Menu>
-                <MenuTrigger
-                  render={<button type="button" className="agent-icon-button" />}
-                  aria-label={`Options for ${profile.name}`}
-                >
-                  <MoreHorizontalIcon size={14} />
-                </MenuTrigger>
-                <MenuPopup align="end">
-                  <MenuItem
-                    disabled={!available}
-                    onClick={() => setEditor({ step: "edit", profile })}
-                  >
-                    <PencilIcon />
-                    Edit agent
-                  </MenuItem>
-                  {scheduledSupported && (
-                    <MenuItem
-                      disabled={!available || profile.runtimeMode === "read-only"}
-                      onClick={() =>
-                        navigate({ to: "/agents/scheduled", search: { agent: profile.profileId } })
-                      }
-                    >
-                      <CalendarClockIcon />
-                      Schedule task
-                    </MenuItem>
-                  )}
-                  <MenuItem disabled={index === 0} onClick={() => moveAgent(index, -1)}>
-                    <ArrowLeftIcon />
-                    Move up
-                  </MenuItem>
-                  <MenuItem
-                    disabled={index === orderedProfiles.length - 1}
-                    onClick={() => moveAgent(index, 1)}
-                  >
-                    <ArrowRightIcon />
-                    Move down
-                  </MenuItem>
-                  <MenuItem
-                    disabled={!available}
-                    onClick={() => {
-                      setDeleting(profile);
-                      setDeleteError("");
-                    }}
-                  >
-                    <Trash2Icon />
-                    Delete agent
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            </div>
+              {groupByRole && <h3>{group.label}</h3>}
+              <div className="agent-rail">
+                {!groupByRole && allTile}
+                {group.profiles.map((profile, index) => {
+                  const previous = group.profiles[index - 1]?.profileId;
+                  const next = group.profiles[index + 1]?.profileId;
+                  return (
+                    <AgentRailTile
+                      key={profile.profileId}
+                      profile={profile}
+                      color={agentColorFor(profile, profiles)}
+                      activeCount={activeCount(groups.get(profile.profileId) ?? [])}
+                      selected={filter === profile.profileId}
+                      machineLabels={machineLabels}
+                      onSelect={() => {
+                        setFilter(profile.profileId);
+                        setShowFilters(false);
+                      }}
+                      actions={{
+                        editDisabled: !available,
+                        scheduleDisabled: scheduledSupported
+                          ? !available || profile.runtimeMode === "read-only"
+                          : null,
+                        moveUpDisabled: previous === undefined,
+                        moveDownDisabled: next === undefined,
+                        onEdit: () => setEditor({ step: "edit", profile }),
+                        onSchedule: () =>
+                          navigate({
+                            to: "/agents/scheduled",
+                            search: { agent: profile.profileId },
+                          }),
+                        onMoveUp: () => swapAgents(profile.profileId, previous),
+                        onMoveDown: () => swapAgents(profile.profileId, next),
+                        onDelete: () => {
+                          setDeleting(profile);
+                          setDeleteError("");
+                        },
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </section>
           ))}
           {profiles.length === 0 && (
             <p className="agent-empty">No agents yet. Create an agent to start a chat.</p>
@@ -636,13 +626,20 @@ export function AgentsBoard() {
                     disabled={busy}
                     onClick={async () => {
                       setBusy(true);
-                      const deleted = await updateSettings({
-                        mcpGatewayProfiles: profiles.filter(
-                          (p) => p.profileId !== deleting.profileId,
-                        ),
-                      }).finally(() => setBusy(false));
-                      if (deleted) setDeleting(null);
-                      else setDeleteError("Could not delete the agent. Try again.");
+                      try {
+                        const deleted = await updateSettings({
+                          mcpGatewayProfiles: profiles.filter(
+                            (p) => p.profileId !== deleting.profileId,
+                          ),
+                        });
+                        if (deleted) setDeleting(null);
+                        else setDeleteError("Could not delete the agent. Try again.");
+                      } catch (cause) {
+                        setDeleteError(
+                          cause instanceof Error ? cause.message : "Could not delete the agent.",
+                        );
+                      }
+                      setBusy(false);
                     }}
                   >
                     {busy ? "Deleting…" : "Delete agent"}

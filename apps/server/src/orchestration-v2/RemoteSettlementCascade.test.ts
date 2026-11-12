@@ -1,7 +1,11 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, type OrchestrationV2AppThread, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type GatewayScope,
+  type TailnetDeviceAccess,
+  type OrchestrationV2AppThread,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +16,7 @@ import * as McpGatewayBrokerModule from "../mcp/McpGatewayBroker.ts";
 import { McpGatewayBroker } from "../mcp/McpGatewayBroker.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { cascadeToOtherEnvironments } from "./RemoteSettlementCascade.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "../mcp/McpGatewayBroker.testkit.ts";
 
 const devBox = EnvironmentId.make("environment-dev-box");
 const macBook = EnvironmentId.make("environment-macbook");
@@ -61,14 +66,18 @@ const macBookThreads = [
 
 type Call = { readonly method: string; readonly args: ReadonlyArray<unknown> };
 
-const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<string>) =>
+const makeLayer = (
+  calls: Array<Call>,
+  scopes: ReadonlyArray<GatewayScope>,
+  self?: TailnetDeviceAccess,
+) =>
   Layer.mergeAll(
     Layer.effect(
       McpGatewayBroker,
       Effect.gen(function* () {
         const broker = yield* McpGatewayBrokerModule.make;
         // The desktop app relaying for dev-box reaches the MacBook.
-        yield* broker.connect("desktop", { [macBook]: scopes }).pipe(
+        yield* broker.connect("desktop", { [macBook]: scopes }, CODE_PAIRED_SUBJECT).pipe(
           Stream.runForEach((event) => {
             calls.push({ method: event.method, args: event.args });
             return broker.respond("desktop", {
@@ -84,7 +93,7 @@ const makeLayer = (calls: Array<Call>, scopes: ReadonlyArray<string>) =>
         );
         return broker;
       }),
-    ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(Layer.provide(layerDependencies({ environmentId: devBox, ...(self && { self }) }))),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getDescriptor: Effect.succeed({ environmentId: devBox } as never),
     }),
@@ -134,4 +143,14 @@ it.effect("an app without lifecycle access is not asked to settle anything", () 
     ]);
     expect(calls).toEqual([]);
   }).pipe(Effect.provide(makeLayer(calls, ["read"])));
+});
+
+it.effect("a machine the network lets only read asks no app to settle anything", () => {
+  const calls: Array<Call> = [];
+  return Effect.gen(function* () {
+    yield* cascadeToOtherEnvironments([
+      { threadId: ThreadId.make("card"), action: "settle", settledAt },
+    ]);
+    expect(calls).toEqual([]);
+  }).pipe(Effect.provide(makeLayer(calls, ["read", "lifecycle"], "read-only")));
 });

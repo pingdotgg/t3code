@@ -8,6 +8,7 @@ import {
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
 } from "@t3tools/contracts";
 import type {
+  AgentContextRecord,
   ComposerContextId,
   ComposerContextRecord,
   EnvironmentContextRecord,
@@ -168,10 +169,13 @@ export function threadContextReference(record: ThreadContextRecord): ComposerCon
 }
 
 /** One record per machine: mentioning the same machine twice reuses the chip. */
+/** Machines and agents the user @-mentioned: identity only, one record per target. */
+export type MentionedIdentityRecord = EnvironmentContextRecord | AgentContextRecord;
+
 export function environmentContextReference(
-  record: EnvironmentContextRecord,
+  record: MentionedIdentityRecord,
 ): ComposerContextReference {
-  return { kind: "environment", contextId: record.contextId, label: record.label };
+  return { kind: record.kind, contextId: record.contextId, label: record.label };
 }
 
 export function environmentContextRecord(
@@ -330,7 +334,7 @@ export function buildMessageContext(input: {
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
-  environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  environmentContexts?: ReadonlyArray<MentionedIdentityRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(

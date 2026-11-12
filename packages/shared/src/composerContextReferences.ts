@@ -1,4 +1,5 @@
 import {
+  type AgentContextRecord,
   COMPOSER_CONTEXT_LABEL_MAX_CHARS,
   type ComposerContextId,
   type ComposerContextKind,
@@ -6,6 +7,7 @@ import {
   type ElementContextDetails,
   type EnvironmentId,
   type KnownComposerContextRecord,
+  type McpGatewayProfile,
   type ScopedThreadRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -93,6 +95,63 @@ export function threadContextRecord(ref: ScopedThreadRef, title: string): Thread
     threadId: ref.threadId,
     title: label,
   };
+}
+
+export type ComposerAgentProfile = Pick<
+  McpGatewayProfile,
+  "profileId" | "name" | "runtimeMode" | "environmentIds"
+>;
+
+/**
+ * One record per agent: its profileId is the identity, so a rename keeps the chip. An agent
+ * limited to other machines names the first of them.
+ */
+export function agentContextRecord(
+  profile: ComposerAgentProfile,
+  environmentId: EnvironmentId,
+): AgentContextRecord {
+  const allowed = profile.environmentIds ?? [];
+  const elsewhere = allowed.length > 0 && !allowed.includes(environmentId);
+  return {
+    version: 1,
+    kind: "agent",
+    contextId: toKindScopedComposerContextId("agent", profile.profileId),
+    label: sanitizeComposerContextLabel(profile.name, "agent"),
+    profileId: profile.profileId,
+    name: profile.name,
+    ...(elsewhere ? { environmentId: allowed[0] as EnvironmentId } : {}),
+  };
+}
+
+export type AgentReferenceState =
+  | { readonly status: "unknown"; readonly name: string }
+  | { readonly status: "available"; readonly name: string }
+  | { readonly status: "missing"; readonly name: string }
+  | { readonly status: "read-only"; readonly name: string }
+  | {
+      readonly status: "elsewhere";
+      readonly name: string;
+      readonly environmentIds: ReadonlyArray<string>;
+    };
+
+/**
+ * What an agent chip means now: resolved by profileId, so it shows the current name, or the
+ * snapshot once the agent is gone. `profiles` is undefined until a library has loaded, and
+ * `environmentId` is where the message runs, when known.
+ */
+export function agentReferenceState(
+  record: Pick<AgentContextRecord, "profileId" | "name">,
+  profiles: ReadonlyArray<ComposerAgentProfile> | undefined,
+  environmentId?: EnvironmentId,
+): AgentReferenceState {
+  if (profiles === undefined) return { status: "unknown", name: record.name };
+  const profile = profiles.find((candidate) => candidate.profileId === record.profileId);
+  if (profile === undefined) return { status: "missing", name: record.name };
+  if (profile.runtimeMode === "read-only") return { status: "read-only", name: profile.name };
+  const allowed = profile.environmentIds ?? [];
+  if (environmentId !== undefined && allowed.length > 0 && !allowed.includes(environmentId))
+    return { status: "elsewhere", name: profile.name, environmentIds: allowed };
+  return { status: "available", name: profile.name };
 }
 
 /**
@@ -287,7 +346,43 @@ function formatElementDetails(element: ElementContextDetails): string[] {
   return lines;
 }
 
-function formatComposerContextProviderPayload(record: KnownComposerContextRecord): string {
+function formatAgentProviderPayload(
+  record: AgentContextRecord,
+  agents: ReadonlyArray<ComposerAgentProfile> | undefined,
+): string {
+  const state = agents === undefined ? undefined : agentReferenceState(record, agents);
+  const name = sanitizeComposerContextLabel(state?.name ?? record.name, "agent");
+  const mentionedAs = sanitizeComposerContextLabel(record.name, "agent");
+  const lines = [`name: ${name}`];
+  if (name !== mentionedAs) lines.push(`mentioned as: ${mentionedAs}`);
+  lines.push(`profileId: ${record.profileId}`);
+  if (record.environmentId) lines.push(`environmentId: ${record.environmentId}`);
+  const limitedTo = agents?.find(
+    (profile) => profile.profileId === record.profileId,
+  )?.environmentIds;
+  if (limitedTo?.length) lines.push(`runs only on environmentIds: ${limitedTo.join(", ")}`);
+  const noRun =
+    "The mention alone asks for nothing: do not run, message, or start the agent unless the message asks.";
+  if (state?.status === "missing") {
+    lines.push(
+      `Unavailable: this environment has no agent with this profileId (deleted, or not synced here). If the message asks for this agent, tell the user so; do not substitute an agent with a similar name. ${noRun}`,
+    );
+  } else if (state?.status === "read-only") {
+    lines.push(
+      `Read-only: this agent cannot run work, so delegate_task, t3_thread_launch and create_threads refuse it. If the message asks it to work, tell the user so. ${noRun}`,
+    );
+  } else {
+    lines.push(
+      `The user picked this T3 agent in the composer, so this profileId is exact: to delegate to it, pass profileId ${JSON.stringify(record.profileId)} to delegate_task, t3_thread_launch or create_threads${record.environmentId ? " with this environmentId as the target" : ""}; do not search agents by name. ${noRun} If a tool refuses the profileId (unknown here, read-only, or not permitted for this thread), report that instead of picking another agent.`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatComposerContextProviderPayload(
+  record: KnownComposerContextRecord,
+  agents: ReadonlyArray<ComposerAgentProfile> | undefined,
+): string {
   switch (record.kind) {
     case "image":
     case "file":
@@ -355,6 +450,8 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
         `environmentId: ${record.environmentId}`,
         "The user means this machine. Not linked here yet: call t3_environment_link with this environmentId. Linked: pass it as environmentId, or target.environmentId for delegate_task.",
       ].join("\n");
+    case "agent":
+      return formatAgentProviderPayload(record, agents);
   }
 }
 
@@ -362,19 +459,25 @@ function formatEnvelopeEntry(
   kind: ComposerContextKind,
   contextId: ComposerContextId,
   record: ComposerContextRecord | undefined,
+  agents: ReadonlyArray<ComposerAgentProfile> | undefined,
 ): string {
   const open = `<${CONTEXT_ENTRY_TAG} kind="${escapeAttribute(kind)}" id="${escapeAttribute(contextId)}"`;
   if (!record) return `${open} unavailable="true"/>`;
   const body =
     "payload" in record
       ? JSON.stringify(record.payload)
-      : formatComposerContextProviderPayload(record);
+      : formatComposerContextProviderPayload(record, agents);
   return `${open}>\n${escapeComposerContextPayloadText(body)}\n</${CONTEXT_ENTRY_TAG}>`;
 }
 
+/**
+ * `agents` is the running environment's agent library. With it, an agent reference says whether
+ * the agent still exists here and its current name; without it, only what the chip recorded.
+ */
 export function projectComposerContextForProvider(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
+  agents?: ReadonlyArray<ComposerAgentProfile>;
 }): string {
   const occurrences = collectComposerContextReferences(input.text);
   if (occurrences.length === 0) return input.text;
@@ -399,6 +502,7 @@ export function projectComposerContextForProvider(input: {
       record?.kind ?? occurrence.kind,
       occurrence.contextId,
       record,
+      input.agents,
     );
     entries.push(entry);
   }

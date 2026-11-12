@@ -88,7 +88,7 @@ export function presentConnectionState(
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
         ...(state.lastFailure ? { failureReason: state.lastFailure.reason } : {}),
-        // A T3 Connect sign-in failure has hop "relay" or "device" and is fixed by signing in.
+        // Only the host refusing the credential is fixed by pairing again.
         ...(state.lastFailure?.reason === "authentication" && state.lastFailure.hop === "server"
           ? { needsPairing: true as const }
           : {}),
@@ -142,17 +142,13 @@ export function connectionStatusTitle(connection: EnvironmentConnectionPresentat
 }
 
 /**
- * The T3 Connect address wins whenever it is known: it works for agents anywhere, while the
- * connected route is often a LAN or loopback address. SSH routes ride a local forward that
- * disappears with the client, so they have no stable address.
+ * The route this device is connected over comes first, then the other saved routes. SSH routes
+ * ride a local forward that disappears with the client, so they have no stable address.
  */
 export function environmentMcpUrl(input: {
   readonly entry: ConnectionCatalogEntry;
-  readonly relayHttpBaseUrl?: string | undefined;
   readonly connectedTarget?: ConnectionTarget | null | undefined;
 }): string | null {
-  const relayMcpUrl = input.relayHttpBaseUrl ? mcpUrlFromBase(input.relayHttpBaseUrl) : null;
-  if (relayMcpUrl !== null) return relayMcpUrl;
   const connectedRouteId = input.connectedTarget ? connectionRouteId(input.connectedTarget) : null;
   const routes = connectionRoutes(input.entry);
   const connectedRoute = routes.find(
@@ -183,8 +179,6 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
   switch (entry.target._tag) {
     case "PrimaryConnectionTarget":
       return entry.target.httpBaseUrl;
-    case "RelayConnectionTarget":
-      return null;
     case "BearerConnectionTarget":
       return Option.isSome(entry.profile) && entry.profile.value._tag === "BearerConnectionProfile"
         ? entry.profile.value.httpBaseUrl

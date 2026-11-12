@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import { migrateLegacyConnectionCatalog } from "./migration";
 
 describe("migrateLegacyConnectionCatalog", () => {
-  it.effect("migrates bearer and relay-managed connections into the new catalog", () =>
+  it.effect("keeps bearer connections and turns T3 Connect ones into a re-pair notice", () =>
     Effect.gen(function* () {
       const bearerEnvironmentId = EnvironmentId.make("bearer-environment");
       const relayEnvironmentId = EnvironmentId.make("relay-environment");
@@ -37,13 +37,12 @@ describe("migrateLegacyConnectionCatalog", () => {
         }),
       );
 
-      expect(catalog.targets).toHaveLength(2);
-      expect(
-        catalog.targets.find((target) => target.environmentId === bearerEnvironmentId)?._tag,
-      ).toBe("BearerConnectionTarget");
-      expect(
-        catalog.targets.find((target) => target.environmentId === relayEnvironmentId)?._tag,
-      ).toBe("RelayConnectionTarget");
+      expect(catalog.targets.map((target) => [target.environmentId, target._tag])).toEqual([
+        [bearerEnvironmentId, "BearerConnectionTarget"],
+      ]);
+      expect(catalog.connectOnlyEnvironments).toEqual([
+        { environmentId: relayEnvironmentId, label: "Cloud Mac" },
+      ]);
       expect(catalog.profiles).toHaveLength(1);
       expect(catalog.credentials).toHaveLength(1);
       expect(catalog.credentials[0]?.credential).toMatchObject({

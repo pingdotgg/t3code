@@ -1,4 +1,5 @@
 import {
+  matchComposerAgentItems,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
@@ -29,6 +30,8 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { mentionableAgentProfiles } from "@t3tools/client-runtime/state/agentIdentity";
+import { useEnvironmentAgents } from "~/state/agentProfiles";
 import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
@@ -129,6 +132,8 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
+  // Only agents this environment's server resolves, and none where it would drop the record.
+  const agentProfiles = mentionableAgentProfiles(useEnvironmentAgents(environmentId));
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -211,6 +216,15 @@ export function useComposerMenuItems({
               environments: mentionableEnvironments,
               environmentId,
               query: composerTrigger.query,
+            })
+          : []),
+        ...(questionAttachmentTarget === null
+          ? matchComposerAgentItems({
+              agents: agentProfiles,
+              environmentId,
+              query: composerTrigger.query,
+              machineLabel: (id) =>
+                environmentIdentities.find((identity) => identity.environmentId === id)?.label,
             })
           : []),
         ...matchComposerModelItems({

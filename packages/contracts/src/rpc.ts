@@ -13,6 +13,7 @@ import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 
 import {
   McpGatewayConnectInput,
+  McpGatewayRelayPreview,
   McpGatewayRelayEvent,
   McpGatewayRelayResponse,
   McpGatewayUnavailableError,
@@ -43,9 +44,14 @@ import {
   TailnetDevicesError,
   TailnetDeviceOpenInput,
   TailnetDeviceSetAccessInput,
-  TailnetDevicesSettings,
-  TailnetDevicesUpdateSettingsInput,
-  DevicePolicyEntry,
+  TailnetAppSetAccessInput,
+  TailnetDeviceAdmitInput,
+  TailnetDeviceForgetInput,
+  TailnetAppForgetInput,
+  TailnetDeviceSetLimitInput,
+  TailnetDeviceAllowJoinResult,
+  NetworkApp,
+  NetworkMember,
 } from "./tailnetDevices.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -195,6 +201,13 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  AgentLibraryConflictError,
+  AgentLibraryMutationInput,
+  AgentLibraryMutationResult,
+  GetAgentSkillsInput,
+  GetAgentSkillsResult,
+} from "./agentLibrary.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -202,11 +215,6 @@ import {
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
-import {
-  GuestShareCreateError,
-  GuestShareCreateInput,
-  GuestShareCreateResult,
-} from "./guestShare.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
@@ -251,11 +259,6 @@ import {
   PullRequestUnavailableError,
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
-import {
-  RelayClientInstallFailedError,
-  RelayClientInstallProgressEventSchema,
-  RelayClientStatusSchema,
-} from "./relayClient.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
@@ -558,6 +561,7 @@ export const WS_METHODS = {
   previewReportStatus: "preview.reportStatus",
   mcpGatewayConnect: "mcpGateway.connect",
   mcpGatewayRespond: "mcpGateway.respond",
+  mcpGatewayPreview: "mcpGateway.preview",
   previewStopLocalServer: "preview.stopLocalServer",
 
   deviceConfigure: "device.configure",
@@ -591,9 +595,18 @@ export const WS_METHODS = {
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   tailnetDevicesList: "tailnetDevices.list",
   tailnetDevicesSetAccess: "tailnetDevices.setAccess",
-  tailnetDevicesUpdateSettings: "tailnetDevices.updateSettings",
+  tailnetDevicesAdmit: "tailnetDevices.admit",
+  tailnetDevicesSetAppAccess: "tailnetDevices.setAppAccess",
   tailnetDevicesOpenDevice: "tailnetDevices.openDevice",
+  tailnetDevicesForget: "tailnetDevices.forget",
+  tailnetDevicesForgetApp: "tailnetDevices.forgetApp",
+  tailnetDevicesSetLimit: "tailnetDevices.setLimit",
+  tailnetDevicesLeave: "tailnetDevices.leave",
+  tailnetDevicesAllowJoin: "tailnetDevices.allowJoin",
+  subscribeTailnetDevices: "subscribeTailnetDevices",
   serverUpdateSettings: "server.updateSettings",
+  serverGetAgentSkills: "server.getAgentSkills",
+  serverMutateAgentLibrary: "server.mutateAgentLibrary",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
@@ -631,7 +644,6 @@ export const WS_METHODS = {
   scheduledTasksRunNow: "scheduledTasks.runNow",
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
   secretsAnswerRequest: "secrets.answerRequest",
-  guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -655,9 +667,6 @@ export const WS_METHODS = {
   threadTasksRemoteOwnerAction: "threadTasks.remoteOwnerAction",
   threadTasksProjectSnapshot: "threadTasks.projectSnapshot",
   threadTasksBoard: "threadTasks.board",
-
-  cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
-  cloudInstallRelayClient: "cloud.installRelayClient",
 
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
@@ -742,7 +751,10 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    /** As on `subscribeServerConfig`. */
+    agentSkillBodiesOnDemand: Schema.optional(Schema.Boolean),
+  }),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
@@ -754,6 +766,11 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     fresh: Schema.optional(Schema.Boolean),
     /** Bypass model caches; explicit rediscovery may open sessions, background refreshes must not. */
     refreshModels: Schema.optional(Schema.Boolean),
+    /**
+     * A model picker opened: refetch a model manifest older than a few minutes and probe providers
+     * only when it changed. The other fields are ignored and the config stream carries the result.
+     */
+    modelCatalogOnly: Schema.optional(Schema.Boolean),
     /** Read secret references again; unlocking a vault can prompt on the host, so only explicit user refreshes ask. */
     reloadSecrets: Schema.optional(Schema.Boolean),
     /**
@@ -950,13 +967,21 @@ const WsTailnetDevicesListRpc = Rpc.make(WS_METHODS.tailnetDevicesList, {
 
 const WsTailnetDevicesSetAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetAccess, {
   payload: TailnetDeviceSetAccessInput,
-  success: DevicePolicyEntry,
+  success: NetworkMember,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
-const WsTailnetDevicesUpdateSettingsRpc = Rpc.make(WS_METHODS.tailnetDevicesUpdateSettings, {
-  payload: TailnetDevicesUpdateSettingsInput,
-  success: TailnetDevicesSettings,
+const WsTailnetDevicesSetAppAccessRpc = Rpc.make(WS_METHODS.tailnetDevicesSetAppAccess, {
+  payload: TailnetAppSetAccessInput,
+  success: NetworkApp,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+/** Adds a machine Tailscale proves is the owner's to the whole network. */
+const WsTailnetDevicesAdmitRpc = Rpc.make(WS_METHODS.tailnetDevicesAdmit, {
+  payload: TailnetDeviceAdmitInput,
+  /** Null for `scope: "local"`, which joins no network. */
+  success: Schema.NullOr(NetworkMember),
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
@@ -967,14 +992,67 @@ const WsTailnetDevicesOpenDeviceRpc = Rpc.make(WS_METHODS.tailnetDevicesOpenDevi
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
 });
 
+const WsTailnetDevicesForgetRpc = Rpc.make(WS_METHODS.tailnetDevicesForget, {
+  payload: TailnetDeviceForgetInput,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesForgetAppRpc = Rpc.make(WS_METHODS.tailnetDevicesForgetApp, {
+  payload: TailnetAppForgetInput,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesSetLimitRpc = Rpc.make(WS_METHODS.tailnetDevicesSetLimit, {
+  payload: TailnetDeviceSetLimitInput,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+/** This machine leaves its network: its links to members end and others see it revoked. */
+const WsTailnetDevicesLeaveRpc = Rpc.make(WS_METHODS.tailnetDevicesLeave, {
+  payload: Schema.Struct({}),
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+const WsTailnetDevicesAllowJoinRpc = Rpc.make(WS_METHODS.tailnetDevicesAllowJoin, {
+  payload: Schema.Struct({}),
+  success: TailnetDeviceAllowJoinResult,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+});
+
+/** The snapshot now and after every roster, link or switch change, so clients follow it live. */
+const WsSubscribeTailnetDevicesRpc = Rpc.make(WS_METHODS.subscribeTailnetDevices, {
+  payload: Schema.Struct({}),
+  success: TailnetDevicesSnapshot,
+  error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
     patch: ServerSettingsPatch,
     replicateProfiles: Schema.optional(Schema.Boolean),
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+    /** Returns skill stubs, as `server.getConfig` does; older servers ignore it and send bodies. */
+    agentSkillBodiesOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetAgentSkillsRpc = Rpc.make(WS_METHODS.serverGetAgentSkills, {
+  payload: GetAgentSkillsInput,
+  success: GetAgentSkillsResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsServerMutateAgentLibraryRpc = Rpc.make(WS_METHODS.serverMutateAgentLibrary, {
+  payload: AgentLibraryMutationInput,
+  success: AgentLibraryMutationResult,
+  error: Schema.Union([
+    AgentLibraryConflictError,
+    ServerSettingsError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1128,19 +1206,6 @@ const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
-});
-
-const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
-  payload: Schema.Struct({}),
-  success: RelayClientStatusSchema,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient, {
-  payload: Schema.Struct({}),
-  success: RelayClientInstallProgressEventSchema,
-  error: Schema.Union([RelayClientInstallFailedError, EnvironmentAuthorizationError]),
-  stream: true,
 });
 
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
@@ -1847,6 +1912,11 @@ const WsMcpGatewayRespondRpc = Rpc.make(WS_METHODS.mcpGatewayRespond, {
   payload: McpGatewayRelayResponse,
   error: Schema.Union([McpGatewayUnavailableError, EnvironmentAuthorizationError]),
 });
+const WsMcpGatewayPreviewRpc = Rpc.make(WS_METHODS.mcpGatewayPreview, {
+  payload: McpGatewayConnectInput,
+  success: McpGatewayRelayPreview,
+  error: Schema.Union([McpGatewayUnavailableError, EnvironmentAuthorizationError]),
+});
 
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
@@ -2137,6 +2207,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
     /** With on-demand snapshots, also omit machine slash commands and skills a cwd snapshot replaces. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /** Send shared skills as stubs without bodies; the client fetches them through `server.getAgentSkills`. */
+    agentSkillBodiesOnDemand: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -2292,12 +2364,6 @@ const WsScheduledTasksRotateWebhookTokenRpc = Rpc.make(
   },
 );
 
-const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
-  payload: GuestShareCreateInput,
-  success: GuestShareCreateResult,
-  error: Schema.Union([GuestShareCreateError, EnvironmentAuthorizationError]),
-});
-
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -2341,7 +2407,6 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
-  WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2372,11 +2437,20 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
+  WsServerGetAgentSkillsRpc,
+  WsServerMutateAgentLibraryRpc,
   WsPeerLinksListRpc,
   WsTailnetDevicesListRpc,
   WsTailnetDevicesSetAccessRpc,
-  WsTailnetDevicesUpdateSettingsRpc,
+  WsTailnetDevicesAdmitRpc,
+  WsTailnetDevicesSetAppAccessRpc,
   WsTailnetDevicesOpenDeviceRpc,
+  WsTailnetDevicesForgetRpc,
+  WsTailnetDevicesForgetAppRpc,
+  WsTailnetDevicesSetLimitRpc,
+  WsTailnetDevicesLeaveRpc,
+  WsTailnetDevicesAllowJoinRpc,
+  WsSubscribeTailnetDevicesRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
@@ -2431,8 +2505,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerReportClientActivityRpc,
-  WsCloudGetRelayClientStatusRpc,
-  WsCloudInstallRelayClientRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsFilterOptionsRpc,
@@ -2543,6 +2615,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewReportStatusRpc,
   WsMcpGatewayConnectRpc,
   WsMcpGatewayRespondRpc,
+  WsMcpGatewayPreviewRpc,
   WsClientsConnectFocusRpc,
   WsServerGetBackgroundPolicyRpc,
   WsClientsListRpc,

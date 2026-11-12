@@ -168,7 +168,11 @@ vi.mock("../state/projects", () => ({
     fileMetadata: (input: unknown) => input,
   },
 }));
-vi.mock("../state/server", () => ({ serverEnvironment: {} }));
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const noConfig = Atom.make(null);
+  return { serverEnvironment: { configValueAtom: () => noConfig } };
+});
 vi.mock("../state/session", () => ({
   readEnvironmentScope: () => true,
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),
@@ -286,7 +290,7 @@ vi.mock("../features/threads/thread-work-log", () => ({ THREAD_DISCLOSURE_TRANSI
 vi.mock("../features/threads/HtmlRenderWebView", () => ({}));
 vi.mock("../features/threads/McpAppWebView", () => ({}));
 vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
-  useAdaptiveWorkspaceLayout: () => ({ fileInspector: { supported: false } }),
+  useWorkspacePaneState: () => ({ fileInspector: { supported: false } }),
 }));
 vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpening: () => null }));
 vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));

@@ -31,10 +31,6 @@ jobs:
         env:
           APP_ID: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
           PRODUCT_NAME: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
-          CLERK_KEY: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-          JWT_TEMPLATE: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-          OAUTH_CLIENT: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-          RELAY_URL: ${{ vars.T3CODE_RELAY_URL }}
           TEAM: ${{ vars.APPLE_TEAM_ID }}
           CERTIFICATE: ${{ secrets.CSC_LINK }}
           CERTIFICATE_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -44,7 +40,7 @@ jobs:
           PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
-          for key in APP_ID PRODUCT_NAME CLERK_KEY JWT_TEMPLATE OAUTH_CLIENT RELAY_URL TEAM CERTIFICATE CERTIFICATE_PASSWORD APPLE_KEY APPLE_KEY_ID APPLE_ISSUER PROFILE; do
+          for key in APP_ID PRODUCT_NAME TEAM CERTIFICATE CERTIFICATE_PASSWORD APPLE_KEY APPLE_KEY_ID APPLE_ISSUER PROFILE; do
             if [[ -z "${!key}" ]]; then
               echo "Missing release setting: $key" >&2
               exit 1
@@ -67,10 +63,6 @@ jobs:
       NODE_ENV: production
       T3CODE_DESKTOP_BRAND: agents
       APP_VERSION: ${{ needs.prepare.outputs.version }}
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      T3CODE_RELAY_URL: ${{ vars.T3CODE_RELAY_URL }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -142,15 +134,10 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: nightly
-      relay_client_tracing: false
       brand: agents
       app_id: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
       product_name: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
       update_repository: ${{ github.repository }}
-      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       label: macOS arm64
       runner: macos-15
       platform: mac
@@ -169,15 +156,10 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: nightly
-      relay_client_tracing: false
       brand: agents
       app_id: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
       product_name: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
       update_repository: ${{ github.repository }}
-      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       label: macOS x64
       runner: macos-15-intel
       platform: mac
@@ -199,15 +181,10 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: nightly
-      relay_client_tracing: false
       brand: agents
       app_id: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
       product_name: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
       update_repository: ${{ github.repository }}
-      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       label: Linux x64
       runner: ubuntu-24.04
       platform: linux
@@ -228,15 +205,10 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: nightly
-      relay_client_tracing: false
       brand: agents
       app_id: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
       product_name: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
       update_repository: ${{ github.repository }}
-      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       label: Linux arm64
       runner: ubuntu-24.04-arm
       platform: linux
@@ -258,15 +230,10 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: nightly
-      relay_client_tracing: false
       brand: agents
       app_id: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
       product_name: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
       update_repository: ${{ github.repository }}
-      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       label: Windows x64
       runner: ubuntu-24.04
       verify_runner: windows-2025
@@ -286,15 +253,10 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       ref: ${{ needs.prepare.outputs.ref }}
       release_channel: nightly
-      relay_client_tracing: false
       brand: agents
       app_id: ${{ vars.FORK_APP_ID || 'com.jayleaton.t3agents' }}
       product_name: ${{ vars.FORK_PRODUCT_NAME || 'T3 Agents' }}
       update_repository: ${{ github.repository }}
-      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
-      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
-      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
-      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       label: Windows arm64
       runner: ubuntu-24.04
       verify_runner: windows-11-arm
@@ -350,7 +312,7 @@ jobs:
       - name: Publish complete update atomically
         run: |
           set -euo pipefail
-          printf 'Community fork build from `%s`. Uses T3 hosted auth and Connect; this is not an official T3 release.\n' "$RELEASE_COMMIT" > "$RUNNER_TEMP/release-notes.md"
+          printf 'Community fork build from `%s`. T3 Connect is not included; this is not an official T3 release.\n' "$RELEASE_COMMIT" > "$RUNNER_TEMP/release-notes.md"
           gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" --title "T3 Agents Nightly $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease --draft
           gh release upload "v$VERSION" release-assets/* --repo "$GITHUB_REPOSITORY"
           gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

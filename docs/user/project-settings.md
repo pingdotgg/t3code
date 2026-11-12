@@ -106,9 +106,11 @@ Leaving an edited form asks before discarding unsaved changes.
 
 In **Settings → Scheduled tasks**, choose **On webhook**
 as a task's schedule to run it whenever another service calls its URL, such as
-GitHub on a new pull request or a CI job that failed. A public URL needs a
-[T3 Connect](remote-access.md) managed tunnel; after you save the task, copy
-its URL from the editor. Without one, the editor shows only the URL's path.
+a CI job that failed. The URL uses the machine's
+[Tailscale HTTPS](remote-access.md#tailscale-https) address, so only senders on
+your tailnet can reach it; outside services such as GitHub or Linear cannot.
+After you save the task, copy its URL from the editor. Without a Tailscale HTTPS
+address, the editor shows only the URL's path.
 **Rotate** replaces the URL and the old one stops working.
 
 The prompt decides what the agent sees. Placeholders pull values out of the
@@ -167,13 +169,7 @@ On desktop and web, pick **Deliveries** from a task's menu to see recent
 requests and the prompt each one produced.
 
 If the environment is offline, the sender gets an error and nothing runs;
-redeliver from the sender, such as GitHub's **Recent Deliveries**, once it is
-back. To have T3 Connect keep requests instead, turn on **Hold webhooks while
-offline** in **Settings → Environments**. T3 Connect then stores requests to a
-T3 Connect URL for up to 24 hours and delivers them when the environment
-returns. Leave it off if you don't want request bodies stored outside your
-machine. To skip requests that waited too long, set **Skip requests older
-than** on the task.
+redeliver from the sender once it is back.
 
 ### Trigger a webhook only when something changes
 
@@ -217,8 +213,8 @@ Values are `present`/`absent` for files, `status:<code>`/`unreachable` for HTTP,
 and `exit:<code>`/`timeout` for commands (add `"output": true` to use the first
 line of stdout instead). `"*"` in `notify` means any change. The first run
 records a baseline and sends nothing unless a probe sets `"notifyInitial": true`.
-Commands run directly, without a shell. The webhook URL can be the direct,
-Tailscale, or T3 Connect URL. Failed deliveries retry, and a still-undelivered
+Commands run directly, without a shell. The webhook URL can be the direct or
+Tailscale URL. Failed deliveries retry, and a still-undelivered
 event is re-sent with the same `Idempotency-Key` on the next run.
 
 Use the `t3` command from the same T3 Code release as your server. Earlier

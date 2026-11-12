@@ -232,7 +232,9 @@ it.effect(
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
         const refusedThere = yield* link.pipe(Effect.flip);
         expect(refusedThere.reason).toBe("pairing_rejected");
-        expect(refusedThere.message).toContain("Linked environments is off on that machine");
+        expect(refusedThere.message).toContain(
+          "That machine is not taking part in your device network",
+        );
         expect(yield* linkedSessions(b)).toEqual([]);
 
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
@@ -241,7 +243,7 @@ it.effect(
         // Not final, so a task already running there picks up again once it is back on.
         const waiting = yield* probe(a).pipe(Effect.flip);
         expect(waiting.code).toBe("orchestration_error");
-        expect(waiting.message).toContain("has Linked environments turned off");
+        expect(waiting.message).toContain("is not taking part in your device network");
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
         expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
       }),
@@ -444,6 +446,38 @@ it.effect("cancelling a descriptor probe aborts its request and leaves later res
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.live("one dropped descriptor request does not list a live peer as unreachable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dropNext = yield* Ref.make(false);
+      const dropOnce = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (
+              request.url.startsWith("/.well-known/t3/environment") &&
+              (yield* Ref.getAndSet(dropNext, false))
+            ) {
+              return HttpServerResponse.empty({ status: 503 });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), dropOnce),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      yield* Ref.set(dropNext, true);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("reads one stored link without asking the peer", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -607,10 +641,35 @@ it.effect(
           expectedEnvironmentId: box.environmentId,
         });
         expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [b.url] });
+        // A picked machine is never linked at this machine's own loopback.
+        const own = yield* a.links
+          .link({
+            url: b.url.replace("127.0.0.1", "localhost"),
+            pairingCode: pairing.credential,
+            access: "auto",
+            expectedEnvironmentId: box.environmentId,
+          })
+          .pipe(Effect.flip);
+        expect(own.message).toContain("is this machine");
         yield* probe(a);
         expect(yield* linkedSessions(impostor)).toEqual([]);
         expect(yield* Ref.get(impostor.bearers)).toEqual([]);
         expect((yield* linkedSessions(b)).length).toBe(1);
+
+        // An address alone that answers as the linked box never takes over its link.
+        yield* Ref.set(impostor.descriptor, box);
+        const second = yield* impostor.auth.issuePairingCredential();
+        const taken = yield* a.links
+          .link({ url: impostor.url, pairingCode: second.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(taken.message).toContain("already linked");
+        expect(yield* linkedSessions(impostor)).toEqual([]);
+        expect(Option.getOrUndefined(yield* a.links.get(box.environmentId))?.urls).toEqual([b.url]);
+        // The address the link already has still renews it.
+        const renewal = yield* b.auth.issuePairingCredential();
+        expect(
+          yield* a.links.link({ url: b.url, pairingCode: renewal.credential, access: "auto" }),
+        ).toMatchObject({ urls: [b.url] });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -685,6 +744,16 @@ it.effect("names an untrusted certificate instead of calling the peer something 
       expect(failed.message).toContain("certificate this machine rejected");
       expect(failed.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(yield* a.links.list).toEqual([]);
+
+      // Something else answering says what it answered.
+      const other = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.empty({ status: 404 })),
+      );
+      const notT3 = yield* a.links
+        .link({ url: other, pairingCode: "unused", access: "auto" })
+        .pipe(Effect.flip);
+      expect(notT3.reason).toBe("not_a_t3_environment");
+      expect(notT3.message).toContain("404");
 
       // A stored link tries its next address past an untrusted one.
       const b = yield* serveB(box);

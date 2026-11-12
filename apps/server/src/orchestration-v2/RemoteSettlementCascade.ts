@@ -66,7 +66,7 @@ export const cascadeToOtherEnvironments = Effect.fn("RemoteSettlementCascade.cas
   if (changes.length === 0) return;
   const broker = yield* McpGatewayBroker;
   const local = (yield* (yield* ServerEnvironment.ServerEnvironment).getDescriptor).environmentId;
-  const remotes = Object.entries(broker.grants())
+  const remotes = Object.entries((yield* broker.access).grants)
     .filter(
       ([id, scopes]) => id !== local && scopes.includes("read") && scopes.includes("lifecycle"),
     )

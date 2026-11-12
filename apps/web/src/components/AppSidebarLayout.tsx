@@ -459,7 +459,10 @@ export function AppSidebarLayout({
   );
   const windowControlsInsetStyle = (
     isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
+      ? {
+          "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET,
+          "--agents-titlebar-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET,
+        }
       : {}
   ) as CSSProperties;
   const sidebarProviderStyle = {

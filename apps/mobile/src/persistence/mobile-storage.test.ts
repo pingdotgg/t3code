@@ -48,7 +48,7 @@ describe("mobile device identity", () => {
       );
 
       expect(deviceIds).toEqual(["generated-device-1", "generated-device-1"]);
-      expect(yield* storage.loadAgentAwarenessDeviceId).toBe(deviceIds[0]);
+      expect(values.get(deviceIdKey) ?? null).toBe(deviceIds[0]);
       expect(values.get(deviceIdKey)).toBe(deviceIds[0]);
       expect(uuidv4).toHaveBeenCalledTimes(1);
       expect(setItemAsync).toHaveBeenCalledTimes(1);
@@ -77,9 +77,9 @@ describe("mobile device identity", () => {
         _tag: "Failure",
         failure: { _tag: "MobileSecureStorageError", operation: "write", key: deviceIdKey },
       });
-      expect(yield* storage.loadAgentAwarenessDeviceId).toBeNull();
+      expect(values.get(deviceIdKey) ?? null).toBeNull();
       expect(yield* storage.loadOrCreateAgentAwarenessDeviceId).toBe("generated-device-2");
-      expect(yield* storage.loadAgentAwarenessDeviceId).toBe("generated-device-2");
+      expect(values.get(deviceIdKey) ?? null).toBe("generated-device-2");
       expect(uuidv4).toHaveBeenCalledTimes(2);
     }),
   );

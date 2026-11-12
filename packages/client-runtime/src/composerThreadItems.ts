@@ -1,9 +1,11 @@
 import {
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type McpGatewayProfile,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { ComposerAgentProfile } from "@t3tools/shared/composerContextReferences";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
 import { isOpenListedThread, type EnvironmentThreadShell } from "./state/models.ts";
@@ -110,4 +112,62 @@ export function matchComposerEnvironmentItems(input: {
       label: environment.label,
       description: "Machine",
     }));
+}
+
+export type ComposerAgentCandidate = ComposerAgentProfile &
+  Pick<McpGatewayProfile, "description" | "modelLabel">;
+
+export interface ComposerAgentItem {
+  readonly id: string;
+  readonly type: "agent";
+  readonly agent: ComposerAgentProfile;
+  readonly label: string;
+  readonly description: string;
+}
+
+/**
+ * The user's T3 agents the `@` picker offers, matched by name ignoring case. Names that differ
+ * only in case carry a detail so the user picks the exact agent. Like threads, they need a query.
+ */
+export function matchComposerAgentItems(input: {
+  agents: ReadonlyArray<ComposerAgentCandidate>;
+  environmentId: EnvironmentId;
+  query: string;
+  machineLabel?: (environmentId: string) => string | undefined;
+}): ComposerAgentItem[] {
+  const query = input.query.trim().toLowerCase();
+  if (query.length === 0) return [];
+  const sameName = new Map<string, number>();
+  for (const agent of input.agents) {
+    const key = agent.name.toLowerCase();
+    sameName.set(key, (sameName.get(key) ?? 0) + 1);
+  }
+  const rank = (name: string) => (name === query ? 0 : name.startsWith(query) ? 1 : 2);
+  return input.agents
+    .filter((agent) => agent.name.toLowerCase().includes(query))
+    .sort((left, right) => rank(left.name.toLowerCase()) - rank(right.name.toLowerCase()))
+    .map((agent) => {
+      const parts = ["Agent"];
+      const allowed = agent.environmentIds ?? [];
+      if (allowed.length > 0 && !allowed.includes(input.environmentId)) {
+        const machines = allowed.map((id) => input.machineLabel?.(id) ?? id);
+        parts.push(`runs on ${machines.join(", ")}`);
+      }
+      if (agent.runtimeMode === "read-only") parts.push("read-only");
+      if ((sameName.get(agent.name.toLowerCase()) ?? 0) > 1) {
+        parts.push(agent.description?.trim() || agent.modelLabel || agent.profileId);
+      }
+      return {
+        id: `agent:${agent.profileId}`,
+        type: "agent",
+        agent: {
+          profileId: agent.profileId,
+          name: agent.name,
+          runtimeMode: agent.runtimeMode,
+          ...(agent.environmentIds ? { environmentIds: agent.environmentIds } : {}),
+        },
+        label: agent.name,
+        description: parts.join(" · "),
+      };
+    });
 }

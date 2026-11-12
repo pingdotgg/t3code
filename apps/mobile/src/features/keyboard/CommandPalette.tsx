@@ -329,6 +329,20 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsEnvironments"),
       },
       {
+        key: "deviceNetwork",
+        kind: "action",
+        title: "Device network",
+        searchTerms: [
+          "tailscale",
+          "machines",
+          "add to network",
+          "leave network",
+          "allow joining",
+          "linked environments",
+        ],
+        run: () => openSettings(navigation, "SettingsEnvironments"),
+      },
+      {
         key: "scheduledTasks",
         kind: "action",
         title: "Scheduled tasks",

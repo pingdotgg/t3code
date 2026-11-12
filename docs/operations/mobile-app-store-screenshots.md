@@ -10,8 +10,7 @@ opens the production Home, Thread, ThreadTerminal, ThreadReview, and SettingsEnv
 
 No screenshot-specific screen recreates application UI. `EXPO_PUBLIC_SHOWCASE=1` only enables the
 non-rendering pairing/readiness coordinator, disables terminal autofocus so captures do not contain
-the software keyboard, and supplies deterministic T3 Connect discovery rows to the real
-Environments screen. The local environment cards always come from real paired servers.
+the software keyboard. The local environment cards always come from real paired servers.
 
 ## Capture the default matrix
 
@@ -78,7 +77,7 @@ Each target captures thread, terminal, review, thread list, and environments, an
 the iPad and Duo also captures agent activity. Each palette folder's five or six screenshots satisfy the configured Apple limit of 1–10, Google
 phone requirement of 2–8, and Google tablet recommendation/slot minimum of 4 with a maximum of 8.
 The two Duo folders each contain five scenes and upload to the same iPhone Duo slot (ten images
-total). They omit agent activity to stay within that shared limit. Duo capture requires
+total). Duo capture requires
 an installed iOS runtime that supports iPhone Duo and `agent-device` on PATH, or
 `AGENT_DEVICE_PATH` pointing to its executable; it sets and verifies the
 simulator fold pose before launching the app.
@@ -86,28 +85,19 @@ simulator fold pose before launching the app.
 Every palette gets its own leaf folder so one upload slot never mixes themes and each folder keeps a
 store-legal screenshot count.
 
-The agent-activity scene shows what a user sees away from the app. The app stages the same Live
-Activity (iOS) or ongoing Live Update (Android) the relay would publish for four seeded threads. On
-iOS the runner then locks the simulator and pushes the matching approval alert with `simctl push`;
-on Android the staged update carries the alert and the runner opens the notification shade. Locking
-the simulator and answering the notification permission prompt use
-[AXe](https://github.com/cameroncooke/AXe), so install it (`brew tap cameroncooke/axe && brew
-install axe`) or set `AXE_PATH` before capturing iOS. The iPad skips the scene because the lock
-screen does not follow the app's landscape self-rotation.
-
 The generated tree is deliberately aligned with the store upload fields:
 
     artifacts/app-store/screenshots/
     ├── apple/
-    │   ├── iphone-6.9/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
-    │   ├── iphone-6.5/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
+    │   ├── iphone-6.9/dark/t3-code/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.5/dark/t3-code/{thread,terminal,review,threads,environments}.png
     │   ├── iphone-duo-closed/dark/t3-code/{thread,terminal,review,threads,environments}.png
     │   ├── iphone-duo-open/dark/t3-code/{thread,terminal,review,threads,environments}.png
     │   └── ipad-13/dark/t3-code/{thread,terminal,review,threads,environments}.png
     └── google-play/
-        ├── phone/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
-        ├── tablet-7/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
-        └── tablet-10/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
+        ├── phone/dark/t3-code/{thread,terminal,review,threads,environments}.png
+        ├── tablet-7/dark/t3-code/{thread,terminal,review,threads,environments}.png
+        └── tablet-10/dark/t3-code/{thread,terminal,review,threads,environments}.png
 
 A light-only run writes the same tree under `light/`; `--appearance both` writes both appearance
 folders, and each requested theme adds a sibling folder next to `t3-code/`.

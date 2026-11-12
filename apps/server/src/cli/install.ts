@@ -16,7 +16,7 @@ import {
   generatedWindowsShimTarget,
   isVersionExecutable,
   recordPinnedRuntimeLauncher,
-} from "../cloud/pinnedRuntime.ts";
+} from "../service/pinnedRuntime.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliInstallError", {

@@ -1,6 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the gateway is a plain Node process outside the Effect runtime.
 import * as NodeCrypto from "node:crypto";
 
+import { ThreadTaskError } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { GATEWAY_SCOPE_VALUES, parseGatewayStatusSnapshot } from "./port.ts";
@@ -24,6 +27,8 @@ export type GatewayBridgeStartupResult =
     };
 
 const GATEWAY_SCOPES = new Set<GatewayScope>(GATEWAY_SCOPE_VALUES);
+// Older clients send only the message, which stays an untyped failure.
+const decodeTaskError = Schema.decodeUnknownOption(ThreadTaskError);
 
 function parseGrants(value: unknown): GatewayGrants {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -329,7 +334,14 @@ export function createBridgeRuntimePort(input: {
         pending.delete(response.id);
         clearRequestTimeout(request);
         if (typeof response.error !== "string") request.resolve(response.result);
-        else request.reject(new Error(response.error));
+        else {
+          request.reject(
+            Option.getOrElse(
+              decodeTaskError(response.taskError),
+              () => new Error(response.error as string),
+            ),
+          );
+        }
       } catch {
         socket.close(
           1008,

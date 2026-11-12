@@ -23,6 +23,7 @@ import {
   matchesScheduledTaskScope,
   newScheduledTaskEnvironment,
   scheduleFromDraft,
+  scheduleLabel,
   taskToDraft,
   unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
@@ -286,33 +287,13 @@ describe("webhook scheduled tasks", () => {
     expect(scheduleFromDraft(draft)).toEqual({
       type: "webhook",
       signature,
-      maxDeliveryAgeMinutes: null,
       dedupe: {},
     });
     expect(scheduleFromDraft({ ...draft, signatureSecret: " new " })).toEqual({
       type: "webhook",
       signature: { ...signature, secret: "new" },
-      maxDeliveryAgeMinutes: null,
       dedupe: {},
     });
-  });
-
-  it("round-trips the max age, treats blank as no limit, and rejects an invalid limit", () => {
-    const draft = taskToDraft({
-      ...webhookTask,
-      schedule: { type: "webhook", signature: null, maxDeliveryAgeMinutes: 90 },
-    });
-    expect(draft.maxDeliveryAgeMinutes).toBe("90");
-    expect(scheduleFromDraft(draft)).toMatchObject({ maxDeliveryAgeMinutes: 90 });
-    for (const blank of ["", "  "]) {
-      expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: blank })).toMatchObject({
-        maxDeliveryAgeMinutes: null,
-        dedupe: {},
-      });
-    }
-    for (const invalid of ["0", "-5", "1.5", "abc", "1441"]) {
-      expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: invalid })).toBeNull();
-    }
   });
 
   it("sends filters only when the form changed them", () => {
@@ -429,4 +410,13 @@ describe("new scheduled task environment", () => {
     );
     expect(newScheduledTaskEnvironment(undefined, [threadHost], null)).toBe(threadHost);
   });
+});
+
+it("appends the server zone only to fixed-time schedule labels", () => {
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "Etc/UTC")).toBe(
+    "Daily at 16:31 UTC",
+  );
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
+  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
+  expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
 });

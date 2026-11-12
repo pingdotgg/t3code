@@ -2,6 +2,7 @@ import {
   createRoutedGatewayPort,
   GATEWAY_SCOPE_VALUES,
   type GatewayPortRelay,
+  type ModeLimit,
   type GatewayScope,
 } from "@t3tools/client-runtime/gateway";
 import { GatewayError, type GatewayToolContext } from "@t3tools/mcp-gateway";
@@ -31,20 +32,21 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { DispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
-import { isTerminalRunStatus } from "../../orchestration-v2/ThreadManagementService.ts";
+import {
+  isTerminalRunStatus,
+  type ThreadManagementService,
+} from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadTaskService from "../../threadTask/ThreadTaskService.ts";
-import { McpGatewayBroker } from "../McpGatewayBroker.ts";
-import type { McpInvocationScope } from "../McpInvocationContext.ts";
+import { McpGatewayBroker, type McpGatewayAccess } from "../McpGatewayBroker.ts";
+import type { McpInvocationContext, McpInvocationScope } from "../McpInvocationContext.ts";
 import { clampWaitTimeoutMs } from "../OrchestratorMcpService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../delegatedTaskModes.ts";
-import { newCommandId } from "../threadAccess.ts";
+import { loadCaller, newCommandId } from "../threadAccess.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
 
 // Agents in a thread act with every scope on their own machine; other machines apply the
 // grants the user set on the T3 app relaying the call.
 const LOCAL_GRANTS = [...GATEWAY_SCOPE_VALUES];
-const isScope = (scope: string): scope is GatewayScope =>
-  (GATEWAY_SCOPE_VALUES as ReadonlyArray<string>).includes(scope);
 
 /**
  * The gateway tool context for this server's agents: this environment in process, every other
@@ -56,23 +58,37 @@ export const gatewayToolContext = Effect.gen(function* () {
   const broker = Option.getOrUndefined(yield* Effect.serviceOption(McpGatewayBroker));
   // The tool catalog is promise-based; its relayed calls still run under this server's services.
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  const relay: GatewayPortRelay | undefined = broker && {
-    invoke: (method, args, environmentIds) =>
-      runPromise(broker.forward(method, args, environmentIds)),
+  /** Relayed calls carry the calling chat's modes, so the app answering applies them too. */
+  const relayFor = (modeCeiling?: ModeLimit): GatewayPortRelay | undefined =>
+    broker && {
+      invoke: (method, args, environmentIds, ceiling = modeCeiling) =>
+        runPromise(broker.forward(method, args, environmentIds, ceiling)),
+    };
+  // The catalog reads grants synchronously, so it is shown the last roster-bounded view;
+  // every relayed call is still checked live by the broker.
+  const grants = (): Record<string, ReadonlyArray<GatewayScope>> => ({
+    ...broker?.view().grants,
+    [local.environmentId]: LOCAL_GRANTS,
+  });
+  const access: Effect.Effect<McpGatewayAccess> = (
+    broker ? broker.access : Effect.succeed({ grants: {}, refusals: {} })
+  ).pipe(
+    Effect.map((bounded) => ({
+      ...bounded,
+      grants: { ...bounded.grants, [local.environmentId]: LOCAL_GRANTS },
+    })),
+  );
+  const contextFor = (modeCeiling?: ModeLimit): GatewayToolContext => {
+    const relay = relayFor(modeCeiling);
+    return {
+      port: createRoutedGatewayPort(local.environmentId, local.port, () =>
+        broker?.available() === true ? relay : undefined,
+      ),
+      grants,
+    };
   };
-  const grants = (): Record<string, ReadonlyArray<GatewayScope>> => {
-    const relayed = Object.entries(broker?.grants() ?? {}).map(
-      ([environmentId, scopes]) => [environmentId, scopes.filter(isScope)] as const,
-    );
-    return { ...Object.fromEntries(relayed), [local.environmentId]: LOCAL_GRANTS };
-  };
-  const context: GatewayToolContext = {
-    port: createRoutedGatewayPort(local.environmentId, local.port, () =>
-      broker?.available() === true ? relay : undefined,
-    ),
-    grants,
-  };
-  return { environmentId: local.environmentId, context, grants };
+  const context = contextFor();
+  return { environmentId: local.environmentId, context, contextFor, grants, access };
 });
 
 export type Gateway = NonNullable<Effect.Success<typeof gatewayToolContext>>;
@@ -82,6 +98,10 @@ export interface RemoteEnvironment {
   readonly gateway: Gateway;
   readonly environmentId: EnvironmentId;
   readonly caller: { readonly environmentId: string; readonly threadId: string } | undefined;
+  /** Why this machine may only read there, when the network caps it. */
+  readonly limit?: string | undefined;
+  /** The calling chat's modes, which the app answering each call applies there. */
+  readonly modeCeiling?: ModeLimit | undefined;
 }
 
 const invalid = (message: string) =>
@@ -96,15 +116,21 @@ export const resolveEnvironment = Effect.fn("remoteThreads.resolveEnvironment")(
   gateway: Gateway | undefined,
   scope: McpInvocationScope,
   environmentId: EnvironmentId | undefined,
-): Effect.fn.Return<RemoteEnvironment | undefined, OrchestratorMcpFailure> {
+): Effect.fn.Return<
+  RemoteEnvironment | undefined,
+  OrchestratorMcpFailure,
+  McpInvocationContext | ThreadManagementService
+> {
   if (environmentId === undefined || environmentId === scope.environmentId) return undefined;
   if (gateway === undefined || environmentId === gateway.environmentId) {
     return yield* invalid(
       `Environment ${environmentId} is not this environment (${scope.environmentId}), and this server reaches no other. Omit environmentId to act here.`,
     );
   }
-  const grants = gateway.grants();
+  const { grants, refusals, limit } = yield* gateway.access;
   if (grants[environmentId] === undefined) {
+    const refusal = refusals[environmentId];
+    if (refusal !== undefined) return yield* invalid(refusal);
     const environments = yield* Effect.promise(() =>
       gateway.context.port.listEnvironments().catch(() => []),
     );
@@ -124,6 +150,8 @@ export const resolveEnvironment = Effect.fn("remoteThreads.resolveEnvironment")(
   return {
     gateway,
     environmentId,
+    limit,
+    modeCeiling: (yield* loadCaller()).limits,
     caller:
       scope.thread === undefined
         ? undefined
@@ -131,8 +159,12 @@ export const resolveEnvironment = Effect.fn("remoteThreads.resolveEnvironment")(
   };
 });
 
-const gatewayFailure = (environmentId: EnvironmentId, error: unknown) => {
-  const message = `${error instanceof Error ? error.message : String(error)} (environment ${environmentId})`;
+const gatewayFailure = (environmentId: EnvironmentId, error: unknown, limit?: string) => {
+  const reason = `${error instanceof Error ? error.message : String(error)} (environment ${environmentId})`;
+  const message =
+    limit !== undefined && error instanceof GatewayError && error.code === "scope_required"
+      ? `${reason} ${limit}`
+      : reason;
   if (!(error instanceof GatewayError))
     return new OrchestratorMcpFailure({ code: "orchestration_error", message });
   switch (error.code) {
@@ -152,7 +184,7 @@ const gatewayFailure = (environmentId: EnvironmentId, error: unknown) => {
 const callRemote = (remote: RemoteEnvironment, name: string, args: Record<string, unknown>) =>
   Effect.promise(() =>
     runGatewayTool(
-      remote.gateway.context,
+      remote.gateway.contextFor(remote.modeCeiling),
       name,
       { ...args, environmentId: remote.environmentId },
       { caller: remote.caller },
@@ -161,7 +193,7 @@ const callRemote = (remote: RemoteEnvironment, name: string, args: Record<string
     Effect.flatMap((run) =>
       run.ok
         ? Effect.succeed(run.value)
-        : Effect.fail(gatewayFailure(remote.environmentId, run.error)),
+        : Effect.fail(gatewayFailure(remote.environmentId, run.error, remote.limit)),
     ),
   );
 
@@ -295,7 +327,7 @@ const decodeSummaries = Schema.decodeUnknownEffect(McpGatewayRelayThreadList);
 /** Whether the environment's thread list still shows this run active: a small read per poll. */
 const stillActive = (remote: RemoteEnvironment, threadId: ThreadId, runId: RunId) =>
   Effect.tryPromise({
-    try: () => remote.gateway.context.port.listThreads(remote.environmentId),
+    try: () => remote.gateway.contextFor(remote.modeCeiling).port.listThreads(remote.environmentId),
     catch: (cause) => new RemoteThreadListError({ cause }),
   }).pipe(
     Effect.flatMap(decodeSummaries),

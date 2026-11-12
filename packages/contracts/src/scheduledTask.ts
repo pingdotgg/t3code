@@ -99,15 +99,6 @@ export const ScheduledTaskWebhookSignature = Schema.Struct(
 ).annotate({ description: "HMAC-SHA256 check on the raw body." });
 export type ScheduledTaskWebhookSignature = typeof ScheduledTaskWebhookSignature.Type;
 
-/** Matches how long the relay holds a request for an offline environment. */
-export const MAX_WEBHOOK_DELIVERY_AGE_MINUTES = 24 * 60;
-
-const WebhookMaxDeliveryAgeMinutes = Schema.Int.check(
-  Schema.isBetween({ minimum: 1, maximum: MAX_WEBHOOK_DELIVERY_AGE_MINUTES }),
-).annotate({
-  description: "Skip requests held offline over this many minutes. Omit to run all.",
-});
-
 export function isWebhookDedupeTemplate(template: string): boolean {
   const placeholders = /\{\{\s*(?:(?:body|headers|query)(?:\.[^{}.\s]+)*|request)\s*\}\}/g;
   const matches = [...template.matchAll(placeholders)];
@@ -169,7 +160,6 @@ const ScheduledTaskWebhookFilters = Schema.Array(ScheduledTaskWebhookFilter)
 const ScheduledTaskWebhookSchedule = Schema.Struct({
   type: Schema.Literal("webhook"),
   signature: Schema.NullOr(ScheduledTaskWebhookSignature),
-  maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(WebhookMaxDeliveryAgeMinutes)),
   dedupe: Schema.optional(ScheduledTaskWebhookDedupe),
   filters: Schema.optional(ScheduledTaskWebhookFilters),
 }).annotate({
@@ -193,7 +183,6 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
   ).annotate({
     description: "Omit for URL token only.",
   }),
-  maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(WebhookMaxDeliveryAgeMinutes)),
   dedupe: Schema.optional(ScheduledTaskWebhookDedupe),
   filters: Schema.optional(ScheduledTaskWebhookFilters),
 }).annotate({
@@ -214,7 +203,7 @@ export const ScheduledTaskSchedule = Schema.Union([
 });
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
-export const ScheduledTaskUpsertSchedule = Schema.Union([
+const ScheduledTaskUpsertTimedSchedules = [
   Schema.Struct({
     type: Schema.Literal("interval"),
     everyMs: ScheduledTaskIntervalMs.check(
@@ -226,12 +215,28 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskCronSchedule,
   ScheduledTaskOnceSchedule,
+] as const;
+
+export const ScheduledTaskUpsertSchedule = Schema.Union([
+  ...ScheduledTaskUpsertTimedSchedules,
   ScheduledTaskUpsertWebhookSchedule,
 ]).annotate({
   description:
     "Writable trigger. Pass an object with type 'interval', 'fixed_time', 'cron', 'once' or 'webhook'.",
 });
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
+
+/**
+ * Shipped clients send the retired `maxDeliveryAgeMinutes` on every webhook save, null when unset.
+ * It decodes here so the server can refuse a value it cannot enforce; agents never see it.
+ */
+const ScheduledTaskClientUpsertSchedule = Schema.Union([
+  ...ScheduledTaskUpsertTimedSchedules,
+  ScheduledTaskUpsertWebhookSchedule.mapFields((fields) => ({
+    ...fields,
+    maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(Schema.Number)),
+  })),
+]);
 
 export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
@@ -292,6 +297,8 @@ export type ScheduledTaskListInput = typeof ScheduledTaskListInput.Type;
 
 export const ScheduledTaskListResult = Schema.Struct({
   tasks: ForwardCompatibleArray(ScheduledTask),
+  /** The server's IANA zone for fixed-time schedules. Absent from older servers. */
+  timeZone: Schema.optional(TrimmedNonEmptyString),
 });
 export type ScheduledTaskListResult = typeof ScheduledTaskListResult.Type;
 
@@ -304,7 +311,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   title: TrimmedNonEmptyString,
   prompt: TrimmedNonEmptyString,
   enabled: Schema.Boolean,
-  schedule: ScheduledTaskUpsertSchedule,
+  schedule: ScheduledTaskClientUpsertSchedule,
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   profileId: Schema.optional(

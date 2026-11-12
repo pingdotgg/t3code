@@ -26,7 +26,6 @@ import showcaseConfig, {
 import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
-  SHOWCASE_THREADS,
   seedShowcaseEnvironment,
 } from "./mobile-showcase-environment.ts";
 
@@ -1001,119 +1000,6 @@ async function waitForIosShowcaseScene(
   throw new Error(`iOS showcase scene '${scene}' did not render within ${timeoutMs}ms.`);
 }
 
-function iosAxe(): string {
-  return NodeProcess.env.AXE_PATH ?? "axe";
-}
-
-async function runAxe(udid: string, args: ReadonlyArray<string>): Promise<void> {
-  // HID events sent right after the simulator settles are dropped without it.
-  await runCommand(iosAxe(), [...args, "--udid", udid], {
-    env: { ...NodeProcess.env, AXE_HID_STABILIZATION_MS: "3000" },
-  }).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(
-        "The agent-activity scene drives the simulator with AXe. Install it with `brew tap cameroncooke/axe && brew install axe`, or set AXE_PATH.",
-      );
-    }
-    throw error;
-  });
-}
-
-async function iosSimulatorLocked(udid: string): Promise<boolean> {
-  const state = await commandOutput("xcrun", [
-    "simctl",
-    "spawn",
-    udid,
-    "notifyutil",
-    "-g",
-    "com.apple.springboard.lockstate",
-  ]).catch(() => "");
-  return state.trim().endsWith(" 1");
-}
-
-// simctl has no notification privacy service; answer the staging app's prompt until ready.
-async function allowIosNotificationsUntilReady(udid: string, ready: Promise<void>): Promise<void> {
-  const state = { settled: false };
-  const tapping = (async () => {
-    while (!state.settled) {
-      await runAxe(udid, ["tap", "--label", "Allow"]).catch(() => undefined);
-      if (!state.settled) await delay(1_000);
-    }
-  })();
-  try {
-    await ready;
-  } finally {
-    state.settled = true;
-    await tapping;
-  }
-}
-
-async function presentIosLockScreen(udid: string): Promise<void> {
-  await runAxe(udid, ["button", "lock"]);
-  const deadline = Date.now() + 15_000;
-  while (!(await iosSimulatorLocked(udid))) {
-    if (Date.now() > deadline) throw new Error(`Simulator ${udid} did not lock.`);
-    await delay(500);
-  }
-  const alert = showcaseAgentAlert();
-  await new Promise<void>((resolve, reject) => {
-    const child = NodeChildProcess.execFile(
-      "xcrun",
-      ["simctl", "push", udid, ANDROID_PACKAGE, "-"],
-      { cwd: REPO_ROOT },
-      (error) => (error ? reject(error) : resolve()),
-    );
-    child.stdin?.end(
-      JSON.stringify({
-        aps: { alert: { title: alert.title, body: alert.body }, sound: "default" },
-      }),
-    );
-  });
-  await wakeIosLockScreen(udid);
-  // The first Live Activity on the lock screen asks to keep allowing them.
-  await delay(2_000);
-  await runAxe(udid, ["tap", "--label", "Allow"]).catch(() => undefined);
-}
-
-/** Press home only if a screenshot proves the lock screen is dark; a lit display would unlock instead. */
-async function wakeIosLockScreen(udid: string): Promise<void> {
-  const probe = NodePath.join(NodeOS.tmpdir(), `t3-showcase-wake-${udid}.png`);
-  try {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      await delay(2_000);
-      await runCommand("xcrun", ["simctl", "io", udid, "screenshot", probe]);
-      if (!pngIsBlack(await NodeFSP.readFile(probe))) return;
-      await runAxe(udid, ["button", "home"]);
-    }
-    throw new Error(`Simulator ${udid} lock screen stayed dark.`);
-  } finally {
-    await NodeFSP.rm(probe, { force: true });
-  }
-}
-
-function pngIsBlack(bytes: Uint8Array): boolean {
-  const { data } = PNG.sync.read(Buffer.from(bytes));
-  for (let offset = 0; offset < data.length; offset += 4 * 997) {
-    if ((data[offset] ?? 0) > 8 || (data[offset + 1] ?? 0) > 8 || (data[offset + 2] ?? 0) > 8) {
-      return false;
-    }
-  }
-  return true;
-}
-
-async function unlockIosSimulator(udid: string): Promise<void> {
-  await runAxe(udid, ["button", "home"]);
-  await delay(2_000);
-  await runAxe(udid, ["button", "home"]);
-}
-
-function showcaseAgentAlert(): { readonly title: string; readonly body: string } {
-  const thread = SHOWCASE_THREADS.find((candidate) => candidate.id === "pocket-command-center");
-  const project = SHOWCASE_PROJECTS.find((candidate) => candidate.id === thread?.projectId);
-  if (!thread || !project) throw new Error("The showcase fixture lost its agent-activity thread.");
-  return { title: thread.title, body: `Approval: ${project.title}` };
-}
-
 async function captureIos(
   capture: ShowcaseCapture & { readonly device: ShowcaseIosDevice },
   appPath: string | null,
@@ -1197,12 +1083,8 @@ async function captureIos(
   for (const [sceneIndex, scene] of capture.scenes.entries()) {
     if (sceneIndex > 0) await NodeFSP.rm(readyPath, { force: true });
     await NodeFSP.writeFile(scenePath, scene);
-    const waitForScene = (timeoutMs?: number) => {
-      const ready = waitForIosShowcaseScene(simulator.udid, scene, timeoutMs);
-      return scene === "agent-activity"
-        ? allowIosNotificationsUntilReady(simulator.udid, ready)
-        : ready;
-    };
+    const waitForScene = (timeoutMs?: number) =>
+      waitForIosShowcaseScene(simulator.udid, scene, timeoutMs);
     if (sceneIndex === 0) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const isLastAttempt = attempt === 1;
@@ -1218,7 +1100,6 @@ async function captureIos(
     } else {
       await waitForScene();
     }
-    if (scene === "agent-activity") await presentIosLockScreen(simulator.udid);
     await delay(scene === "review" ? Math.max(config.settleDelayMs, 8_000) : config.settleDelayMs);
     const destination = NodePath.join(
       showcaseCaptureDirectory(outputDirectory, capture),
@@ -1239,7 +1120,6 @@ async function captureIos(
         await runCommand("sips", ["--rotate", capture.device.fold ? "90" : "270", destination]);
       }
     }
-    if (scene === "agent-activity") await unlockIosSimulator(simulator.udid);
     await finalizeCapture(destination, capture.device);
   }
 }
@@ -1254,18 +1134,6 @@ async function adbOutput(serial: string, args: ReadonlyArray<string>): Promise<s
 
 async function runAdb(serial: string, args: ReadonlyArray<string>): Promise<void> {
   await runCommand(androidSdkTool("platform-tools/adb"), ["-s", serial, ...args]);
-}
-
-/** Snooze emulator system notices for an hour so only app notifications appear in captures. */
-async function snoozeAndroidSystemNotifications(serial: string): Promise<void> {
-  const keys = (await adbOutput(serial, ["shell", "cmd", "notification", "list"]))
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((key) => key.includes("|") && !key.includes(`|${ANDROID_PACKAGE}|`));
-  for (const key of keys) {
-    // adb joins shell args with spaces, so the key needs quoting for the pipes.
-    await runAdb(serial, ["shell", `cmd notification snooze --for 3600000 '${key}'`]);
-  }
 }
 
 async function runningAndroidAvds(): Promise<ReadonlyMap<string, string>> {
@@ -1479,10 +1347,6 @@ async function captureAndroid(
   for (const [sceneIndex, scene] of capture.scenes.entries()) {
     if (sceneIndex > 0) await writeAndroidShowcaseScene(serial, scene);
     await waitForAndroidShowcaseScene(serial, scene);
-    if (scene === "agent-activity") {
-      await snoozeAndroidSystemNotifications(serial);
-      await runAdb(serial, ["shell", "cmd", "statusbar", "expand-notifications"]);
-    }
     await delay(Math.max(config.settleDelayMs, scene === "review" ? 8_000 : 5_000));
     const destination = NodePath.join(
       showcaseCaptureDirectory(outputDirectory, capture),
@@ -1500,9 +1364,6 @@ async function captureAndroid(
       );
     });
     await NodeFSP.writeFile(destination, png);
-    if (scene === "agent-activity") {
-      await runAdb(serial, ["shell", "cmd", "statusbar", "collapse"]);
-    }
     await finalizeCapture(destination, capture.device);
   }
 }

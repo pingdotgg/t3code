@@ -19,8 +19,8 @@ export function agentColorFor(
 
 export type AgentIconKey = NonNullable<McpGatewayProfile["icon"]>;
 
-/** Icon choices in the agent editor, with their display labels. */
-export const agentIconLabels: Record<AgentIconKey, string> = {
+/** The legacy `icon` literals; `agentIdentity` holds the full catalog. */
+const agentIconLabels: Record<AgentIconKey, string> = {
   orb: "Orb",
   bot: "Robot",
   code: "Code",
