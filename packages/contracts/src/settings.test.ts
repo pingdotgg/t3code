@@ -41,6 +41,25 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("reply font preferences", () => {
+  it("keeps existing clients on their interface font", () => {
+    expect(decodeClientSettings({}).fontFamilyReply).toBe("");
+  });
+
+  it("round-trips a reply font independently and accepts clearing it", () => {
+    const input = { fontFamilySans: "Arial", fontFamilyReply: "Source Serif 4" };
+    expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+    expect(decodeClientSettingsPatch({ fontFamilyReply: "" })).toEqual({ fontFamilyReply: "" });
+  });
+
+  it("enforces the existing font preference limit on reads and writes", () => {
+    const input = { fontFamilyReply: "a".repeat(201) };
+    expect(() => decodeClientSettings(input)).toThrow();
+    expect(() => decodeClientSettingsPatch(input)).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
