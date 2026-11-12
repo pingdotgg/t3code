@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -664,6 +665,22 @@ describe("RepoWorktreeService", () => {
           "mine\n",
         );
         assert.equal(yield* git(parentSubmodule, ["rev-parse", "HEAD"]), secondCommit);
+
+        // A link at the submodule path must not move the checkout it points to.
+        if (symlinksSupported) {
+          yield* fileSystem.remove(parentSubmodule, { recursive: true });
+          yield* fileSystem.symlink(sourceSubmodule, parentSubmodule);
+          const linked = yield* service
+            .setSubmoduleCommit({
+              threadId,
+              worktreePath: parent,
+              submodulePath: "framework",
+              sourceWorktreePath: framework,
+            })
+            .pipe(Effect.flip, Effect.map(requestReason));
+          assert.equal(linked, "not_a_submodule");
+          assert.equal(yield* git(sourceSubmodule, ["rev-parse", "HEAD"]), sourceSubmoduleHead);
+        }
 
         const notAttached = yield* service
           .setSubmoduleCommit({

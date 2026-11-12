@@ -223,15 +223,35 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// The service worktree was saved at both turns; Git failed on the workspace snapshot of one.
+// The service worktree was saved at both turns.
 it.effect.each([
-  // The thread's own worktree failed at the target turn.
-  { owner: "thread worktree", target: "error", later: "ready", expected: "workspace-unavailable" },
-  // The shared project folder failed after the target, so later edits there are unknown.
-  { owner: "project folder", target: "ready", later: "error", expected: "shared-workspace" },
+  {
+    refusal: "the thread worktree's snapshot failed at the target",
+    owner: "thread worktree",
+    target: "error",
+    later: "ready",
+    otherAttached: false,
+    expected: "workspace-unavailable",
+  },
+  {
+    refusal: "the project folder's snapshot failed after the target",
+    owner: "project folder",
+    target: "ready",
+    later: "error",
+    otherAttached: false,
+    expected: "shared-workspace",
+  },
+  {
+    refusal: "another thread has the removed service worktree attached",
+    owner: "project folder",
+    target: "ready",
+    later: "ready",
+    otherAttached: true,
+    expected: "shared-repository",
+  },
 ] as const)(
-  "refuses file restore when the $owner snapshot failed",
-  ({ owner, target: targetStatus, later, expected }) =>
+  "refuses file restore when $refusal",
+  ({ owner, target: targetStatus, later, otherAttached, expected }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -274,7 +294,18 @@ it.effect.each([
           path,
           projections: {
             getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
-            getThreadRepoWorktreePaths: () => Effect.succeed([]),
+            // The service worktree folder does not exist.
+            getThreadRepoWorktreePaths: () =>
+              Effect.succeed(
+                otherAttached
+                  ? [
+                      {
+                        threadId: ThreadId.make("other-thread"),
+                        worktreePath: repository.worktreePath,
+                      },
+                    ]
+                  : [],
+              ),
           } as never,
           projects: {} as never,
         },

@@ -435,6 +435,9 @@ const make = Effect.gen(function* () {
   // Repository worktrees of threads that still exist, archived ones included,
   // keyed by path identity. Cleanup never removes them, and a thread's own
   // worktree that another thread also works in counts as shared.
+  // Cleaning or removing a folder also deletes a checkout nested inside it.
+  const holdsRepoWorktree = (attached: ReadonlyMap<string, unknown>, key: string) =>
+    attached.has(key) || [...attached.keys()].some((attachedPath) => inside(key, attachedPath));
   const readRepoWorktreePaths = Effect.fn("StorageCleanup.readRepoWorktreePaths")(function* () {
     const rows = yield* projections.getThreadRepoWorktreePaths().pipe(NodeSqliteClient.readOnly);
     const paths = new Map<string, { readonly path: string; readonly threadIds: Set<string> }>();
@@ -1068,7 +1071,7 @@ const make = Effect.gen(function* () {
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);
-        if (repoWorktreePaths.has(yield* pathIdentity(worktreePath)))
+        if (holdsRepoWorktree(repoWorktreePaths, yield* pathIdentity(worktreePath)))
           return keep("another thread works in it as a repository worktree");
         if (project === undefined) return keep("project is unavailable");
         if (
@@ -1236,7 +1239,7 @@ const make = Effect.gen(function* () {
             includeArchived: true,
           })).filter((entry) => path.resolve(entry.worktreePath) === worktreePath);
           if (hasTerminal(worktreePath)) return waitForStop("open terminal");
-          if ((yield* readRepoWorktreePaths()).has(yield* pathIdentity(worktreePath)))
+          if (holdsRepoWorktree(yield* readRepoWorktreePaths(), yield* pathIdentity(worktreePath)))
             return "another thread works in it as a repository worktree";
           if (deleted) {
             if (
@@ -1365,7 +1368,12 @@ const make = Effect.gen(function* () {
             const removed = yield* withRepositoryLease(
               leaseKey,
               Effect.gen(function* () {
-                if ((yield* readRepoWorktreePaths()).has(yield* pathIdentity(worktreePath))) {
+                if (
+                  holdsRepoWorktree(
+                    yield* readRepoWorktreePaths(),
+                    yield* pathIdentity(worktreePath),
+                  )
+                ) {
                   keep("another thread works in it as a repository worktree");
                   return false;
                 }

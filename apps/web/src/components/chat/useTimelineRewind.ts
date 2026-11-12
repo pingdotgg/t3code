@@ -224,10 +224,10 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onRetryFileRestore = async () => {
     if (!currentFileRestoreRetry || !activeThread || isRevertingCheckpoint) return;
     if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
-      setThreadError(
-        activeThread.id,
-        `Reconnect ${activeEnvironmentUnavailableLabel} before restoring files.`,
-      );
+      const message = `Reconnect ${activeEnvironmentUnavailableLabel} before restoring files.`;
+      setThreadError(activeThread.id, message);
+      // The banner offers Try again only while it shows the retry's message.
+      setFileRestoreRetry({ ...currentFileRestoreRetry, message });
       return;
     }
     const { turnCount, checkpoint } = currentFileRestoreRetry;

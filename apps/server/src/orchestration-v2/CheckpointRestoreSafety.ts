@@ -87,13 +87,16 @@ const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function*
   }
   const resolved: Array<string> = [];
   for (const candidate of candidates) {
-    const real = yield* fileSystem.realPath(candidate).pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        (_error) => Effect.succeed(null),
+    // A removed folder still counts, spelled as restoreIsolation spells a removed target, since
+    // rollback can recreate a checkout another thread still has attached.
+    resolved.push(
+      yield* fileSystem.realPath(candidate).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          (_error) => Effect.succeed(dependencies.path.resolve(candidate)),
+        ),
       ),
     );
-    if (real !== null) resolved.push(real);
   }
   return resolved;
 });

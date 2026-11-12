@@ -33,13 +33,7 @@ describe("WebSocket RPC contracts", () => {
         }),
       ),
     ).toBe(true);
-  });
-
-  it("lets clients detach a repository worktree but never attach one", () => {
-    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
-    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
-    const decode = Schema.decodeUnknownExit(dispatchCommand.payloadSchema);
-
+    // Only the server attaches a repository worktree; clients may detach one.
     expect(
       Exit.isFailure(
         decode({

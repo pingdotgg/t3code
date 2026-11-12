@@ -101,7 +101,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
+  // The thread's branch names its own checkout, never a selected repository worktree.
+  const currentBranchLabel =
+    gitStatus.data?.refName ??
+    (sourceControl.repoWorktree === null
+      ? selectedThread?.branch
+      : gitStatus.data === undefined
+        ? sourceControl.repoWorktree.branch
+        : null) ??
+    "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;

@@ -3116,7 +3116,10 @@ export const layerWsRpc = (
                 Effect.matchCauseEffect({
                   // Earlier steps (branch, commit) may have landed before the failing one.
                   onFailure: (cause) =>
-                    refreshGitStatus(input.cwd).pipe(Effect.andThen(Queue.failCause(queue, cause))),
+                    recordBranch(input.cwd).pipe(
+                      Effect.andThen(refreshGitStatus(input.cwd)),
+                      Effect.andThen(Queue.failCause(queue, cause)),
+                    ),
                   onSuccess: (result) =>
                     (input.threadId === undefined
                       ? Effect.void

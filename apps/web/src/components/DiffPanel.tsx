@@ -477,10 +477,11 @@ export default function DiffPanel({
             : ` in ${selectedRepoWorktree.repository} · ${selectedRepoWorktree.branch}`
         }`;
   const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
+  // The project's identity names its own repository, not a selected repository worktree's.
+  const commitLinkIdentity =
+    selectedRepoWorktree === null ? activeProject?.repositoryIdentity : undefined;
   const selectedCommitUrl =
-    headerCommitSha !== null
-      ? projectCommitUrl(activeProject?.repositoryIdentity, headerCommitSha)
-      : null;
+    headerCommitSha !== null ? projectCommitUrl(commitLinkIdentity, headerCommitSha) : null;
   const openLink = useOpenLink(routeThreadRef);
   // A SHA link goes to the code host; it must not route back into this pane's commit selection.
   const openCommitUrl = (event: MouseEvent<HTMLElement>, url: string) => {
@@ -973,10 +974,7 @@ export default function DiffPanel({
                   onValueChange={selectScopeValue}
                 >
                   {branchCommits?.commits.map((commit) => {
-                    const commitUrl = projectCommitUrl(
-                      activeProject?.repositoryIdentity,
-                      commit.sha,
-                    );
+                    const commitUrl = projectCommitUrl(commitLinkIdentity, commit.sha);
                     return (
                       <div
                         key={commit.sha}

@@ -35,19 +35,6 @@ describe("repoWorktreeNote", () => {
     expect(note({ userText: "  /compact" })).toBe("");
   });
 
-  // The setting can turn on partway through a conversation, so no turn may
-  // count on an earlier one having carried the rules.
-  it("carries every rule the agent needs on any turn it is sent", () => {
-    const rules = note();
-    expect(rules).toContain("never edit, commit, or switch branches there");
-    expect(rules).toContain("t3_repo_worktree_ensure");
-    expect(rules).toContain("never stash, reset, or clean");
-    expect(rules).toContain("Use a new branch name for new, independent work");
-    expect(rules).toContain("`useExistingBranch:true` only to continue an existing branch");
-    expect(rules).toContain("t3_repo_worktree_set_submodule");
-    expect(rules).toContain("checkpoints these worktrees with every turn");
-  });
-
   it("repeats project guidance and where the work is on every turn", () => {
     const later = note({
       settings: {

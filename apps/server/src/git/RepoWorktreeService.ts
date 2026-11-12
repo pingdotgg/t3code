@@ -981,9 +981,9 @@ const make = Effect.gen(function* () {
     const { thread } = yield* loadEnabledContext(input.threadId);
     const parent = yield* requireAttached(thread, input.worktreePath);
     const source = yield* requireAttached(thread, input.sourceWorktreePath);
-    // One pin at a time per parent, so two calls cannot interleave checkouts.
+    // One pin at a time per parent checkout, under any spelling of its path.
     return yield* repositoryLocks.withLock(
-      `submodules:${pathKey(parent.worktreePath)}`,
+      `submodules:${yield* pathIdentity(parent.worktreePath)}`,
       pinSubmodule(input, parent, source),
     );
   });
@@ -1031,6 +1031,19 @@ const make = Effect.gen(function* () {
     ])).stdout.trim();
 
     const submoduleDir = path.join(parent.worktreePath, ...submodulePath.split("/"));
+    // A link at the submodule path would send the checkout to another folder, such as the source.
+    const parentReal = yield* realPathOr(parent.worktreePath);
+    const destination = (yield* fileSystem
+      .exists(submoduleDir)
+      .pipe(Effect.orElseSucceed(() => false)))
+      ? yield* realPathOr(submoduleDir)
+      : path.join(parentReal, ...submodulePath.split("/"));
+    if (!insideOrEqual(parentReal, destination) || sameWorktree(parentReal, destination)) {
+      return yield* new RepoWorktreeRequestError({
+        reason: "not_a_submodule",
+        path: submodulePath,
+      });
+    }
     const isCheckout = Effect.gen(function* () {
       const toplevel = yield* probe(submoduleDir, "submoduleToplevel", [
         "rev-parse",

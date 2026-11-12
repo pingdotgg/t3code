@@ -2427,6 +2427,20 @@ describe("storage cleanup reports and local file policies", () => {
           });
           expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
 
+          // Removing it would also delete a checkout attached inside it.
+          const nested = `${fixture.worktree}/nested/repo`;
+          yield* fixture.fs.makeDirectory(nested, { recursive: true });
+          fixture.setRepoWorktrees([{ threadId: "thread-2", worktreePath: nested }]);
+          expect(
+            (yield* fixture.service.runNow).entries.find(
+              (entry) => entry.path === fixture.worktree,
+            ),
+          ).toMatchObject({
+            outcome: "kept",
+            reason: "Another thread works in it as a repository worktree",
+          });
+          yield* fixture.fs.remove(`${fixture.worktree}/nested`, { recursive: true });
+
           fixture.setRepoWorktrees([]);
           expect((yield* fixture.service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         }),
