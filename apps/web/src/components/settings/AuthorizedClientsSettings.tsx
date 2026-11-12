@@ -21,6 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -151,6 +152,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   canRevoke,
 }: PairingLinkListRowProps) {
   const nowMs = useNowSecond();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const expiresAtMs = new Date(pairingLink.expiresAt).getTime();
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
   const [isQrPanelOpen, setIsQrPanelOpen] = useState(defaultShareOpen);
@@ -265,7 +267,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     if (credential) copyPairingValue(credential, "code");
   };
 
-  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
+  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt, timestampFormat);
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
   const selectedQrOption = selectQrEndpointOption(
@@ -285,7 +287,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
-              tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
+              tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt, timestampFormat)}`}
               dotClassName="bg-warning"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
@@ -507,6 +509,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   canRevoke,
 }: ConnectedClientListRowProps) {
   const nowMs = useNowSecond();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const isLive = clientSession.current || clientSession.connected;
   const lastConnectedAt = clientSession.lastConnectedAt;
   const statusTooltip = isLive
@@ -514,7 +517,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
       ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
       : "Connected"
     : lastConnectedAt
-      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
+      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt, timestampFormat)}`
       : "Not connected yet.";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
