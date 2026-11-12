@@ -1002,6 +1002,9 @@ export function resolveWindowTitleThreadStatus(thread: SidebarThreadStatusInput)
     case "preparing":
     case "working":
       return THREAD_STATUS_TEXT.working;
+    case "waiting":
+      // Waiting on a child thread is still this turn, so it must not read as finished.
+      return thread.runtime?.status === "running" ? THREAD_STATUS_TEXT.working : null;
     default:
       return null;
   }
