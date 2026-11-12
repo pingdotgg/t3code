@@ -258,6 +258,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -1540,6 +1541,8 @@ export const layerWsRpc = (
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
+      // The panel's reads for a pull request the user opened go out during a rate-limit pause.
+      const openedPullRequestRead = Effect.provideService(SourceControlRateLimit.Interactive, true);
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -2105,38 +2108,49 @@ export const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  ThreadMessageIntake.launchThread({
-                    commandId: input.commandId,
-                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input.reuseExistingThread === undefined
-                      ? {}
-                      : { reuseExistingThread: input.reuseExistingThread }),
-                    projectId: input.projectId,
-                    title: input.title,
-                    ...(input.generateTitle === undefined
-                      ? {}
-                      : { generateTitle: input.generateTitle }),
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                    workspaceStrategy: input.workspaceStrategy,
-                    ...(input.initialMessage === undefined
-                      ? {}
-                      : {
-                          initialMessage: {
-                            ...(input.initialMessage.messageId === undefined
-                              ? {}
-                              : { messageId: input.initialMessage.messageId }),
-                            text: input.initialMessage.text,
-                            attachments: input.initialMessage.attachments,
-                            ...(input.initialMessage.context === undefined
-                              ? {}
-                              : { context: input.initialMessage.context }),
-                          },
+                  threadLaunch
+                    .checkWorktreeBase({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      workspaceStrategy: input.workspaceStrategy,
+                    })
+                    .pipe(
+                      Effect.andThen(
+                        ThreadMessageIntake.launchThread({
+                          commandId: input.commandId,
+                          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                          ...(input.reuseExistingThread === undefined
+                            ? {}
+                            : { reuseExistingThread: input.reuseExistingThread }),
+                          projectId: input.projectId,
+                          title: input.title,
+                          ...(input.generateTitle === undefined
+                            ? {}
+                            : { generateTitle: input.generateTitle }),
+                          modelSelection: input.modelSelection,
+                          runtimeMode: input.runtimeMode,
+                          interactionMode: input.interactionMode,
+                          workspaceStrategy: input.workspaceStrategy,
+                          ...(input.initialMessage === undefined
+                            ? {}
+                            : {
+                                initialMessage: {
+                                  ...(input.initialMessage.messageId === undefined
+                                    ? {}
+                                    : { messageId: input.initialMessage.messageId }),
+                                  text: input.initialMessage.text,
+                                  attachments: input.initialMessage.attachments,
+                                  ...(input.initialMessage.context === undefined
+                                    ? {}
+                                    : { context: input.initialMessage.context }),
+                                },
+                              }),
+                          createdBy: "user",
+                          creationSource: input.creationSource ?? "web",
                         }),
-                    createdBy: "user",
-                    creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                      ),
+                      Effect.provide(intakeContext),
+                    ),
                 )
                 .pipe(
                   // A resumed launch is a retry of one already counted.
@@ -2184,6 +2198,27 @@ export const layerWsRpc = (
                         cause,
                       }),
                     ThreadManagementProviderInstanceDisabledError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    ThreadLaunchBaseRefError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    ThreadLaunchBranchConflictError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    ThreadLaunchNotRepositoryError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,
@@ -2666,13 +2701,13 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.pullRequestsDetail]: (input) =>
-          withPullRequestViewer(input, pullRequests.detail(input)),
+          withPullRequestViewer(input, openedPullRequestRead(pullRequests.detail(input))),
         [WS_METHODS.pullRequestsPreview]: (input) =>
           withPullRequestViewer(input, pullRequests.preview(input)),
         [WS_METHODS.pullRequestsChecks]: (input) =>
           withPullRequestViewer(input, pullRequests.checks(input)),
         [WS_METHODS.pullRequestsActivity]: (input) =>
-          withPullRequestViewer(input, pullRequests.activity(input)),
+          withPullRequestViewer(input, openedPullRequestRead(pullRequests.activity(input))),
         [WS_METHODS.pullRequestsReviewGuide]: (input) =>
           withPullRequestViewer(input, reviewGuides.get(input)),
         [WS_METHODS.pullRequestsGenerateReviewGuide]: (input) =>
@@ -3035,7 +3070,9 @@ export const layerWsRpc = (
               })
               .pipe(
                 Effect.matchCauseEffect({
-                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  // Earlier steps (branch, commit) may have landed before the failing one.
+                  onFailure: (cause) =>
+                    refreshGitStatus(input.cwd).pipe(Effect.andThen(Queue.failCause(queue, cause))),
                   onSuccess: (result) =>
                     (input.threadId === undefined
                       ? Effect.void
@@ -3472,7 +3509,6 @@ export const layer = Layer.unwrap(
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-              Layer.provide(AgentSessionScanner.layer),
               Layer.provide(AcpRegistrySessions.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
