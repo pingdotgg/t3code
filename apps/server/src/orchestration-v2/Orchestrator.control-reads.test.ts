@@ -593,13 +593,15 @@ it.effect("a thread visit does not wait for another write to release the writer"
       .pipe(Effect.forkChild);
     yield* Deferred.await(writerHeld);
 
+    const visitedAt = yield* DateTime.now;
+    const visitCommand = {
+      type: "thread.visit",
+      commandId: CommandId.make("visit-behind-writer"),
+      threadId,
+      visitedAt: DateTime.formatIso(visitedAt),
+    } as const;
     const visit = yield* orchestrator
-      .dispatch({
-        type: "thread.visit",
-        commandId: CommandId.make("visit-behind-writer"),
-        threadId,
-        visitedAt: DateTime.formatIso(yield* DateTime.now),
-      })
+      .dispatch(visitCommand)
       .pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
     yield* TestClock.adjust("1 second");
     const settled = yield* Fiber.join(visit);
@@ -607,6 +609,11 @@ it.effect("a thread visit does not wait for another write to release the writer"
     yield* Fiber.join(longWrite);
 
     assert.isTrue(Option.isSome(settled), "thread.visit waited behind the held writer");
+    // The same command id replays the receipt the deferred visit committed.
+    const replayed = yield* orchestrator.dispatch(visitCommand);
+    assert.isTrue(replayed.replayed);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    assert.deepEqual((yield* projections.getThread(threadId)).lastVisitedAt, visitedAt);
   }).pipe(Effect.provide(layerTest)),
 );
 
