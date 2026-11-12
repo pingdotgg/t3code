@@ -237,6 +237,16 @@ it("ends bare URLs at CJK punctuation with source positions", () => {
   expect(links.at(-1)).toMatchObject({
     position: { start: at(300, 4, lastLine + 3), end: at(300, 24, lastLine + 23) },
   });
+  // Only a table unescapes `\|` in code, so that cell keeps its parse and the URL is cut.
+  const descendants = (node: Root | RootContent): RootContent[] =>
+    "children" in node
+      ? (node.children as RootContent[]).flatMap((child) => [child, ...descendants(child)])
+      : [];
+  const cell = descendants(parse("| a |\n| - |\n| http://example.com， `a\\|b` |") as Root);
+  expect(cell.flatMap((node) => (node.type === "link" ? [node.url] : []))).toEqual([
+    "http://example.com",
+  ]);
+  expect(cell.flatMap((node) => (node.type === "inlineCode" ? [node.value] : []))).toEqual(["a|b"]);
   // A list item's continuation line parses the same on its own.
   expect(parse(`- 第一行\n  **${url}**（已重启）`)).toMatchObject({
     children: [
