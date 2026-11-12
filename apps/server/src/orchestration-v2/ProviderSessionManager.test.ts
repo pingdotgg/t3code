@@ -18,6 +18,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -451,7 +453,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
-    readonly interruptTurn?: Effect.Effect<void>;
+    readonly interruptTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -632,7 +634,7 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
-  readonly interruptTurn?: Effect.Effect<void>;
+  readonly interruptTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -1765,12 +1767,14 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
   }),
 );
 
-it.effect.each(["pending", "running", "completed"] as const)(
+it.effect.each(["pending", "running", "completed", "interrupt-failed"] as const)(
   "orders detach after a selected %s turn and only interrupts active native work",
   (status) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const milestones: Array<string> = [];
+      const interruptStarted = yield* Deferred.make<void>();
+      const releaseInterrupt = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1810,6 +1814,17 @@ it.effect.each(["pending", "running", "completed"] as const)(
           modelSelection,
           runtimePolicy,
         });
+        const siblingId = ThreadId.make("thread:detach-sibling");
+        yield* sink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: siblingId, now })],
+        });
+        const siblingRuntime = yield* manager.open({
+          threadId: siblingId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const sibling = yield* siblingRuntime.subscribeEvents!(siblingId);
         const subscription = yield* runtime.subscribeEvents!(threadId);
         const turnEvent: ProviderAdapter.ProviderAdapterV2Event = {
           type: "provider_turn.updated",
@@ -1824,7 +1839,7 @@ it.effect.each(["pending", "running", "completed"] as const)(
             runAttemptId: null,
             nativeTurnRef: null,
             ordinal: 1,
-            status: status === "completed" ? "running" : status,
+            status: status === "completed" || status === "interrupt-failed" ? "running" : status,
             startedAt: now,
             completedAt: null,
           },
@@ -1888,9 +1903,30 @@ it.effect.each(["pending", "running", "completed"] as const)(
           .pipe(Effect.withTracer(tracer), Effect.forkScoped({ startImmediately: true }));
         yield* Deferred.await(detaching);
         yield* Deferred.succeed(releaseOffer, undefined);
+        if (status !== "completed") {
+          yield* Deferred.await(interruptStarted);
+          const siblingEvent = { ...event };
+          const receivedBySibling = yield* sibling.events.pipe(
+            Stream.filter((received) => received === siblingEvent),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.andThen(Effect.sync(() => assert.notInclude(milestones, "detached"))),
+            Effect.andThen(Deferred.succeed(releaseInterrupt, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* Queue.offer(queue, siblingEvent);
+          yield* TestClock.adjust("15 seconds");
+          yield* Fiber.join(receivedBySibling);
+        }
         yield* Fiber.join(detach);
         const exit = yield* Fiber.join(reading);
         assert.isTrue(Exit.isFailure(exit));
+        if (status === "interrupt-failed" && Exit.isFailure(exit)) {
+          assert.instanceOf(
+            Cause.squash(exit.cause),
+            ProviderAdapter.ProviderAdapterInterruptError,
+          );
+        }
         assert.deepEqual(received, status === "completed" ? [turnEvent, event] : [event]);
         assert.deepEqual(
           milestones,
@@ -1901,9 +1937,22 @@ it.effect.each(["pending", "running", "completed"] as const)(
           layerTest({
             state,
             idleTimeoutMs: 60_000,
-            interruptTurn: Effect.sync(() => {
-              milestones.push("interrupt");
-            }),
+            interruptTurn: Deferred.succeed(interruptStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseInterrupt)),
+              Effect.andThen(Effect.sync(() => milestones.push("interrupt"))),
+              Effect.andThen(
+                status === "interrupt-failed"
+                  ? Effect.fail(
+                      new ProviderAdapter.ProviderAdapterInterruptError({
+                        driver: CODEX_DRIVER,
+                        providerThreadId: ProviderThreadId.make("failed-native-thread"),
+                        providerTurnId: ProviderTurnId.make("failed-native-turn"),
+                        cause: "first native interrupt failed",
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
           }),
         ),
       );

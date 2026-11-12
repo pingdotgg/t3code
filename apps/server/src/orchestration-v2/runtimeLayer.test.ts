@@ -10726,6 +10726,59 @@ const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
 it.layer(layerQueueResumeDisabledInstanceTest)(
   "queue.resume on a project-disabled instance",
   (it) => {
+    it.effect.each([false, true])(
+      "rejects a disabled worktree continuation atomically with active source %s",
+      (active) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = ThreadId.make(`disabled-handoff:${active}`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:create`),
+            threadId,
+            projectId: queueResumeDisabledInstanceProjectId,
+            title: "Disabled handoff",
+            modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/source",
+          });
+          if (active) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`${threadId}:start`),
+              threadId,
+              messageId: MessageId.make(`${threadId}:start`),
+              text: "Start",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+          }
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const error = yield* orchestrator
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${threadId}:bind`),
+              threadId,
+              worktreePath: "/destination",
+              expectedWorktreePath: "/source",
+              worktreeContinuation: {
+                messageId: MessageId.make(`${threadId}:continue`),
+                text: "Continue",
+              },
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+          assert.include(String(error.cause), "disabled");
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+        }),
+    );
+
     it.effect(
       "holds a queued run instead of starting it on an instance the project turned off",
       () =>

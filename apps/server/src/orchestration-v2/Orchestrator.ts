@@ -3949,6 +3949,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (command.type === "thread.metadata.update" && command.worktreeContinuation !== undefined) {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      if (
+        !resolveProjectProviderInstanceEnabled(
+          settings,
+          thread.projectId,
+          thread.providerInstanceId,
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The provider for this project is disabled.",
+        });
+      }
       const sourceRunId = command.worktreeContinuation.sourceRunId;
       const { runs } = yield* projectionStore
         .getThreadRecords(
