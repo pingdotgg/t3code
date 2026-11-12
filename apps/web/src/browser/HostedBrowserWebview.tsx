@@ -4,7 +4,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import {
@@ -13,6 +13,7 @@ import {
 } from "~/components/preview/thumbButtons";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { useViewportSize } from "~/hooks/useViewportSize";
 import { cn, isMacPlatform } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
@@ -50,13 +51,6 @@ declare global {
     webview: ElectronWebview;
   }
 }
-
-const subscribeToWindowSize = (onChange: () => void) => {
-  window.addEventListener("resize", onChange);
-  return () => window.removeEventListener("resize", onChange);
-};
-const readWindowWidth = () => window.innerWidth;
-const readWindowHeight = () => window.innerHeight;
 
 export function HostedBrowserWebview(props: {
   readonly threadRef: ScopedThreadRef;
@@ -231,14 +225,13 @@ export function HostedBrowserWebview(props: {
     setAspectRatioLocked(aspectRatio !== null);
   };
   const content = presentation.content;
-  const windowWidth = useSyncExternalStore(subscribeToWindowSize, readWindowWidth);
-  const windowHeight = useSyncExternalStore(subscribeToWindowSize, readWindowHeight);
+  const windowSize = useViewportSize();
   const { width: hiddenWidth, height: hiddenHeight } = resolveHiddenBrowserViewportSize({
     setting: viewport,
     zoomFactor: layoutZoomFactor,
     content,
     lastRect,
-    windowSize: { width: windowWidth, height: windowHeight },
+    windowSize,
   });
   // Build from primitives on each side of the resize hook to keep both objects cached.
   const containerSize =
