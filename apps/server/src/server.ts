@@ -1,6 +1,8 @@
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
+import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
+import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
@@ -31,6 +33,7 @@ import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import {
   guardHttpResponseWriteErrors,
+  keepIdleConnections,
   rejectRequestsUntilServing,
 } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
@@ -39,6 +42,11 @@ import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
+import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
+import * as SpeechService from "./speech/SpeechService.ts";
+import * as CloudSpeech from "./speech/CloudSpeech.ts";
+import { speechHttpApiLayer } from "./speech/http.ts";
+import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -101,7 +109,9 @@ import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
+import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
+import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -187,7 +197,6 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as AntigravityUsage from "./provider/Drivers/AntigravityUsage.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
@@ -209,6 +218,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
   ensureTailscaleServe,
+  readTailscaleServeRootHolders,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
@@ -289,9 +299,7 @@ const layerUsage = UsageService.layer.pipe(
       AntigravityUsage.layer,
       MuseUsageHome.layer,
       CodexUsageHistory.layer,
-      CursorUsageAccounts.layer.pipe(
-        Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
-      ),
+      CursorUsageAccounts.layer.pipe(Layer.provide(CursorAccountReader.layer)),
     ).pipe(Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer)))),
   ),
   Layer.provide(layerServerSettings),
@@ -347,7 +355,7 @@ const layerHttpServer = Layer.unwrap(
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
-          guardHttpResponseWriteErrors(NodeHttp.createServer()),
+          keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
         );
         if (config.privateNetworkOnly) {
           server.on("connection", (socket) => {
@@ -622,13 +630,30 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// The desktop app and the background service start the server again after it exits.
+const layerServerRestart = Layer.effect(
+  DatabaseStorage.ServerRestart,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    // As in runServerCommand, only the desktop app passes a bootstrap token; `serve --mode desktop` by hand has no supervisor.
+    const desktopLaunched = config.mode === "desktop" && config.desktopBootstrapToken !== undefined;
+    if (!desktopLaunched && !launcher.managed) return null;
+    // Stop as a SIGTERM would: runMain's listener interrupts the server, so its shutdown path runs.
+    return Effect.sync(() => void process.emit("SIGTERM"));
+  }),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
-  DatabaseStorage.layer.pipe(Layer.provide(ProjectionMaintenance.layer)),
+  DatabaseStorage.layer.pipe(
+    Layer.provide(ProjectionMaintenance.layer),
+    Layer.provide(layerServerRestart),
+  ),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
   Layer.effectDiscard(
@@ -659,6 +684,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
+  ProviderInstallation.layer,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
@@ -676,7 +702,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
   Layer.provideMerge(ProviderRegistry.layer),
-  Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  Layer.provideMerge(
+    ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(SqlitePersistence.layerConfig)),
+  ),
+  // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
+  // reference, so the runtime layer shares it.
+  Layer.provideMerge(ProviderInstallationGate.layer),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),
@@ -719,6 +750,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
+  Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -763,6 +795,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
+      Layer.provide(speechHttpApiLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -775,6 +808,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
+    speechStreamRouteLayer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
@@ -808,6 +842,14 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provideMerge(PeerLinks.layer),
     ),
   ),
+  Layer.provide(
+    SpeechService.layer.pipe(
+      Layer.provide(layerServerSettings),
+      Layer.provide(SpeechModelStore.layer),
+    ),
+  ),
+  Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
+  Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),
@@ -864,6 +906,22 @@ const layerMakeServer = Layer.unwrap(
           );
       }),
     );
+    // Who holds the Serve port's root: nobody, this server, only dead loopback ports (an unclean
+    // exit leaves one), or another live server or app, whose route is left alone.
+    const tailscaleServeRootHolder = Effect.fn("server.tailscaleServeRootHolder")(
+      function* (target: { readonly host: string; readonly port: number }) {
+        const net = yield* NetService.NetService;
+        const holders = yield* readTailscaleServeRootHolders(config.tailscaleServePort, target);
+        if (holders.length === 0) return "none" as const;
+        if (holders.some((holder) => holder.ours)) return "ours" as const;
+        const live = yield* Effect.forEach(holders, (holder) =>
+          holder.ours || holder.loopback === undefined
+            ? Effect.succeed(true)
+            : net.hasListenerOnHost(holder.loopback.port, holder.loopback.host),
+        );
+        return live.includes(true) ? ("other" as const) : ("dead" as const);
+      },
+    );
     const layerTailscaleServe = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
           Effect.acquireRelease(
@@ -878,16 +936,31 @@ const layerMakeServer = Layer.unwrap(
 
               const localPort = address.port;
               const localHost = loopbackUrlHostForAddress(address);
+              const route = {
+                localPort,
+                urlHost: localHost,
+                localHost: localHost.replace(/^\[|\]$/gu, ""),
+                servePort: config.tailscaleServePort,
+              };
+              const holder = yield* tailscaleServeRootHolder({
+                host: route.localHost,
+                port: localPort,
+              }).pipe(Effect.orElseSucceed(() => "unreadable" as const));
+              if (holder === "other" || holder === "unreadable") {
+                yield* Effect.logWarning(
+                  holder === "other"
+                    ? "Tailscale Serve left off; its port already serves another server or app"
+                    : "Tailscale Serve left off; its current routes could not be read",
+                  { localPort, servePort: config.tailscaleServePort },
+                );
+                return route;
+              }
               return yield* ensureTailscaleServe({
                 localPort,
                 servePort: config.tailscaleServePort,
                 localHost,
               }).pipe(
-                Effect.as({
-                  localPort,
-                  localHost: localHost.replace(/^\[|\]$/gu, ""),
-                  servePort: config.tailscaleServePort,
-                }),
+                Effect.as(route),
                 Effect.tap(() =>
                   Effect.logInfo("Tailscale Serve configured", {
                     localPort,
@@ -952,8 +1025,42 @@ const layerMakeServer = Layer.unwrap(
                     ),
                   )
                 : Effect.void,
+          ).pipe(
+            // Startup is not the only time the route can go stale, so whoever finds it on a dead
+            // port takes it back.
+            Effect.tap((configured) =>
+              configured === null
+                ? Effect.void
+                : Effect.sleep("30 seconds").pipe(
+                    Effect.andThen(
+                      tailscaleServeRootHolder({
+                        host: configured.localHost,
+                        port: configured.localPort,
+                      }),
+                    ),
+                    Effect.flatMap((holder) =>
+                      holder === "dead"
+                        ? ensureTailscaleServe({
+                            localPort: configured.localPort,
+                            servePort: configured.servePort,
+                            localHost: configured.urlHost,
+                          }).pipe(
+                            Effect.andThen(
+                              Effect.logInfo("Tailscale Serve repaired", {
+                                localPort: configured.localPort,
+                                servePort: configured.servePort,
+                              }),
+                            ),
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.ignore,
+                    Effect.forever,
+                    Effect.forkScoped,
+                  ),
+            ),
           ),
-        )
+        ).pipe(Layer.provide(NetService.layer))
       : Layer.empty;
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {

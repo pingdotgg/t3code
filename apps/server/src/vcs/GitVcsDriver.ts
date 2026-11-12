@@ -42,6 +42,7 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import * as CheckoutCloner from "./CheckoutCloner.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -53,7 +54,6 @@ export interface ExecuteGitInput {
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number | null;
-  readonly forceKillAfterMs?: number;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   /** With appendTruncationMarker, line callbacks continue beyond the buffer cap for progress-only consumers. */
@@ -144,6 +144,8 @@ export interface CreateWorktreeOptions {
   /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
+  /** Clone the checkout from the macOS worktree checkout cache. */
+  readonly fastCheckout?: boolean;
 }
 
 export interface GitCommitProgress {
@@ -176,6 +178,11 @@ export interface GitPushResult {
   branch: string;
   upstreamBranch?: string | undefined;
   setUpstream?: boolean | undefined;
+}
+
+export interface GitPushTarget {
+  remoteName: string;
+  branchName: string;
 }
 
 export interface GitRangeContext {
@@ -301,6 +308,11 @@ export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
 }
 
+/** Set by background discovery so its Git commands run in their own small lane, not the user's. */
+export const BackgroundGitWork = Context.Reference<boolean>("t3/vcs/BackgroundGitWork", {
+  defaultValue: () => false,
+});
+
 export class GitVcsDriver extends Context.Service<
   GitVcsDriver,
   {
@@ -331,6 +343,11 @@ export class GitVcsDriver extends Context.Service<
       fallbackBranch: string | null,
       options?: { readonly remoteName?: string | null },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
+    /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */
+    readonly resolvePushTarget: (
+      cwd: string,
+      current: { readonly branch: string; readonly hasUpstream: boolean },
+    ) => Effect.Effect<GitPushTarget | null, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,
       baseRef: string,
@@ -368,6 +385,8 @@ export class GitVcsDriver extends Context.Service<
       input: VcsCreateWorktreeInput,
       options?: CreateWorktreeOptions,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    /** Deletes the macOS worktree checkout cache in the background. */
+    readonly clearWorktreeCheckoutCache: Effect.Effect<void>;
     /** Force-updates local `branch` to the primary remote's `ref`. */
     readonly fetchRefIntoBranch: (
       input: GitFetchRefInput & { readonly branch: string },
@@ -498,14 +517,10 @@ function parseGitRemoteVerboseOutput(
   output: string,
 ): Map<string, { url?: string; pushUrl?: string }> {
   const remotes = new Map<string, { url?: string; pushUrl?: string }>();
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      continue;
-    }
-
+  for (const line of output.split(/\r?\n/)) {
+    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
+    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
     if (!match) {
       continue;
     }
@@ -526,6 +541,13 @@ function parseGitRemoteVerboseOutput(
   }
   return remotes;
 }
+
+// Trace output and deprecation warnings can precede Git's own message, so check every line.
+const hasStderrLine = (stderr: string, prefixes: ReadonlyArray<string>) =>
+  stderr.split("\n").some((line) => prefixes.some((prefix) => line.startsWith(prefix)));
+
+/** Operation of the error raised when Git cannot say whether a cwd is a work tree. */
+export const WORK_TREE_PROBE_OPERATION = "GitVcsDriver.probeWorkTree";
 
 const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
   (
@@ -569,21 +591,50 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
+  // Returns stdout, or null when there is no work tree. A non-repository exits 128 like a broken
+  // one, so only Git's message (pinned to the C locale) or a missing cwd tells them apart.
+  const probeWorkTree = Effect.fn("GitVcsDriver.probeWorkTree")(function* (
+    operation: string,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    maxOutputBytes: number,
+  ) {
+    const result = yield* gitCommand(vcsProcess, operation, cwd, args, {
+      env: { LC_ALL: "C" },
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+      maxOutputBytes,
+    }).pipe(Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)));
+    if (result === null) return null;
+    if (result.exitCode === 0) return result.stdout;
+    // Git before 2.38 answers "false" for a bare repo, then fails on --show-toplevel.
+    // Match line prefixes only: a path inside a diagnostic may contain the same words.
+    if (
+      result.stdout.startsWith("false") ||
+      hasStderrLine(result.stderr, [
+        "fatal: not a git repository",
+        "fatal: cannot use bare repository",
+      ]) ||
+      !(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return null;
+    }
+    return yield* new VcsProcessExitError({
+      operation: WORK_TREE_PROBE_OPERATION,
+      command: "git rev-parse",
+      cwd,
+      exitCode: result.exitCode,
+      detail: result.stderr.trim() || "git rev-parse failed",
+    });
+  });
+
   const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
-    gitCommand(
-      vcsProcess,
+    probeWorkTree(
       "GitVcsDriver.isInsideWorkTree",
       cwd,
       ["rev-parse", "--is-inside-work-tree"],
-      {
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 4_096,
-      },
-    ).pipe(
-      Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
-      Effect.catchIf(isMissingExecutable, () => Effect.succeed(false)),
-    );
+      4_096,
+    ).pipe(Effect.map((stdout) => stdout?.trim() === "true"));
 
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
@@ -602,19 +653,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     "detectRepository",
   )(function* (cwd) {
     // One spawn answers all three; outside a work tree it exits non-zero or prints "false".
-    const result = yield* gitCommand(
-      vcsProcess,
+    const stdout = yield* probeWorkTree(
       "GitVcsDriver.detectRepository",
       cwd,
       ["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--git-common-dir"],
-      {
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 16_384,
-      },
-    ).pipe(Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)));
-    if (result === null || result.exitCode !== 0) return null;
-    const lines = result.stdout.replace(/\r?\n$/u, "").split(/\r?\n/u);
+      16_384,
+    );
+    if (stdout === null) return null;
+    const lines = stdout.replace(/\r?\n$/u, "").split(/\r?\n/u);
     if (lines[0]?.trim() !== "true") return null;
     // A newline inside a path breaks the line framing; ask for each path on its own.
     if (lines.length !== 3) {
@@ -813,14 +859,28 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
       cwd,
       args: ["rev-parse", "--verify", "--quiet", `${checkpointRef}^{commit}`],
+      env: { LC_ALL: "C" },
       allowNonZeroExit: true,
     }).pipe(
-      Effect.map((result) => {
+      Effect.flatMap((result) => {
+        // --quiet reports an absent ref as exit 1 with no error; an unreadable object also exits 1
+        // but reports an error line.
+        if (result.exitCode === 1 && !hasStderrLine(result.stderr, ["error:", "fatal:"])) {
+          return Effect.succeed(null);
+        }
         if (result.exitCode !== 0) {
-          return null;
+          return Effect.fail(
+            new VcsProcessExitError({
+              operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
+              command: "git rev-parse",
+              cwd,
+              exitCode: result.exitCode,
+              detail: result.stderr.trim() || "git rev-parse failed",
+            }),
+          );
         }
         const commit = result.stdout.trim();
-        return commit.length > 0 ? commit : null;
+        return Effect.succeed(commit.length > 0 ? commit : null);
       }),
     );
 
@@ -852,6 +912,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "--git-common-dir",
         "--git-path",
         "index",
+        "--show-prefix",
         "--verify",
         "--quiet",
         "HEAD",
@@ -861,19 +922,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const headExists = result.exitCode === 0;
     const headChecked = headExists || result.exitCode === 1;
     const lines = result.stdout.split("\n");
-    const [gitCommonDir = "", indexPath = ""] = lines;
-    if (headChecked && lines.length === (headExists ? 4 : 3) && lines.at(-1) === "") {
+    const [gitCommonDir = "", indexPath = "", prefix = ""] = lines;
+    if (headChecked && lines.length === (headExists ? 5 : 4) && lines.at(-1) === "") {
       return {
         gitCommonDir: gitCommonDir.trim(),
         indexPath: indexPath.trim(),
+        prefix,
         headExists,
       };
     }
     // Git before 2.31 echoes --path-format, and a path containing a newline spans lines.
     // Separate commands read the paths as before and report a failure the same way.
+    const fallbackCommonDir = yield* resolveGitCommonDir(cwd);
+    const prefixResult = yield* execute({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd,
+      args: ["rev-parse", "--show-prefix"],
+    });
     return {
-      gitCommonDir: yield* resolveGitCommonDir(cwd),
+      gitCommonDir: fallbackCommonDir,
       indexPath: undefined,
+      prefix: prefixResult.stdout.replace(/\n$/, ""),
       headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
     };
   });
@@ -910,11 +979,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
+      const { gitCommonDir, indexPath, prefix, headExists } = yield* resolveCaptureRepository(
+        input.cwd,
+      );
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      const hostEnv = yield* HostProcess.Environment;
       const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
@@ -1102,7 +1173,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        const workspaceIgnored = (yield* filterIgnoredPaths(input.cwd, ["."])).length === 0;
+        // The working-tree root is never ignored. Probe a subdirectory without the trailing slash
+        // Git adds to ".", which a blank or whitespace-only ignore line matches as an empty pattern.
+        const workspaceIgnored =
+          prefix !== "" &&
+          (yield* filterIgnoredPaths(input.cwd, [`../${prefix.slice(0, -1).split("/").at(-1)}`]))
+            .length === 0;
         if (workspaceIgnored) {
           // HEAD omits staged-only paths. Seed just this workspace's additions, keeping
           // unrelated staged changes and the scratch index's sparse flags untouched.
@@ -1207,7 +1283,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 );
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
                 const nestedRepoEnv: NodeJS.ProcessEnv = {
-                  ...process.env,
+                  ...hostEnv,
                   GIT_DIR: undefined,
                   GIT_WORK_TREE: undefined,
                   GIT_COMMON_DIR: undefined,
@@ -1342,13 +1418,52 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
         ),
       );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...longPaths, "reset", "--quiet", "--", "."],
+        });
+      });
       yield* recreateWorkspace;
-      const cleaned = yield* execute({
+      const clean = execute({
         operation,
         cwd: input.cwd,
         args: [...longPaths, "clean", "-fd", "--", "."],
+        env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
+      let cleaned = yield* clean;
+      // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
+      for (
+        let pass = 1;
+        pass < 4 && cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout);
+        pass++
+      ) {
+        yield* recreateWorkspace;
+        cleaned = yield* clean;
+      }
+      if (cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout)) {
+        yield* recreateWorkspace;
+        const remaining = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...longPaths, "clean", "-dn", "--", "."],
+          env: { LC_ALL: "C" },
+        });
+        if (/^Would remove /m.test(remaining.stdout)) {
+          yield* resetIndex;
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git clean",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: "Could not clean the checkpoint workspace: untracked files remain.",
+          });
+        }
+      }
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
         const emptiedWorkspace =
@@ -1358,7 +1473,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             Effect.map((entries) => entries.length === 0),
             Effect.orElseSucceed(() => false),
           ));
-        if (!emptiedWorkspace)
+        if (!emptiedWorkspace) {
+          yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
             command: "git clean",
@@ -1366,15 +1482,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             exitCode: cleaned.exitCode,
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
+        }
       }
-      // On Windows the same clean can remove './' and exit 0.
-      yield* recreateWorkspace;
-
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: [...longPaths, "reset", "--quiet", "--", "."],
-      });
+      yield* resetIndex;
 
       return true;
     }),
@@ -1554,4 +1664,4 @@ export const make = Effect.gen(function* () {
 });
 
 export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
-export const layer = Layer.effect(GitVcsDriver, make);
+export const layer = Layer.effect(GitVcsDriver, make).pipe(Layer.provide(CheckoutCloner.layer));
