@@ -442,6 +442,41 @@ describe("server browser snapshot screenshot", () => {
     }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
   });
 
+  it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
+    const page = await context.newPage();
+    await page.setContent(`
+      <style>
+        body { margin: 0; background: #2563eb; }
+        @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
+        button { animation: pulse 2s infinite; }
+        #paused { animation: enter 2s paused; }
+        #overlay { display: none; position: fixed; inset: 0; background: #ef4444; }
+        #overlay.open { display: block; animation: enter 200ms both; }
+      </style>
+      <button onclick="document.querySelector('#overlay').classList.add('open')">Open</button>
+      <div id="paused"></div>
+      <div id="overlay"></div>
+    `);
+    await page.getByRole("button", { name: "Open" }).click();
+    const frame = await ServerBrowserPage.captureFinalRecordingFrame(
+      await context.newCDPSession(page),
+      80,
+    );
+    expect(frame).toBeDefined();
+    const pixel = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(frame)}), char => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return Array.from(context.getImageData(bitmap.width / 2, bitmap.height / 2, 1, 1).data);
+    })()`)) as [number, number, number, number];
+    expect(colorOf(pixel)).toBe("red");
+  });
+
   it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
     const page = await context.newPage();
     await page.goto("data:text/xml,<a/>");
@@ -527,6 +562,26 @@ describe("server browser evaluate", () => {
         "Runtime.evaluate",
         "Runtime.terminateExecution",
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser wait", () => {
+  it("ends at its timeout when a check never answers", async () => {
+    // As on a desktop tab whose Playwright utility world never answers.
+    const page = {
+      locator: () => ({ count: () => new Promise<number>(() => {}) }),
+    } as unknown as Page;
+    vi.useFakeTimers();
+    try {
+      let failure: unknown;
+      void ServerBrowserPage.waitFor(page, { selector: "button", timeoutMs: 300 }).catch(
+        (error: unknown) => (failure = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
     } finally {
       vi.useRealTimers();
     }

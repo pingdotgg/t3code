@@ -78,6 +78,8 @@ Fix:
 1. Make sure the host is awake and online.
 2. On the host, run `t3 connect status`.
 3. If the check fails only on the host, check the host's DNS, VPN, or proxy.
+   If it says the host's network has an old cached answer, wait: it usually
+   clears within about 30 minutes.
 
 ## This device can't reach T3 Connect
 
