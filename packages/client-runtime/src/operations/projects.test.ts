@@ -206,10 +206,25 @@ describe("add project shared logic", () => {
         defaultModelSelection: null,
         scripts: [],
       },
+      {
+        environmentId: env,
+        id: ProjectId.make("unc-project"),
+        title: "Share",
+        workspaceRoot: "\\\\server\\share\\repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+      },
     ];
 
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
+    // regression: #34755 Windows accepts a UNC root spelled with forward slashes
+    expect(
+      findExistingAddProject({ projects, environmentId: env, path: "//server/share/repo" })?.id,
+    ).toBe("unc-project");
   });
 });
