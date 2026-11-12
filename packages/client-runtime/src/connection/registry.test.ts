@@ -451,6 +451,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ),
       ),
     checkHost: () => Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
+    sessionGrant: () => Effect.succeedNone,
+    routeGrant: () => Effect.succeedNone,
   });
 
   const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);

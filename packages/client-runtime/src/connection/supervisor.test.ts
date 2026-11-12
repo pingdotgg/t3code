@@ -1,4 +1,5 @@
 import {
+  authScopeResponse,
   AuthStandardClientScopes,
   EnvironmentId,
   type ServerConfig,
@@ -45,7 +46,14 @@ import * as RpcSession from "../rpc/session.ts";
 import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
+import {
+  connectionRouteId,
+  entryWithRoutes,
+  isLearned,
+  mergeLearnedRoutes,
+  type RouteGrant,
+  routeGrantFromSession,
+} from "./routes.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -126,6 +134,17 @@ const PROBE_CAPABLE_CONFIG = {
   environment: { capabilities: { connectionProbe: true } },
 } as ServerConfig;
 
+// What a pairing from before scoped permissions still grants: no filesystem:read.
+const LEGACY_GRANT = Option.getOrThrow(
+  routeGrantFromSession({
+    authenticated: true,
+    ...authScopeResponse(["orchestration:read", "orchestration:operate", "terminal:operate"]),
+  }),
+);
+const STANDARD_GRANT = Option.getOrThrow(
+  routeGrantFromSession({ authenticated: true, ...authScopeResponse(AuthStandardClientScopes) }),
+);
+
 function preparedFor(target: ConnectionTarget): PreparedConnection {
   return { ...PREPARED_CONNECTION, target };
 }
@@ -168,6 +187,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly checkRoute?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly checkHost?: (prepared: PreparedConnection) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly preflight?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RoutePreflight>;
+  readonly grant?: (target: ConnectionTarget) => Effect.Effect<Option.Option<RouteGrant>>;
   readonly inboundFrames?: Effect.Effect<number>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
@@ -280,6 +300,8 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         checkHost: (prepared) =>
           options?.checkHost?.(prepared) ??
           Effect.succeed<ConnectionDriver.RouteCheck>("unchecked"),
+        sessionGrant: (prepared) => options?.grant?.(prepared.target) ?? Effect.succeedNone,
+        routeGrant: (_entry, route) => options?.grant?.(route.target) ?? Effect.succeedNone,
       }),
     ),
   );
@@ -1942,17 +1964,71 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
-  it.effect("moves back to the LAN route when the network changes and it answers again", () =>
+  it.effect.each([
+    { lanGrant: undefined, expected: "BearerConnectionTarget" },
+    { lanGrant: STANDARD_GRANT, expected: "BearerConnectionTarget" },
+    { lanGrant: LEGACY_GRANT, expected: "RelayConnectionTarget" },
+  ] as const)(
+    "after the network changes and the LAN answers again, uses $expected when the LAN grants $lanGrant.size scopes",
+    ({ lanGrant, expected }) =>
+      Effect.gen(function* () {
+        const lanReachable = yield* Ref.make(false);
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            route.target._tag === "BearerConnectionTarget"
+              ? Ref.get(lanReachable).pipe(
+                  Effect.map((reachable) => (reachable ? "answered" : "silent")),
+                )
+              : Effect.succeed("unchecked"),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          grant: (target) =>
+            target._tag === "RelayConnectionTarget"
+              ? Effect.succeedSome(STANDARD_GRANT)
+              : Ref.get(lanReachable).pipe(
+                  Effect.map((reachable) =>
+                    reachable ? Option.fromUndefinedOr(lanGrant) : Option.none(),
+                  ),
+                ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 1,
+        );
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "RelayConnectionTarget",
+        );
+
+        yield* Ref.set(lanReachable, true);
+        yield* harness.setNetworkStatus("unknown");
+        yield* harness.setNetworkStatus("online");
+        for (let minute = 0; minute < 3; minute += 1) {
+          yield* TestClock.adjust("60 seconds");
+        }
+
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          expected,
+        );
+        expect(yield* Ref.get(harness.releaseCount)).toBe(
+          expected === "BearerConnectionTarget" ? 1 : 0,
+        );
+      }),
+  );
+
+  it.effect("moves a narrow LAN connection to a T3 Connect route that grants more", () =>
     Effect.gen(function* () {
-      const lanReachable = yield* Ref.make(false);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
-            ? Ref.get(lanReachable).pipe(
-                Effect.map((reachable) => (reachable ? "answered" : "silent")),
-              )
-            : Effect.succeed("unchecked"),
+          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
+        preflight: () => Effect.succeed("ready"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        grant: (target) =>
+          Effect.succeedSome(
+            target._tag === "RelayConnectionTarget" ? STANDARD_GRANT : LEGACY_GRANT,
+          ),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
         initiallyDesired: true,
@@ -1960,24 +2036,25 @@ describe("EnvironmentSupervisor routes", () => {
 
       yield* awaitState(
         supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 1,
+        (state) => state.phase === "connected" && state.generation === 2,
       );
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
         "RelayConnectionTarget",
       );
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
 
-      yield* Ref.set(lanReachable, true);
-      yield* harness.setNetworkStatus("unknown");
-      yield* harness.setNetworkStatus("online");
-
+      // A replacement connection goes straight to the route that grants more.
+      yield* harness.closeLatestSession();
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* TestClock.adjust("250 millis");
       yield* awaitState(
         supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
+        (state) => state.phase === "connected" && state.generation === 3,
       );
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
+        "RelayConnectionTarget",
       );
-      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(3);
     }),
   );
 
