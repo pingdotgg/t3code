@@ -446,7 +446,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
-    it.effect("keeps a shadow's own databases until the shared home has some too", () =>
+    it.effect("keeps a shadow's own databases and refuses only one the shared home also has", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
@@ -454,6 +454,9 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "private wal");
 
         expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(shadowHome);
+
+        yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared db");
+        expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(sharedHome);
 
         yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared db");
         const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);

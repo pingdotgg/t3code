@@ -284,25 +284,31 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       entryName: stranded.entryName,
     });
   }
-  const [privateDatabase] = regularDatabases;
-  if (privateDatabase === undefined) {
+  if (regularDatabases.size === 0) {
     return { ...environment, CODEX_SQLITE_HOME: layout.sharedHomePath };
   }
-  // A shadow that only ever had its own databases keeps them, until the shared home has some too.
-  const sharedEntries = yield* readHomeEntries(
+  const sharedDatabases = (yield* readHomeEntries(
     fileSystem,
     layout,
     effectiveHomePath,
     layout.sharedHomePath,
-  );
-  if (sharedEntries.some((entry) => SQLITE_DATABASE_ENTRY_NAME.test(entry))) {
+  ))
+    .filter((entry) => SQLITE_DATABASE_ENTRY_NAME.test(entry))
+    .map((entry) => entry.toLowerCase());
+  // A shadow that only ever had its own databases keeps them, until the shared home has some too.
+  if (sharedDatabases.length === 0) {
+    return { ...environment, CODEX_SQLITE_HOME: effectiveHomePath };
+  }
+  // Only the same database diverging in both homes is ambiguous, as for other shadow entries.
+  const conflict = sharedDatabases.find((entry) => regularDatabases.has(entry));
+  if (conflict) {
     return yield* new CodexShadowHomeSqliteConflictError({
       sharedHomePath: layout.sharedHomePath,
       effectiveHomePath,
-      entryName: privateDatabase,
+      entryName: conflict,
     });
   }
-  return { ...environment, CODEX_SQLITE_HOME: effectiveHomePath };
+  return { ...environment, CODEX_SQLITE_HOME: layout.sharedHomePath };
 });
 
 const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
