@@ -216,4 +216,14 @@ describe("withLaunchingThreads", () => {
     };
     expect(launch([started])[0]).toBe(started);
   });
+
+  it("titles an image-only launch the way it is created", () => {
+    const [thread] = withLaunchingThreads({
+      threads: [],
+      launches: [{ ...creation, text: "" }],
+      hiddenThreadKeys: new Set(),
+    });
+
+    expect(thread?.title).toBe("Attached image");
+  });
 });

@@ -142,4 +142,33 @@ describe("buildPendingNewTasks", () => {
       new Set(["syncing", "read-only", "retrying", "offline", "sending"]),
     );
   });
+
+  it("titles an image-only creation the way it is created", () => {
+    const imageOnly: QueuedThreadMessage = {
+      ...queuedCreation("offline"),
+      text: "",
+      attachments: [
+        {
+          id: "image-1",
+          type: "image",
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+          previewUri: "data:image/png;base64,AAAA",
+        },
+      ],
+    };
+    const [task] = buildPendingNewTasks({
+      queuedMessages: [imageOnly],
+      drafts: {},
+      sendGate: {
+        connectedEnvironmentIds: new Set(),
+        operableEnvironmentIds: new Set(),
+        shellStatuses: new Map(),
+        retryingMessageIds: {},
+      },
+    });
+
+    expect(task?.title).toBe("Attached image");
+  });
 });
