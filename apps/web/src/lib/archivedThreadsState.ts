@@ -68,8 +68,14 @@ export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentI
   refreshArchivedPage(environmentId);
 }
 
-/** The most recently archived threads, a page at a time, for the archive view. */
-export function useArchivedThreadPages(environmentIds: ReadonlyArray<EnvironmentId>): {
+/**
+ * The most recently archived threads, a page at a time, for the archive view. Pages span every
+ * project, so a view filtered to some projects passes `paged: false` and reads the whole archive.
+ */
+export function useArchivedThreadPages(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  { paged }: { readonly paged: boolean },
+): {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly error: string | null;
   readonly isLoading: boolean;
@@ -77,7 +83,10 @@ export function useArchivedThreadPages(environmentIds: ReadonlyArray<Environment
   readonly loadMore: () => void;
   readonly refresh: () => void;
 } {
-  const result = useAtomValue(archivedPagesAtom(makeArchivedThreadsEnvironmentKey(environmentIds)));
+  const environmentKey = makeArchivedThreadsEnvironmentKey(environmentIds);
+  const result = useAtomValue(
+    paged ? archivedPagesAtom(environmentKey) : archivedSnapshotsAtom(environmentKey),
+  );
   return {
     ...result,
     hasMore: result.snapshots.some(({ snapshot }) => snapshot.hasMore === true),
@@ -91,7 +100,10 @@ export function useArchivedThreadPages(environmentIds: ReadonlyArray<Environment
       }
     },
     refresh: () => {
-      for (const environmentId of environmentIds) refreshArchivedPage(environmentId);
+      for (const environmentId of environmentIds) {
+        if (paged) refreshArchivedPage(environmentId);
+        else appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+      }
     },
   };
 }

@@ -34,6 +34,7 @@ export function ArchivedThreadsPanel() {
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const pendingActionsRef = useRef(new Set<string>());
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const {
     snapshots: archivedSnapshots,
     error: archiveError,
@@ -41,13 +42,12 @@ export function ArchivedThreadsPanel() {
     hasMore: hasMoreArchive,
     loadMore: loadMoreArchive,
     refresh: refreshArchivedThreads,
-  } = useArchivedThreadPages(scope.environmentIds);
+  } = useArchivedThreadPages(scope.environmentIds, { paged: !isProjectScope });
 
   const { groups: archivedGroups, hasMultipleEnvironments } = (() => {
-    const selectedProjectKeys =
-      scope.kind === "project" || scope.kind === "checkout"
-        ? new Set(scope.members.map((member) => `${member.environmentId}:${member.id}`))
-        : null;
+    const selectedProjectKeys = isProjectScope
+      ? new Set(scope.members.map((member) => `${member.environmentId}:${member.id}`))
+      : null;
     const projectsByEnvironmentAndId = new Map(
       archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
         snapshot.projects
