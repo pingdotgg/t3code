@@ -45,6 +45,8 @@ const layerCodexTextGenerationTest = ServerConfig.ServerConfig.layerTest(process
   prefix: "t3code-codex-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+
 interface FakeCodexInput {
   output: string;
   lifecycle?: { port: number; command: "exec" | "mcp list" };
@@ -342,7 +344,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     }),
   );
 
-  it.effect("stamps the Codex config under the subprocess HOME", () =>
+  // Codex reads its user config from HOME only off Windows.
+  it.effect.skipIf(windowsHost)("stamps the Codex config under the subprocess HOME", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -375,7 +378,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             expect(yield* listCount).toBe(2);
           }),
       );
-    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    }),
   );
 
   it.effect("drops the requested model's options when falling back to another model", () =>
