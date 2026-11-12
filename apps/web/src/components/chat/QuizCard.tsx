@@ -399,7 +399,7 @@ function MultipleChoiceCard(props: {
 }) {
   const options = shuffledQuizOptions(props.card, props.seed);
   const [selected, setSelected] = useState<string | null>(null);
-  const [confidence, setConfidence] = useState(50);
+  const [confidence, setConfidence] = useState<number | undefined>(undefined);
   const [thinking, setThinking] = useThinkingDraft(props.seed);
   const [submitted, setSubmitted] = useState(false);
   const [sending, setSending] = useState(false);
@@ -435,7 +435,8 @@ function MultipleChoiceCard(props: {
           quizAnswerMessage({
             answer: selected === "__unknown__" ? null : selected,
             correct: picked?.correct === true,
-            confidence,
+            ...(confidence === undefined ? {} : { confidence }),
+            shownOptions: options.map((option) => option.option),
             thinking: text,
           }),
           props.seed,
@@ -488,7 +489,8 @@ function MultipleChoiceCard(props: {
                 className="mt-4 block text-sm font-medium"
                 htmlFor={`${props.seed}-confidence`}
               >
-                How sure are you? <span>{confidence}%</span>
+                How sure are you?{" "}
+                <span>{confidence === undefined ? "not set" : `${confidence}%`}</span>
               </label>
               <input
                 id={`${props.seed}-confidence`}
@@ -496,7 +498,7 @@ function MultipleChoiceCard(props: {
                 type="range"
                 min={0}
                 max={100}
-                value={confidence}
+                value={confidence ?? 50}
                 onChange={(event) => setConfidence(Number(event.target.value))}
                 disabled={sending}
                 className="mt-2 w-full accent-primary"

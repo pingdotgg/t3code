@@ -93,6 +93,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   const requests: Array<string> = [];
   const browser = yield* PreviewBrowser.makePreviewBrowser({
     baseDir,
+    stateDir: baseDir,
     release: options.unsupported
       ? null
       : {
@@ -126,7 +127,9 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser", (it) => {
   it.effect.each(["0.8.0", "1.2.3"])("retains another version when installing %s", (current) =>
     Effect.gen(function* () {
-      const { browser, fs, path, installRoot, requests } = yield* makeHarness({ version: current });
+      const { browser, fs, path, baseDir, installRoot, requests } = yield* makeHarness({
+        version: current,
+      });
       yield* fs.makeDirectory(path.join(installRoot, "0.9.0"), { recursive: true });
       yield* fs.makeDirectory(path.join(installRoot, "0.10.0"));
       const active = path.join(installRoot, ".install-other");
@@ -155,6 +158,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
       expect(yield* browser.executable).toBe(executable);
       expect(yield* browser.installed).toEqual(Option.some(executable));
       expect(requests).toHaveLength(1);
+      const auditDir = path.join(baseDir, "audit");
+      const auditFiles = yield* fs.readDirectory(auditDir);
+      expect(auditFiles).toHaveLength(1);
+      const [auditLine] = (yield* fs.readFileString(path.join(auditDir, auditFiles[0]!)))
+        .trim()
+        .split("\n");
+      expect(JSON.parse(auditLine!)).toMatchObject({
+        url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
+        status: 200,
+        bytes: browserArchive.byteLength,
+      });
     }),
   );
 
@@ -167,7 +181,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
     },
   ])("rejects $name, installs nothing, and retries on the next call", (testCase) =>
     Effect.gen(function* () {
-      const { browser, fs, installRoot, requests } = yield* makeHarness(testCase);
+      const { browser, fs, path, baseDir, installRoot, requests } = yield* makeHarness(testCase);
 
       const error = yield* browser.executable.pipe(Effect.flip);
 
@@ -176,6 +190,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
       expect(yield* fs.readDirectory(installRoot)).toEqual([]);
       yield* browser.executable.pipe(Effect.flip);
       expect(requests).toHaveLength(2);
+      const [auditFile] = yield* fs.readDirectory(path.join(baseDir, "audit"));
+      const auditLines = (yield* fs.readFileString(path.join(baseDir, "audit", auditFile!)))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(auditLines).toHaveLength(2);
+      expect(auditLines.every((line) => line.error)).toBe(true);
     }),
   );
 

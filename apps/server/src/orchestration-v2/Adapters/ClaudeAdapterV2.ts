@@ -77,6 +77,7 @@ import {
   QUESTION_CARD_TOOL_NAME,
   QUIZ_CARD_TOOL_NAME,
   replyCoverage,
+  withoutCardAnswerTag,
 } from "@t3tools/shared/quizCard";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -2094,6 +2095,10 @@ function isLessonTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput): boolea
   return input.appThread.lesson !== undefined || input.appThread.sideChat !== undefined;
 }
 
+function isLessonCardAnswerTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput): boolean {
+  return isLessonTurn(input) && withoutCardAnswerTag(input.message.text) !== input.message.text;
+}
+
 // A lesson card whose reply already says this text shows it once, as the reply (APP-102).
 function cardReplyRepeats(block: { readonly name: string; readonly input: unknown }, text: string) {
   if (!isLessonCardTool(block.name)) return false;
@@ -2148,12 +2153,34 @@ function isLessonStatusLine(text: string) {
 function stripLessonNarration(text: string) {
   const narration =
     /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
+  const firstPerson = /\bI['’](?:m|ll|ve|d)\b/u;
   return text
     .split("\n")
     .map((line) =>
       line
         .split(/(?<=[.!?])\s+/u)
-        .filter((sentence) => !narration.test(sentence.trimStart()))
+        .flatMap((sentence) => {
+          const tail =
+            /,\s*(?:so|and)\s+I(?:['’](?:m|ll|ve|d)\b| (?!is\b|equals\b)[a-z])[\s\S]*$/u.exec(
+              sentence,
+            );
+          const withoutTail = tail === null ? sentence : `${sentence.slice(0, tail.index)}.`;
+          const clauses = withoutTail.split(";");
+          const kept = clauses.filter((clause) => {
+            const trimmed = clause.trimStart();
+            return !narration.test(trimmed) && !firstPerson.test(trimmed);
+          });
+          if (kept.length === 0) return [];
+          if (kept.length === clauses.length && tail === null) return [sentence];
+          return [
+            kept
+              .map((clause) => {
+                const trimmed = clause.trim();
+                return /[.!?]$/u.test(trimmed) ? trimmed : `${trimmed}.`;
+              })
+              .join(" "),
+          ];
+        })
         .join(" "),
     )
     .join("\n")
@@ -8080,8 +8107,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           const held = context.assistant.heldText;
           context.assistant.heldText = [];
+          const short = held.reduce((total, item) => total + item.text.length, 0) <= 300;
+          // A verdict on the learner's answer shows even when the tutor reads code next.
           if (
-            held.reduce((total, item) => total + item.text.length, 0) <= 300 &&
+            short &&
+            !isLessonCardTool(block.name) &&
+            isLessonCardAnswerTurn(context.input) &&
+            context.assistant.emittedNativeItemIds.size === 0
+          ) {
+            for (const item of held) {
+              const verdict = stripLessonNarration(item.text);
+              if (verdict === "") yield* emitHeldAssistantTextItemAsReasoning(context, item);
+              else yield* emitAssistantTextArtifacts({ context, ...item, text: verdict });
+            }
+            return;
+          }
+          if (
+            short &&
             (resolveT3McpToolId(block.name) === null ||
               (context.assistant.cardSeen && !isLessonCardTool(block.name)))
           ) {

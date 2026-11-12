@@ -15,7 +15,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
-import { withoutCardAnswerTag } from "@t3tools/shared/quizCard";
+import { withoutCardAnswerTag, withoutShownOptions } from "@t3tools/shared/quizCard";
 import { videoMimeType } from "@t3tools/shared/video";
 
 /** The working row while T3 Code's own compaction runs. */
@@ -107,7 +107,9 @@ export function resolveUserMessagePresentation(message: {
   }
   return {
     // The agent needs words to start a turn; people sent only the attachments.
-    text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : withoutCardAnswerTag(message.text),
+    text: isAttachmentOnlyBootstrapPrompt(message.text)
+      ? ""
+      : withoutShownOptions(withoutCardAnswerTag(message.text)),
     attribution:
       message.createdBy !== "agent"
         ? null

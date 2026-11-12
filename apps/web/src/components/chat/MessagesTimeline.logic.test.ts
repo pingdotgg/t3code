@@ -4947,6 +4947,65 @@ it("marks only the quiz card an answer names as answered", () => {
   );
 });
 
+it("hides a lesson picture before an unanswered card until the card is answered", () => {
+  const runId = RunId.make("picture-card-run");
+  const at = "2026-01-01T00:00:00Z";
+  const message = (id: string, role: "user" | "assistant", text: string): TimelineEntry => ({
+    kind: "message",
+    id,
+    createdAt: at,
+    message: {
+      id: MessageId.make(id),
+      role,
+      text,
+      runId: role === "assistant" ? runId : null,
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+    },
+  });
+  const picture: TimelineEntry = {
+    kind: "html-render",
+    id: "picture",
+    createdAt: at,
+    runId,
+    htmlRender: { attachmentId: "picture", title: "Picture", height: 200 },
+  };
+  const card: TimelineEntry = {
+    kind: "quiz-card",
+    id: "card",
+    createdAt: at,
+    runId,
+    quizCard: { question: "What is shown?" },
+  };
+  const input = {
+    timelineEntries: [
+      message("user", "user", "Teach me"),
+      message("text-before", "assistant", "Here is the setup."),
+      picture,
+      message("text-after", "assistant", "Now answer this."),
+      card,
+    ],
+    lesson: true,
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+  expect(deriveMessagesTimelineRows(input).find((row) => row.id === "picture")).toMatchObject({
+    kind: "html-render",
+    picturePending: true,
+  });
+
+  const answer = cardAnswerMessage('Quiz answer: "A", right.', "card");
+  expect(
+    deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries: [...input.timelineEntries, message("answer", "user", answer)],
+      answeredCardAnswers: answeredCardAnswers([{ role: "user", text: answer }]),
+    }).find((row) => row.id === "picture"),
+  ).not.toMatchObject({ picturePending: true });
+});
+
 it("turns a question card into an unanswered quiz-card row", () => {
   const at = "2026-01-01T00:00:00Z";
   const question: TimelineEntry = {

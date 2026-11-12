@@ -19,6 +19,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 
 import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { openZipArchive } from "../zipArchive.ts";
 
 // Update the version, sizes and hashes from each chrome-headless-shell zip listed at
@@ -137,6 +138,7 @@ export class PreviewBrowser extends Context.Service<
 
 export interface PreviewBrowserOptions {
   readonly baseDir: string;
+  readonly stateDir: string;
   readonly release?: PreviewBrowserRelease | null;
   /** How long a caller waits on an install in progress. Provider tool calls time out near 60s. */
   readonly wait?: Duration.Input;
@@ -233,8 +235,31 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
           detail: "The download failed its size or SHA-256 check. Nothing was installed.",
         });
       }
+      yield* Effect.promise(() =>
+        auditDownload(
+          { stateDir: options.stateDir },
+          {
+            url: release.url,
+            status: response.status,
+            bytes: progress.downloadedBytes,
+            contentType: response.headers["content-type"] ?? null,
+            sha256: release.sha256,
+          },
+        ),
+      );
     },
     Effect.timeout(DOWNLOAD_TIMEOUT),
+    (effect, release) =>
+      effect.pipe(
+        Effect.tapCause((cause) =>
+          Effect.promise(() =>
+            auditDownload(
+              { stateDir: options.stateDir },
+              { url: release.url, bytes: progress.downloadedBytes, error: Cause.pretty(cause) },
+            ),
+          ),
+        ),
+      ),
     Effect.mapError(
       wrapFailure(
         "The download from storage.googleapis.com failed. Check this machine's network access.",
@@ -442,6 +467,6 @@ export const layer = Layer.effect(
   PreviewBrowser,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return yield* makePreviewBrowser({ baseDir: config.baseDir });
+    return yield* makePreviewBrowser({ baseDir: config.baseDir, stateDir: config.stateDir });
   }),
 );

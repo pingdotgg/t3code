@@ -70,7 +70,7 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
-import type { LessonCard } from "@t3tools/shared/quizCard";
+import { answeredCardAnswers, type LessonCard } from "@t3tools/shared/quizCard";
 import {
   compactDynamicToolOutput,
   htmlRenderFromToolItem,
@@ -182,6 +182,7 @@ type RawThreadFeedEntry =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly render: HtmlRenderReference;
+      readonly picturePending?: boolean;
     }
   | {
       readonly type: "mcp-app";
@@ -1611,8 +1612,29 @@ export function deriveThreadFeedPresentation(
   const sourceFeed = retainedFeed.map((entry, index) =>
     settleSupersededReasoning(entry, index === retainedFeed.length - 1),
   );
-  const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
-  const activeTailGroup = sourceFeed.at(-1);
+  const answeredCards = lesson
+    ? answeredCardAnswers(
+        sourceFeed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+      )
+    : new Map<string, string>();
+  const feedWithPictureState = lesson
+    ? sourceFeed.map((entry, index) => {
+        if (entry.type !== "html-render" || entry.runId === null) return entry;
+        let pendingCardId: string | undefined;
+        for (let next = index + 1; next < sourceFeed.length; next += 1) {
+          const candidate = sourceFeed[next]!;
+          if (candidate.type === "message" && candidate.message.role === "user") break;
+          if (candidate.type === "quiz-card" && candidate.runId === entry.runId) {
+            pendingCardId = candidate.id;
+            break;
+          }
+        }
+        const pending = pendingCardId !== undefined && !answeredCards.has(pendingCardId);
+        return pending ? { ...entry, picturePending: true } : entry;
+      })
+    : sourceFeed;
+  const failedRunIds = failedFeedRunIds(feedWithPictureState, latestRun);
+  const activeTailGroup = feedWithPictureState.at(-1);
   // A bare `/compact` turn is the compaction itself: its compaction row stands in for the prompt
   // and the live activity row. An answered "compact before continuing?" question folds into the
   // compaction it asked for.
@@ -1636,7 +1658,7 @@ export function deriveThreadFeedPresentation(
   const foldsByAnchorId = zen
     ? new Map<string, ThreadFeedRunFold>()
     : deriveThreadFeedRunFolds(
-        sourceFeed,
+        feedWithPictureState,
         latestRun,
         isWorking && runlessWorkActive,
         failedRunIds,
@@ -1648,8 +1670,8 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
-  for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
-    const entry = sourceFeed[sourceIndex]!;
+  for (let sourceIndex = 0; sourceIndex < feedWithPictureState.length; sourceIndex += 1) {
+    const entry = feedWithPictureState[sourceIndex]!;
     const feedIndex = retainedFeedIndices[sourceIndex]!;
     if (isUserMessageEntry(entry)) {
       restarts.push({ entry: feedIndex, rowsLength: result.length });

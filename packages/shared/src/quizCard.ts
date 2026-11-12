@@ -296,15 +296,17 @@ export function quizAnswerMessage(input: {
   readonly answer: string | null;
   readonly correct: boolean;
   readonly confidence?: number;
+  readonly shownOptions: ReadonlyArray<string>;
   readonly thinking?: string;
 }) {
   const thinking = input.thinking?.trim();
+  const options = ` Options as shown: ${input.shownOptions.map((option, index) => `${index + 1}. "${option}"`).join("; ")}.`;
   if (input.answer === null) {
-    return `Quiz answer: I don't know.${thinking ? ` My thinking: ${thinking}` : ""}`;
+    return `Quiz answer: I don't know.${options}${thinking ? ` My thinking: ${thinking}` : ""}`;
   }
   const result = `Quiz answer: "${input.answer}", ${input.correct ? "right" : "wrong"}.`;
   const confidence = input.confidence === undefined ? "" : ` Confidence: ${input.confidence}%.`;
-  return `${result}${confidence}${thinking ? ` My thinking: ${thinking}` : ""}`;
+  return `${result}${confidence}${options}${thinking ? ` My thinking: ${thinking}` : ""}`;
 }
 
 export function blanksAnswerMessage(input: {
@@ -395,6 +397,13 @@ const CARD_ANSWER_TAG = /\n\n\(card (\S+)\)$/;
 
 export function cardAnswerMessage(text: string, cardId: string) {
   return `${text}\n\n(card ${cardId})`;
+}
+
+// The shown order is for the tutor; the learner's own message hides it.
+const SHOWN_OPTIONS = / Options as shown: \d+\. ".*?"(?:; \d+\. ".*?")*\./su;
+
+export function withoutShownOptions(text: string) {
+  return text.replace(SHOWN_OPTIONS, "");
 }
 
 export function withoutCardAnswerTag(text: string) {

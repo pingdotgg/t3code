@@ -639,6 +639,7 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       htmlRender: HtmlRenderReference;
+      picturePending?: boolean;
     }
   | {
       kind: "quiz-card";
@@ -1628,6 +1629,26 @@ export function deriveMessagesTimelineRows(input: {
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
+  const pendingPictureIds = new Set(
+    input.lesson === true
+      ? timelineEntries.flatMap((entry, index) => {
+          if (entry.kind !== "html-render" || entry.runId === null) return [];
+          let pendingCard: Extract<TimelineEntry, { kind: "quiz-card" }> | undefined;
+          for (let next = index + 1; next < timelineEntries.length; next += 1) {
+            const candidate = timelineEntries[next]!;
+            if (candidate.kind === "message" && candidate.message.role === "user") break;
+            if (candidate.kind === "quiz-card" && candidate.runId === entry.runId) {
+              pendingCard = candidate;
+              break;
+            }
+          }
+          if (pendingCard && input.answeredCardAnswers?.has(pendingCard.id) === true) {
+            pendingCard = undefined;
+          }
+          return pendingCard === undefined ? [] : [entry.id];
+        })
+      : [],
+  );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
@@ -2179,6 +2200,7 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         htmlRender: timelineEntry.htmlRender,
+        ...(pendingPictureIds.has(timelineEntry.id) ? { picturePending: true } : {}),
       });
       continue;
     }
@@ -2715,6 +2737,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.createdAt === bh.createdAt &&
         a.anchorMessageId === bh.anchorMessageId &&
+        a.picturePending === bh.picturePending &&
         htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender)
       );
     }

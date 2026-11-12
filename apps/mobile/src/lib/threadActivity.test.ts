@@ -105,6 +105,86 @@ it("keeps a completed quiz card as its own feed entry", () => {
   ]);
 });
 
+it("hides a lesson picture before an unanswered card until the card is answered", () => {
+  const visual = {
+    ...base("picture", "2026-06-20T00:00:02.000Z", 2),
+    type: "dynamic_tool" as const,
+    toolName: "html_render",
+    input: {},
+    output: { htmlRender: { attachmentId: "picture", title: "Picture", height: 200 } },
+  };
+  const card = {
+    ...base("card", "2026-06-20T00:00:04.000Z", 4),
+    type: "dynamic_tool" as const,
+    toolName: "quiz_card",
+    input: {},
+    output: {
+      quizCard: {
+        answer: "A",
+        explanation: "Because",
+        level: "remember",
+        question: "What is shown?",
+        wrongOptions: [
+          { option: "B", wrongIdea: "Mistake" },
+          { option: "C", wrongIdea: "Another mistake" },
+        ],
+      },
+    },
+  };
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected({ ...assistantMessage(), id: TurnItemId.make("text-before") }, 1),
+    projected(visual, 2),
+    projected({ ...assistantMessage(), id: TurnItemId.make("text-after") }, 3),
+    projected(card, 4),
+  ]);
+  const lessonRows = deriveThreadFeedPresentation(
+    feed,
+    null,
+    new Set(),
+    new Set(),
+    null,
+    false,
+    undefined,
+    undefined,
+    true,
+  );
+  expect(lessonRows.find((entry) => entry.type === "html-render")).toMatchObject({
+    type: "html-render",
+    picturePending: true,
+  });
+  const answer = projected(
+    {
+      ...userMessage("2026-06-20T00:00:05.000Z"),
+      id: TurnItemId.make("card-answer"),
+      messageId: MessageId.make("card-answer-message"),
+      text: 'Quiz answer: "A", right.\n\n(card card)',
+    },
+    5,
+  );
+  const answeredRows = deriveThreadFeedPresentation(
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected({ ...assistantMessage(), id: TurnItemId.make("text-before") }, 1),
+      projected(visual, 2),
+      projected({ ...assistantMessage(), id: TurnItemId.make("text-after") }, 3),
+      projected(card, 4),
+      answer,
+    ]),
+    null,
+    new Set(),
+    new Set(),
+    null,
+    false,
+    undefined,
+    undefined,
+    true,
+  );
+  expect(answeredRows.find((entry) => entry.type === "html-render")).not.toMatchObject({
+    picturePending: true,
+  });
+});
+
 it("keeps historical plan detail accessible from its paged turn item", () => {
   const item = {
     ...base("historical-plan", "2026-08-29T00:00:00.000Z", 1),

@@ -16,6 +16,8 @@ import { cn } from "../../lib/cn";
 import { uuidv4 } from "../../lib/uuid";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 
+const nowIso = () => new Date().toISOString();
+
 export function QuizCard(props: {
   readonly quizCard: QuizCardData;
   readonly seed: string;
@@ -26,7 +28,7 @@ export function QuizCard(props: {
 }) {
   const options = shuffledQuizOptions(props.quizCard, props.seed);
   const [selected, setSelected] = useState<string | null>(null);
-  const [confidence, setConfidence] = useState(50);
+  const [confidence, setConfidence] = useState<number | undefined>(undefined);
   const [thinking, setThinking] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [sending, setSending] = useState(false);
@@ -53,7 +55,13 @@ export function QuizCard(props: {
     setError(null);
     const answer = selected === "__unknown__" ? null : selected;
     const message = cardAnswerMessage(
-      quizAnswerMessage({ answer, correct: picked?.correct === true, confidence, thinking }),
+      quizAnswerMessage({
+        answer,
+        correct: picked?.correct === true,
+        ...(confidence === undefined ? {} : { confidence }),
+        shownOptions: options.map((option) => option.option),
+        thinking,
+      }),
       props.seed,
     );
     try {
@@ -65,7 +73,7 @@ export function QuizCard(props: {
         text: message,
         attachments: [],
         dispatchMode: "queue",
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso(),
       });
       setSubmitted(true);
     } catch (cause) {
@@ -120,7 +128,9 @@ export function QuizCard(props: {
         <>
           {selected === "__unknown__" ? null : (
             <View className="mt-4 gap-2">
-              <Text className="font-t3-medium text-sm">How sure are you? {confidence}%</Text>
+              <Text className="font-t3-medium text-sm">
+                How sure are you? {confidence === undefined ? "not set" : `${confidence}%`}
+              </Text>
               <View
                 accessibilityRole="radiogroup"
                 accessibilityLabel="How sure are you?"

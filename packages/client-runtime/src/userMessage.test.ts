@@ -183,13 +183,19 @@ describe("resolveUserMessagePresentation", () => {
     }
   });
 
-  it("hides the card tag the agent reads on a lesson card answer", () => {
+  it("hides the card tag and shown option order the agent reads on a lesson card answer", () => {
     expect(
       resolveUserMessagePresentation({
         role: "user",
         text: 'Quiz answer: "High", right.\n\n(card question-1:item-2)',
       }).text,
     ).toBe('Quiz answer: "High", right.');
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        text: 'Quiz answer: "High", right. Confidence: 70%. Options as shown: 1. "Low"; 2. "High". My thinking: it rises\n\n(card question-1:item-2)',
+      }).text,
+    ).toBe('Quiz answer: "High", right. Confidence: 70%. My thinking: it rises');
   });
 
   it("shows a guest's own words and name, not the attributed text the agent reads", () => {
