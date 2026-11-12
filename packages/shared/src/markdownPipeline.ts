@@ -1,5 +1,14 @@
 import { isLocalEditorFileUrl, LOCAL_FILE_LINK_SCHEMES } from "@t3tools/contracts";
-import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
+import type {
+  Heading,
+  Link,
+  Paragraph,
+  PhrasingContent,
+  Root,
+  RootContent,
+  TableCell,
+  Text,
+} from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
@@ -236,6 +245,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkEndAutolinksAtCjkPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
@@ -250,6 +260,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkEndAutolinksAtCjkPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
@@ -450,6 +461,187 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
       }
     };
     visit(tree);
+  };
+}
+
+// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms.
+const CJK_PUNCTUATION = /(?=[　-〿＀-￯])[\p{P}\p{S}]/u;
+
+/**
+ * GFM runs a bare URL on until whitespace, so Chinese and Japanese punctuation joins it, along with
+ * the rest of the sentence and any `**` that should have closed around it. A URL that is ASCII up to
+ * such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
+ */
+function cjkPunctuationIndex(link: Link): number {
+  const label = link.children.length === 1 ? link.children[0] : undefined;
+  if (label?.type !== "text" || !/^https?:\/\//i.test(link.url)) return -1;
+  if (link.url !== label.value && link.url !== `http://${label.value}`) return -1;
+  const index = label.value.search(/[^!-~]/u);
+  return index > 0 && CJK_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
+}
+
+/** GFM's text pass links bare URLs without positions; its tokenizer's links span their URL. */
+function isBareLink(link: Link, source: string): boolean {
+  const start = link.position?.start.offset;
+  const end = link.position?.end.offset;
+  const label = link.children[0];
+  return (
+    !link.position ||
+    (start !== undefined &&
+      end !== undefined &&
+      label?.type === "text" &&
+      source.slice(start, end) === label.value)
+  );
+}
+
+/** Source offsets of the marks that tokenized bare URLs run past. */
+function cjkPunctuationOffsets(node: RootContent, source: string): number[] {
+  if (node.type === "link") {
+    const index = cjkPunctuationIndex(node);
+    const start = node.position?.start.offset;
+    return index > 0 && start !== undefined && isBareLink(node, source) ? [start + index] : [];
+  }
+  return "children" in node && node.type !== "linkReference"
+    ? (node.children as RootContent[]).flatMap((child) => cjkPunctuationOffsets(child, source))
+    : [];
+}
+
+const hasReference = (node: RootContent): boolean =>
+  node.type === "linkReference" ||
+  node.type === "imageReference" ||
+  node.type === "footnoteReference" ||
+  ("children" in node && (node.children as RootContent[]).some(hasReference));
+
+const plainText = (node: RootContent): string =>
+  "value" in node
+    ? node.value
+    : "children" in node
+      ? (node.children as RootContent[]).map(plainText).join("")
+      : "";
+
+/**
+ * Parses the block's text again with a tab before each mark. The tab ends the URL as a space would,
+ * so emphasis around the URL closes and a later URL gets its own link. The tabs are then dropped
+ * and positions mapped back to the source. Returns false and leaves the block alone when its text
+ * would parse differently on its own, as a quote's continuation lines do.
+ */
+function reparseAtCjkPunctuation(
+  processor: Processor,
+  block: Paragraph | Heading | TableCell,
+  source: string,
+  offsets: number[],
+): boolean {
+  const from = (block.type === "paragraph" ? block : block.children[0])?.position?.start;
+  const to = (block.type === "paragraph" ? block : block.children.at(-1))?.position?.end;
+  if (from?.offset === undefined || to?.offset === undefined || hasReference(block)) return false;
+  const base = from.offset;
+  const text = source.slice(base, to.offset);
+  if (text.includes("\t")) return false;
+  const marks = offsets.map((offset) => offset - base);
+  for (let attempt = 0; attempt < 32; attempt++) {
+    marks.sort((a, b) => a - b);
+    const tabs = marks.map((mark, index) => mark + index);
+    const unmarked = (offset: number) => offset - tabs.filter((tab) => tab < offset).length;
+    const marked = marks.reduceRight(
+      (value, mark) => `${value.slice(0, mark)}\t${value.slice(mark)}`,
+      text,
+    );
+    const [paragraph, ...rest] = (processor.parse(marked) as Root).children;
+    if (paragraph?.type !== "paragraph" || rest.length > 0) return false;
+    const more = cjkPunctuationOffsets(paragraph, marked);
+    if (more.length > 0) {
+      marks.push(...more.map(unmarked));
+      continue;
+    }
+    if (plainText(paragraph).replace(/[\t*_~]/g, "") !== plainText(block).replace(/[*_~]/g, "")) {
+      return false;
+    }
+
+    let tabCount = 0;
+    const moved = new Set<object>();
+    const restore = (node: RootContent): boolean => {
+      for (const point of node.position ? [node.position.start, node.position.end] : []) {
+        const offset = point.offset;
+        if (offset === undefined || moved.has(point)) continue;
+        moved.add(point);
+        const lineStart = offset - point.column + 1;
+        const tabsOnLine = tabs.filter((tab) => tab >= lineStart && tab < offset).length;
+        point.column = (point.line === 1 ? from.column - 1 : 0) + point.column - tabsOnLine;
+        point.line += from.line - 1;
+        point.offset = base + unmarked(offset);
+      }
+      if (node.type === "text") {
+        tabCount += node.value.split("\t").length - 1;
+        node.value = node.value.replaceAll("\t", "");
+      } else if (
+        ("value" in node && node.value.includes("\t")) ||
+        ("url" in node && node.url.includes("\t"))
+      ) {
+        return false;
+      }
+      if (!("children" in node)) return true;
+      const children = node.children as RootContent[];
+      if (!children.every(restore)) return false;
+      node.children = children.filter(
+        (child) => child.type !== "text" || child.value !== "",
+      ) as typeof node.children;
+      return true;
+    };
+    if (!restore(paragraph) || tabCount !== tabs.length) return false;
+    block.children = paragraph.children;
+    return true;
+  }
+  return false;
+}
+
+/** Ends the bare URLs a reparse could not, and those GFM's text pass linked after emphasis. */
+function splitAtCjkPunctuation(node: RootContent, source: string) {
+  if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+  const children = node.children as RootContent[];
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]!;
+    if (child.type !== "link") {
+      splitAtCjkPunctuation(child, source);
+      continue;
+    }
+    const at = isBareLink(child, source) ? cjkPunctuationIndex(child) : -1;
+    const label = child.children[0];
+    if (at < 0 || label?.type !== "text") continue;
+    // GFM drops this punctuation from the end of a URL; remarkKeepAutolinkSuffixes restores `_` and `~`.
+    const length = label.value.slice(0, at).replace(/[!"'*,.:;?_~]+$/, "").length;
+    const tail: Text = { type: "text", value: label.value.slice(length) };
+    const start = child.position?.start;
+    if (child.position && start?.offset !== undefined) {
+      const end = {
+        line: start.line,
+        column: start.column + length,
+        offset: start.offset + length,
+      };
+      tail.position = { start: end, end: child.position.end };
+      child.position = { start, end };
+      label.position = { start, end };
+    }
+    child.url = child.url.slice(0, child.url.length - label.value.length + length);
+    label.value = label.value.slice(0, length);
+    children.splice(index + 1, 0, tail);
+    index++;
+  }
+}
+
+function remarkEndAutolinksAtCjkPunctuation(this: Processor): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    if (!CJK_PUNCTUATION.test(source)) return;
+    const visit = (node: RootContent) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offsets = cjkPunctuationOffsets(node, source);
+        if (offsets.length > 0) reparseAtCjkPunctuation(this, node, source, offsets);
+        splitAtCjkPunctuation(node, source);
+      } else if ("children" in node) {
+        (node.children as RootContent[]).forEach(visit);
+      }
+    };
+    tree.children.forEach(visit);
   };
 }
 
