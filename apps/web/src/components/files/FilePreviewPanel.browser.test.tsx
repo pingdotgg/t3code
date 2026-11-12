@@ -121,11 +121,11 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean) {
+function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
   state.file = {
     relativePath: "tasks.md",
-    contents: "- [ ] Keep the rest of this file\n",
-    byteLength: truncated ? 1_200_000 : 32,
+    contents,
+    byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
   return filePreview("tasks.md");
@@ -276,5 +276,31 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+});
+
+describe("rendered Markdown select all", () => {
+  it("selects only the rendered file, including after a task toggle", async () => {
+    using _settings = setup();
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {markdownPreview(false, "- [ ] Task item\n\nRendered file body.\n")}
+      </>,
+    );
+    const expectFileOnlySelection = async () => {
+      await userEvent.keyboard(
+        isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+      );
+      const selection = window.getSelection()?.toString() ?? "";
+      expect(selection).toContain("Rendered file body.");
+      expect(selection).not.toContain("Transcript text from the chat thread.");
+    };
+
+    await userEvent.click(screen.getByText("Rendered file body."));
+    await expectFileOnlySelection();
+    // A toggled checkbox keeps focus on an input inside the preview.
+    await userEvent.click(screen.getByRole("checkbox"));
+    await expectFileOnlySelection();
   });
 });
