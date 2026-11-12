@@ -123,6 +123,7 @@ function makeTestAdapter(input: {
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
+  readonly runtimeRestarts?: Ref.Ref<ReadonlyArray<string>>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -392,7 +393,10 @@ function makeTestAdapter(input: {
               }
             }),
           steerTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
+          interruptTurn: (turnInput) =>
+            input.runtimeRestarts === undefined || turnInput.requestRuntimeRestart !== true
+              ? Effect.void
+              : Ref.update(input.runtimeRestarts, (ids) => [...ids, turnInput.providerTurnId]),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
@@ -2688,6 +2692,7 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const backgroundWork = yield* Ref.make(background);
         const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const runtimeRestarts = yield* Ref.make<ReadonlyArray<string>>([]);
         const firstStarted = yield* Deferred.make<void>();
         const releaseFirst = yield* Deferred.make<void>();
         const secondSelection: ModelSelection = {
@@ -2704,6 +2709,7 @@ describe("orchestration v2 provider switching", () => {
             capturedTurns,
             backgroundWork,
             closedSessions,
+            runtimeRestarts,
             ...(queued ? { holdFirstTurn: firstStarted, releaseFirstTurn: releaseFirst } : {}),
           }),
           makeTestAdapter({
@@ -2864,6 +2870,8 @@ describe("orchestration v2 provider switching", () => {
                 threadId: handoffThreadId,
               });
               yield* worker.drain();
+              // Only the adapter can end work it alone sees, so Stop restarts its runtime.
+              assert.lengthOf(yield* Ref.get(runtimeRestarts), 1);
             } else {
               yield* Ref.set(backgroundWork, false);
             }
