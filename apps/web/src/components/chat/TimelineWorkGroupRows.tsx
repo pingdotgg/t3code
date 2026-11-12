@@ -502,7 +502,7 @@ function LiveWorkToggle({
       <button
         type="button"
         className={cn(
-          "group/live-work flex min-w-0 flex-1 cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          "group/live-work flex min-w-0 flex-1 cursor-pointer rounded-md text-left hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           stacked ? "flex-col items-start" : "min-h-6 items-center",
         )}
         {...props}

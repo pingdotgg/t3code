@@ -3081,14 +3081,9 @@ function OpenCommandPaletteDialog(props: {
         ...(isSubmenu
           ? {
               startAddon: (
-                <button
-                  type="button"
-                  className="flex cursor-pointer items-center"
-                  aria-label="Back"
-                  onClick={popView}
-                >
+                <Button variant="ghost" size="icon-micro" aria-label="Back" onClick={popView}>
                   <ArrowLeftIcon />
-                </button>
+                </Button>
               ),
             }
           : isBrowsing
