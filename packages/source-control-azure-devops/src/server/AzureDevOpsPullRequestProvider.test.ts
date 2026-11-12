@@ -187,6 +187,41 @@ describe("getChangeRequest", () => {
         expect(detail.changedFiles).toBe(0);
       }),
   );
+
+  it.effect("reports a comment on an open pull request as its latest update", () =>
+    Effect.gen(function* () {
+      const commentedAt = "2026-07-09T12:00:00Z";
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () =>
+              Effect.succeed({ ...PULL_REQUEST, updatedAt: PULL_REQUEST.createdAt }),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
+            listThreads: () =>
+              Effect.succeed([
+                {
+                  id: "1:1",
+                  kind: "issue-comment" as const,
+                  author: null,
+                  body: "Looks good",
+                  createdAt: commentedAt,
+                  url: null,
+                },
+              ]),
+          }),
+        ),
+      );
+
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+      expect(detail.updatedAt).toBe(commentedAt);
+    }),
+  );
 });
 
 describe("getDiff reads", () => {
