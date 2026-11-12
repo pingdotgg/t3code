@@ -438,6 +438,8 @@ export const OpenCodeDriver: ProviderDriver<
                   Effect.timeout("2 seconds"),
                   Effect.orElseSucceed(() => true),
                 ),
+            // OpenCode answers provider.list for a location only once its skill scan has ended.
+            client.provider.list({ location }).pipe(Effect.timeout("10 seconds"), Effect.ignore),
           );
         }).pipe(Effect.scoped),
       );
