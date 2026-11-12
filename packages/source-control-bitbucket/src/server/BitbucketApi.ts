@@ -1046,65 +1046,114 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const fetchMedia = Effect.fn("BitbucketApi.fetchMedia")(function* (
-    input: SourceControlMediaRequest,
-  ) {
-    const source = URL.parse(input.url);
-    const media = source === null ? null : definition.mediaUrl(source);
+  /**
+   * Media rides the same slots and pause as API reads. It reports a 429 as a response rather than
+   * a failure, so the status is recorded here; while paused it yields no response.
+   */
+  const admitMedia = <E, R>(
+    effect: Effect.Effect<Option.Option<HttpClientResponse.HttpClientResponse>, E, R>,
+  ) =>
+    slots
+      .withPermit(
+        Effect.gen(function* () {
+          const interactive = yield* SourceControlRateLimit.Interactive;
+          const lease = yield* limits.check(
+            rateLimitKey,
+            interactive ? { allowPaused: true } : undefined,
+          );
+          const response = yield* effect;
+          if (Option.isSome(response) && response.value.status === 429) {
+            const now = yield* Clock.currentTimeMillis;
+            yield* limits.recordRateLimit({
+              ...rateLimitKey,
+              lease,
+              retryAt: SourceControlRateLimit.retryAtFromHeader(
+                response.value.headers["retry-after"],
+                now,
+              ),
+            });
+          } else if (Option.isSome(response) && response.value.status < 400) {
+            yield* limits.recordSuccess({ ...rateLimitKey, lease });
+          }
+          return response;
+        }),
+      )
+      .pipe(
+        Effect.catchTags({
+          SourceControlRateLimitPausedError: () =>
+            Effect.succeed(Option.none<HttpClientResponse.HttpClientResponse>()),
+        }),
+      );
 
-    if (media === null) {
-      return null;
-    }
+  const fetchMedia = Effect.fn("BitbucketApi.fetchMedia")(
+    function* (input: SourceControlMediaRequest) {
+      const source = URL.parse(input.url);
+      const media = source === null ? null : definition.mediaUrl(source);
 
-    const client = HttpClient.withScope(httpClient);
-    const headers: Record<string, string> = { "accept-encoding": "identity" };
-
-    for (const name of ["range", "if-range"] as const) {
-      const value = input.headers[name];
-
-      if (value !== undefined) {
-        headers[name] = value;
-      }
-    }
-
-    let target = media.fetchUrl;
-
-    for (let hop = 0; ; hop += 1) {
-      const request = HttpClientRequest.get(target).pipe(HttpClientRequest.setHeaders(headers));
-      // A signed storage redirect authorizes itself. Only the configured API receives our token.
-      const authorized = originOf(target) === apiOrigin ? yield* withAuth(request) : request;
-      const response = yield* client
-        .execute(authorized)
-        .pipe(
-          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-          Effect.timeoutOption(BITBUCKET_API_REQUEST_TIMEOUT),
-        );
-
-      if (Option.isNone(response)) {
+      if (media === null) {
         return null;
       }
 
-      const value = response.value;
+      const client = HttpClient.withScope(httpClient);
+      const headers: Record<string, string> = { "accept-encoding": "identity" };
 
-      if (value.status < 300 || value.status >= 400) {
-        return value;
+      for (const name of ["range", "if-range"] as const) {
+        const value = input.headers[name];
+
+        if (value !== undefined) {
+          headers[name] = value;
+        }
       }
 
-      const location = value.headers.location;
+      let target = media.fetchUrl;
 
-      if (location === undefined || hop >= MAX_REDIRECTS) {
-        return null;
+      for (let hop = 0; ; hop += 1) {
+        const request = HttpClientRequest.get(target).pipe(HttpClientRequest.setHeaders(headers));
+        const execute = (outgoing: HttpClientRequest.HttpClientRequest) =>
+          client
+            .execute(outgoing)
+            .pipe(
+              Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+              Effect.timeoutOption(BITBUCKET_API_REQUEST_TIMEOUT),
+            );
+        // A signed storage redirect authorizes itself. Only the configured API receives our token,
+        // and only API requests share its slots and rate-limit pause. The slot covers the headers,
+        // not the streamed body.
+        const response =
+          originOf(target) === apiOrigin
+            ? yield* admitMedia(withAuth(request).pipe(Effect.flatMap(execute)))
+            : yield* execute(request);
+
+        if (Option.isNone(response)) {
+          return null;
+        }
+
+        const value = response.value;
+
+        if (value.status < 300 || value.status >= 400) {
+          return value;
+        }
+
+        const location = value.headers.location;
+
+        if (location === undefined || hop >= MAX_REDIRECTS) {
+          return null;
+        }
+
+        const next = URL.parse(location, target);
+
+        if (next === null || next.protocol !== "https:" || next.username || next.password) {
+          return null;
+        }
+
+        target = next.toString();
       }
-
-      const next = URL.parse(location, target);
-
-      if (next === null || next.protocol !== "https:" || next.username || next.password) {
-        return null;
-      }
-
-      target = next.toString();
-    }
-  });
+    },
+    Effect.catchTags({
+      // A saved token that can't be read must not fall back to an anonymous fetch.
+      SettingsSecretUnresolvedError: () => Effect.succeed(null),
+    }),
+  );
 
   return BitbucketApi.of({
     fetchMedia,

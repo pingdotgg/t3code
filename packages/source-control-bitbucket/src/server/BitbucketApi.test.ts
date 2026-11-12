@@ -1132,6 +1132,30 @@ it.effect("pauses background reads after a 429 until Bitbucket's retry-after pas
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("shares Bitbucket's rate-limit pause between media and API reads", () => {
+  const { execute, layer } = makeLayer({
+    env: { T3CODE_BITBUCKET_ACCESS_TOKEN: "token" },
+    response: () =>
+      new Response("Rate limit exceeded", { status: 429, headers: { "retry-after": "60" } }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const media = {
+      url: "https://api.bitbucket.org/2.0/repositories/acme/app/src/main/docs/shot.png",
+      headers: {},
+    };
+
+    assert.strictEqual((yield* bitbucket.fetchMedia(media))?.status, 429);
+    const paused = yield* Effect.flip(
+      bitbucket.listPullRequests({ cwd: "/repo", headSelector: "feature/a", state: "all" }),
+    );
+    assert.strictEqual(paused._tag, "SourceControlRateLimitPausedError");
+    assert.isNull(yield* bitbucket.fetchMedia(media));
+    assert.strictEqual(execute.mock.calls.length, 1);
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
 it.effect("keeps a sweep over many branches to a few Bitbucket requests at a time", () =>
   Effect.gen(function* () {
     const started = yield* Queue.unbounded<void>();
