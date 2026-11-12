@@ -235,7 +235,7 @@ it.effect("shows a listed pull request's preview without asking the host again",
   }),
 );
 
-it.effect("a finished turn in one project keeps another project's listing cached", () =>
+it.effect("a finished turn keeps pull request listings cached", () =>
   Effect.gen(function* () {
     const reads: Array<string> = [];
     const service = yield* makeService({
@@ -253,13 +253,13 @@ it.effect("a finished turn in one project keeps another project's listing cached
         }),
       ],
     });
-    yield* service.list({ state: "open", projectId: "p1" as ProjectId });
     yield* service.list({ state: "open", projectId: "p2" as ProjectId });
-    assert.deepStrictEqual(reads, ["acme/web", "acme/api"]);
+    yield* service.list({ state: "open" });
+    const before = reads.length;
     yield* service.refreshAfterTurn("p1" as ProjectId);
     yield* service.list({ state: "open", projectId: "p2" as ProjectId });
-    yield* service.list({ state: "open", projectId: "p1" as ProjectId });
-    assert.deepStrictEqual(reads, ["acme/web", "acme/api", "acme/web"]);
+    yield* service.list({ state: "open" });
+    assert.strictEqual(reads.length, before);
   }),
 );
 
