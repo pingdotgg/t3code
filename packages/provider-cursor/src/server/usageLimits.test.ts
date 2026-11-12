@@ -76,6 +76,21 @@ describe("Cursor usage limits", () => {
     }
   });
 
+  it("shows a unified allowance once, not as a total plus a pool", () => {
+    // A unified plan reports only the total and the auto bucket, at the same value.
+    const windows = cursorUsageResponseToLimits(
+      { planUsage: { totalPercentUsed: 1.77, autoPercentUsed: 1.77 } },
+      checkedAt,
+    ).windows;
+    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed"]);
+    expect(
+      cursorUsageResponseToLimits(
+        { planUsage: { totalPercentUsed: 100, apiPercentUsed: 100 } },
+        checkedAt,
+      ).windows.map((window) => window.id),
+    ).toEqual(["apiPercentUsed", "totalPercentUsed"]);
+  });
+
   it("does not invent unused allowance for absent buckets", () => {
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
       "unsupported",
