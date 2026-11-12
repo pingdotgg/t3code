@@ -4,10 +4,27 @@ import {
   type PresetSkillChoice,
   type PresetSkillConflict,
 } from "@t3tools/shared/agentPresets";
-import { ArrowLeftIcon, DownloadIcon, LayersIcon, PencilLineIcon, UploadIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  LayersIcon,
+  PencilLineIcon,
+  UploadIcon,
+} from "lucide-react";
 import { useRef, useState, type CSSProperties } from "react";
 import { useAgentLibrary } from "../../hooks/useAgentLibrary";
-import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Button } from "../ui/button";
+import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AgentIcon } from "./AgentIcon";
 
@@ -21,6 +38,10 @@ const parseChoice = (value: string): PresetSkillChoice => {
   return kind === "reuse" || kind === "update" ? { kind, skillId } : { kind: "new" };
 };
 const updatedLabel = (updatedAt: string) => updatedAt.slice(0, 10);
+
+/** A whole-row choice: icon, title, one line of detail, chevron. */
+const choiceRowClass =
+  "flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 export const AGENT_PRESET_SETUP_NOTE =
   "Some agents might require specific software setup for full compatibility.";
@@ -117,8 +138,8 @@ export function AgentPresetPicker({
         if (!open) onClose();
       }}
     >
-      <DialogPopup>
-        <div className="agent-dialog p-6">
+      <DialogPopup className="sm:max-w-lg">
+        <DialogHeader>
           <DialogTitle>
             {step === "start"
               ? "New agent"
@@ -126,29 +147,36 @@ export function AgentPresetPicker({
                 ? "Skills already in your library"
                 : "Preconfigured agents"}
           </DialogTitle>
-          <DialogDescription className="mt-2">
+          <DialogDescription>
             {step === "start"
               ? "Start from a blank agent or from a preconfigured one you can edit before saving."
               : step === "skills"
                 ? "These skills share a name with different skills you already have. Nothing is deleted."
-                : AGENT_PRESET_SETUP_NOTE}
+                : "Pick one to review and edit before saving."}
           </DialogDescription>
-          <input
-            ref={importInput}
-            type="file"
-            accept=".zip,application/zip"
-            hidden
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = "";
-              if (file) importFile(file);
-            }}
-          />
+        </DialogHeader>
+        <input
+          ref={importInput}
+          type="file"
+          accept=".zip,application/zip"
+          hidden
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) importFile(file);
+          }}
+        />
+        <DialogPanel>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
           {step === "skills" && pending ? (
-            <div className="agent-preset-list">
+            <div className="flex flex-col gap-4">
               {pending.conflicts.map((conflict, index) => (
-                <label key={conflict.index} className="flex flex-col gap-1 text-sm">
-                  <strong>{conflict.name}</strong>
+                <div key={conflict.index} className="flex flex-col gap-1.5">
+                  <Label>{conflict.name}</Label>
                   <Select
                     value={choiceValue(pending.choices[index]!)}
                     onValueChange={(value) => {
@@ -161,7 +189,7 @@ export function AgentPresetPicker({
                       });
                     }}
                   >
-                    <SelectTrigger aria-label={`What to do with ${conflict.name}`} size="sm">
+                    <SelectTrigger aria-label={`What to do with ${conflict.name}`}>
                       <SelectValue>{choiceLabel(conflict, pending.choices[index]!)}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup>
@@ -184,36 +212,34 @@ export function AgentPresetPicker({
                       <SelectItem value="new">{choiceLabel(conflict, { kind: "new" })}</SelectItem>
                     </SelectPopup>
                   </Select>
-                </label>
+                </div>
               ))}
             </div>
           ) : step === "start" ? (
-            <>
-              {error && (
-                <p role="alert" className="mt-3 text-sm text-destructive">
-                  {error}
-                </p>
-              )}
-              <div className="agent-start-options">
-                <button type="button" onClick={onScratch}>
-                  <PencilLineIcon size={20} />
-                  <strong>Start from scratch</strong>
-                  <span>Name a specialist and write its instructions yourself.</span>
-                </button>
-                <button type="button" onClick={load}>
-                  <LayersIcon size={20} />
-                  <strong>Preconfigured</strong>
-                  <span>Start from a ready-made agent with its prompt, model and skills.</span>
-                </button>
-              </div>
-            </>
+            <div className="flex flex-col gap-2">
+              <button type="button" className={choiceRowClass} onClick={onScratch}>
+                <PencilLineIcon className="size-5 shrink-0 text-muted-foreground" />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <strong className="text-sm font-medium">Start from scratch</strong>
+                  <span className="text-xs text-muted-foreground">
+                    Name a specialist and write its instructions yourself.
+                  </span>
+                </span>
+                <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+              <button type="button" className={choiceRowClass} onClick={load}>
+                <LayersIcon className="size-5 shrink-0 text-muted-foreground" />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <strong className="text-sm font-medium">Preconfigured</strong>
+                  <span className="text-xs text-muted-foreground">
+                    Start from a ready-made agent with its prompt, model and skills.
+                  </span>
+                </span>
+                <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </div>
           ) : (
-            <div className="agent-preset-list" aria-busy={presets === null && !error}>
-              {error && (
-                <p role="alert" className="text-sm text-destructive">
-                  {error}
-                </p>
-              )}
+            <div className="flex flex-col gap-2" aria-busy={presets === null && !error}>
               {!error && presets === null && (
                 <p className="text-sm text-muted-foreground">Loading…</p>
               )}
@@ -226,68 +252,70 @@ export function AgentPresetPicker({
                 <button
                   key={preset.id}
                   type="button"
-                  className="agent-preset-card"
+                  className={choiceRowClass}
                   style={{ "--agent-color": preset.color } as CSSProperties}
                   onClick={() => pick(preset, presets)}
                 >
                   <AgentIcon icon={preset.icon} />
-                  <span className="agent-preset-body">
-                    <strong>{preset.name}</strong>
-                    <span>{preset.description}</span>
-                    <span className="agent-preset-meta">
-                      {preset.model.model}
-                      {preset.skills.length > 0 &&
-                        ` · ${preset.skills.map((skill) => skill.name).join(", ")}`}
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <strong className="text-sm font-medium">{preset.name}</strong>
+                    <span className="line-clamp-2 text-xs text-muted-foreground">
+                      {preset.description}
                     </span>
-                    {preset.setupNotes.length > 0 && (
-                      <ul className="agent-preset-notes">
-                        {preset.setupNotes.map((note) => (
-                          <li key={note}>{note}</li>
-                        ))}
-                      </ul>
-                    )}
+                    <span className="truncate font-mono text-2xs text-muted-foreground">
+                      {[
+                        preset.model.model,
+                        preset.skills.length > 0 &&
+                          `${preset.skills.length} ${preset.skills.length === 1 ? "skill" : "skills"}`,
+                        preset.setupNotes.length > 0 && "needs setup",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
                   </span>
+                  <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
                 </button>
               ))}
             </div>
           )}
-          <div className="agent-form">
-            <footer>
-              {step === "start" && (
-                <>
-                  <button type="button" onClick={() => importInput.current?.click()}>
-                    <UploadIcon size={14} className="inline" /> Import
-                  </button>
-                  <button
-                    type="button"
-                    className="mr-auto"
-                    disabled={profiles.length === 0}
-                    onClick={exportAgents}
-                  >
-                    <DownloadIcon size={14} className="inline" /> Export agents
-                  </button>
-                </>
-              )}
-              {step !== "start" && (
-                <button
-                  type="button"
-                  className="mr-auto"
-                  onClick={() => setStep(step === "skills" ? "presets" : "start")}
-                >
-                  <ArrowLeftIcon size={14} className="inline" /> Back
-                </button>
-              )}
-              <button type="button" onClick={onClose}>
-                Cancel
-              </button>
-              {step === "skills" && (
-                <button type="button" className="agent-primary" onClick={confirmSkills}>
-                  Continue
-                </button>
-              )}
-            </footer>
-          </div>
-        </div>
+        </DialogPanel>
+        <DialogFooter>
+          {step === "start" ? (
+            <div className="flex gap-2 sm:me-auto">
+              <Button type="button" variant="ghost" onClick={() => importInput.current?.click()}>
+                <UploadIcon />
+                Import
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={profiles.length === 0}
+                onClick={exportAgents}
+              >
+                <DownloadIcon />
+                Export agents
+              </Button>
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              className="sm:me-auto"
+              onClick={() => setStep(step === "skills" ? "presets" : "start")}
+            >
+              <ArrowLeftIcon />
+              Back
+            </Button>
+          )}
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          {step === "skills" && (
+            <Button type="button" onClick={confirmSkills}>
+              Continue
+            </Button>
+          )}
+        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );

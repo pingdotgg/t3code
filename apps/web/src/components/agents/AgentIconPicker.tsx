@@ -15,6 +15,7 @@ import {
   ComboboxSearchInput,
   ComboboxTrigger,
 } from "../ui/combobox";
+import { Button } from "../ui/button";
 import { AgentIcon } from "./AgentIcon";
 
 /** A searchable listbox of the curated icons; search covers names, roles, and keywords. */
@@ -39,7 +40,7 @@ export function AgentIconPicker({
       <ComboboxTrigger
         ref={triggerRef}
         aria-label={`Icon: ${AGENT_ICONS[value].label}. Change icon`}
-        render={<button type="button" className="agent-icon-trigger" />}
+        render={<Button type="button" variant="outline" size="icon-lg" />}
       >
         <AgentIcon iconId={value} />
       </ComboboxTrigger>
@@ -50,7 +51,7 @@ export function AgentIconPicker({
           {(id: AgentIconId) => (
             <ComboboxItem key={id} value={id}>
               <span className="agent-icon-option" aria-hidden="true">
-                <AgentIcon iconId={id} />
+                <AgentIcon iconId={id} size="sm" />
               </span>
               <span className="min-w-0 flex-1 truncate">{AGENT_ICONS[id].label}</span>
               <span className="text-xs text-muted-foreground">

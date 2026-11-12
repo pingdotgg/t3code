@@ -1,18 +1,44 @@
-import { useRef, useState, type CSSProperties } from "react";
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  CalendarClockIcon,
-  ListFilterIcon,
-  PencilIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react";
 import type { McpGatewayProfile } from "@t3tools/contracts";
 import { normalizeAgentTags } from "@t3tools/client-runtime/state/agentIdentity";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentIcon } from "./AgentIcon";
+
+/** Every rail tile (New, All, each agent, Scheduled) is this exact size, so the column lines up. */
+export const agentRailTileClass =
+  "relative flex h-16 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 data-popup-open:bg-accent/60 aria-[current]:bg-accent";
+
+/** A tile's body: a 28px icon slot, a one-line label, and the count pinned top-right. */
+export function AgentRailTileBody({
+  icon,
+  label,
+  count,
+}: {
+  icon: ReactNode;
+  label: string;
+  count: number;
+}) {
+  return (
+    <>
+      <span className="flex size-7 shrink-0 items-center justify-center" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="w-full truncate text-center text-xs leading-4">{label}</span>
+      {count > 0 && (
+        <span
+          className="absolute top-1 right-1.5 text-2xs leading-4 tabular-nums text-muted-foreground"
+          aria-hidden="true"
+        >
+          {count}
+        </span>
+      )}
+    </>
+  );
+}
 
 export interface AgentRailTileActions {
   readonly editDisabled: boolean;
@@ -27,9 +53,19 @@ export interface AgentRailTileActions {
   readonly onDelete: () => void;
 }
 
+/** Named machines once each; ids this client can't resolve collapse into one count. */
+function machineSummary(ids: readonly string[], labels: ReadonlyMap<string, string>): string {
+  if (ids.length === 0) return "Any machine";
+  const known = [...new Set(ids.flatMap((id) => labels.get(id) ?? []))];
+  const unknown = ids.filter((id) => !labels.has(id)).length;
+  if (unknown > 0)
+    known.push(unknown === 1 ? "1 unavailable machine" : `${unknown} unavailable machines`);
+  return known.join(", ");
+}
+
 /**
- * One agent in the rail: icon over name. Click or Enter filters; the details card opens on
- * hover, on tap, and on ArrowDown, which focuses its actions. Tab moves tile to tile.
+ * One agent in the rail: icon, name, active count. Click or Enter filters; the details card
+ * opens on hover, on tap, and on ArrowDown, which focuses its actions. Tab moves tile to tile.
  */
 export function AgentRailTile({
   profile,
@@ -57,13 +93,12 @@ export function AgentRailTile({
       ? `${profile.providerLabel} · ${profile.modelLabel}`
       : (profile.providerLabel ?? profile.modelLabel);
   const skills = profile.skillIds?.length ?? 0;
-  const machines = profile.environmentIds?.length
-    ? profile.environmentIds.map((id) => machineLabels.get(id) ?? "Unavailable machine").join(", ")
-    : "Any machine";
+  const machines = machineSummary(profile.environmentIds ?? [], machineLabels);
   const run = (action: () => void) => () => {
     setOpen(false);
     action();
   };
+  const colorStyle = { "--agent-color": color } as CSSProperties;
   return (
     <Popover
       open={open}
@@ -79,11 +114,11 @@ export function AgentRailTile({
         render={
           <button
             type="button"
-            className="agent-tile"
+            className={agentRailTileClass}
             aria-current={selected ? "true" : undefined}
             aria-keyshortcuts="ArrowDown"
             aria-label={`${profile.name}${activeCount ? `, ${activeCount} active` : ""}`}
-            style={{ "--agent-color": color } as CSSProperties}
+            style={colorStyle}
           />
         }
         onPointerDown={(event) => {
@@ -103,13 +138,11 @@ export function AgentRailTile({
           else onSelect();
         }}
       >
-        <AgentIcon icon={profile.icon} iconId={profile.iconId} />
-        <span className="agent-tile-name">{profile.name}</span>
-        {activeCount > 0 && (
-          <span className="agent-tile-count" aria-hidden="true">
-            {activeCount}
-          </span>
-        )}
+        <AgentRailTileBody
+          icon={<AgentIcon icon={profile.icon} iconId={profile.iconId} />}
+          label={profile.name}
+          count={activeCount}
+        />
       </PopoverTrigger>
       <PopoverPopup
         side="right"
@@ -119,15 +152,21 @@ export function AgentRailTile({
         initialFocus={openedByKey}
         aria-label={`${profile.name} details`}
       >
-        <div className="agent-card" style={{ "--agent-color": color } as CSSProperties}>
-          <header>
+        <div className="flex flex-col gap-3 text-xs" style={colorStyle}>
+          <header className="flex items-center gap-2">
             <AgentIcon icon={profile.icon} iconId={profile.iconId} />
             <div className="min-w-0">
-              <strong>{profile.name}</strong>
-              {model && <p className="agent-card-model">{model}</p>}
+              <strong className="block text-sm font-semibold wrap-anywhere">{profile.name}</strong>
+              {model && (
+                <p className="font-mono text-2xs text-muted-foreground wrap-anywhere">{model}</p>
+              )}
             </div>
           </header>
-          {profile.description && <p>{profile.description}</p>}
+          {profile.description && (
+            <p className="leading-relaxed text-muted-foreground wrap-anywhere">
+              {profile.description}
+            </p>
+          )}
           {tags.length > 0 && (
             <ul className="flex flex-wrap gap-1" aria-label="Roles">
               {tags.map((tag) => (
@@ -137,66 +176,70 @@ export function AgentRailTile({
               ))}
             </ul>
           )}
-          <dl>
-            <dt>Skills</dt>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            <dt className="text-muted-foreground">Skills</dt>
             <dd>
               {skills === 0 ? "None assigned" : `${skills} ${skills === 1 ? "skill" : "skills"}`}
             </dd>
-            <dt>Machines</dt>
-            <dd>{machines}</dd>
+            <dt className="text-muted-foreground">Machines</dt>
+            <dd className="wrap-anywhere">{machines}</dd>
           </dl>
-          <div className="grid grid-cols-2 gap-1">
-            <Button variant="ghost" size="xs" onClick={run(onSelect)}>
-              <ListFilterIcon />
-              Show chats
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={actions.editDisabled}
-              onClick={run(actions.onEdit)}
-            >
-              <PencilIcon />
-              Edit agent
-            </Button>
-            {actions.scheduleDisabled !== null && (
-              <Button
-                variant="ghost"
-                size="xs"
-                disabled={actions.scheduleDisabled}
-                onClick={run(actions.onSchedule)}
-              >
-                <CalendarClockIcon />
-                Schedule task
+          <div className="flex flex-col gap-2 border-t pt-3">
+            <div className="flex flex-wrap gap-1">
+              <Button variant="outline" size="xs" onClick={run(onSelect)}>
+                Show chats
               </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={actions.moveUpDisabled}
-              onClick={actions.onMoveUp}
-            >
-              <ArrowLeftIcon />
-              Move up
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={actions.moveDownDisabled}
-              onClick={actions.onMoveDown}
-            >
-              <ArrowRightIcon />
-              Move down
-            </Button>
-            <Button
-              variant="ghost-destructive"
-              size="xs"
-              disabled={actions.editDisabled}
-              onClick={run(actions.onDelete)}
-            >
-              <Trash2Icon />
-              Delete agent
-            </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={actions.editDisabled}
+                onClick={run(actions.onEdit)}
+              >
+                Edit
+              </Button>
+              {actions.scheduleDisabled !== null && (
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={actions.scheduleDisabled}
+                  onClick={run(actions.onSchedule)}
+                >
+                  Schedule
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  render={<Button variant="ghost" size="icon-xs" aria-label="Move up" />}
+                  disabled={actions.moveUpDisabled}
+                  onClick={actions.onMoveUp}
+                >
+                  <ArrowUpIcon />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Move up</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={<Button variant="ghost" size="icon-xs" aria-label="Move down" />}
+                  disabled={actions.moveDownDisabled}
+                  onClick={actions.onMoveDown}
+                >
+                  <ArrowDownIcon />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Move down</TooltipPopup>
+              </Tooltip>
+              <Button
+                variant="ghost-destructive"
+                size="xs"
+                className="ms-auto"
+                disabled={actions.editDisabled}
+                onClick={run(actions.onDelete)}
+              >
+                <Trash2Icon />
+                Delete
+              </Button>
+            </div>
           </div>
         </div>
       </PopoverPopup>

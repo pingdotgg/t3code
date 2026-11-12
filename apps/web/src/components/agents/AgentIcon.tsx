@@ -138,13 +138,15 @@ const agentIconGlyphs = {
 export function AgentIcon(props: {
   icon?: McpGatewayProfile["icon"];
   iconId?: string | undefined;
+  /** `sm` fits a 20px list row; the default is the 28px card size. */
+  size?: "sm";
 }) {
   const Icon = agentIconGlyphs[resolveAgentIconId(props)];
   return Icon ? (
-    <span className="agent-custom-icon" aria-hidden="true">
-      <Icon size={20} />
+    <span className="agent-custom-icon" data-size={props.size} aria-hidden="true">
+      <Icon size={props.size === "sm" ? 16 : 20} />
     </span>
   ) : (
-    <span className="agent-orb" aria-hidden="true" />
+    <span className="agent-orb" data-size={props.size} aria-hidden="true" />
   );
 }

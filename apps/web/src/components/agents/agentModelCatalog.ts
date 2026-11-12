@@ -1,5 +1,6 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider, ServerProviderModel } from "@t3tools/contracts";
+import { findReasoningEffortDescriptor } from "@t3tools/shared/model";
 
 export function visibleAgentProviders(
   environmentId: string,
@@ -50,4 +51,21 @@ export function presetProviderLabel(providers: ReadonlyArray<ServerProvider>, pr
         candidate.displayName?.trim().toLowerCase() === wanted),
   );
   return match ? match.displayName?.trim() || match.driver : provider;
+}
+
+/**
+ * Thinking levels for the agent editor: the levels the model's reasoning control advertises (the
+ * control runs apply the saved value to), plus the saved value when the model no longer lists it.
+ */
+export function agentThinkingChoices(
+  model: Pick<ServerProviderModel, "capabilities"> | undefined,
+  current: string,
+): ReadonlyArray<{ readonly value: string; readonly label: string }> {
+  const descriptor = findReasoningEffortDescriptor(model?.capabilities?.optionDescriptors);
+  const levels = (descriptor?.options ?? [])
+    .filter((option) => !descriptor?.promptInjectedValues?.includes(option.id))
+    .map((option) => ({ value: option.id, label: option.label }));
+  return current && !levels.some((level) => level.value === current)
+    ? [...levels, { value: current, label: `${current} (unlisted)` }]
+    : levels;
 }

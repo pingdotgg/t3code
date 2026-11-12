@@ -46,24 +46,6 @@ export function defaultAgentColor(
   return agentColors[Math.max(0, index) % agentColors.length]!;
 }
 
-/** Whether the editor opens with Advanced expanded: any field it holds differs from a new agent's. */
-export function agentHasAdvancedSettings(
-  profile: McpGatewayProfile,
-  profiles: ReadonlyArray<Pick<McpGatewayProfile, "profileId">>,
-) {
-  return Boolean(
-    profile.description?.trim() ||
-    profile.systemPrompt?.trim() ||
-    profile.skillIds?.length ||
-    profile.includeUserSkills === false ||
-    profile.reasoningEffort?.trim() ||
-    profile.environmentIds?.length ||
-    profile.runtimeMode !== "approval-required" ||
-    profile.interactionMode !== "default" ||
-    (profile.color && profile.color !== defaultAgentColor(profile, profiles)),
-  );
-}
-
 /** The only option when there is exactly one, so a form can preselect it. */
 export function soleOption<T>(options: ReadonlyArray<T>): T | undefined {
   return options.length === 1 ? options[0] : undefined;

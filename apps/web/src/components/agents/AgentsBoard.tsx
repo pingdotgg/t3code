@@ -6,21 +6,18 @@ import { ThreadCard } from "./ThreadCard";
 import { useAgentThreadContextMenu, useAgentThreadSettleAction } from "./useAgentThreadContextMenu";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { AgentRailTile } from "./AgentRailTile";
-import { groupAgentsByRole } from "@t3tools/client-runtime/state/agentIdentity";
+import { AgentRailTile, AgentRailTileBody, agentRailTileClass } from "./AgentRailTile";
 import { Link, Outlet, useLocation, useNavigate, type LinkProps } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useState, type ReactElement, type ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import {
   PlusIcon,
-  ArrowLeftIcon,
   SettingsIcon,
   SearchIcon,
-  TagsIcon,
   XIcon,
-  LayoutGridIcon,
+  UsersRoundIcon,
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
 } from "lucide-react";
@@ -63,6 +60,7 @@ import { useToggleWorkspaceView } from "../sidebar/mainAppLocation";
 import { BrandMark } from "../BrandMark";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
+import { Button } from "../ui/button";
 
 const agentFilterSchema = Schema.NullOr(Schema.String);
 const agentOrderSchema = Schema.Array(Schema.String);
@@ -154,6 +152,16 @@ function AgentThreadList({
   );
 }
 
+/** The rail's short labels ("New", "All", "Scheduled") spell out in full on hover. */
+function RailTooltip({ label, children }: { label: string; children: ReactElement }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipPopup side="right">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function TopbarIconLink({
   label,
   children,
@@ -186,15 +194,7 @@ export function AgentsBoard() {
   const orderedProfiles = profiles.toSorted(
     (a, b) => (ranks.get(a.profileId) ?? order.length) - (ranks.get(b.profileId) ?? order.length),
   );
-  const [groupByRole, setGroupByRole] = useLocalStorage(
-    "t3code:agents:group-by-role",
-    false,
-    Schema.Boolean,
-  );
-  const railGroups = groupByRole
-    ? groupAgentsByRole(orderedProfiles)
-    : [{ tag: null, label: "Agents", profiles: orderedProfiles }];
-  /** Swaps two agents in the saved order, so a move within a role group follows what is shown. */
+  /** Swaps two neighbouring agents in the saved order. */
   const swapAgents = (first: string, second: string | undefined) => {
     if (second === undefined) return;
     const ids = orderedProfiles.map((profile) => profile.profileId);
@@ -223,8 +223,7 @@ export function AgentsBoard() {
   const [query, setQuery] = useState("");
   const [savedFilter, setFilter] = useLocalStorage("t3code:agents:filter", null, agentFilterSchema);
   const filter = profiles.some((profile) => profile.profileId === savedFilter) ? savedFilter : null;
-  const [showFilters, setShowFilters] = useState(false);
-  const { attachWorkspace, paneStyle, profilesHandlers, threadsHandlers } = useAgentsPaneWidths();
+  const { attachWorkspace, paneStyle, threadsHandlers } = useAgentsPaneWidths();
   const selected = useLocation({
     select: (location) => location.pathname.split("/").filter(Boolean).length > 1,
   });
@@ -262,26 +261,8 @@ export function AgentsBoard() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
-  const allTile = (
-    <button
-      type="button"
-      className="agent-tile"
-      aria-current={filter === null ? "true" : undefined}
-      aria-label={`All agents, ${activeCount(allThreads)} active`}
-      onClick={() => {
-        setFilter(null);
-        setShowFilters(false);
-      }}
-    >
-      <LayoutGridIcon size={20} aria-hidden="true" />
-      <span className="agent-tile-name">All</span>
-      <span className="agent-tile-count" aria-hidden="true">
-        {activeCount(allThreads)}
-      </span>
-    </button>
-  );
   return (
-    <div className="agents-page" data-thread-selected={selected} data-show-filters={showFilters}>
+    <div className="agents-page" data-thread-selected={selected}>
       <header className="agents-topbar">
         <Link to="/" className="agents-brand">
           <BrandMark className="size-4" />
@@ -370,120 +351,97 @@ export function AgentsBoard() {
         aria-label="Agents workspace"
         style={paneStyle}
       >
-        <aside className="agents-filters" aria-label="Agent filters">
-          <header className="agents-filters-heading">
-            <h2>Agents</h2>
-            {profiles.length > 0 && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={<button type="button" className="agent-icon-button" />}
-                  aria-label="Group by role"
-                  aria-pressed={groupByRole}
-                  onClick={() => setGroupByRole(!groupByRole)}
-                >
-                  <TagsIcon size={14} />
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">Group by role</TooltipPopup>
-              </Tooltip>
-            )}
+        <aside className="agents-filters" aria-label="Agents">
+          <RailTooltip label="New agent">
             <button
-              className="agent-primary agents-new-agent"
+              type="button"
+              className={agentRailTileClass}
+              aria-label="New agent"
               disabled={!available}
               onClick={() => setEditor({ step: "start", presets: null })}
             >
-              <PlusIcon size={14} />
-              New agent
+              <AgentRailTileBody
+                icon={
+                  <span className="flex size-7 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <PlusIcon className="size-4" />
+                  </span>
+                }
+                label="New"
+                count={0}
+              />
             </button>
-          </header>
-          {groupByRole && <div className="agent-rail">{allTile}</div>}
-          {railGroups.map((group) => (
-            <section
-              key={group.tag === null ? "untagged" : `tag:${group.tag}`}
-              className="agent-rail-group"
-              aria-label={groupByRole ? group.label : undefined}
-            >
-              {groupByRole && <h3>{group.label}</h3>}
-              <div className="agent-rail">
-                {!groupByRole && allTile}
-                {group.profiles.map((profile, index) => {
-                  const previous = group.profiles[index - 1]?.profileId;
-                  const next = group.profiles[index + 1]?.profileId;
-                  return (
-                    <AgentRailTile
-                      key={profile.profileId}
-                      profile={profile}
-                      color={agentColorFor(profile, profiles)}
-                      activeCount={activeCount(groups.get(profile.profileId) ?? [])}
-                      selected={filter === profile.profileId}
-                      machineLabels={machineLabels}
-                      onSelect={() => {
-                        setFilter(profile.profileId);
-                        setShowFilters(false);
-                      }}
-                      actions={{
-                        editDisabled: !available,
-                        scheduleDisabled: scheduledSupported
-                          ? !available || profile.runtimeMode === "read-only"
-                          : null,
-                        moveUpDisabled: previous === undefined,
-                        moveDownDisabled: next === undefined,
-                        onEdit: () => setEditor({ step: "edit", profile }),
-                        onSchedule: () =>
-                          navigate({
-                            to: "/agents/scheduled",
-                            search: { agent: profile.profileId },
-                          }),
-                        onMoveUp: () => swapAgents(profile.profileId, previous),
-                        onMoveDown: () => swapAgents(profile.profileId, next),
-                        onDelete: () => {
-                          setDeleting(profile);
-                          setDeleteError("");
-                        },
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-          {profiles.length === 0 && (
-            <p className="agent-empty">No agents yet. Create an agent to start a chat.</p>
-          )}
+          </RailTooltip>
+          <nav className="agents-rail-list" aria-label="Agent filters">
+            <RailTooltip label="All agents">
+              <button
+                type="button"
+                className={agentRailTileClass}
+                aria-current={filter === null ? "true" : undefined}
+                aria-label={`All agents, ${activeCount(allThreads)} active`}
+                onClick={() => setFilter(null)}
+              >
+                <AgentRailTileBody
+                  icon={<UsersRoundIcon className="size-5 text-muted-foreground" />}
+                  label="All"
+                  count={activeCount(allThreads)}
+                />
+              </button>
+            </RailTooltip>
+            {orderedProfiles.map((profile, index) => {
+              const previous = orderedProfiles[index - 1]?.profileId;
+              const next = orderedProfiles[index + 1]?.profileId;
+              return (
+                <AgentRailTile
+                  key={profile.profileId}
+                  profile={profile}
+                  color={agentColorFor(profile, profiles)}
+                  activeCount={activeCount(groups.get(profile.profileId) ?? [])}
+                  selected={filter === profile.profileId}
+                  machineLabels={machineLabels}
+                  onSelect={() => setFilter(profile.profileId)}
+                  actions={{
+                    editDisabled: !available,
+                    scheduleDisabled: scheduledSupported
+                      ? !available || profile.runtimeMode === "read-only"
+                      : null,
+                    moveUpDisabled: previous === undefined,
+                    moveDownDisabled: next === undefined,
+                    onEdit: () => setEditor({ step: "edit", profile }),
+                    onSchedule: () =>
+                      navigate({
+                        to: "/agents/scheduled",
+                        search: { agent: profile.profileId },
+                      }),
+                    onMoveUp: () => swapAgents(profile.profileId, previous),
+                    onMoveDown: () => swapAgents(profile.profileId, next),
+                    onDelete: () => {
+                      setDeleting(profile);
+                      setDeleteError("");
+                    },
+                  }}
+                />
+              );
+            })}
+          </nav>
           {scheduledSupported && (
-            <footer className="agents-filters-footer">
+            <RailTooltip label="Scheduled tasks">
               <Link
                 to="/agents/scheduled"
-                className="agent-filter"
+                className={agentRailTileClass}
+                aria-label="Scheduled tasks"
                 activeProps={{ "aria-current": "page" }}
-                onClick={() => setShowFilters(false)}
               >
-                <CalendarClockIcon size={22} />
-                <span className="agent-filter-body">
-                  <span className="agent-filter-name">Scheduled tasks</span>
-                </span>
-                <span className="agent-filter-count">
-                  {scheduledTasks.filter(({ task }) => task.enabled).length}
-                </span>
+                <AgentRailTileBody
+                  icon={<CalendarClockIcon className="size-5 text-muted-foreground" />}
+                  label="Scheduled"
+                  count={scheduledTasks.filter(({ task }) => task.enabled).length}
+                />
               </Link>
-            </footer>
+            </RailTooltip>
           )}
         </aside>
-        <div className="agents-pane-resize" data-pane="profiles">
-          <RightPanelResizeHandle handlers={profilesHandlers} />
-        </div>
         <section className="agents-threads" aria-label="Threads">
           <header>
-            <button
-              className="agent-mobile-filters agent-icon-button"
-              onClick={() => setShowFilters(true)}
-            >
-              <ArrowLeftIcon size={14} /> Agents
-            </button>
-            {scheduledSupported && (
-              <Link to="/agents/scheduled" className="agent-mobile-filters agent-icon-button">
-                <CalendarClockIcon size={14} /> Scheduled
-              </Link>
-            )}
             <div className="agents-threads-heading">
               <h2>
                 Threads
@@ -493,20 +451,24 @@ export function AgentsBoard() {
               </h2>
               <p>Active & unread</p>
             </div>
-            <button
+            <Button
               type="button"
-              className="agent-primary agents-new-chat"
+              size="sm"
               aria-haspopup="dialog"
               disabled={!available || orderedProfiles.length === 0}
               onClick={() => setNewChatOpen(true)}
             >
-              <PlusIcon size={14} />
+              <PlusIcon />
               New chat
-            </button>
+            </Button>
           </header>
           {visible.length === 0 && pinned.length === 0 && (
             <p role="status" className="agent-empty">
-              {query ? "No chats match your search." : "No threads here yet."}
+              {query
+                ? "No chats match your search."
+                : profiles.length === 0
+                  ? "No agents yet. Create an agent to start a chat."
+                  : "No threads here yet."}
             </p>
           )}
           <AgentThreadList

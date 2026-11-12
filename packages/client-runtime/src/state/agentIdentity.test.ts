@@ -9,7 +9,6 @@ import {
   agentIconMatches,
   agentTagOptions,
   environmentAgents,
-  groupAgentsByRole,
   normalizeAgentTags,
   resolveAgentIconId,
 } from "./agentIdentity.ts";
@@ -83,26 +82,6 @@ describe("agent role tags", () => {
       "beta",
       "gamma",
     ]);
-  });
-
-  it("groups agents under every tag, roles first, then custom A–Z, then Other", () => {
-    const a = { name: "a", tags: ["Ops", "dev"] };
-    const b = { name: "b", tags: ["zeta"] };
-    const c = { name: "c", tags: [] };
-    const d = { name: "d", tags: ["Alpha", "Dev"] };
-    expect(
-      groupAgentsByRole([a, b, c, d]).map((group) => [
-        group.label,
-        group.profiles.map((p) => p.name),
-      ]),
-    ).toEqual([
-      ["Dev", ["a", "d"]],
-      ["Ops", ["a"]],
-      ["Alpha", ["d"]],
-      ["zeta", ["b"]],
-      ["Other", ["c"]],
-    ]);
-    expect(groupAgentsByRole([a]).at(-1)?.label).toBe("Ops");
   });
 });
 
