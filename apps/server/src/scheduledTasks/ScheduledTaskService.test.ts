@@ -915,3 +915,62 @@ it.effect("a run interrupted right after it reserves the task does not block the
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("a run that finds its destination archived pauses the task instead of rescheduling", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:archived-destination");
+    const threadId = ThreadId.make("thread:archived-destination");
+    const sends = yield* Ref.make(0);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            // Active when saved, archived before the first occurrence.
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+            sendToThread: () =>
+              Ref.update(sends, (n) => n + 1).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ThreadManagementService.ThreadManagementThreadArchivedError({ threadId }),
+                  ),
+                ),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:archived-destination"),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 300_000 },
+        projectId,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const result = yield* service.runNow({ id: task.id });
+
+      assert.equal(yield* Ref.get(sends), 1);
+      assert.equal(result.task.lastRunStatus, "failed");
+      assert.isFalse(result.task.enabled);
+      assert.isNull(result.task.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
