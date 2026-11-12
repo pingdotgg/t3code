@@ -124,18 +124,47 @@ function makeRun(input: {
 
 it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
+  const pullRequestLink = (number: number, state: "open" | "merged", watched: boolean) => ({
+    host: "github.com",
+    repository: "acme/web",
+    number,
+    url: `https://github.com/acme/web/pull/${number}`,
+    source: "agent",
+    linkedAt: "2026-08-04T11:00:00.000Z",
+    snapshot: { state },
+    stack: null,
+    ...(watched
+      ? {
+          watch: {
+            startedAt: "2026-08-04T11:30:00.000Z",
+            headSha: null,
+            failedChecks: [],
+            passed: false,
+            passedChecks: [],
+            remarksThrough: "2026-08-04T11:30:00.000Z",
+            remarkIds: [],
+            conflicting: false,
+            wakes: 0,
+          },
+        }
+      : {}),
+  });
   const projection = {
-    thread: baseThread({
-      threadId: parentThreadId,
-      title: "Parent",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
+    thread: {
+      ...baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      pullRequests: [pullRequestLink(1, "merged", false), pullRequestLink(2, "open", true)],
+    },
     runs: [
       makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
     ],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -196,6 +225,19 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    // Every page read must not repeat each linked PR, and an open PR shows whether it is watched.
+    const listed = result.thread.pullRequests ?? [];
+    expect(listed.map((link) => link.number)).not.toContain(1);
+    expect(listed.find((link) => link.number === 2)).toMatchObject({
+      watching: true,
+      watchStartedAt: "2026-08-04T11:30:00.000Z",
+    });
+    const laterPage = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      afterPosition: 0,
+    });
+    expect(laterPage.thread.pullRequests).toBeUndefined();
+    expect(laterPage.thread.pullRequestCount).toBe(2);
 
     callerUnavailable = true;
     const denied = yield* service
@@ -222,6 +264,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -312,6 +355,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     }),
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -365,6 +409,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
       }),
     ],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [
@@ -438,6 +483,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       return parentRuns;
     },
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -474,6 +520,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
           },
         },
       ],
+      providerTurns: [],
       runtimeRequests: [],
       messages: [],
       contextTransfers: [],
@@ -670,6 +717,7 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
     }),
     runs: [{ ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId }],
     visibleTurnItems: [],
+    providerTurns: [],
     runtimeRequests: [],
     messages: [],
     contextTransfers: [],
@@ -791,6 +839,7 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
           card === undefined
             ? []
             : [{ type: "secret_request", id: card.turnItemId, secretStatus: outcome }],
+        providerTurns: [],
         runtimeRequests: [],
         messages: [],
         contextTransfers: [],

@@ -7,6 +7,7 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -123,6 +124,83 @@ function cacheWithRefs(
     ...overrides,
   });
 }
+
+describe("branch subscriptions", () => {
+  it.effect.each([true, false])(
+    "shares and releases branch streams across session replacement (capability %s)",
+    (supported) =>
+      Effect.gen(function* () {
+        const released = yield* Queue.unbounded<string>();
+        let subscriptions = 0;
+        const clientFor = (refName: string, branchSupported: boolean) =>
+          ({
+            [branchSupported ? WS_METHODS.subscribeVcsBranch : WS_METHODS.subscribeVcsStatus]:
+              () => {
+                subscriptions += 1;
+                return Stream.concat(
+                  Stream.make(
+                    branchSupported
+                      ? { refName, isRepo: true }
+                      : { _tag: "snapshot", local: status({ refName }), remote: null },
+                  ),
+                  Stream.never,
+                ).pipe(Stream.ensuring(Queue.offer(released, refName)));
+              },
+          }) as unknown as WsRpcProtocolClient;
+        const branchSession = (refName: string, branchSupported: boolean): RpcSession => ({
+          ...session(clientFor(refName, branchSupported)),
+          initialConfig: Effect.succeed({
+            environment: { capabilities: branchSupported ? { vcsBranchStatus: true } : {} },
+          } as ServerConfig),
+        });
+        const activeSession = yield* SubscriptionRef.make(
+          Option.some(branchSession("main", supported)),
+        );
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: activeSession,
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          followStream: (_environmentId, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+          Effect.sync(() => value.dispose()),
+        );
+        const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
+        const first = yield* Stream.toPull(
+          AtomRegistry.toStreamResult(registry, atoms.branch(target)),
+        );
+        expect(yield* first).toEqual([{ refName: "main", isRepo: true }]);
+        const second = yield* Stream.toPull(
+          AtomRegistry.toStreamResult(registry, atoms.branch(target)),
+        );
+        expect(yield* second).toEqual([{ refName: "main", isRepo: true }]);
+        expect(subscriptions).toBe(1);
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(branchSession("external", !supported)),
+        );
+        expect(yield* Queue.take(released)).toBe("main");
+        expect(yield* first).toEqual([{ refName: "external", isRepo: true }]);
+        expect(yield* second).toEqual([{ refName: "external", isRepo: true }]);
+        registry.dispose();
+        expect(yield* Queue.take(released)).toBe("external");
+      }).pipe(Effect.scoped),
+  );
+});
 
 describe("cached VCS refs", () => {
   it("invalidates all ref streams in the mutated environment", () => {
