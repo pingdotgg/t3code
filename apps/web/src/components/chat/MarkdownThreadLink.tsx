@@ -9,6 +9,7 @@ import {
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { useEnvironmentIdentities } from "../../state/environments";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { UnresolvedChip } from "../contextChipParts";
@@ -23,8 +24,12 @@ export function MarkdownThreadLink(props: {
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
   const written = useThreadShell(writtenRef);
+  // A linked machine's threads are reachable only through its server, not from this client.
+  const reachable = useEnvironmentIdentities().some(
+    (environment) => environment.environmentId === writtenRef.environmentId,
+  );
   const lookup = useEnvironmentQuery(
-    written === null
+    written === null && reachable
       ? orchestrationEnvironment.threadLinkMetadata({
           environmentId: writtenRef.environmentId,
           input: { threadIds: candidates.map((ref) => ref.threadId) },
@@ -39,7 +44,7 @@ export function MarkdownThreadLink(props: {
           const metadata = lookup.data?.[ref.threadId];
           return metadata ? [{ ref, metadata }] : [];
         })[0] ?? null);
-  const missing = target === null && settled;
+  const missing = target === null && (settled || !reachable);
   const guess = missing && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
   const remoteRef = guess
