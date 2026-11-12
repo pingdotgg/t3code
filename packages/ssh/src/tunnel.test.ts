@@ -170,6 +170,56 @@ const localRemoteShellLayer = (home: string) =>
   );
 
 describe("ssh tunnel scripts", () => {
+  it.live("distinguishes an incompatible remote Node from a missing executable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-node-" });
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      for (const missing of [false, true]) {
+        const nodeFixture = missing
+          ? "command() { return 1; }; "
+          : 'node() { cat >/dev/null; printf "Remote node 18.20.8 does not satisfy required range >=999.0.0.\\n" >&2; return 1; }; ';
+        const remoteShell = ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand") return spawner.spawn(command);
+          return spawner.spawn(
+            ChildProcess.make(
+              "sh",
+              ["-c", `${nodeFixture}eval "$(cat)"`, "sh", ...commandArgs(command).slice(-1)],
+              {
+                ...command.options,
+                env: {
+                  ...command.options.env,
+                  HOME: home,
+                  NVM_DIR: NodePath.join(home, ".nvm"),
+                  FNM_DIR: NodePath.join(home, ".fnm"),
+                  VOLTA_HOME: NodePath.join(home, ".volta"),
+                },
+              },
+            ),
+          );
+        });
+        const result = yield* SshTunnel.launchOrReuseRemoteServer(
+          { alias: "devbox", hostname: "devbox", username: null, port: null },
+          undefined,
+          { nodeScriptPath: "/unused/server.ts", nodeEngineRange: ">=999.0.0" },
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, remoteShell),
+          Effect.result,
+        );
+        assert.isTrue(Result.isFailure(result));
+        if (!Result.isFailure(result)) return;
+        assert.isTrue(isSshCommandError(result.failure));
+        if (!isSshCommandError(result.failure)) return;
+        assert.equal(result.failure.exitCode, 1);
+        assert.equal(result.failure.stderr.includes("missing node on PATH"), missing);
+        assert.equal(
+          result.failure.stderr.includes("does not satisfy required range >=999.0.0"),
+          !missing,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
