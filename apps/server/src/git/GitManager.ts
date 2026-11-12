@@ -2961,21 +2961,10 @@ export const make = Effect.gen(function* () {
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
-      // Git refuses to move checked-out branches; advance reused checkouts from inside their worktree.
-      const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
+      // Advances only without dropping local commits, unlike materializing the head into the branch.
+      const refreshPullRequestCheckout = Effect.fn("refreshPullRequestCheckout")(function* (
         worktreePath: string,
-        checkedOutBranch: string,
       ) {
-        if (checkedOutBranch !== localPullRequestBranch) {
-          // Bare-name matches may be unrelated local branches; preserve their work and tracking config.
-          return {
-            pullRequest,
-            branch: localPullRequestBranch,
-            worktreePath,
-            isOnPullRequestHead: false,
-          };
-        }
-
         // Capture upstream before its forced fetch so rewritten heads remain distinguishable from local commits.
         const upstreamCommitBeforeFetch = yield* gitCore
           .resolveCommit({ cwd: worktreePath, revision: "@{upstream}" })
@@ -2990,7 +2979,7 @@ export const make = Effect.gen(function* () {
         // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
         // from `origin/main` whose head branch has since been deleted still resolves — and
         // following it would move the checkout onto main and call that the pull request.
-        const refreshed = yield* changeRequestHeadRef(worktreePath, pullRequest.number).pipe(
+        return yield* changeRequestHeadRef(worktreePath, pullRequest.number).pipe(
           Effect.flatMap((ref) => gitCore.fetchRefCommit({ cwd: worktreePath, ref })),
           // A host that publishes no head ref leaves the remote-tracking branch,
           // taken only where it is the head branch's own rather than whatever the checkout
@@ -3032,6 +3021,24 @@ export const make = Effect.gen(function* () {
             ).pipe(Effect.as({ moved: false, onTarget: false })),
           ),
         );
+      });
+
+      // Git refuses to move checked-out branches; advance reused checkouts from inside their worktree.
+      const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
+        worktreePath: string,
+        checkedOutBranch: string,
+      ) {
+        if (checkedOutBranch !== localPullRequestBranch) {
+          // Bare-name matches may be unrelated local branches; preserve their work and tracking config.
+          return {
+            pullRequest,
+            branch: localPullRequestBranch,
+            worktreePath,
+            isOnPullRequestHead: false,
+          };
+        }
+
+        const refreshed = yield* refreshPullRequestCheckout(worktreePath);
 
         // Setup can disrupt other threads using this worktree; rerun only when the checkout moved.
         if (refreshed.moved) {
@@ -3080,6 +3087,26 @@ export const make = Effect.gen(function* () {
         return null;
       });
 
+      const createPullRequestWorktree = Effect.fn("createPullRequestWorktree")(function* (
+        progress?: GitVcsDriver.CreateWorktreeProgress,
+      ) {
+        return yield* gitCore.createWorktree(
+          {
+            cwd: input.cwd,
+            refName: localPullRequestBranch,
+            path: null,
+          },
+          {
+            ...(progress ? { progress } : {}),
+            ...(yield* readWorktreeCreationSettings),
+            submodules: yield* projectSettingsFor(input).pipe(
+              Effect.map(({ settings }) => settings.worktreeSubmodules),
+              Effect.orElseSucceed(() => null),
+            ),
+          },
+        );
+      });
+
       const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
         ? yield* canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
@@ -3100,6 +3127,28 @@ export const make = Effect.gen(function* () {
           detail:
             "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
         });
+      }
+
+      // Materializing forces the branch onto the head, dropping commits it has that the head lacks.
+      if (existingBranchBeforeFetch !== null) {
+        let refreshed = { moved: false, onTarget: false };
+        // Refresh before submodules initialize so they match the commit the checkout ends on.
+        const worktree = yield* createPullRequestWorktree({
+          onWorktreeClaimed: (worktreePath) =>
+            refreshPullRequestCheckout(worktreePath).pipe(
+              Effect.map((result) => {
+                refreshed = result;
+              }),
+              Effect.orElseSucceed(() => undefined),
+            ),
+        });
+        yield* maybeRunSetupScript(worktree.worktree.path);
+        return {
+          pullRequest,
+          branch: worktree.worktree.refName,
+          worktreePath: worktree.worktree.path,
+          isOnPullRequestHead: refreshed.onTarget,
+        };
       }
 
       yield* materializePullRequestHeadBranch(
@@ -3130,20 +3179,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const worktree = yield* gitCore.createWorktree(
-        {
-          cwd: input.cwd,
-          refName: localPullRequestBranch,
-          path: null,
-        },
-        {
-          ...(yield* readWorktreeCreationSettings),
-          submodules: yield* projectSettingsFor(input).pipe(
-            Effect.map(({ settings }) => settings.worktreeSubmodules),
-            Effect.orElseSucceed(() => null),
-          ),
-        },
-      );
+      const worktree = yield* createPullRequestWorktree();
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
