@@ -121,26 +121,32 @@ async function resolveLatestNightlyCommit({ github, context, core }) {
   return { tag, sha: commit.sha, version };
 }
 
-// The two places a nightly install looks for an update: releases.atom, which holds the 10 newest
-// git tags of any kind, and the `update-feed` pointer. Reports what each names beside the newest
-// published nightly, so the caller can repair the pointer and fail when the feed hides the nightly.
+// The two places a nightly install looks for an update: the `update-feed` pointer, and
+// releases.atom, which holds the 10 newest git tags of any kind. Older installs take the first
+// nightly in the feed. Reports what each names beside the newest published nightly.
 async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch }) {
   const latest = await findLatestNightly({ github, context });
   if (!latest) return {};
 
   const base = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
-  const feed = await fetch(`${base}/releases.atom`);
-  if (!feed.ok) throw new Error(`releases.atom answered HTTP ${feed.status}.`);
-  const feedTags = Array.from(
-    (await feed.text()).matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g),
-    (match) => decodeURIComponent(match[1]),
-  );
-
-  // A missing or unreadable pointer is a stale one; the caller rewrites it.
+  // Only a missing or malformed pointer is stale. Rewriting deletes the old file first, so a
+  // GitHub outage must not look like one.
   const pointer = await fetch(`${base}/releases/download/update-feed/nightly.json`);
-  const pointerTag = pointer.ok ? (await pointer.json().catch(() => ({}))).tag_name : undefined;
+  if (!pointer.ok && pointer.status !== 404) {
+    throw new Error(`The update-feed pointer answered HTTP ${pointer.status}.`);
+  }
+  const pointerTag = pointer.ok ? (await pointer.json().catch(() => null))?.tag_name : undefined;
 
-  return { tag: latest.tagName, feedTags, pointerTag };
+  // An unreadable feed leaves `feedNightly` unset, so the pointer is still repaired.
+  const feed = await fetch(`${base}/releases.atom`).catch(() => undefined);
+  const feedTags = feed?.ok
+    ? Array.from((await feed.text()).matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
+        decodeURIComponent(match[1]),
+      )
+    : undefined;
+  const feedNightly = feedTags?.find((tag) => /^v\d+\.\d+\.\d+-nightly\./.test(tag));
+
+  return { tag: latest.tagName, pointerTag, feedNightly, feedTags };
 }
 
 module.exports = {

@@ -39,10 +39,10 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..c298ffe7808c421c29e16f1e2ba8510f
          request.on("redirect", (statusCode, method, redirectUrl) => {
              // no way to modify request options, abort old and make a new one
 diff --git a/out/providers/GitHubProvider.js b/out/providers/GitHubProvider.js
-index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..8ffb1a1047bae2329f071fc2ab5db4e90db8b9a6 100644
+index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..708a1fa7d740192944f04259cde6d6bf79d58c53 100644
 --- a/out/providers/GitHubProvider.js
 +++ b/out/providers/GitHubProvider.js
-@@ -107,6 +107,21 @@ class GitHubProvider extends BaseGitHubProvider {
+@@ -107,6 +107,32 @@ class GitHubProvider extends BaseGitHubProvider {
          catch (e) {
              throw (0, builder_util_runtime_1.newError)(`Cannot parse releases feed: ${e.stack || e.message},\nXML:\n${feedXml}`, "ERR_UPDATER_INVALID_RELEASE_FEED");
          }
@@ -51,20 +51,31 @@ index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..8ffb1a1047bae2329f071fc2ab5db4e9
 +        // The newer of the two answers wins; the API scan is the last resort.
 +        let apiRelease = null;
 +        if (this.updater.allowPrerelease && this.updater.channel) {
++            const feedTag = tag;
 +            const pointer = await this.getChannelPointerRelease(this.updater.channel, cancellationToken);
 +            if (pointer !== null && (tag == null || semver.gt(pointer.tag_name, tag))) {
 +                apiRelease = pointer;
 +                tag = pointer.tag_name;
 +            }
-+        }
-+        if (tag == null && this.updater.allowPrerelease && this.updater.channel) {
-+            apiRelease = await this.getLatestChannelRelease(this.updater.channel, cancellationToken);
-+            tag = apiRelease === null ? null : apiRelease.tag_name;
++            // With no nightly in the feed, a pointer that offers nothing new may be stale, so the API
++            // scan still runs. Its failure is fatal only when nothing else answered.
++            if (feedTag == null && (tag == null || !semver.gt(tag, this.updater.currentVersion))) {
++                const listed = await this.getLatestChannelRelease(this.updater.channel, cancellationToken).catch(e => {
++                    if (tag == null) {
++                        throw e;
++                    }
++                    return null;
++                });
++                if (listed !== null && (tag == null || semver.gt(listed.tag_name, tag))) {
++                    apiRelease = listed;
++                    tag = listed.tag_name;
++                }
++            }
 +        }
          if (tag == null) {
              throw (0, builder_util_runtime_1.newError)(`No published versions on GitHub`, "ERR_UPDATER_NO_PUBLISHED_VERSIONS");
          }
-@@ -144,6 +159,14 @@ class GitHubProvider extends BaseGitHubProvider {
+@@ -144,6 +170,14 @@ class GitHubProvider extends BaseGitHubProvider {
              }
          }
          const result = (0, Provider_1.parseUpdateInfo)(rawData, channelFile, channelFileUrl);
@@ -79,7 +90,7 @@ index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..8ffb1a1047bae2329f071fc2ab5db4e9
          if (result.releaseName == null) {
              result.releaseName = latestRelease.elementValueOrEmpty("title");
          }
-@@ -155,6 +178,42 @@ class GitHubProvider extends BaseGitHubProvider {
+@@ -155,6 +189,42 @@ class GitHubProvider extends BaseGitHubProvider {
              ...result,
          };
      }

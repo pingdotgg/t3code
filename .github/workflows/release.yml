@@ -169,8 +169,8 @@ jobs:
             # commit end users must never receive. Never scheduled.
             # Same versioning as nightly under its own prerelease identifier.
             # A preview release stays a draft (see "Publish prerelease"), its
-            # desktop builds carry no update feed, and no updater manifest is
-            # attached, so neither stable nor nightly installs can be offered one.
+            # desktop builds carry no update feed, no updater manifest is
+            # attached, and npm gets nothing, so no install can be offered one.
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
@@ -1053,7 +1053,7 @@ jobs:
   update_feed:
     name: Check the update feed
     needs: [preflight, release]
-    if: ${{ !cancelled() && github.repository == 'pingdotgg/t3code' && (github.event_name == 'schedule' || needs.preflight.outputs.release_channel == 'nightly') }}
+    if: ${{ !cancelled() && github.repository == 'pingdotgg/t3code' && ((github.event_name == 'schedule' && vars.PAUSE_NIGHTLY != 'true') || needs.preflight.outputs.release_channel == 'nightly') }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
@@ -1071,12 +1071,12 @@ jobs:
           retries: 3
           script: |
             const { readNightlyUpdateFeed } = require('./.github/scripts/check-nightly-release.cjs');
-            const { tag, feedTags, pointerTag } = await readNightlyUpdateFeed({ github, context });
+            const { tag, pointerTag, feedNightly, feedTags } = await readNightlyUpdateFeed({ github, context });
             if (!tag) return;
-            core.info(`Newest nightly: ${tag}. Pointer: ${pointerTag}. Feed: ${feedTags.join(', ')}.`);
+            core.info(`Newest nightly: ${tag}. Pointer: ${pointerTag}. Feed: ${feedTags?.join(', ')}.`);
             core.setOutput('tag', tag);
             core.setOutput('pointer_stale', pointerTag !== tag);
-            core.setOutput('in_feed', feedTags.includes(tag));
+            core.setOutput('feed_names_it', feedNightly === tag);
 
       - name: Point the update feed at the newest nightly
         if: steps.feed.outputs.pointer_stale == 'true'
@@ -1092,21 +1092,21 @@ jobs:
           gh release upload update-feed nightly.json --clobber
 
       - name: Fail when the feed hides the newest nightly
-        if: steps.feed.outputs.in_feed == 'false'
+        if: steps.feed.outputs.feed_names_it == 'false'
         env:
           RELEASE_TAG: ${{ steps.feed.outputs.tag }}
         run: |
-          echo "::error::releases.atom does not list $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot update. See docs/operations/release.md#update-feed."
+          echo "::error::releases.atom could not be read, or its first nightly is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
           exit 1
 
   # The `t3` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release
-  # exists. Preview publishes too, under the `preview` dist-tag, which
-  # nothing resolves unless asked for by name.
+  # exists. A preview release stays a draft, whose files are not public, so
+  # a preview never publishes the launcher.
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, build_bundle, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:

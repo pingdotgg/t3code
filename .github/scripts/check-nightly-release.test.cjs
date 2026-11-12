@@ -243,36 +243,53 @@ const { readNightlyUpdateFeed } = require("./check-nightly-release.cjs");
 // GitHub percent-encodes tag names in the feed, and any tag in the repository takes a slot.
 const atomEntry = (tag) =>
   `<entry><link rel="alternate" type="text/html" href="https://github.com/example/app/releases/tag/${encodeURIComponent(tag)}"/></entry>`;
+const atomFeed = (tags) => new Response(`<feed>${tags.map(atomEntry).join("")}</feed>`);
+const NEWEST = "v1.0.1-nightly.20260905.123";
+const OLDER = "v1.0.1-nightly.20260905.100";
 
-function updateFeedFixture({ feedTags, pointer }) {
+function updateFeedFixture({ feed, pointer }) {
   const { options } = fixture({
     releases: [nightly(1), nightly(0, { tagName: "v1.0.2-preview.1" })],
   });
   options.fetch = async (url) =>
     url === "https://github.com/example/app/releases.atom"
-      ? new Response(`<feed>${feedTags.map(atomEntry).join("")}</feed>`)
+      ? feed
       : url === "https://github.com/example/app/releases/download/update-feed/nightly.json"
         ? pointer
         : assert.fail(`unexpected fetch ${url}`);
   return options;
 }
 
-test("update feed check reports a nightly crowded out of the feed and a missing pointer", async () => {
-  const feedTags = ["v1.0.2-preview.1", "mobile-android-build/2.3.0/abc"];
-  assert.deepEqual(
-    await readNightlyUpdateFeed(
-      updateFeedFixture({ feedTags, pointer: new Response("Not Found", { status: 404 }) }),
-    ),
-    { tag: "v1.0.1-nightly.20260905.123", feedTags, pointerTag: undefined },
-  );
-});
-
-test("update feed check reads the tag the pointer names", async () => {
-  const feedTags = ["v1.0.1-nightly.20260905.123"];
-  const pointer = Response.json({ tag_name: "v1.0.1-nightly.20260905.100" });
-  assert.deepEqual(await readNightlyUpdateFeed(updateFeedFixture({ feedTags, pointer })), {
-    tag: "v1.0.1-nightly.20260905.123",
-    feedTags,
-    pointerTag: "v1.0.1-nightly.20260905.100",
+const missing = () => new Response("Not Found", { status: 404 });
+for (const [name, { feed, pointer }, expected] of [
+  [
+    "a nightly crowded out of the feed and a missing pointer",
+    { feed: atomFeed(["v1.0.2-preview.1", "mobile-android-build/2.3.0/abc"]), pointer: missing() },
+    { pointerTag: undefined, feedNightly: undefined },
+  ],
+  [
+    "the first nightly in the feed, which is the one older installs take",
+    { feed: atomFeed(["update-feed", OLDER, NEWEST]), pointer: Response.json({ tag_name: OLDER }) },
+    { pointerTag: OLDER, feedNightly: OLDER },
+  ],
+  [
+    "a malformed pointer as stale and an unreadable feed as naming nothing",
+    { feed: new Response("", { status: 503 }), pointer: Response.json(null) },
+    { pointerTag: undefined, feedNightly: undefined },
+  ],
+]) {
+  test(`update feed check reports ${name}`, async () => {
+    const { tag, pointerTag, feedNightly } = await readNightlyUpdateFeed(
+      updateFeedFixture({ feed, pointer }),
+    );
+    assert.deepEqual({ tag, pointerTag, feedNightly }, { tag: NEWEST, ...expected });
   });
+}
+
+test("update feed check does not call a pointer stale when GitHub fails to serve it", async () => {
+  const options = updateFeedFixture({
+    feed: atomFeed([NEWEST]),
+    pointer: new Response("", { status: 503 }),
+  });
+  await assert.rejects(readNightlyUpdateFeed(options), /pointer answered HTTP 503/);
 });

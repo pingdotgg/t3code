@@ -21,8 +21,16 @@ const atomFeed = (tags: ReadonlyArray<string>) =>
     )
     .join("")}</feed>`;
 
-/** The tag a nightly install is offered when GitHub serves this feed and this `update-feed` pointer. */
-const offeredRelease = async (feedTags: ReadonlyArray<string>, pointerTag: string | undefined) => {
+/**
+ * The release a nightly install on 4580 is offered when GitHub serves this feed, this `update-feed`
+ * pointer, and this newest nightly from the REST API scan.
+ */
+const offeredRelease = async (
+  feedTags: ReadonlyArray<string>,
+  pointerTag: string | undefined,
+  listedTag?: string,
+) => {
+  let apiScans = 0;
   const request = async ({ path = "" }: { readonly path?: string | null }) => {
     if (path === `${REPO}/releases.atom`) return atomFeed(feedTags);
     if (path === `${REPO}/releases/download/update-feed/nightly.json`) {
@@ -31,8 +39,8 @@ const offeredRelease = async (feedTags: ReadonlyArray<string>, pointerTag: strin
     }
     const manifest = /\/releases\/download\/v([^/]+)\/nightly\.yml$/.exec(path ?? "");
     if (manifest) return `version: ${manifest[1]}\npath: T3-Code.exe\nsha512: abc\n`;
-    // The API scan, the last resort, finds nothing.
-    return "[]";
+    apiScans += 1;
+    return JSON.stringify(listedTag ? [{ tag_name: listedTag, body: "API notes" }] : []);
   };
   const provider = new GitHubProvider(
     { provider: "github", owner: "pingdotgg", repo: "t3code" },
@@ -41,7 +49,7 @@ const offeredRelease = async (feedTags: ReadonlyArray<string>, pointerTag: strin
       allowPrerelease: true,
       channel: "nightly",
       currentVersion: semver.parse("0.1.10-nightly.20261112.4580"),
-      fullChangelog: false,
+      fullChangelog: true,
     } as ProviderArgs[1],
     {
       isUseMultipleRangeRequest: false,
@@ -50,7 +58,7 @@ const offeredRelease = async (feedTags: ReadonlyArray<string>, pointerTag: strin
     } as ProviderArgs[2],
   );
   const { tag, releaseNotes } = await provider.getLatestVersion();
-  return { tag, releaseNotes };
+  return { tag, releaseNotes, apiScans };
 };
 
 // What filled releases.atom on 2026-11-12: ten tags, none of them a nightly.
@@ -61,17 +69,27 @@ describe("GitHubProvider nightly lookup", () => {
     expect(await offeredRelease(crowdedFeed, nightly(4606))).toEqual({
       tag: nightly(4606),
       releaseNotes: "pointer notes",
+      apiScans: 0,
+    });
+  });
+
+  it("still scans the API when the feed has no nightly and the pointer offers nothing new", async () => {
+    expect(await offeredRelease(crowdedFeed, nightly(4580), nightly(4606))).toEqual({
+      tag: nightly(4606),
+      releaseNotes: "API notes",
+      apiScans: 1,
     });
   });
 
   it.each([
-    ["the feed is newer than the pointer", [nightly(4606)], nightly(4603)],
-    ["there is no pointer", [nightly(4606)], undefined],
-    ["the pointer names another channel", [nightly(4606)], "v0.1.10-preview.20261112.4700"],
-  ])("keeps the feed's nightly when %s", async (_case, feedTags, pointerTag) => {
-    expect(await offeredRelease(feedTags, pointerTag)).toEqual({
+    ["the feed is newer than the pointer", nightly(4603)],
+    ["there is no pointer", undefined],
+    ["the pointer names another channel", "v0.1.10-preview.20261112.4700"],
+  ])("keeps the feed's nightly when %s", async (_case, pointerTag) => {
+    expect(await offeredRelease([nightly(4606)], pointerTag)).toEqual({
       tag: nightly(4606),
-      releaseNotes: `${nightly(4606)} feed notes`,
+      releaseNotes: [{ version: nightly(4606).slice(1), note: `${nightly(4606)} feed notes` }],
+      apiScans: 0,
     });
   });
 });
