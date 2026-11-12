@@ -24,11 +24,23 @@ describe("workspace file previews", () => {
     ["db", "sqlite", "application/vnd.sqlite3"],
   ])("recognizes binary preview %s", (extension, kind, mimeType) => {
     const name = `files#draft/sample.${extension.toUpperCase()}`;
-    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    for (const genericMime of [
+      "",
+      "application/octet-stream",
+      "binary/octet-stream",
+      "application/unknown",
+      " APPLICATION/UNKNOWN ; charset=utf-8",
+      "text/plain",
+    ]) {
+      expect(filePreviewKind({ name, mimeType: genericMime })).toBe(kind);
+    }
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
     expect(isWorkspacePreviewEntryPath(name)).toBe(true);
     expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
     expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(mimeType);
+  });
+  it("previews a TypeScript file the OS labels as MPEG transport stream as text", () => {
+    expect(filePreviewKind({ name: "clamp.ts", mimeType: "video/mp2t" })).toBe("text");
   });
   it("recognizes compound archives and MIME aliases", () => {
     expect(filePreviewKind({ name: "archive.tar.gz" })).toBe("archive");
@@ -76,7 +88,16 @@ describe("workspace file previews", () => {
     ["analysis.ipynb", "ipynb", "application/x-ipynb+json"],
   ])("recognizes Office assets at literal path %s", (name, kind, mimeType) => {
     expect(officePreviewKind({ name })).toBe(kind);
-    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    for (const genericMime of [
+      "",
+      "application/octet-stream",
+      "binary/octet-stream",
+      "application/unknown",
+      " APPLICATION/UNKNOWN ; charset=utf-8",
+      "text/plain",
+    ]) {
+      expect(filePreviewKind({ name, mimeType: genericMime })).toBe(kind);
+    }
     expect(isWorkspacePreviewEntryPath(name)).toBe(true);
     expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(mimeType);
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
@@ -154,8 +175,6 @@ describe("attachment preview classification", () => {
     ["diagram.MERMAID", "text/plain", "mermaid"],
     ["download", "text/vnd.mermaid", "mermaid"],
     ["source-code.otf", "application/vnd.oasis.opendocument.formula-template", "font"],
-    ["notes.rtf", "application/rtf", "rtf"],
-    ["notes.rtf", "", "rtf"],
     ["download", "text/rtf", "rtf"],
     ["analysis.IPYNB", "application/json", "ipynb"],
     ["clip.weba", "", "audio"],

@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   OrchestrationV2ProviderFailureClass,
   ProviderInstanceId,
   ServerProvider,
@@ -16,6 +17,7 @@ import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadE
  * values, so a ChatView render that changes neither banner leaves both cached.
  */
 export function ChatBannerLane(props: {
+  environmentId: EnvironmentId;
   providerStatus: ServerProvider | null;
   providerStatusDismissalKey: string | null;
   setProviderStatusBannerDismissTick: Dispatch<SetStateAction<number>>;
@@ -44,6 +46,7 @@ export function ChatBannerLane(props: {
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
       <ProviderStatusBanner
+        environmentId={props.environmentId}
         status={providerStatus}
         onDismiss={() => {
           dismissProviderStatusBannerForSession(providerStatusDismissalKey);

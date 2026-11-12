@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://effect.website/schemas/ai-codegen.json",
+  "title": "Effect AI Codegen Configuration",
+  "description": "Configuration for @effect/ai-codegen code generation",
+  "type": "object",
+  "required": ["spec", "output"],
+  "properties": {
+    "spec": {
+      "type": "string",
+      "description": "URL or file path to the OpenAPI specification (JSON or YAML, optionally gzipped with a .gz suffix)"
+    },
+    "output": {
+      "type": "string",
+      "description": "Output file path relative to the package directory"
+    },
+    "name": {
+      "type": "string",
+      "description": "Name for the generated client (defaults to 'Client')"
+    },
+    "typeOnly": {
+      "type": "boolean",
+      "description": "Generate type-only output without runtime code",
+      "default": false
+    },
+    "header": {
+      "type": "string",
+      "description": "Content to prepend to the generated file (e.g. module-level JSDoc)"
+    },
+    "patches": {
+      "type": "array",
+      "description": "JSON Patch documents to apply to the spec before generation. Each item can be a file path or inline JSON array.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "includePaths": {
+      "type": "array",
+      "description": "Path prefixes to generate. Paths that match none of the prefixes are dropped after patches are applied. Defaults to every path.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "includeSchemas": {
+      "type": "array",
+      "description": "Component schemas to generate even when no operation references them, such as stream events or deprecated legacy contracts.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "collapseErrorResponses": {
+      "type": "boolean",
+      "description": "Replace each operation's explicit 4xx and 5xx responses with one 4XX response using the error envelope component they share. Generation fails when an operation's error responses do not reference exactly one component.",
+      "default": false
+    },
+    "replacements": {
+      "type": "array",
+      "description": "Text replacements to apply to generated code.",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The string to search for"
+          },
+          "to": {
+            "type": "string",
+            "description": "The string to replace with"
+          }
+        }
+      }
+    },
+    "excludeAnnotations": {
+      "type": "array",
+      "description": "Annotation keys to exclude from generated schema code (e.g. [\"examples\"]).",
+      "items": {
+        "type": "string"
+      }
+    },
+    "disableAdditionalProperties": {
+      "type": "boolean",
+      "description": "When true, closes object schemas that declare properties and no additionalProperties of their own, preventing StructWithRest emission. Object compositions (allOf, and properties next to anyOf/oneOf) are merged before closing.",
+      "default": false
+    }
+  },
+  "additionalProperties": false
+}

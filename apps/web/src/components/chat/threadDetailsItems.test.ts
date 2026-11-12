@@ -11,16 +11,17 @@ const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
 
 describe("thread details items", () => {
   it.each([
-    { legacy: false, items: {}, usage: false },
-    { legacy: true, items: {}, usage: true },
-    { legacy: true, items: { usage: false }, usage: false },
-    { legacy: false, items: { usage: true, retired: false }, usage: true },
-  ])("resolves Usage from overrides and the retired Labs flag: %o", (row) => {
+    { legacy: false, items: {}, usage: false, context: false },
+    { legacy: true, items: {}, usage: true, context: true },
+    { legacy: true, items: { usage: false }, usage: false, context: true },
+    { legacy: false, items: { usage: true, retired: false }, usage: true, context: false },
+  ])("resolves Usage and Context from overrides and the retired Labs flag: %o", (row) => {
     const visibility = resolveThreadDetailsVisibility({
       threadDetailsItems: row.items,
       threadDetailsUsageEnabled: row.legacy,
     });
     expect(visibility.usage).toBe(row.usage);
+    expect(visibility.context).toBe(row.context);
     expect(visibility.servers).toBe(true);
   });
 
