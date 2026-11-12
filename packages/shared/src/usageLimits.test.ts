@@ -765,6 +765,27 @@ describe("pools", () => {
     ]);
   });
 
+  it("names one account seen on two environments by the instance the user renamed", () => {
+    const untouched = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const renamed = { ...untouched, displayName: "ClaudePersonal 1", accentColor: "#ff00aa" };
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [untouched] } }],
+      [
+        EnvironmentId.make("env-b"),
+        { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [renamed] } },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ displayName: "ClaudePersonal 1", accentColor: "#ff00aa" });
+  });
+
   it("pools Codex windows by kind, whichever slot reported them", () => {
     const codexAccount = (id: string, slots: readonly string[]) => ({
       id,
