@@ -9884,6 +9884,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
     it.effect("pauses a goal at once while a delegated task will wake the thread", () =>
       Effect.gen(function* () {
+        const lookupStarted = yield* Deferred.make<void>();
+        const lookupAnswered = yield* Deferred.make<void>();
         const turnStart = (id: number, text: string) =>
           Effect.map(
             CodexAdapterV2.buildCodexTurnStartParams({
@@ -9919,21 +9921,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
             }),
+            // Codex continues before the wake lookup answers.
+            notification("continuation", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+            }),
             ...request(
               4,
               "thread/goal/set",
               { threadId: nativeThreadId, status: "paused" },
               { goal: codexGoal("paused", 10) },
             ),
-            yield* turnStart(5, "Child finished"),
+            ...request(
+              5,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "paused" },
+              { goal: codexGoal("paused", 10) },
+            ),
+            ...request(
+              6,
+              "turn/interrupt",
+              { threadId: nativeThreadId, turnId: "goal-turn-2" },
+              {},
+            ),
+            ...request(
+              7,
+              "thread/goal/get",
+              { threadId: nativeThreadId },
+              { goal: codexGoal("paused", 10) },
+            ),
+            yield* turnStart(8, "Child finished"),
             ...withReplayRequestId(
               codexReplayPreamble({ nativeThreadId, nativeTurnId: "wake-turn", prompt: "" }).slice(
                 6,
               ),
-              5,
+              8,
             ),
             ...request(
-              6,
+              9,
               "thread/goal/set",
               { threadId: nativeThreadId, status: "active" },
               { goal: codexGoal("active", 10) },
@@ -9954,9 +9979,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer test",
           browserToolsAvailable: true,
-          hasPendingWake: Effect.succeed(true),
+          hasPendingWake: Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(lookupAnswered)),
+            Effect.as(true),
+          ),
         });
         yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "Delegate and wait"));
+        yield* Deferred.await(lookupStarted);
+        yield* Deferred.succeed(lookupAnswered, undefined);
         // Settles without waiting out the continuation grace.
         yield* harness.firstTerminal;
         assert.deepEqual(providerGoals(harness.events), ["active", "paused"]);
@@ -9964,7 +9994,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           harness.terminalEvents().map((event) => event.status),
           ["completed"],
         );
+        yield* harness.until(() => harness.terminalEvents().length === 1);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+              ? [event.providerTurn.ordinal]
+              : [],
+          ),
+          [1],
+        );
 
+        // Inspecting the goal must not cancel its resume on the wake.
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "/goal"));
         yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "Child finished"));
         yield* harness.until(() => providerGoals(harness.events).at(-1) === "active");
       }).pipe(

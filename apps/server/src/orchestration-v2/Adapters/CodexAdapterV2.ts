@@ -6253,21 +6253,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               event.status === "completed" &&
               nativeThreadId != null
             ) {
+              const hasPendingWake = (yield* mcpSessions.read(input.context.input.threadId))
+                ?.hasPendingWake;
+              // Decided under the permit before the hold exists, so no continuation can adopt it first.
+              const waitsForWake = hasPendingWake === undefined ? false : yield* hasPendingWake;
               goalHolds.set(nativeThreadId, {
                 context: input.context,
                 event,
                 completedTurn: input.goalHoldTurn,
                 next: yield* Deferred.make<ActiveCodexTurnContext | undefined>(),
               });
-              const hasPendingWake = (yield* mcpSessions.read(input.context.input.threadId))
-                ?.hasPendingWake;
               // A continuation turn would only report that the delegated task is still running.
-              yield* (hasPendingWake ?? Effect.succeed(false)).pipe(
-                Effect.tap((waitsForWake) =>
-                  waitsForWake ? Effect.void : Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE),
-                ),
-                Effect.flatMap((waitsForWake) =>
-                  pauseUncontinuedGoal(nativeThreadId, event, waitsForWake),
+              const claimed = waitsForWake ? claimGoalHold(nativeThreadId, event) : undefined;
+              if (claimed !== undefined) {
+                yield* pauseClaimedGoal(nativeThreadId, claimed, true).pipe(Effect.forkIn(scope));
+                return;
+              }
+              yield* Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE).pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    const hold = claimGoalHold(nativeThreadId, event);
+                    return hold === undefined
+                      ? Effect.void
+                      : pauseClaimedGoal(nativeThreadId, hold, false);
+                  }),
                 ),
                 Effect.andThen(
                   turnTerminalizationPermit.withPermits(1)(releaseGoalHold(nativeThreadId, event)),
@@ -6283,22 +6292,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         // A goal must not read as active once its run ends. Claiming the hold first
         // makes a turn Codex starts during the pause an orphan, which is stopped.
-        const pauseUncontinuedGoal = Effect.fnUntraced(function* (
-          nativeThreadId: string,
-          expected: CodexRootTerminalEvent,
-          waitsForWake: boolean,
-        ) {
+        const claimGoalHold = (nativeThreadId: string, expected: CodexRootTerminalEvent) => {
           const hold = goalHolds.get(nativeThreadId);
           if (
             hold?.event !== expected ||
             goalStops.has(nativeThreadId) ||
             goalsByNativeThread.get(nativeThreadId)?.status !== "active"
           ) {
-            return;
+            return undefined;
           }
           goalHolds.delete(nativeThreadId);
           // Keeps a turn Codex starts before settlement an orphan once the goal reads paused.
           goalStops.set(nativeThreadId, (goalStops.get(nativeThreadId) ?? 0) + 1);
+          return hold;
+        };
+
+        const pauseClaimedGoal = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          hold: CodexGoalHold,
+          waitsForWake: boolean,
+        ) {
           if (!waitsForWake) {
             yield* Effect.logWarning("orchestration-v2.codex-goal-continuation-expired", {
               nativeThreadId,
@@ -7316,7 +7329,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (command.type === "set") yield* validateCodexGoalObjective(command.objective);
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             rootProviderThreads.set(threadId, turnInput.providerThread);
-            goalsPausedForWake.delete(threadId);
             const readGoal = client
               .request("thread/goal/get", { threadId })
               .pipe(
@@ -7332,6 +7344,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 current === null ? "No goal is set." : describeCodexGoal(current),
               );
             }
+            goalsPausedForWake.delete(threadId);
             if (command.type === "clear") {
               const { cleared } = yield* client.request("thread/goal/clear", { threadId });
               goalsByNativeThread.set(threadId, null);
