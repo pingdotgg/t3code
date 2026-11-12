@@ -164,7 +164,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           appRunOrdinal: 1,
           ref: CheckpointRef.make("checkpoint-ref:captured-1"),
           status: "ready" as const,
-          files: [{ path: "src/b.ts", kind: "modified" as const, additions: 1, deletions: 0 }],
+          files: [],
           capturedAt: now,
         };
 
@@ -337,9 +337,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           );
           if (refLookupFails && capturedEvent?.type === "checkpoint.captured") {
             assert.equal(capturedEvent.payload.status, "ready");
+            assert.deepEqual(capturedEvent.payload.files, []);
           }
-          // The run only answered, so the checkout's changes belong to someone else.
-          assert.deepEqual(capturedEvent?.payload.files, []);
           assert.isUndefined(
             runUpdated.payload.delegatedCompletion,
             "checkpoint capture must omit delegatedCompletion so ProjectionStore can keep a newer cohort",
@@ -863,15 +862,100 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         appRunOrdinal: 1,
         ref: CheckpointRef.make("checkpoint-ref:cancelled-captured-1"),
         status: "ready" as const,
-        files: [{ path: "src/b.ts", kind: "modified" as const, additions: 1, deletions: 0 }],
+        files: ["a", "b", "c", "d", "e"].map((name) => ({
+          path: `src/${name}.ts`,
+          kind: "modified" as const,
+          additions: 1,
+          deletions: 0,
+        })),
         capturedAt: cancelledAt,
       };
+      // Another chat in the same checkout edits files during this run; a delegate of this thread counts as its own.
+      const otherThreadId = ThreadId.make("thread:checkpoint-capture-other-chat");
+      const childThreadId = ThreadId.make("thread:checkpoint-capture-delegate");
+      for (const [id, parentThreadId] of [
+        [otherThreadId, null],
+        [childThreadId, cancelledThreadId],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-cancelled:thread-${id}`),
+          type: "thread.created",
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id,
+            projectId,
+            title: "Same checkout",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId,
+              relationshipToParent: parentThreadId === null ? null : "subagent",
+              rootThreadId: parentThreadId ?? id,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      }
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
-        (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
-          parent_item_id, ordinal, type, status, updated_at, payload_json)
-        VALUES ('cancelled-command', ${cancelledThreadId}, ${cancelledRunId}, ${cancelledRootNodeId},
-          NULL, NULL, NULL, 1, 'command_execution', 'completed', ${DateTime.formatIso(now)}, '{}')`;
+      const earlier = DateTime.formatIso(DateTime.subtract(now, { seconds: 5 }));
+      for (const [runThreadId, editRunId, completedAt] of [
+        [otherThreadId, "run:other-chat", null],
+        [otherThreadId, "run:other-chat-earlier", earlier],
+        [childThreadId, "run:delegate", null],
+      ] as const) {
+        yield* sql`INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at, completed_at, payload_json)
+          VALUES (${editRunId}, ${runThreadId}, ${editRunId.endsWith("earlier") ? 1 : 2}, 'codex', NULL,
+            ${completedAt === null ? "running" : "completed"}, ${earlier}, ${completedAt}, '{}')`;
+      }
+      const edits = [
+        [cancelledThreadId, cancelledRunId, now, { fileName: "/repo/src/c.ts" }],
+        [childThreadId, "run:delegate", now, { fileName: "/repo/src/d.ts" }],
+        [otherThreadId, "run:other-chat", now, { fileName: "/repo/src/b.ts" }],
+        [otherThreadId, "run:other-chat", now, { fileName: "/repo/src/d.ts" }],
+        [otherThreadId, "run:other-chat", now, { fileName: "src/e.ts" }],
+        [
+          otherThreadId,
+          "run:other-chat",
+          now,
+          {
+            fileName: "/elsewhere/src/a.ts",
+            changes: [{ operation: "update", path: "/repo/src/c.ts" }],
+          },
+        ],
+        [
+          otherThreadId,
+          "run:other-chat",
+          DateTime.subtract(now, { seconds: 5 }),
+          {
+            fileName: "/repo/src/a.ts",
+          },
+        ],
+        [otherThreadId, "run:other-chat-earlier", now, { fileName: "/repo/src/a.ts" }],
+      ] as const;
+      for (const [index, [editThreadId, editRunId, updatedAt, payload]] of edits.entries()) {
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json)
+          VALUES (${`edit-${index}`}, ${editThreadId}, ${editRunId}, NULL, NULL, NULL, NULL,
+            ${index}, 'file_change', 'completed', ${DateTime.formatIso(updatedAt)},
+            ${JSON.stringify(payload)})`;
+      }
       const commits = yield* Ref.make(0);
       const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const layerCapture = CheckpointCaptureService.layer.pipe(
@@ -920,7 +1004,10 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       const capturedEvent = (yield* Ref.get(committed)).find(
         (event) => event.type === "checkpoint.captured",
       );
-      assert.deepEqual(capturedEvent?.payload.files, captured.files);
+      assert.deepEqual(
+        capturedEvent?.payload.files.map((file) => file.path),
+        ["src/a.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+      );
       const completedAt = projected.run?.completedAt;
       assert.equal(
         completedAt ? DateTime.formatIso(completedAt) : completedAt,

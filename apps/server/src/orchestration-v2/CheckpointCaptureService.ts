@@ -72,7 +72,7 @@ export const layer: Layer.Layer<
         providerThread,
         preservedCheckpointOrdinals,
         sideChat,
-        runCanWriteFiles,
+        editedPaths,
       } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
@@ -134,10 +134,23 @@ export const layer: Layer.Layer<
         capturedAt,
         forceMissing: sideChat,
       });
-      // The ref still snapshots the whole checkout so rewind restores it.
-      const checkpoint = runCanWriteFiles
-        ? capturedCheckpoint
-        : { ...capturedCheckpoint, files: [] };
+      // The diff spans the whole checkout; another chat sharing it may have made some of it.
+      const checkpoint = {
+        ...capturedCheckpoint,
+        files: capturedCheckpoint.files.filter(
+          (file) =>
+            !editedPaths.others.some((path) =>
+              namesCheckoutFile(path, {
+                cwd: scope.cwd,
+                filePath: file.path,
+                trustRelative: false,
+              }),
+            ) ||
+            editedPaths.own.some((path) =>
+              namesCheckoutFile(path, { cwd: scope.cwd, filePath: file.path, trustRelative: true }),
+            ),
+        ),
+      };
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
@@ -258,6 +271,23 @@ export const layer: Layer.Layer<
     });
   }),
 );
+
+// Absolute paths name a file in this checkout only under the checkout's repository root.
+// A relative path's base is unknown, so it is trusted only for this thread's own edits.
+function namesCheckoutFile(
+  editedPath: string,
+  input: { readonly cwd: string; readonly filePath: string; readonly trustRelative: boolean },
+): boolean {
+  const edited = editedPath.replaceAll("\\", "/");
+  const { filePath } = input;
+  if (!edited.startsWith("/") && !/^[A-Za-z]:\//.test(edited)) {
+    return input.trustRelative && (edited === filePath || filePath.endsWith(`/${edited}`));
+  }
+  if (!edited.endsWith(`/${filePath}`)) return false;
+  const root = edited.slice(0, edited.length - filePath.length - 1);
+  const checkout = input.cwd.replaceAll("\\", "/");
+  return checkout === root || checkout.startsWith(`${root}/`);
+}
 
 function makeCheckpointTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
