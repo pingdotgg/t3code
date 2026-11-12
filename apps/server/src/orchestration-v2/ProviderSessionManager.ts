@@ -941,7 +941,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
-            Effect.exit(flushInstructionInvalidations(input.entry)),
+            Effect.exit(flushInstructionInvalidations(input.entry, input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
@@ -2245,7 +2245,11 @@ export const layerWithOptions = (
 
       const persistInstructionInvalidation = Effect.fn(
         "ProviderSessionManager.persistInstructionInvalidation",
-      )(function* (entry: LiveSessionEntry, offered: OrchestrationV2ProviderThread) {
+      )(function* (
+        entry: LiveSessionEntry,
+        offered: OrchestrationV2ProviderThread,
+        detachedThreadId?: ThreadId,
+      ) {
         const threadId = offered.appThreadId;
         if (threadId === null || offered.nativeMetadata?.acpInstructions !== null) return;
         // Idle updates outlive run subscribers; invalidate only the receipt, not newer thread state.
@@ -2255,7 +2259,12 @@ export const layerWithOptions = (
             sessionKey(entry.runtime.providerSessionId),
           );
           if (current !== undefined && current.runtime !== entry.runtime) return true;
-          if (!(current?.attachedThreadIds ?? entry.attachedThreadIds).has(threadId)) return true;
+          if (
+            !(current?.attachedThreadIds ?? entry.attachedThreadIds).has(threadId) &&
+            (current !== undefined || detachedThreadId !== threadId)
+          ) {
+            return true;
+          }
           const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
           const stored = projection.providerThreads.find(
             (candidate) => candidate.id === offered.id,
@@ -2291,10 +2300,27 @@ export const layerWithOptions = (
         );
       });
 
-      const flushInstructionInvalidations = (entry: LiveSessionEntry) =>
-        Effect.forEach([...entry.instructionInvalidations.values()], (offered) =>
-          Effect.exit(persistInstructionInvalidation(entry, offered)),
+      const flushInstructionInvalidations = Effect.fn(
+        "ProviderSessionManager.flushInstructionInvalidations",
+      )(function* (entry: LiveSessionEntry, release?: { readonly detachedThreadId?: ThreadId }) {
+        if (release !== undefined && entry.runtime.readInstructionInvalidations !== undefined) {
+          // The adapter can have invalidated a receipt before the event pump saw the update.
+          yield* entry.runtime.readInstructionInvalidations.pipe(
+            Effect.tap((invalidations) =>
+              Effect.sync(() => {
+                entry.instructionInvalidations.clear();
+                for (const invalidation of invalidations) {
+                  entry.instructionInvalidations.set(invalidation.id, invalidation);
+                }
+              }),
+            ),
+            entry.requestEventPermit.withPermits(1),
+          );
+        }
+        return yield* Effect.forEach([...entry.instructionInvalidations.values()], (offered) =>
+          Effect.exit(persistInstructionInvalidation(entry, offered, release?.detachedThreadId)),
         ).pipe(Effect.flatMap(Exit.asVoidAll));
+      });
 
       const makeRetryStallWatch = (entry: LiveSessionEntry) => {
         const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();

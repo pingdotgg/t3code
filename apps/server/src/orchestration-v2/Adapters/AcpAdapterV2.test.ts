@@ -826,12 +826,14 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
           status: "completed",
         },
       });
+      const pendingInvalidations = yield* session.runtime.readInstructionInvalidations!;
       const updated = yield* session.runtime.events.pipe(
         Stream.filter((event) => event.type === "provider_thread.updated"),
         Stream.runHead,
       );
       providerThread = Option.getOrThrow(updated).providerThread;
       assert.isNull(providerThread.nativeMetadata?.acpInstructions);
+      assert.deepEqual(pendingInvalidations, [providerThread]);
       yield* resume();
     }
     const { runtime } = session;

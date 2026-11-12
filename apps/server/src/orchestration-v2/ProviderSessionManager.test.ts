@@ -433,6 +433,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
     readonly failEventStream?: boolean;
+    readonly readInstructionInvalidations?: Effect.Effect<
+      ReadonlyArray<OrchestrationV2ProviderThread>
+    >;
     readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
     readonly extensionStatuses?: OrchestrationV2ProviderSession["extensionStatuses"];
@@ -520,6 +523,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           instanceId: ProviderInstanceId.make("codex"),
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
+          ...(options.readInstructionInvalidations === undefined
+            ? {}
+            : { readInstructionInvalidations: options.readInstructionInvalidations }),
           ...(options.normalizeThreadLoadModelSelection === undefined
             ? {}
             : { normalizeThreadLoadModelSelection: options.normalizeThreadLoadModelSelection }),
@@ -605,6 +611,9 @@ function layerTest(input: {
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void, EventSink.EventSinkWriteError>>;
+  readonly readInstructionInvalidations?: Effect.Effect<
+    ReadonlyArray<OrchestrationV2ProviderThread>
+  >;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -635,6 +644,9 @@ function layerTest(input: {
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
+      ...(input.readInstructionInvalidations === undefined
+        ? {}
+        : { readInstructionInvalidations: input.readInstructionInvalidations }),
       ...(input.normalizeThreadLoadModelSelection === undefined
         ? {}
         : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
@@ -3782,6 +3794,8 @@ it.effect.each([
   "failed-event",
   "release-after-failed-event",
   "retry-after-failed-release",
+  "detach-after-failed-event",
+  "release-before-event",
   "newer-run",
   "newer-session",
 ] as const)(
@@ -3792,6 +3806,9 @@ it.effect.each([
       const beforeUnchangedWrite = yield* Ref.make<
         Effect.Effect<void, EventSink.EventSinkWriteError>
       >(Effect.void);
+      const adapterInvalidations = yield* Ref.make<ReadonlyArray<OrchestrationV2ProviderThread>>(
+        [],
+      );
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3842,6 +3859,18 @@ it.effect.each([
           modelSelection,
           runtimePolicy,
         });
+        const invalidation = {
+          ...providerThread,
+          nativeMetadata: { title: "stale title", acpInstructions: null },
+        };
+        if (owner === "release-before-event") {
+          // The adapter has recorded compaction, but the event pump has not seen it.
+          yield* Ref.set(adapterInvalidations, [invalidation]);
+          yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+          const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+          assert.isNull(projection.providerThreads[0]?.nativeMetadata?.acpInstructions);
+          return;
+        }
         const subscription = yield* runtime.subscribeEvents!;
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(queue);
@@ -3849,17 +3878,15 @@ it.effect.each([
         if (
           owner === "failed-event" ||
           owner === "release-after-failed-event" ||
-          owner === "retry-after-failed-release"
+          owner === "retry-after-failed-release" ||
+          owner === "detach-after-failed-event"
         ) {
           yield* Ref.set(beforeUnchangedWrite, failedWrite);
         }
         yield* Queue.offer(queue!, {
           type: "provider_thread.updated",
           driver: CODEX_DRIVER,
-          providerThread: {
-            ...providerThread,
-            nativeMetadata: { title: "stale title", acpInstructions: null },
-          },
+          providerThread: invalidation,
         });
         const completionEventId = yield* idAllocator.allocate.event({
           threadId,
@@ -3923,9 +3950,13 @@ it.effect.each([
                 yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
               if (
                 owner === "release-after-failed-event" ||
-                owner === "retry-after-failed-release"
+                owner === "retry-after-failed-release" ||
+                owner === "detach-after-failed-event"
               ) {
-                const release = manager.release({ providerSessionId, reason: "manual_shutdown" });
+                const release =
+                  owner === "detach-after-failed-event"
+                    ? manager.detach({ providerSessionId, threadId })
+                    : manager.release({ providerSessionId, reason: "manual_shutdown" });
                 if (owner === "retry-after-failed-release") {
                   yield* Ref.set(beforeUnchangedWrite, failedWrite);
                   assert.isTrue(Exit.isFailure(yield* Effect.exit(release)));
@@ -3995,7 +4026,8 @@ it.effect.each([
             owner === "failed-close" ||
             owner === "failed-event" ||
             owner === "release-after-failed-event" ||
-            owner === "retry-after-failed-release"
+            owner === "retry-after-failed-release" ||
+            owner === "detach-after-failed-event"
             ? {
                 ...before,
                 nativeMetadata: {
@@ -4006,7 +4038,21 @@ it.effect.each([
               }
             : before,
         );
-      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnchangedWrite })));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            beforeUnchangedWrite,
+            ...(owner === "detach-after-failed-event"
+              ? { capabilities: ExclusiveCapabilities }
+              : {}),
+            ...(owner === "release-before-event"
+              ? { readInstructionInvalidations: Ref.get(adapterInvalidations) }
+              : {}),
+          }),
+        ),
+      );
     }),
 );
 

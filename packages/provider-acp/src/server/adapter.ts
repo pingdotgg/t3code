@@ -8747,6 +8747,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           providerSession,
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          readInstructionInvalidations: Ref.get(providerThreadByNativeSessionId).pipe(
+            Effect.map((threads) =>
+              [...threads.values()].filter(
+                (thread) => thread.nativeMetadata?.acpInstructions === null,
+              ),
+            ),
+          ),
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {
