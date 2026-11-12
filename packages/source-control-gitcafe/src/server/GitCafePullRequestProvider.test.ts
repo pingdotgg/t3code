@@ -1103,6 +1103,8 @@ describe("GitCafePullRequestProvider", () => {
       const detail = yield* provider.getChangeRequest(target);
       assert.strictEqual(detail.state, "merged");
       assert.strictEqual(detail.mergedAt, mergedAt);
+      const preview = yield* provider.getChangeRequestPreview!(target);
+      assert.strictEqual(preview.state, "merged");
     }).pipe(Effect.provide(server.layer));
   });
 
