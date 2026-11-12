@@ -169,6 +169,40 @@ describe("createThreadRowProviderInstanceResolver", () => {
       registry.dispose();
     }
   });
+
+  it("badges ACP Registry threads only when they share an agent", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const agents = { devin: "devin", devin_work: "devin", mistral: "mistral-vibe" };
+    const config = {
+      ...makeConfig(
+        Object.keys(agents).map((instanceId) => ({ instanceId, driver: "acpRegistry" })),
+      ),
+      settings: {
+        providerInstances: Object.fromEntries(
+          Object.entries(agents).map(([instanceId, agentId]) => [
+            instanceId,
+            { driver: "acpRegistry", config: { source: "registry", agentId } },
+          ]),
+        ),
+      },
+    } as unknown as ServerConfig;
+    const environments = createThreadListEnvironmentsAtom(
+      Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(new Map([[environmentId, config]])),
+      Atom.make([environmentId]),
+    );
+    const registry = AtomRegistry.make();
+    registry.mount(environments);
+    try {
+      const resolve = createThreadRowProviderInstanceResolver(
+        registry.get(environments).providersByEnvironmentId,
+      );
+      expect(resolve(makeThread(environmentId, "devin"))?.showBadge).toBe(true);
+      expect(resolve(makeThread(environmentId, "devin_work"))?.showBadge).toBe(true);
+      expect(resolve(makeThread(environmentId, "mistral"))?.showBadge).toBe(false);
+    } finally {
+      registry.dispose();
+    }
+  });
 });
 
 describe("thread list reorder availability", () => {
