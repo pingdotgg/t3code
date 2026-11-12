@@ -605,6 +605,28 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
+  it.effect("sends a user-named $skill as a Muse skill part so user-only skills run", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const input = yield* turnInput(harness.providerThread);
+      yield* harness.runtime.startTurn({
+        ...input,
+        message: { ...input.message, text: "$wait-what check the parser" },
+      });
+      const turnStart = yield* fake.takeCall("turn/start");
+      const parts = turnStart.params.input as ReadonlyArray<{
+        type: string;
+        selector?: string;
+        arguments?: string;
+      }>;
+      assert.deepInclude(
+        parts.filter((part) => part.type === "skill"),
+        { type: "skill", selector: "wait-what", arguments: "check the parser" },
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
