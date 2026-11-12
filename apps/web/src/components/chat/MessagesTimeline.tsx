@@ -1185,6 +1185,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       level={screenReaderAnnouncements}
       entries={screenReaderAnnouncements === "status" ? EMPTY_TIMELINE_ENTRIES : timelineEntries}
       workspaceRoot={workspaceRoot}
+      ignoredCommandPrefixes={ignoredCommandPrefixes}
     />
   );
   const listHeaderLeadingContent =

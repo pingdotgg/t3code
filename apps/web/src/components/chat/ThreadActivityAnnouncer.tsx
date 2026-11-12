@@ -51,6 +51,7 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
   level,
   entries,
   workspaceRoot,
+  ignoredCommandPrefixes,
 }: ThreadActivitySnapshot & {
   /** Null while the timeline shows another thread during a switch. */
   readonly threadKey: string | null;
@@ -60,6 +61,7 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
   /** The thread's entries before any are hidden; unread at the "status" level. */
   readonly entries: ReadonlyArray<TimelineEntry>;
   readonly workspaceRoot: string | undefined;
+  readonly ignoredCommandPrefixes: ReadonlyArray<string>;
 }) {
   const { regionRef, announce, clear } = useLiveRegion();
   const {
@@ -121,7 +123,12 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
     const detail = nextTurnDetailAnnouncement(previousDetail, {
       ...(level === "status"
         ? NO_TURN_DETAIL
-        : turnDetail(entries, workspaceRoot, previousDetail?.tailId ?? null)),
+        : turnDetail(
+            entries,
+            workspaceRoot,
+            previousDetail?.tailId ?? null,
+            ignoredCommandPrefixes,
+          )),
       level,
       status,
     });
@@ -172,6 +179,7 @@ export const ThreadActivityAnnouncer = memo(function ThreadActivityAnnouncer({
     level,
     entries,
     workspaceRoot,
+    ignoredCommandPrefixes,
     announce,
     clear,
     announceDetail,
