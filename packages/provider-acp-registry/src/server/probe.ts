@@ -10,9 +10,11 @@ import {
   type ProviderInstanceId,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import {
 } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { usageStatsToUsageLimits } from "./usageStats.ts";
 
 const MAX_AUTH_METHODS = 32;
 const MAX_MODELS = 256;
@@ -46,6 +49,8 @@ const MAX_COMMAND_LINE_LENGTH = 2_048;
 const PROBE_TIMEOUT_MS = 60_000;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
+/** Bound the optional `account/usage_stats` pull so agents without it never delay the probe. */
+const USAGE_STATS_TIMEOUT = "5 seconds";
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -315,6 +320,8 @@ export interface AcpRegistryConfigurationProbeResult {
   readonly probe: AcpRegistryProbeResult;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /** Present when the agent answered an `account/usage_stats` pull during the probe. */
+  readonly usageLimits?: ServerProviderUsageLimits;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
@@ -445,7 +452,21 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       yield* Deferred.await(commandsAdvertised).pipe(
         Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
       );
-      return { resolved, started, commands: yield* Ref.get(commandsRef) };
+      // Account-level quota pull (zcode-acp exposes `account/usage_stats` right
+      // after initialize). Agents without the method fail here in one round trip;
+      // either way the answer never blocks or fails the probe itself.
+      const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
+      const usageLimits = yield* runtime.request("account/usage_stats", {}).pipe(
+        Effect.timeoutOption(USAGE_STATS_TIMEOUT),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.undefined,
+            onSome: (payload) => Effect.succeed(usageStatsToUsageLimits(payload, usageCheckedAt)),
+          }),
+        ),
+        Effect.catch(() => Effect.undefined),
+      );
+      return { resolved, started, commands: yield* Ref.get(commandsRef), usageLimits };
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
@@ -474,6 +495,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
+      ...(result.usageLimits ? { usageLimits: result.usageLimits } : {}),
     };
   },
 );
