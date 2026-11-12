@@ -32,6 +32,9 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+const BAD_GATEWAY_ERROR = errorPayload(
+  "model unreachable: Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: 502 Bad Gateway, Details: []",
+);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -89,6 +92,19 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T01:00:00.000Z",
+        },
+      );
+      assert.deepEqual(
+        yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, BAD_GATEWAY_ERROR],
+        ]),
+        {
+          class: "provider_error",
+          message: "Bad Gateway: Failed to connect to backend API",
+          code: "502 Bad Gateway",
+          retryable: true,
+          resetAt: null,
         },
       );
       // The earlier error step is outside this turn.
