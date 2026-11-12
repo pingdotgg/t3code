@@ -33,8 +33,17 @@ function subscribeHomeVisibility(onChange: () => void) {
   };
 }
 
+let onHomeCovered: (() => void) | null = null;
+
+/** Runs `action` once the page opening over Home covers it; Home starting to reappear first drops it. */
+export function runWhenHomeCovered(action: () => void): void {
+  onHomeCovered = action;
+}
+
 export function recordHomeTransitionStart(closing: boolean): void {
-  if (!closing) setHomeVisible(true);
+  if (closing) return;
+  onHomeCovered = null;
+  setHomeVisible(true);
 }
 
 /**
@@ -42,7 +51,11 @@ export function recordHomeTransitionStart(closing: boolean): void {
  * disappears last. So a disappear hides Home only when another route has the focus.
  */
 export function recordHomeTransitionEnd(closing: boolean, homeFocused: boolean): void {
-  if (closing && !homeFocused) setHomeVisible(false);
+  if (!closing || homeFocused) return;
+  setHomeVisible(false);
+  const action = onHomeCovered;
+  onHomeCovered = null;
+  action?.();
 }
 
 /** Popping a sheet or a deep-linked route above Home has no appear event. */
