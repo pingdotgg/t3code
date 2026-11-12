@@ -23,7 +23,7 @@ import {
   deriveProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../providerInstances";
-import { useThreadShells } from "../state/entities";
+import { useVisibleThreadShells } from "../state/entities";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -99,7 +99,7 @@ export function useCommandPaletteThreadItems(input: {
 }) {
   const { activeThread, threadSearchQuery } = input;
   const navigate = useNavigate();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);
@@ -164,6 +164,7 @@ export function useCommandPaletteThreadItems(input: {
       const isOpen =
         activeThread?.environmentId === thread.environmentId && activeThread.id === thread.id;
       if (threadSearchQuery.trim().length > 0 && !threadSearchQuery.startsWith(">") && !isOpen) {
+        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         claimThreadOpen(thread.environmentId, thread.id, Date.now());
       }
       if (

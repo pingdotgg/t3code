@@ -4,8 +4,9 @@ import {
   capitalizedIdentifierColor,
   errorAnnotations,
 } from "./plugins/expresssive-code.ts";
+import { previewInstallUrls } from "./plugins/preview-install.ts";
 
 export default defineEcConfig({
   themes: [alchemyWalnutTheme],
-  plugins: [errorAnnotations(), capitalizedIdentifierColor()],
+  plugins: [errorAnnotations(), capitalizedIdentifierColor(), previewInstallUrls()],
 });

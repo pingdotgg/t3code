@@ -2,6 +2,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { resolveMobileMarkdownMediaSource } from "../../lib/markdownMediaSource";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
+import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { useState } from "react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { RefreshControl, ScrollView, View } from "react-native";
@@ -22,8 +23,8 @@ import {
   resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import { AppText as Text } from "../../components/ui/AppText";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
@@ -235,7 +236,7 @@ export function FileMarkdownPreview(props: {
     >
       <View className="mx-auto w-full max-w-[760px]">
         <SelectableMarkdownText
-          markdown={props.markdown}
+          markdown={maskMarkdownFrontmatter(props.markdown)}
           fileEmbedLabel={(href) =>
             markdownFileEmbedLabel(
               href,

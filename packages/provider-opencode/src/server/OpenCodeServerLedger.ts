@@ -144,8 +144,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         Effect.orElseSucceed(() => undefined),
       );
     }
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - Missing process observations are undefined, not void.
-    return Effect.succeed(undefined);
+    return Effect.undefined;
   };
 
   const observeGroup = (pgid: number): Effect.Effect<ReadonlyArray<ObservedProcess>> => {
@@ -307,5 +306,9 @@ export const layer = (input: { readonly stateDir: string }) =>
 
 export const layerTest = Layer.succeed(
   OpenCodeServerLedger,
-  OpenCodeServerLedger.of({ track: () => Effect.succeed(Effect.void) }),
+  OpenCodeServerLedger.of({
+    track: Effect.fn("OpenCodeServerLedger.track")(function () {
+      return Effect.succeed(Effect.void);
+    }),
+  }),
 );

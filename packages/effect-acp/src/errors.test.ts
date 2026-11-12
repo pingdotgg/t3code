@@ -126,14 +126,17 @@ describe("effect-acp errors", () => {
   it.effect("summarizes schema issues by path without payload values", () =>
     Effect.gen(function* () {
       const secret = "acp-summary-secret";
-      const cause = yield* Schema.decodeUnknownEffect(
+      const decodeStruct = Schema.decodeUnknownEffect(
         Schema.Struct({
           update: Schema.Struct({ used: Schema.Number, size: Schema.Number }),
           env: Schema.Record(Schema.String, Schema.Number),
         }),
-      )({ update: { size: secret }, env: { [`${secret} key`]: secret } }, { errors: "all" }).pipe(
-        Effect.flip,
       );
+
+      const cause = yield* decodeStruct(
+        { update: { size: secret }, env: { [`${secret} key`]: secret } },
+        { errors: "all" },
+      ).pipe(Effect.flip);
       const error = AcpError.AcpProtocolParseError.fromSchemaError(
         "decode-notification-payload",
         "session/update",

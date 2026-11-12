@@ -112,6 +112,11 @@ function armDeadline(entry: DeadlineEntry, deadlineMs: number) {
   entry.timer = setTimeout(() => armDeadline(entry, deadlineMs), Math.min(delay, MAX_TIMEOUT_MS));
 }
 
+/** The epoch-ms deadline `delayMs` from now, for `deadlineStore`. */
+export function deadlineAfter(delayMs: number): number {
+  return Date.now() + delayMs;
+}
+
 /**
  * Whether `Date.now()` has reached `deadlineMs`. One timer per distinct
  * deadline, shared by its subscribers; once passed the snapshot stays true.

@@ -167,7 +167,10 @@ const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
     return new Response(null, { status: 404 });
   }
 
-  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  // Assign the path so leading slashes cannot replace the configured host.
+  const targetUrl = new URL(targetOrigin);
+  targetUrl.pathname = requestUrl.pathname;
+  targetUrl.search = requestUrl.search;
   const headers = new Headers(request.headers);
   const headersToRemove: string[] = [];
   for (const name of headers.keys()) {
@@ -213,9 +216,7 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405 });
   }
-  const pathname = yield* Effect.try(() => decodeURIComponent(url.pathname)).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+  const pathname = Option.getOrNull(Option.liftThrowable(decodeURIComponent)(url.pathname));
   if (pathname === null || pathname.includes("\0")) return new Response(null, { status: 400 });
   const root = path.resolve(assetDirectory);
   const assetPath = path.resolve(root, `.${pathname}`);
