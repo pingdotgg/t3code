@@ -7,13 +7,13 @@ import { runMigrations } from "../Migrations.ts";
 
 const at = "2026-10-01T00:00:00.000Z";
 
-it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("083_RunItemCounts", (it) => {
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("084_RunItemCounts", (it) => {
   it.effect(
     "counts the existing items per run, marking rolled-back and missing runs uncounted",
     () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 82 });
+        yield* runMigrations({ toMigrationInclusive: 83 });
         const insertItem = (id: string, threadId: string, runId: string | null) => sql`
         INSERT INTO orchestration_v2_projection_turn_items (
           turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json
@@ -32,8 +32,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("083_RunItemCounts", 
         yield* insertItem("a4", "thread:a", null);
         yield* insertItem("b1", "thread:b", "run:3");
 
-        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 83 }), [
-          [83, "RunItemCounts"],
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 84 }), [
+          [84, "RunItemCounts"],
         ]);
         assert.deepEqual(
           yield* sql`
