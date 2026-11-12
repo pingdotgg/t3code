@@ -264,7 +264,7 @@ function NoticeCard({
           </span>
         ) : null}
         {overflow || item.onDismiss ? (
-          <ComposerBanner.Actions className="h-lh flex-nowrap @min-[480px]:h-auto">
+          <ComposerBanner.Actions className="h-lh flex-nowrap @min-[480px]:-ms-0.5 @min-[480px]:h-auto">
             {overflow}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
