@@ -5,6 +5,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useSelectThreadShellsForProjectRefs } from "../../state/entities";
 import { vcsEnvironment } from "../../state/vcs";
 import {
+  deriveLocalBranchNameFromRemoteRef,
   findRunningThreadTitle,
   resolveWorkspaceModeFolder,
   resolveWorkspaceModeNotice,
@@ -28,17 +29,22 @@ export function useWorkspaceModeNoticeBanner(input: {
 }): ComposerBannerStackItem | null {
   const { projectRoot, branch, mode } = input;
   const lookupBranch = input.enabled && mode === "open" && projectRoot !== null && branch !== null;
+  // The server opens the local branch for a remote ref, so look that one up.
+  const localBranch = branch === null ? null : deriveLocalBranchNameFromRemoteRef(branch);
   const branchRefQuery = useEnvironmentQuery(
-    lookupBranch
+    lookupBranch && localBranch !== null
       ? vcsEnvironment.listRefs({
           environmentId: input.environmentId,
-          input: { cwd: projectRoot, query: branch, limit: 10 },
+          // Only local names containing this one can come first, so one page holds it in practice.
+          input: { cwd: projectRoot, refKind: "local", query: localBranch, limit: 100 },
         })
       : null,
   );
-  const branchWorktreePath =
-    branchRefQuery.data?.refs.find((ref) => ref.name === branch && ref.isRemote !== true)
-      ?.worktreePath ?? null;
+  const localRefs = branchRefQuery.data?.refs ?? [];
+  const branchRef =
+    localRefs.find((ref) => ref.name === branch) ??
+    localRefs.find((ref) => ref.name === localBranch);
+  const branchWorktreePath = branchRef?.worktreePath ?? null;
   const folder =
     input.enabled && projectRoot !== null
       ? resolveWorkspaceModeFolder({ mode, projectRoot, branchWorktreePath })
@@ -58,7 +64,7 @@ export function useWorkspaceModeNoticeBanner(input: {
   if (!input.enabled || projectRoot === null) return null;
   const notice = resolveWorkspaceModeNotice({
     mode,
-    branch,
+    branch: branchRef?.name ?? branch,
     branchWorktreePath,
     projectRoot,
     runningThreadTitle,
