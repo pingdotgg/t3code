@@ -592,7 +592,7 @@ const layerThreadSettlementWorker = Layer.effectDiscard(
 
 const layerIdleCompactionWorker = Layer.effectDiscard(
   IdleCompactionService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(Layer.provide(ProjectionStoreV2.layer));
+).pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)));
 
 const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),

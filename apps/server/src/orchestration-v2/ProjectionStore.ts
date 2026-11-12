@@ -555,6 +555,13 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
   >;
+  /** Active threads whose latest run completed at or after the cutoff. */
+  readonly listIdleCompactionCandidates: (query: {
+    readonly completedAfter: DateTime.Utc;
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
+    ProjectionStoreV2Error
+  >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
@@ -8501,6 +8508,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError(shellSnapshotReadError),
     );
 
+    const listIdleCompactionCandidates = Effect.fn("ProjectionStore.listIdleCompactionCandidates")(
+      function* ({ completedAfter }: { readonly completedAfter: DateTime.Utc }) {
+        const rows = yield* sql<{ readonly thread_id: string; readonly run_id: string }>`
+        SELECT run.thread_id, run.run_id
+        FROM orchestration_v2_projection_threads thread
+        -- CROSS JOIN keeps threads outermost; the planner otherwise scans every run row.
+        CROSS JOIN orchestration_v2_projection_runs run
+        WHERE thread.deleted_at IS NULL
+          AND thread.archived_at IS NULL
+          AND run.thread_id = thread.thread_id
+          AND run.ordinal = (
+            SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
+            WHERE latest.thread_id = thread.thread_id
+              -- A removed or steered queued message leaves a cancelled run that never started.
+              AND (
+                latest.status <> 'cancelled'
+                OR json_extract(latest.payload_json, '$.startedAt') IS NOT NULL
+              )
+          )
+          AND run.status = 'completed'
+          AND run.completed_at >= ${DateTime.formatIso(completedAfter)}
+      `;
+        return rows.map((row) => ({
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+        }));
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
+
     const countThreads = Effect.fn("ProjectionStore.countThreads")(function* () {
       const rows = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
@@ -8793,6 +8830,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getShellSnapshot: readOnReader(getShellSnapshot),
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
+      listIdleCompactionCandidates: readOnReader(listIdleCompactionCandidates),
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       readShellSnapshot: readOnReader(readShellSnapshot),

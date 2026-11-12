@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   MessageId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   NodeId,
   ProjectId,
@@ -16,12 +17,15 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as EventSink from "./EventSink.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -192,6 +196,12 @@ describe("idleCompactionWindow", () => {
   });
 });
 
+const eventSinkStreaming = (events: Stream.Stream<OrchestrationV2DomainEvent>) =>
+  Layer.mock(EventSink.EventSinkV2)({
+    latestSequence: () => Effect.succeed(0),
+    stream: () => events.pipe(Stream.map((event) => ({ sequence: 1, commandId: null, event }))),
+  });
+
 describe("IdleCompactionService", () => {
   it.effect.each([
     { mode: "onReturn", reads: 0 },
@@ -266,8 +276,8 @@ describe("IdleCompactionService", () => {
             },
           });
           const dependencies = Layer.mergeAll(
-            Layer.mock(Orchestrator.OrchestratorV2)({
-              streamDomainEvents: Stream.make({
+            eventSinkStreaming(
+              Stream.make({
                 id: EventId.make("idle-completed"),
                 type: "run.updated",
                 threadId,
@@ -275,6 +285,8 @@ describe("IdleCompactionService", () => {
                 occurredAt: at(),
                 payload: data.runs[0]!,
               }),
+            ),
+            Layer.mock(Orchestrator.OrchestratorV2)({
               dispatch: () =>
                 Effect.sync(() => {
                   dispatches++;
@@ -288,6 +300,7 @@ describe("IdleCompactionService", () => {
                   historyReads++;
                   return data;
                 }),
+              listIdleCompactionCandidates: () => Effect.succeed([]),
             }),
             Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: Effect.succeed({
@@ -377,11 +390,13 @@ describe("IdleCompactionService", () => {
         const dispatched: Array<string> = [];
         const streamDone = yield* Deferred.make<void>();
         const dependencies = Layer.mergeAll(
-          Layer.mock(Orchestrator.OrchestratorV2)({
-            // A delegated completion on the earlier run lands after the later run completed.
-            streamDomainEvents: Stream.make(completed(laterRun), completed(earlierRun)).pipe(
+          // A delegated completion on the earlier run lands after the later run completed.
+          eventSinkStreaming(
+            Stream.make(completed(laterRun), completed(earlierRun)).pipe(
               Stream.ensuring(Deferred.succeed(streamDone, undefined)),
             ),
+          ),
+          Layer.mock(Orchestrator.OrchestratorV2)({
             dispatch: (command) =>
               Effect.sync(() => {
                 dispatched.push(command.commandId);
@@ -399,6 +414,7 @@ describe("IdleCompactionService", () => {
                     (message.runId !== null && options.messageRunIds.includes(message.runId)),
                 ),
               }),
+            listIdleCompactionCandidates: () => Effect.succeed([]),
           }),
           Layer.mock(ServerSettings.ServerSettingsService)({
             getSettings: Effect.succeed({
@@ -414,6 +430,66 @@ describe("IdleCompactionService", () => {
           yield* TestClock.adjust(9 * MINUTE_MS);
         }).pipe(Effect.provide(dependencies));
         expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-2"]);
+      }),
+    ),
+  );
+
+  it.effect("compacts a thread that went idle before the server restarted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const base = records({ cacheExpiresInMs: 30 * MINUTE_MS });
+        const data: OrchestrationV2ThreadProjection = {
+          ...base,
+          attempts: [],
+          nodes: [],
+          subagents: [],
+          providerSessions: [],
+          plans: [],
+          checkpointScopes: [],
+          checkpoints: [],
+          contextHandoffs: [],
+          visibleTurnItems: [],
+          updatedAt: at(),
+        };
+        const dispatched = yield* Deferred.make<ReadonlyArray<string>>();
+        const commandIds: Array<string> = [];
+        const dependencies = Layer.mergeAll(
+          // The run completed before the restart, so no run.updated event arrives.
+          eventSinkStreaming(Stream.never),
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commandIds.push(command.commandId);
+                Deferred.doneUnsafe(dispatched, Effect.succeed(commandIds));
+                return { sequence: 1, storedEvents: [] };
+              }),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(data.thread),
+            getThreadRecords: () => Effect.succeed(data),
+            listIdleCompactionCandidates: () => Effect.succeed([{ threadId, runId }]),
+          }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              idleCompaction: "beforeCacheExpires",
+            }),
+          }),
+        );
+        const result = yield* Effect.gen(function* () {
+          const service = yield* IdleCompactionService.make;
+          yield* service.start();
+          const waiter = yield* Deferred.await(dispatched).pipe(
+            Effect.timeoutOption("1 hour"),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("1 hour");
+          return yield* Fiber.join(waiter);
+        }).pipe(Effect.provide(dependencies));
+        expect(Option.getOrElse(result, () => [])).toEqual([
+          `server:idle-compact:${threadId}:${runId}`,
+        ]);
       }),
     ),
   );

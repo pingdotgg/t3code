@@ -15,19 +15,20 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow } from "./IdleCompaction.ts";
+import { idleCompactionWindow, MAX_PROMPT_CACHE_TTL } from "./IdleCompaction.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
  * Beta: when a run completes on a Claude instance set to compact before the
  * cache expires, waits until shortly before its prompt cache expires and sends
- * `/compact` as a visible T3 Code turn. Timers live in
- * memory, so a server restart skips compactions that were still waiting.
+ * `/compact` as a visible T3 Code turn. On start it re-arms runs that completed before a restart.
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
@@ -131,11 +132,41 @@ export const make = Effect.gen(function* () {
   const start = Effect.fn("IdleCompactionService.start")(function* () {
     // Keyed by thread: a newer completed run replaces the waiting timer.
     const timers = yield* FiberMap.make<ThreadId>();
+    // Events after this sequence come from the stream; earlier ones are already in the projections the scan reads.
+    const afterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
+    const rearm = Effect.fn("IdleCompactionService.rearm")(
+      function* () {
+        const completedAfter = DateTime.subtractDuration(yield* DateTime.now, MAX_PROMPT_CACHE_TTL);
+        const candidates = yield* projections.listIdleCompactionCandidates({ completedAfter });
+        yield* Effect.forEach(
+          candidates,
+          ({ threadId, runId }) =>
+            // A timer armed by a live event is newer than the scan.
+            FiberMap.run(timers, threadId, compactWhenDue(threadId, runId), {
+              onlyIfMissing: true,
+            }),
+          { discard: true },
+        );
+      },
+      Effect.catch((cause) => Effect.logWarning("idle compaction rearm skipped", { cause })),
+    );
     yield* forkParked(
-      Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-        event.type === "run.updated" && event.payload.status === "completed"
-          ? FiberMap.run(timers, event.threadId, compactWhenDue(event.threadId, event.payload.id))
-          : Effect.void,
+      Effect.all(
+        [
+          Stream.runForEach(
+            eventSink.stream({ afterSequence, eventType: "run.updated" }),
+            ({ event }) =>
+              event.type === "run.updated" && event.payload.status === "completed"
+                ? FiberMap.run(
+                    timers,
+                    event.threadId,
+                    compactWhenDue(event.threadId, event.payload.id),
+                  )
+                : Effect.void,
+          ),
+          rearm(),
+        ],
+        { concurrency: "unbounded", discard: true },
       ),
     );
   });
