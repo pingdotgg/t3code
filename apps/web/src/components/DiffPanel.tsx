@@ -25,6 +25,7 @@ import {
 import * as Schema from "effect/Schema";
 import { type ComponentProps, type MouseEvent, useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
+import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
@@ -761,14 +762,22 @@ export default function DiffPanel({
   }));
   const viewedFileCount = shownFileEntries.filter(({ fileDiff }) => isFileViewed(fileDiff)).length;
   const codeViewReveal = useCodeViewFileReveal();
+  // Lazy files that sat above the saved position load again only when asked for.
+  const codeViewScroll = useCodeViewScrollRestore(
+    collapseScopeKey,
+    !isRefreshingDiff && remainingFileCount === 0,
+    remainingFileCount > 0 ? loadNextFiles : null,
+  );
   const viewerHandleRef = useRef<AnnotatableCodeViewHandle | null>(null);
   const attachViewer = useStableCallback((handle: AnnotatableCodeViewHandle | null) => {
     viewerHandleRef.current = handle;
+    codeViewScroll.attach(handle);
     codeViewReveal.attach(handle);
   });
   const revealFileAt = (index: number, align?: "start" | "nearest") => {
     const file = renderableFileEntries[index];
     if (!file) return;
+    codeViewScroll.discard();
     if (lazySource) requestFile(resolveFileDiffPath(file.fileDiff));
     codeViewReveal.request(file.fileKey, undefined, align);
   };
@@ -792,6 +801,7 @@ export default function DiffPanel({
     beginComment: (fileKey, range) => reviewRef.current?.beginComment(fileKey, range),
   });
   const onPostRender = useStableCallback(() => {
+    codeViewScroll.flush();
     codeViewReveal.flush();
     review.flushScroll();
   });
@@ -878,6 +888,7 @@ export default function DiffPanel({
   });
 
   const toggleDiffFileCollapse = () => {
+    codeViewScroll.discard();
     review.showAllFiles();
     setCodeViewRevision((current) => current + 1);
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
@@ -1553,6 +1564,7 @@ export default function DiffPanel({
                       environmentId={activeThread?.environmentId}
                       projectId={activeThread?.projectId}
                       viewerRef={attachViewer}
+                      onScroll={codeViewScroll.onScroll}
                       reviewRef={reviewRef}
                       onSelectedLinesChange={review.onSelectedLinesChange}
                       onDraftClose={review.onDraftClose}

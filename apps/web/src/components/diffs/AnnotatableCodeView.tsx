@@ -7,7 +7,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   useEffect,
@@ -106,6 +106,7 @@ interface AnnotatableCodeViewProps {
   onSelectedLinesChange: (selection: CodeViewLineSelection | null) => void;
   onDraftClose?: () => void;
   commentShortcutLabel?: string | null;
+  onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
   className?: string;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
@@ -135,6 +136,7 @@ export function AnnotatableCodeView({
   onSelectedLinesChange,
   onDraftClose,
   commentShortcutLabel,
+  onScroll,
   className,
   renderCodeViewFooter,
   unsafeCSSExtra,
@@ -297,6 +299,7 @@ export function AnnotatableCodeView({
         commentShortcutLabel ? `Add comment (${commentShortcutLabel})` : "Add comment"
       }
       {...(viewerRef ? { viewerRef } : {})}
+      {...(onScroll ? { onScroll } : {})}
       {...(className ? { className } : {})}
       {...(unsafeCSSExtra ? { unsafeCSSExtra } : {})}
       {...(renderHeaderMetadata
