@@ -183,6 +183,7 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
+    environmentId: EnvironmentId,
   ) => ProjectSettingsOverrides | null,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
@@ -193,7 +194,8 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const current = settings.projectSettingsOverrides[member.id] ?? {};
+    const entry = update(current, settings, member.id, member.environmentId);
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -221,6 +223,11 @@ export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   patch: ScopedSettingsPatch,
+  /** Rewrites the server patch for one destination, such as its own provider instance ids. */
+  localize: (environmentId: EnvironmentId, patch: ServerSettingsPatch) => ServerSettingsPatch = (
+    _environmentId,
+    serverPatch,
+  ) => serverPatch,
 ) {
   const clientPatch = Object.fromEntries(
     Object.entries(patch).filter(([key]) => CLIENT_KEYS.has(key) && !SERVER_KEYS.has(key)),
@@ -240,18 +247,19 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
+          : projectOverrideWrites(scope, environments, (current, settings, projectId, envId) => {
               // Override entries store whole objects; complete partial patches from each target's effective
               // value.
               const effective = resolveProjectSettings(settings, projectId).settings;
               const next: Record<string, unknown> = { ...current };
-              for (const [key, value] of Object.entries<unknown>(serverPatch)) {
-                if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
+              const localPatch = localize(envId, serverPatch);
+              for (const [key, value] of Object.entries<unknown>(localPatch)) {
+                if (key === "worktreeCleanup" && localPatch.worktreeCleanup?.mode === "custom") {
                   next[key] = {
                     mode: "custom",
                     rules: {
                       ...resolveWorktreeCleanup(settings, projectId),
-                      ...serverPatch.worktreeCleanup.rules,
+                      ...localPatch.worktreeCleanup.rules,
                     },
                   };
                   continue;
@@ -287,6 +295,7 @@ export function planScopedSettingsPatch(
           ? connectedEnvironments.flatMap((environment) => {
               const previous = environment.serverConfig?.settings;
               if (!previous) return [];
+              const localPatch = localize(environment.environmentId, serverPatch);
               return [
                 {
                   environmentId: environment.environmentId,
@@ -295,25 +304,25 @@ export function planScopedSettingsPatch(
                   patch: forDestination(
                     previous,
                     previous.worktreeCleanup != null &&
-                      serverPatch.storageCleanup &&
-                      Object.keys(serverPatch.storageCleanup).some((key) =>
+                      localPatch.storageCleanup &&
+                      Object.keys(localPatch.storageCleanup).some((key) =>
                         key.startsWith("worktree"),
                       )
                       ? {
-                          ...serverPatch,
+                          ...localPatch,
                           worktreeCleanup: {
                             mode: "custom",
                             rules: {
                               ...resolveWorktreeCleanup(previous, null),
                               ...Object.fromEntries(
-                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                                Object.entries(localPatch.storageCleanup).filter(([key]) =>
                                   key.startsWith("worktree"),
                                 ),
                               ),
                             },
                           },
                         }
-                      : serverPatch,
+                      : localPatch,
                   ),
                 },
               ];

@@ -9,12 +9,17 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
   type ProjectScopedServerSettingKey,
+  type ProviderInstanceId,
+  type ServerProvider,
   type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
+import { localizeModelSelection } from "../../providerInstances";
+import { useEnvironmentProviders } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -30,6 +35,57 @@ import {
   type ScopedSettingsPatch,
 } from "./scopedSettings";
 
+const MODEL_SELECTION_KEYS = [
+  "defaultModelSelection",
+  "fallbackModelSelection",
+  "textGenerationModelSelection",
+  "sourceControlWriterModelSelection",
+  "reviewGuideModelSelection",
+  "speechPostProcessingModelSelection",
+] as const;
+
+type ModelSelectionFields = {
+  readonly [K in (typeof MODEL_SELECTION_KEYS)[number]]?: {
+    readonly instanceId?: ProviderInstanceId;
+  } | null;
+};
+
+function localizeModelSelections<T extends ModelSelectionFields>(
+  settings: T,
+  source: ReadonlyArray<ServerProvider>,
+  target: ReadonlyArray<ServerProvider>,
+): T {
+  let next: T | null = null;
+  for (const key of MODEL_SELECTION_KEYS) {
+    const value = settings[key];
+    const localized = value ? localizeModelSelection(value, source, target) : value;
+    if (localized !== value) Object.assign((next ??= { ...settings }), { [key]: localized });
+  }
+  return next ?? settings;
+}
+
+/** Pickers show the scope target's instance ids; each environment stores its own. */
+function useModelSelectionLocalizer() {
+  const { target } = useSettingsScope();
+  const providersByEnvironment = useEnvironmentProviders();
+  const shown = target ? providersByEnvironment.get(target.environmentId) : undefined;
+  return {
+    toEnvironment: <T extends ModelSelectionFields>(
+      environmentId: EnvironmentId,
+      settings: T,
+    ): T => {
+      const destination = providersByEnvironment.get(environmentId);
+      return shown && destination
+        ? localizeModelSelections(settings, shown, destination)
+        : settings;
+    },
+    toShown: <T extends ModelSelectionFields>(environmentId: EnvironmentId, settings: T): T => {
+      const source = providersByEnvironment.get(environmentId);
+      return shown && source ? localizeModelSelections(settings, source, shown) : settings;
+    },
+  };
+}
+
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
@@ -39,7 +95,13 @@ export function useScopedSettings<T = UnifiedSettings>(
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
   const { targets } = useSettingsScope();
-  return scopedSettingsAreMixed(targets, keys);
+  const { toShown } = useModelSelectionLocalizer();
+  return scopedSettingsAreMixed(
+    targets.map((candidate) => ({
+      settings: toShown(candidate.environmentId, candidate.settings),
+    })),
+    keys,
+  );
 }
 
 export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) {
@@ -100,9 +162,10 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
+  const { toEnvironment } = useModelSelectionLocalizer();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
-    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+    run(planScopedSettingsPatch(scope, environments, patch, toEnvironment), options?.onFailed);
 }
 
 export function useClearScopedSettings() {

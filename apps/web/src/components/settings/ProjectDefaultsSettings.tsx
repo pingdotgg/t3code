@@ -13,7 +13,7 @@ import {
   defaultModelSelectionsAreMixed,
   getCustomModelOptionsByInstance,
 } from "../../modelSelection";
-import { providerInstanceEntriesFor } from "../../providerInstances";
+import { localizeModelSelection, providerInstanceEntriesFor } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -80,11 +80,17 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
   const mixedModel = defaultModelSelectionsAreMixed(
     clientSettings,
-    targets.map((candidate) => ({
-      projectId: candidate.projectId,
-      settings: candidate.settings,
-      providers: providersByEnvironment.get(candidate.environmentId) ?? EMPTY_SERVER_PROVIDERS,
-    })),
+    targets.map((candidate) => {
+      const candidateProviders =
+        providersByEnvironment.get(candidate.environmentId) ?? EMPTY_SERVER_PROVIDERS;
+      return {
+        projectId: candidate.projectId,
+        settings: candidate.settings,
+        providers: candidateProviders,
+        toShown: (selection: ModelSelection) =>
+          localizeModelSelection(selection, candidateProviders, providers),
+      };
+    }),
   );
   const automaticModel =
     targets.length > 0 &&
