@@ -420,6 +420,21 @@ describe("derivePendingBackgroundWork kinds", () => {
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
     });
 
+    it("stops holding a settled run once every check on the watched head has finished", () => {
+      const tasks = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [
+          {
+            ...link(1, {}),
+            watch: { ...watch, headSha: "abc123", passed: true, passedChecks: ["ci", "lint"] },
+          },
+        ],
+      });
+      expect(backgroundWorkHoldsCompletion(tasks)).toBe(false);
+    });
+
     it("keeps a thread that never ran waiting on its watch", () => {
       expect(
         derivePendingBackgroundWork({
