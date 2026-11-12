@@ -22,6 +22,7 @@ import { constVoid } from "effect/Function";
 import * as Schema from "effect/Schema";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
+import * as NodeUtil from "node:util";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
 const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
@@ -84,7 +85,8 @@ export const toOperationError = (
 
 /** Playwright puts why an element was not actionable in its call log, below the first line. */
 const withActionabilityReason = (message: string, cause: Error) => {
-  const reason = cause.message
+  // Playwright dims call-log lines with ANSI escapes when colour is on.
+  const reason = NodeUtil.stripVTControlCharacters(cause.message)
     .split("\n")
     .map((line) => line.trim())
     .findLast((line) => line.startsWith("- element is "))
