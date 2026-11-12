@@ -100,9 +100,6 @@ function makeRenderer() {
   return {
     /** A page script that never yields; Chromium stops it on `Runtime.terminateExecution`. */
     busyScript: null as PromiseWithResolvers<void> | null,
-    gotoStarted: Promise.withResolvers<void>(),
-    /** Rejecting these stands in for Playwright's goto timeout while the script runs. */
-    stalledGotos: [] as Array<(cause: Error) => void>,
   };
 }
 
@@ -229,14 +226,8 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       viewport = size;
     }),
     goto: vi.fn(async (next: string, _options?: { timeout?: number }) => {
-      const busyScript = renderer.busyScript;
-      renderer.gotoStarted.resolve();
-      if (busyScript) {
-        await new Promise<void>((resolve, reject) => {
-          renderer.stalledGotos.push(reject);
-          void busyScript.promise.then(resolve);
-        });
-      }
+      // A same-site goto commits only once the page's script stops.
+      await renderer.busyScript?.promise;
       url = next;
       events.emit("load");
       const pending = initialNavigation;
@@ -979,31 +970,21 @@ it.live.each(["load", "none"] as const)(
           sessions.flatMap((session) => session.send.mock.calls.map(([method]) => method)),
         ).not.toContain("Runtime.terminateExecution");
         renderer.busyScript = Promise.withResolvers<void>();
-        renderer.gotoStarted = Promise.withResolvers<void>();
 
-        const navigation = yield* broker
+        const navigated = yield* broker
           .invoke<PreviewAutomationStatus>({
             scope,
             tabId,
             operation: "navigate",
             input: { url: "http://localhost:5173/next", readiness, timeoutMs: 200 },
           })
-          .pipe(Effect.exit, Effect.forkScoped);
-        yield* Effect.promise(() => renderer.gotoStarted.promise);
-        for (const timeOut of renderer.stalledGotos.splice(0)) {
-          timeOut(
-            Object.assign(new Error("page.goto: Timeout 200ms exceeded."), {
-              name: "TimeoutError",
-            }),
-          );
-        }
-        const navigated = yield* Fiber.join(navigation);
+          .pipe(Effect.exit);
         const waited = yield* broker
           .invoke({
             scope,
             tabId,
             operation: "waitFor",
-            input: { urlIncludes: "/next", timeoutMs: 100 },
+            input: { urlIncludes: "/next", timeoutMs: 1_000 },
           })
           .pipe(Effect.exit);
         const status = yield* broker.invoke<PreviewAutomationStatus>({
@@ -1015,10 +996,9 @@ it.live.each(["load", "none"] as const)(
 
         expect(status.url).toBe("http://localhost:5173/next");
         expect(navigated).toMatchObject({ _tag: "Success" });
-        // Waiting on the busy script spends half the navigation's own budget, not all of it.
+        // A cross-site goto can leave a hung page by itself, so the probe takes none of its budget.
         const [, gotoOptions] = contexts[0]!.page.goto.mock.calls.at(-1)!;
-        expect(gotoOptions?.timeout).toBeLessThan(200);
-        expect(gotoOptions?.timeout).toBeGreaterThan(1);
+        expect(gotoOptions?.timeout).toBe(200);
         expect(waited).toMatchObject({ _tag: "Success" });
       }),
     ).pipe(Effect.provide(layer)),

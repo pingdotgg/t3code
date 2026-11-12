@@ -1784,12 +1784,8 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const probeStartedAt = performance.now();
-    // Half the budget at most: a cross-site goto leaves a hung page by itself and needs the rest.
-    await ServerBrowserPage.stopUnresponsiveScript(tab.cdp, timeout / 2);
     const navigation = tab.page.goto(url, {
-      // The probe spends the caller's budget; the broker evicts a host that answers late.
-      timeout: Math.max(1, timeout - (performance.now() - probeStartedAt)),
+      timeout,
       waitUntil:
         readiness === "domContentLoaded"
           ? "domcontentloaded"
@@ -1797,6 +1793,9 @@ const make = Effect.gen(function* () {
             ? "commit"
             : "load",
     });
+    // Alongside goto, not before it: a cross-site goto leaves a hung page by itself in a new
+    // renderer, while a same-site one commits once the hung script is stopped.
+    void ServerBrowserPage.stopUnresponsiveScript(tab.cdp, timeout / 2);
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
