@@ -27,7 +27,12 @@ export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInpu
   if (thread.settledAt != null && toSortableTimestamp(thread.settledAt) !== null) {
     return thread.settledAt;
   }
+  return resolveThreadActivityTimestamp(thread);
+}
 
+export function resolveThreadActivityTimestamp(
+  thread: Pick<EnvironmentThreadShell, "latestUserMessageAt" | "latestRun" | "updatedAt">,
+): string | null {
   let latest: string | null = null;
   let latestMs = Number.NEGATIVE_INFINITY;
   for (const candidate of [

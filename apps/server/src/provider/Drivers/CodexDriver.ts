@@ -1,9 +1,13 @@
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Signature from "effect/crypto/Signature";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -79,6 +83,7 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
+    mise: { tool: "codex" },
     nativeUpdate: {
       args: ["update"],
       isCommandPath: (commandPath) => codexStandaloneHome(commandPath) !== null,
@@ -98,7 +103,9 @@ export type CodexDriverEnv =
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
+  | Signature.Signature
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -366,6 +373,17 @@ export const CodexDriver: ProviderDriver<
           ),
         );
 
+    // `codex login` and `codex logout` rewrite auth.json outside T3.
+    if (effectiveConfig.enabled) {
+      yield* fileSystem.watch(accountKey).pipe(
+        Stream.filter((event) => pathService.basename(event.path) === "auth.json"),
+        Stream.debounce(Duration.millis(250)),
+        Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+        Effect.ignoreCause({ log: true }),
+        Effect.forkScoped,
+      );
+    }
     return {
       instanceId,
       driverKind: DRIVER_KIND,

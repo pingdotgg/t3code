@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -12,6 +13,7 @@ import {
   type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -22,10 +24,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
-import { projectDomainEventForWire } from "./WireProjection.ts";
+import { projectStoredEventForWire } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -66,7 +69,33 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
+interface ProviderBatchPublication {
+  readonly publish: Array<Effect.Effect<void>>;
+  eventCount: number;
+}
+const CurrentProviderBatch = Context.Reference<ProviderBatchPublication | undefined>(
+  "t3/orchestration-v2/EventSink/CurrentProviderBatch",
+  { defaultValue: () => undefined },
+);
+
 export interface EventSinkV2Shape {
+  /** Items that are not provider snapshots, such as a consumer's own control items, never batch. */
+  readonly consumeProviderEvents: <A extends { readonly type: string }, E, R, E2, R2>(
+    source: Stream.Stream<A, E, R>,
+    process: (event: A) => Effect.Effect<void, E2, R2>,
+    after: Effect.Effect<boolean, E2, R2>,
+    canBatch: Effect.Effect<boolean, never, R2>,
+  ) => Effect.Effect<
+    void,
+    E | E2 | ProviderCommitBatch.CommitBatchError | Schema.SchemaError,
+    R | R2
+  >;
+
+  /** Normalize and persist an ordered group against one transaction; publish after its commit. */
+  readonly withProviderBatch: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EventSinkV2Error, R>;
+
   readonly write: (input: {
     /** Return no events if another thread owns this native session at commit time. */
     readonly unlessNativeThreadOwned?: Pick<
@@ -99,6 +128,11 @@ export interface EventSinkV2Shape {
     readonly runId: RunId;
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
+    /** Also refuse while this run interrupt request is stored without its result. */
+    readonly unlessInterruptRequested?: {
+      readonly requestId: OrchestrationV2TurnItem["id"];
+      readonly resultId: OrchestrationV2TurnItem["id"];
+    };
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
@@ -256,7 +290,7 @@ const layerBase: Layer.Layer<
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
     const publishLane = yield* Semaphore.make(1);
-    const commitThenPublish = <A, E, R>(
+    const commitThenPublishNow = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
     ) =>
@@ -416,6 +450,8 @@ const layerBase: Layer.Layer<
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
 
+      const batch = yield* CurrentProviderBatch;
+      if (batch !== undefined) batch.eventCount += input.events.length;
       const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
           // Check ownership in the same transaction that claims the native session.
@@ -494,6 +530,24 @@ const layerBase: Layer.Layer<
                 committed: false as const,
                 storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
               };
+            }
+            if (input.unlessInterruptRequested !== undefined) {
+              const { requestId, resultId } = input.unlessInterruptRequested;
+              const pending = yield* sql<{ readonly pending: number }>`
+                SELECT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_turn_items
+                  WHERE thread_id = ${input.threadId} AND turn_item_id = ${requestId}
+                ) AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_turn_items
+                  WHERE thread_id = ${input.threadId} AND turn_item_id = ${resultId}
+                ) AS pending
+              `;
+              if (pending[0]?.pending === 1) {
+                return {
+                  committed: false as const,
+                  storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+                };
+              }
             }
 
             const normalized = yield* normalizeEvents(
@@ -863,7 +917,7 @@ const layerBase: Layer.Layer<
               afterSequence,
               filter: matches,
               replay,
-              project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
+              project: projectStoredEventForWire,
             });
           }
           const subscription = yield* PubSub.subscribe(pubsub);
@@ -877,7 +931,95 @@ const layerBase: Layer.Layer<
       );
     };
 
+    const commitThenPublish = <A, E, R>(
+      transaction: Effect.Effect<A, E, R>,
+      publish: (committed: A) => Effect.Effect<void>,
+    ) =>
+      Effect.flatMap(CurrentProviderBatch, (batch) =>
+        batch === undefined
+          ? Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
+              Option.isSome(existing)
+                ? commitThenPublishNow(transaction, publish)
+                : coordinator.barrier(commitThenPublishNow(transaction, publish)),
+            )
+          : transaction.pipe(
+              Effect.tap((committed) =>
+                Effect.sync(() => {
+                  batch.publish.push(publish(committed));
+                }),
+              ),
+            ),
+      );
+
+    const withProviderBatch: EventSinkV2Shape["withProviderBatch"] = Effect.fn(
+      "orchestrationV2.EventSink.providerBatch",
+    )(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+      if ((yield* CurrentProviderBatch) !== undefined) return yield* effect;
+      const batch: ProviderBatchPublication = { publish: [], eventCount: 0 };
+      let started = false;
+      const result = yield* commitThenPublishNow(
+        Effect.sync(() => {
+          started = true;
+        }).pipe(Effect.andThen(Effect.provideService(effect, CurrentProviderBatch, batch))),
+        () => Effect.forEach(batch.publish, (publish) => publish, { discard: true }),
+      ).pipe(
+        // Normalization mutates run-local state, so only retry before its transaction body starts.
+        Effect.retry({
+          while: (cause) =>
+            !started && SqlError.isSqlError(cause) && cause.reason._tag === "LockTimeoutError",
+          times: 2,
+        }),
+        Effect.mapError((cause) =>
+          SqlError.isSqlError(cause)
+            ? new EventSinkWriteError({ eventCount: batch.eventCount, cause })
+            : cause,
+        ),
+      );
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": batch.eventCount,
+        "orchestration_v2.batch_writes": batch.publish.length,
+      });
+      return result;
+    });
+
+    const coordinator = yield* ProviderCommitBatch.make(
+      (work) =>
+        withProviderBatch(work).pipe(
+          Effect.mapError((cause) =>
+            ProviderCommitBatch.isCommitBatchError(cause)
+              ? cause
+              : new ProviderCommitBatch.CommitBatchError({ cause }),
+          ),
+        ),
+      yield* ProviderCommitBatch.enabled,
+      // Each snapshot owns a savepoint and its deferred publications within the shared commit.
+      Effect.fnUntraced(function* (
+        work: Effect.Effect<void, ProviderCommitBatch.CommitBatchError>,
+      ) {
+        const batch = yield* CurrentProviderBatch;
+        const publicationCount = batch?.publish.length ?? 0;
+        const eventCount = batch?.eventCount ?? 0;
+        return yield* sql.withTransaction(work).pipe(
+          Effect.onError(() =>
+            Effect.sync(() => {
+              if (batch !== undefined) {
+                batch.publish.length = publicationCount;
+                batch.eventCount = eventCount;
+              }
+            }),
+          ),
+          Effect.mapError((cause) =>
+            ProviderCommitBatch.isCommitBatchError(cause)
+              ? cause
+              : new ProviderCommitBatch.CommitBatchError({ cause }),
+          ),
+        );
+      }),
+    );
+
     return EventSinkV2.of({
+      consumeProviderEvents: coordinator.consume,
+      withProviderBatch,
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(
           Effect.mapError(

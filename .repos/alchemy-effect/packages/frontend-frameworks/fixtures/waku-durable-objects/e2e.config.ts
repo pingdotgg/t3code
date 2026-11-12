@@ -1,7 +1,4 @@
-import {
-  DurableObjectNamespace,
-  Text,
-} from "@alchemy.run/cloudflare-runtime/core/bindings";
+import { DurableObjectNamespace, Text } from "@alchemy.run/cloudflare-runtime/core/bindings";
 import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
 import wakuFramework from "@alchemy.run/frontend-frameworks/waku";
 
