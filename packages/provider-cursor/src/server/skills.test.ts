@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "vite-plus/test";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -299,6 +300,41 @@ describe("Cursor skills", () => {
     });
     expect(stats).toBeGreaterThanOrEqual(100_000);
     expect(stats).toBeLessThanOrEqual(100_000);
+  });
+
+  it("keeps folder skills when the Cursor plugin folders cannot be read", async () => {
+    const skillRoot = "/home/.cursor/skills";
+    const plugins = "/home/.cursor/plugins";
+    const denied = (method: string) =>
+      Effect.fail(
+        PlatformError.systemError({ _tag: "PermissionDenied", module: "FileSystem", method }),
+      );
+    const notFound = (method: string) =>
+      Effect.fail(PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method }));
+    const fileSystem = FileSystem.layerNoop({
+      realPath: (path) => Effect.succeed(path),
+      readDirectory: (path) =>
+        path.startsWith(plugins)
+          ? denied("readDirectory")
+          : Effect.succeed(path === skillRoot ? ["folder-skill"] : []),
+      readFileString: () => Effect.succeed("---\ndescription: folder\n---\n"),
+      stat: (path) => {
+        if (path === skillRoot || path === `${skillRoot}/folder-skill`) {
+          return Effect.succeed({ type: "Directory" } as FileSystem.File.Info);
+        }
+        if (path === `${skillRoot}/folder-skill/SKILL.md`) {
+          return Effect.succeed({ type: "File", size: ByteSize.bytes(30) } as FileSystem.File.Info);
+        }
+        return notFound("stat");
+      },
+    });
+
+    const skills = await probeCursorSkills(undefined, { HOME: "/home" }).pipe(
+      Effect.provide(Layer.mergeAll(fileSystem, Path.layer)),
+      Effect.runPromise,
+    );
+
+    expect(skills.map((skill) => skill.name)).toEqual(["folder-skill"]);
   });
 
   it.skipIf(!symlinksSupported)(

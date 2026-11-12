@@ -238,8 +238,9 @@ const decodeCursorPluginManifest = Schema.decodeUnknownOption(
 );
 
 // Mirrors `@cursor/sdk`'s loader: local plugins sit in `plugins/local/<name>`, installed
-// marketplace and team plugins in `plugins/cache/<marketplace>/<plugin>/<version>` once
-// `.cache-complete` exists. A manifest `skills` field overrides the default `skills/` folder.
+// marketplace plugins in `plugins/cache/cursor-public/<plugin>/<version>` once
+// `.cache-complete` exists. The SDK loads no other marketplace, so neither do we.
+// A manifest `skills` field overrides the default `skills/` folder.
 const listCursorPluginSkillDirectories = Effect.fn("listCursorPluginSkillDirectories")(function* (
   userHome: string,
   budget: CursorSkillScanBudget,
@@ -279,12 +280,12 @@ const listCursorPluginSkillDirectories = Effect.fn("listCursorPluginSkillDirecto
 
   const pluginsDirectory = path.join(userHome, ".cursor", "plugins");
   const pluginRoots = yield* subdirectories(path.join(pluginsDirectory, "local"));
-  for (const marketplace of yield* subdirectories(path.join(pluginsDirectory, "cache"))) {
-    for (const plugin of yield* subdirectories(marketplace)) {
-      for (const version of yield* subdirectories(plugin)) {
-        const marker = yield* orUndefined(fileSystem.stat(path.join(version, ".cache-complete")));
-        if (marker?.type === "File") pluginRoots.push(version);
-      }
+  for (const plugin of yield* subdirectories(
+    path.join(pluginsDirectory, "cache", "cursor-public"),
+  )) {
+    for (const version of yield* subdirectories(plugin)) {
+      const marker = yield* orUndefined(fileSystem.stat(path.join(version, ".cache-complete")));
+      if (marker?.type === "File") pluginRoots.push(version);
     }
   }
 
@@ -332,21 +333,26 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     incomplete: false,
   };
   const scannedRoots = new Set<string>();
-  const scan = Effect.fn("scanCursorSkillRoot")(function* (root: (typeof roots)[number]) {
-    const skills = yield* discoverSkillsInRoot({ ...root, budget, scannedRoots });
+  const scan = Effect.fn("scanCursorSkillRoot")(function* (
+    root: (typeof roots)[number],
+    scanBudget: CursorSkillScanBudget,
+  ) {
+    const skills = yield* discoverSkillsInRoot({ ...root, budget: scanBudget, scannedRoots });
     for (const skill of skills) {
       if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
     }
   });
   for (const root of roots) {
     if (budget.exhausted) break;
-    yield* scan(root);
+    yield* scan(root, budget);
   }
-  // Plugins come last so same-named folder and built-in skills win.
+  // Plugins come last so same-named folder and built-in skills win. Their failure
+  // flags stay apart: an unreadable plugin must not fail the folder-skill probe.
   if (!budget.exhausted) {
-    for (const directory of yield* listCursorPluginSkillDirectories(userHome, budget)) {
-      if (budget.exhausted) break;
-      yield* scan({ directory, scope: "user" });
+    const pluginBudget = { ...budget, exhausted: false, incomplete: false };
+    for (const directory of yield* listCursorPluginSkillDirectories(userHome, pluginBudget)) {
+      if (pluginBudget.exhausted) break;
+      yield* scan({ directory, scope: "user" }, pluginBudget);
     }
   }
   return {
