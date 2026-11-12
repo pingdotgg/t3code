@@ -5048,7 +5048,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     }
   });
   const resolveNadirCompactionHooks = Effect.fn("ClaudeAdapterV2.resolveNadirCompactionHooks")(
-    function* (cwd: string | null) {
+    function* (cwd: string | null, launchSettings: ClaudeSdkSettings | undefined) {
       if (Option.isNone(serverSettings)) return undefined;
       const enabled = yield* serverSettings.value.getSettings.pipe(
         Effect.map((settings) => settings.nadirCompaction),
@@ -5062,6 +5062,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         claudeHome: homePath,
         hostHome,
         settingsFiles: yield* settingsFilesByPrecedence(cwd),
+        launchSettings,
       });
       if (script === undefined) {
         yield* Effect.logDebug("Nadir compaction skipped: not installed, or Claude Code runs it");
@@ -11075,7 +11076,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
-          const extraHooks = yield* resolveNadirCompactionHooks(turnInput.runtimePolicy.cwd);
+          const extraHooks = yield* resolveNadirCompactionHooks(
+            turnInput.runtimePolicy.cwd,
+            launchArgSettings,
+          );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,

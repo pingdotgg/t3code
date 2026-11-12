@@ -90,6 +90,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  draftModelPick,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
@@ -1583,17 +1584,19 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
-  it("releases the pick a send used but keeps one changed while it was in flight", () => {
+  it("releases the pick a send used but keeps one made while it was in flight", () => {
     const store = useComposerDraftStore.getState();
-    const sent = modelSelection(CODEX_DRIVER, "gpt-5.5");
-    const next = modelSelection(CODEX_DRIVER, "gpt-5.4");
-    store.setModelSelection(threadRef, sent, { explicit: true });
-    store.setModelSelection(threadRef, next, { explicit: true });
+    const pickAtSend = () => draftModelPick(draftFor(threadId, TEST_ENVIRONMENT_ID));
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), { explicit: true });
+    const sent = pickAtSend();
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), { explicit: true });
     store.releaseModelPick(threadRef, sent);
-    expect(
-      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[next.instanceId],
-    ).toEqual(next);
-    store.releaseModelPick(threadRef, next);
+    expect(pickAtSend()?.model).toBe("gpt-5.4");
+    // Picking the sent model again is a new pick too.
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), { explicit: true });
+    store.releaseModelPick(threadRef, sent);
+    expect(pickAtSend()?.model).toBe("gpt-5.5");
+    store.releaseModelPick(threadRef, pickAtSend());
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 

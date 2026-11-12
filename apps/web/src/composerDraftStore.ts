@@ -4140,9 +4140,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           set((state) => {
             const current = state.draftsByThreadKey[threadKey];
-            const pick = draftModelPick(current);
-            if (!current || pick === undefined || sentPick === undefined) return state;
-            if (!draftModelPickMatchesThread(pick, sentPick)) return state;
+            // A newer pick, even of the same model, is still waiting for its own reply.
+            if (!current || sentPick === undefined || draftModelPick(current) !== sentPick) {
+              return state;
+            }
             const { modelSelectionExplicit: _explicit, ...retained } = current;
             const draft = { ...retained, activeProvider: null, modelSelectionByProvider: {} };
             const drafts = { ...state.draftsByThreadKey };

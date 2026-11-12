@@ -19,8 +19,18 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         const claudeHome = yield* fileSystem.makeTempDirectoryScoped();
         const hostHome = yield* fileSystem.makeTempDirectoryScoped();
         const userSettings = path.join(claudeHome, "settings.json");
-        const find = (settingsFiles: ReadonlyArray<string> = [userSettings]) =>
-          findNadirCompactionScript({ fileSystem, path, claudeHome, hostHome, settingsFiles });
+        const find = (
+          settingsFiles: ReadonlyArray<string> = [userSettings],
+          launchSettings?: unknown,
+        ) =>
+          findNadirCompactionScript({
+            fileSystem,
+            path,
+            claudeHome,
+            hostHome,
+            settingsFiles,
+            launchSettings,
+          });
         const touch = (file: string) =>
           fileSystem
             .makeDirectory(path.dirname(file), { recursive: true })
@@ -80,6 +90,13 @@ it.layer(NodeServices.layer)("NadirCompaction", (it) => {
         expect(yield* find([projectSettings, localSettings])).toBeUndefined();
         // A disabled plugin does not cancel hooks a lower file wires.
         expect(yield* find([localSettings, userSettings])).toBeUndefined();
+        // The --settings launch argument outranks every file.
+        const launchHooks = {
+          hooks: { PostToolUse: [{ hooks: [{ command: `python3 ${labsScript}` }] }] },
+        };
+        expect(yield* find([], launchHooks)).toBeUndefined();
+        const launchOff = { enabledPlugins: { "nadir-route@nadir": false } };
+        expect(yield* find([projectSettings], launchOff)).toBe(labsScript);
 
         // A plugin installed only under the host's own Claude home is found from a separate one.
         const separateHome = yield* fileSystem.makeTempDirectoryScoped();

@@ -153,6 +153,7 @@ vi.mock("./use-composer-drafts", async () => {
     }),
     replaceComposerDraftAttachments: vi.fn(),
     setFreshSessionPending: vi.fn(),
+    takeSentComposerPick: () => undefined,
     undoComposerDraftMerge: vi.fn(),
     updateComposerDraftSettings: vi.fn(),
     waitForComposerDraftsLoaded: vi.fn(),

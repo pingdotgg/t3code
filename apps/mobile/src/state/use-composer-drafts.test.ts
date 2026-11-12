@@ -209,10 +209,13 @@ import {
   insertComposerDraftContext,
   insertComposerDraftText,
   rememberComposerDraftSelection,
+  rememberSentComposerPick,
+  releaseComposerDraftModelSelection,
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
   stickyComposerModelSelectionAtom,
+  takeSentComposerPick,
   undoComposerDraftMergeState,
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
@@ -584,6 +587,23 @@ describe("mobile composer drafts", () => {
     }
     h.update({ modelSelection: { ...pick, options: pick.options!.toReversed() } });
     expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
+  });
+
+  it("releases only the pick a queued send used", () => {
+    const key = "environment-1:thread-picks";
+    const sol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" };
+    // A draft with no pick sends the thread's model, so a pick made while it waits stays.
+    rememberSentComposerPick("send-1", getComposerDraftSnapshot(key).modelSelection);
+    updateComposerDraftSettings(key, { modelSelection: sol });
+    expect(takeSentComposerPick("send-1")).toBeUndefined();
+    // Picking the sent model again is a new pick, so releasing the sent one leaves it.
+    rememberSentComposerPick("send-2", getComposerDraftSnapshot(key).modelSelection);
+    updateComposerDraftSettings(key, { modelSelection: { ...sol } });
+    const sent = takeSentComposerPick("send-2");
+    expect(sent).toBe(sol);
+    releaseComposerDraftModelSelection(key, sent!);
+    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(sol);
+    expect(takeSentComposerPick("send-2")).toBeUndefined();
   });
 
   it("drops chips and records for attachments a replace no longer keeps", () => {

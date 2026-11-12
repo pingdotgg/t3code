@@ -523,9 +523,19 @@ describe("Nadir routing at intake", () => {
           Layer.mergeAll(
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               dispatch: (command) =>
-                record(
-                  command.type === "message.dispatch" ? command.modelSelection?.model : undefined,
-                ),
+                command.commandId === "send-refused"
+                  ? Effect.fail(
+                      new OrchestratorCommandPreviouslyRejectedError({
+                        commandId: command.commandId,
+                        commandType: command.type,
+                        detail: "refused",
+                      }),
+                    )
+                  : record(
+                      command.type === "message.dispatch"
+                        ? command.modelSelection?.model
+                        : undefined,
+                    ),
               // Only these shell and snapshot fields are read.
               getThreadShell: () =>
                 Effect.sync(() => {
@@ -685,6 +695,30 @@ describe("Nadir routing at intake", () => {
         ),
       ),
     ),
+  );
+
+  it.effect("puts the thread's ceiling back when the server refuses a routed send", () =>
+    Effect.gen(function* () {
+      const ceilings = yield* NadirCeilings;
+      const sonnet = { instanceId, model: "claude-sonnet-5-5" };
+      const models = (
+        found: Option.Option<{ baseline: { model: string }; chosen: { model: string } }>,
+      ) => Option.map(found, ({ baseline, chosen }) => [baseline.model, chosen.model]);
+      yield* rememberChoice(ceilings, "thread-routed", opus, sonnet);
+      const refused = send({ commandId: CommandId.make("send-refused") });
+      expect(yield* run(dispatchCommand(refused), null, layerMockReceipts, Layer.empty)).toEqual({
+        requests: 1,
+        dispatched: [],
+      });
+      expect(models(yield* ceilings.get("thread-routed"))).toEqual(
+        Option.some(["claude-opus-5-5", "claude-sonnet-5-5"]),
+      );
+      // A send that may have been accepted keeps its decision.
+      yield* run(dispatchCommand(send()), null, layerMockReceipts, Layer.empty);
+      expect(models(yield* ceilings.get("thread-routed"))).toEqual(
+        Option.some(["claude-opus-5-5", "claude-haiku-5-5"]),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(layerCeilingsMemory, layerIntakeTest))),
   );
 
   it.effect("asks Nadir once for a command retried while its first attempt routes", () =>

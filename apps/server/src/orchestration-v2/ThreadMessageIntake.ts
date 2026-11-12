@@ -232,10 +232,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     (command.type !== "queued-run.edit" || command.attachments === undefined)
   )
     return yield* threads.dispatch(command);
+  // A send the server refused leaves the thread's Nadir ceiling as it was.
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: command.threadId,
     attachments: command.attachments ?? [],
-  });
+  }).pipe(Effect.tapError(() => NadirRouting.undoChoice(command.commandId)));
   return yield* threads
     .dispatch({
       ...command,
@@ -261,7 +262,9 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       ),
       Effect.tapError((error) =>
         dispatchWasNotAccepted(error)
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+              Effect.andThen(NadirRouting.undoChoice(command.commandId)),
+            )
           : Effect.void,
       ),
     );

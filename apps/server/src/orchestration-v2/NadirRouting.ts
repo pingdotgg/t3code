@@ -60,7 +60,15 @@ export class NadirCeilings extends Context.Service<
     readonly lock: (threadId: string) => Semaphore.Semaphore;
     /** The selection a command already got, so a retry of it gets the same one. */
     readonly decided: (commandId: string) => ModelSelection | undefined;
-    readonly decide: (commandId: string, selection: ModelSelection) => void;
+    /** Saves a turn's ceiling, remembering the record it replaced until the send is settled. */
+    readonly decide: (input: {
+      readonly commandId: string | undefined;
+      readonly threadId: string;
+      readonly baseline: ModelSelection;
+      readonly chosen: ModelSelection;
+    }) => Effect.Effect<void>;
+    /** Puts back the record a refused command replaced, unless a later turn saved one since. */
+    readonly undo: (commandId: string) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/NadirRouting/NadirCeilings") {}
 
@@ -71,45 +79,80 @@ export const layerCeilingsFromStore = Layer.effect(
   Effect.gen(function* () {
     const store = KeyValueStore.toSchemaStore(yield* KeyValueStore.KeyValueStore, Ceiling);
     const memory = new Map<string, Ceiling | undefined>();
+    // Counts each thread's saves, so an undo can tell whether a later turn saved since.
+    const saves = new Map<string, number>();
     const locks = new Map<string, Semaphore.Semaphore>();
-    const decisions = new Map<string, ModelSelection>();
+    const decisions = new Map<
+      string,
+      {
+        readonly threadId: string;
+        readonly chosen: ModelSelection;
+        readonly replaced: Ceiling | undefined;
+        readonly save: number;
+      }
+    >();
+    const get = Effect.fn("NadirCeilings.get")(function* (threadId: string) {
+      if (memory.has(threadId)) return Option.fromUndefinedOr(memory.get(threadId));
+      return yield* store.get(threadId).pipe(
+        Effect.tap((found) =>
+          Effect.sync(() => memory.set(threadId, Option.getOrUndefined(found))),
+        ),
+        Effect.orElseSucceed(() => Option.none<Ceiling>()),
+      );
+    });
+    const save = Effect.fn("NadirCeilings.save")(function* (
+      threadId: string,
+      ceiling: Ceiling | undefined,
+    ) {
+      memory.set(threadId, ceiling);
+      saves.set(threadId, (saves.get(threadId) ?? 0) + 1);
+      yield* (ceiling === undefined ? store.remove(threadId) : store.set(threadId, ceiling)).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Nadir ceiling kept in memory only", { reason: failureKind(cause) }),
+        ),
+      );
+    });
+    const lock = (threadId: string) => {
+      let found = locks.get(threadId);
+      if (found === undefined) {
+        found = Semaphore.makeUnsafe(1);
+        locks.set(threadId, found);
+      }
+      return found;
+    };
     return {
-      get: Effect.fn("NadirCeilings.get")(function* (threadId: string) {
-        if (memory.has(threadId)) return Option.fromUndefinedOr(memory.get(threadId));
-        return yield* store.get(threadId).pipe(
-          Effect.tap((found) =>
-            Effect.sync(() => memory.set(threadId, Option.getOrUndefined(found))),
-          ),
-          Effect.orElseSucceed(() => Option.none<Ceiling>()),
-        );
-      }),
-      save: Effect.fn("NadirCeilings.save")(function* (
-        threadId: string,
-        ceiling: Ceiling | undefined,
-      ) {
-        memory.set(threadId, ceiling);
-        yield* (ceiling === undefined ? store.remove(threadId) : store.set(threadId, ceiling)).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Nadir ceiling kept in memory only", { reason: failureKind(cause) }),
-          ),
-        );
-      }),
-      lock: (threadId) => {
-        let lock = locks.get(threadId);
-        if (lock === undefined) {
-          lock = Semaphore.makeUnsafe(1);
-          locks.set(threadId, lock);
-        }
-        return lock;
-      },
-      decided: (commandId) => decisions.get(commandId),
-      decide: (commandId, selection) => {
-        decisions.set(commandId, selection);
+      get,
+      save,
+      lock,
+      decided: (commandId) => decisions.get(commandId)?.chosen,
+      decide: Effect.fn("NadirCeilings.decide")(function* ({
+        commandId,
+        threadId,
+        baseline,
+        chosen,
+      }) {
+        const replaced = Option.getOrUndefined(yield* get(threadId));
+        yield* save(threadId, baseline === chosen ? undefined : { baseline, chosen });
+        if (commandId === undefined) return;
+        decisions.set(commandId, { threadId, chosen, replaced, save: saves.get(threadId) ?? 0 });
         if (decisions.size > MAX_REMEMBERED_DECISIONS) {
           const oldest = decisions.keys().next().value;
           if (oldest !== undefined) decisions.delete(oldest);
         }
-      },
+      }),
+      undo: Effect.fn("NadirCeilings.undo")(function* (commandId: string) {
+        const decision = decisions.get(commandId);
+        if (decision === undefined) return;
+        yield* lock(decision.threadId).withPermits(1)(
+          Effect.gen(function* () {
+            // A retry of the refused command asks Nadir again.
+            decisions.delete(commandId);
+            if (saves.get(decision.threadId) === decision.save) {
+              yield* save(decision.threadId, decision.replaced);
+            }
+          }),
+        );
+      }),
     };
   }),
 );
@@ -159,7 +202,13 @@ export const rememberChoice = (
   threadId: string,
   baseline: ModelSelection,
   chosen: ModelSelection,
-) => ceilings.save(threadId, baseline === chosen ? undefined : { baseline, chosen });
+) => ceilings.decide({ commandId: undefined, threadId, baseline, chosen });
+
+/** A send the server refused leaves the thread's ceiling as it was before routing. */
+export const undoChoice = Effect.fn("NadirRouting.undoChoice")(function* (commandId: string) {
+  const ceilings = yield* Effect.serviceOption(NadirCeilings);
+  if (Option.isSome(ceilings)) yield* ceilings.value.undo(commandId);
+});
 
 /** Models the user can pick for this instance, the menu Nadir chooses from. */
 function modelMenu(provider: ServerProvider | undefined): ReadonlyArray<string> {
@@ -371,8 +420,12 @@ export const chooseModelSelection = Effect.fn("NadirRouting.chooseModelSelection
         const model = pickModel(answer, { baseline: baseline.model, current, menu });
         const chosen =
           model === baseline.model ? baseline : routedSelection(baseline, model, provider);
-        yield* rememberChoice(store, input.threadId, baseline, chosen);
-        if (input.commandId !== undefined) store.decide(input.commandId, chosen);
+        yield* store.decide({
+          commandId: input.commandId,
+          threadId: input.threadId,
+          baseline,
+          chosen,
+        });
         if (model !== baseline.model) {
           yield* Effect.logInfo("Nadir routed turn", { from: baseline.model, to: model });
         }

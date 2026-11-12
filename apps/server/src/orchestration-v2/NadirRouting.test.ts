@@ -97,6 +97,30 @@ describe("baselineFor", () => {
     }).pipe(Effect.provide(layerCeilingsMemory)),
   );
 
+  it.effect("puts back the record a refused send replaced, unless a later turn saved one", () =>
+    Effect.gen(function* () {
+      const ceilings = yield* NadirCeilings;
+      const sonnet: ModelSelection = { instanceId, model: "claude-sonnet-4-6" };
+      yield* rememberChoice(ceilings, "thread-1", opus, haiku);
+      // Routing back to the ceiling clears the record, then the server refuses the send.
+      const backToOpus = { threadId: "thread-1", baseline: opus, chosen: opus };
+      yield* ceilings.decide({ ...backToOpus, commandId: "send-1" });
+      expect(Option.isNone(yield* ceilings.get("thread-1"))).toBe(true);
+      yield* ceilings.undo("send-1");
+      expect(yield* ceilings.get("thread-1")).toEqual(
+        Option.some({ baseline: opus, chosen: haiku }),
+      );
+      // A retry of the refused command asks Nadir again.
+      expect(ceilings.decided("send-1")).toBeUndefined();
+      yield* ceilings.decide({ ...backToOpus, commandId: "send-2" });
+      yield* rememberChoice(ceilings, "thread-1", opus, sonnet);
+      yield* ceilings.undo("send-2");
+      expect(yield* ceilings.get("thread-1")).toEqual(
+        Option.some({ baseline: opus, chosen: sonnet }),
+      );
+    }).pipe(Effect.provide(layerCeilingsMemory)),
+  );
+
   it.effect("keeps the ceiling across a server restart", () =>
     Effect.gen(function* () {
       const directory = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();

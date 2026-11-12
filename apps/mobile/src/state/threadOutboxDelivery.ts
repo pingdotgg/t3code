@@ -79,9 +79,10 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
-  releaseComposerModelPick,
+  releaseComposerDraftModelSelection,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
+  takeSentComposerPick,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
@@ -965,17 +966,18 @@ export function createThreadOutboxDelivery(): {
     }
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
     // Nadir may run a new turn on another model; the picker then shows the one that ran.
+    const sentPick = takeSentComposerPick(queuedMessage.commandId);
     if (
-      sendSettings.modelSelection !== undefined &&
+      sentPick !== undefined &&
       releasesComposerModelPick({
         nadirRouting: currentConfig.settings?.nadirRouting === true,
         dispatchMode: queuedMessage.dispatchMode,
         activeRunId: thread.runtime?.activeRunId ?? null,
       })
     ) {
-      releaseComposerModelPick(
+      releaseComposerDraftModelSelection(
         scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
-        sendSettings.modelSelection,
+        sentPick,
       );
     }
     const delivered =

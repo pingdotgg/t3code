@@ -76,6 +76,7 @@ import {
   getComposerDraftSnapshot,
   isFreshSessionPending,
   mergeComposerDraftContent,
+  rememberSentComposerPick,
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
@@ -755,6 +756,7 @@ export function useThreadComposerState(input: {
     const messageId = MessageId.make(metadata.messageId);
     onWillEnqueue?.();
     clearThreadComposerError(threadKey);
+    rememberSentComposerPick(metadata.commandId, draft.modelSelection);
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,

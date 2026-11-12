@@ -59,9 +59,14 @@ export const findNadirCompactionScript = Effect.fn("NadirCompaction.findScript")
   readonly hostHome: string;
   /** The settings files Claude Code loads for this session, highest precedence first. */
   readonly settingsFiles: ReadonlyArray<string>;
+  /** The `--settings` launch argument, which outranks every file. */
+  readonly launchSettings?: unknown;
 }) {
   const { fileSystem, path, claudeHome } = input;
-  const settings = yield* Effect.forEach(input.settingsFiles, (file) => readJson(fileSystem, file));
+  const settings = [
+    input.launchSettings,
+    ...(yield* Effect.forEach(input.settingsFiles, (file) => readJson(fileSystem, file))),
+  ];
   if (runsNadirCompaction(settings)) return undefined;
   const homes = [claudeHome, path.join(input.hostHome, ".claude")];
   const pluginScripts: string[] = [];

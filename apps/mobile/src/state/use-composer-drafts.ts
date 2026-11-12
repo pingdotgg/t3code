@@ -1328,16 +1328,20 @@ function updateComposerDrafts(
   schedulePersistComposerState();
 }
 
-/** Drops a thread draft's model pick that a send used, so the picker follows the thread's model. */
-export function releaseComposerModelPick(draftKey: string, sentPick: ModelSelection): void {
-  updateComposerDrafts((current) => {
-    const draft = current[draftKey];
-    if (!draft?.modelSelection || !draftModelPickMatchesThread(draft.modelSelection, sentPick)) {
-      return current;
-    }
-    const { modelSelection: _modelSelection, ...rest } = draft;
-    return withComposerDraft(current, draftKey, rest);
-  });
+// The draft pick each queued send used, by command id. A send from a draft with no pick has no
+// entry, so a pick made while it was queued stays. After a restart the entry is gone and the
+// picker keeps the pick. ponytail: a send that never delivers leaves its entry until then.
+const sentComposerPicks = new Map<string, ModelSelection>();
+
+export function rememberSentComposerPick(commandId: string, pick: ModelSelection | undefined) {
+  if (pick !== undefined) sentComposerPicks.set(commandId, pick);
+}
+
+/** The draft pick a queued send used, if it had one; forgotten once read. */
+export function takeSentComposerPick(commandId: string): ModelSelection | undefined {
+  const pick = sentComposerPicks.get(commandId);
+  sentComposerPicks.delete(commandId);
+  return pick;
 }
 
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
