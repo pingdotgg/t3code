@@ -71,13 +71,12 @@ from evidence you could not access. Do not run untrusted PR code merely to decid
 Read the guide's linked sections before applying these checks. Inspect enough source to substantiate
 scope and behavioral claims; leave the full correctness, security, and performance audit to code review.
 
-- Under [prior approval](../../../CONTRIBUTING.md#prior-approval), identify the actual failure and
-  intended behavior. Inspect maintainer responses in the linked issue or discussion, including what
-  direction and scope they approved. A link, label, or acknowledgment alone is not approval. Judge a
-  claimed obvious-bug exception by purpose, impact, and necessary changes, without numeric cutoffs.
-  Separately assess focused configuration of an established capability: identify what already exists,
-  what the option controls, and its effects and necessary scope. This route does not require a proven
-  obvious bug. Adding a setting alone establishes neither a new feature nor an approval exemption.
+- Under [fix a bug](../../../CONTRIBUTING.md#prior-approval), identify the actual failure and
+  intended behavior. A feature, or anything on the guide's not-interested list, warrants closure
+  unless a maintainer in the trusted exemption list asked for that PR. Inspect the request and the
+  direction and scope it covers. A link, label, or acknowledgment alone is not a request. Judge a
+  claimed bug fix by purpose, impact, and necessary changes, without numeric cutoffs. A setting that
+  adds a workflow or changes a default is a feature.
   Check whether an alleged fix intentionally changes product behavior or overlooks an existing workflow.
   Preserve any useful documentation, onboarding, or discoverability problem when declining the solution.
 - Under [one problem](../../../CONTRIBUTING.md#one-problem), trace how each material change contributes
@@ -90,22 +89,11 @@ scope and behavioral claims; leave the full correctness, security, and performan
   as the guide requires them. Do not demand unrelated evidence or repo-wide tests. An unavailable local
   platform does not defeat adequate contributor evidence. Do not infer fabrication or AI authorship
   from writing style, suspicion, or a check you cannot reproduce.
+- Under [models](../../../CONTRIBUTING.md#models), use only the model and harness the PR names,
+  usually in its closing attribution line.
 
-### Configuration and workflow examples
-
-- Hosting CLI-path configuration in [#11653](https://github.com/pingdotgg/t3code/pull/11653) is eligible
-  for deeper review under the maintainer's ruling: it makes an existing capability configurable.
-  It need not qualify as an obvious-bug repair or obtain prior feature approval on that basis.
-  Still assess one underlying problem, necessary scope and credible verification. Deeper review can
-  reject the configuration mechanism or its implementation.
-- Preserving Files as an independent tab in [#14436](https://github.com/pingdotgg/t3code/pull/14436)
-  changes tab lifetime and navigation. The maintainer classified it as a broader workflow change
-  requiring prior product-direction approval, which is absent. Propose closure for missing approval
-  in a dry run, or carry out closure in authorized enforcement. Its good evidence does not make it
-  eligible or justify keeping it pending after that ruling. The remedy is to obtain scope approval.
-
-Use these examples to distinguish effects, not to exempt every configuration option. Apply current
-trusted policy and reassess changed submission evidence; neither example grants permanent eligibility.
+Bans in the guide are a maintainer decision. Report suspected spam to maintainers; do not ban or
+threaten a ban.
 
 ## Apply the outcome
 
@@ -141,7 +129,7 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   permission error, means the variable cannot be read; then report the closure as incomplete. The comment
   must name the violated rule, cite supporting submission evidence, link the maintained guide section,
   and give a concrete remedy. Missing contributor evidence can warrant closure; explain what must be
-  established. Missing product approval calls for maintainer discussion, not an agent's product decision.
+  established. The remedy for a feature is an Ideas discussion, not an agent's product decision.
   Close for multiple problems only when the independence of those changes is supported. Closing a PR
   does not require a configured Macroscope label.
 - **Needs explanation or maintainer decision.** Name the unresolved question and who can resolve it.
@@ -149,9 +137,9 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   was posted. If tracing the source leaves an extra diff's necessity unclear, request the causal
   explanation needed. If established facts leave a product-direction choice to maintainers, identify
   that choice. Leave the PR open and pending that answer; do not mark it eligible. Do not substitute
-  "the agent was uncertain" for a violated rule. Once maintainers establish that a workflow change
-  requires approval and that approval is absent, apply the closure outcome instead of retaining a
-  pending classification. Good verification does not cure missing approval.
+  "the agent was uncertain" for a violated rule. Once a change is established as a feature with no
+  maintainer request, apply the closure outcome instead of retaining a pending classification. Good
+  verification does not make a feature eligible.
 - **Incomplete; retry required.** State the failed retrieval, missing access, truncated diff, or unfinished
   assessment and what is needed to resume. Do not convert operational failures into policy violations
   or hand the PR off as having passed. An inaccessible artifact is different from an omitted artifact.
