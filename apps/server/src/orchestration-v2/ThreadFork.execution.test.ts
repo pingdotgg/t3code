@@ -727,7 +727,12 @@ const writeParentRun = (input: {
             queuePosition: null,
             requestedAt: now,
             startedAt: now,
-            completedAt: input.status === "completed" ? now : null,
+            completedAt:
+              input.status === "preparing" ||
+              input.status === "running" ||
+              input.status === "queued"
+                ? null
+                : now,
             checkpointId: input.stable ? CheckpointId.make(`${input.runId}:checkpoint`) : null,
             contextHandoffId: null,
             ...(input.status === "preparing" ||
@@ -1054,30 +1059,33 @@ it.effect("a side chat opens once a later run has worked in the project checkout
     yield* forkSideChat("side-chat-worktree-abandoned-fork", parentId, sideChatId);
     assert.isNull((yield* orchestrator.getThreadProjection(sideChatId)).thread.deletedAt);
 
-    // Retrying the failed setup puts the same run back into preparing.
-    const retriedParentId = ThreadId.make("side-chat-worktree-retried-parent");
-    yield* createParent(retriedParentId);
-    yield* writeParentRun({
-      threadId: retriedParentId,
-      runId: RunId.make("side-chat-worktree-retried-run-2"),
-      ordinal: 2,
-      status: "completed",
-      text: "Worked in the project checkout",
-      stable: true,
-    });
-    yield* writeParentRun({
-      threadId: retriedParentId,
-      runId: RunId.make("side-chat-worktree-retried-run-1"),
-      ordinal: 1,
-      status: "preparing",
-      text: "Retrying setup",
-    });
-    const rejected = yield* forkSideChat(
-      "side-chat-worktree-retried-fork",
-      retriedParentId,
-      ThreadId.make("side-chat-worktree-retried-child"),
-    ).pipe(Effect.flip);
-    assert.include(String(rejected.cause), "has no worktree yet");
+    // A retried setup that is running again, or failed again, comes after the later run.
+    for (const status of ["preparing", "failed"] as const) {
+      const retriedParentId = ThreadId.make(`side-chat-worktree-retried-parent-${status}`);
+      yield* createParent(retriedParentId);
+      yield* writeParentRun({
+        threadId: retriedParentId,
+        runId: RunId.make(`side-chat-worktree-retried-run-2-${status}`),
+        ordinal: 2,
+        status: "completed",
+        text: "Worked in the project checkout",
+        stable: true,
+      });
+      yield* TestClock.adjust("1 second");
+      yield* writeParentRun({
+        threadId: retriedParentId,
+        runId: RunId.make(`side-chat-worktree-retried-run-1-${status}`),
+        ordinal: 1,
+        status,
+        text: "Retried setup",
+      });
+      const rejected = yield* forkSideChat(
+        `side-chat-worktree-retried-fork-${status}`,
+        retriedParentId,
+        ThreadId.make(`side-chat-worktree-retried-child-${status}`),
+      ).pipe(Effect.flip);
+      assert.include(String(rejected.cause), "has no worktree yet", status);
+    }
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 

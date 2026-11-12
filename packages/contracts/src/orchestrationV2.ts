@@ -728,35 +728,6 @@ export function orchestrationV2RunWorkStartedAt(
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
 }
 
-/**
- * Work started now would run in the project checkout, not the worktree the thread asked for. A
- * failed or interrupted setup leaves the request standing until a worktree exists, or until a
- * later run has started work in the project checkout anyway. A retried setup is pending again.
- */
-export function orchestrationV2WorktreePending(
-  worktreePath: string | null,
-  runs: ReadonlyArray<
-    Pick<OrchestrationV2Run, "ordinal" | "status" | "startedAt" | "workspacePreparation">
-  >,
-): boolean {
-  return (
-    worktreePath === null &&
-    runs.some(
-      (run) =>
-        run.workspacePreparation?.type === "worktree" &&
-        (run.status === "preparing" ||
-          ((run.status === "failed" || run.status === "interrupted") &&
-            !runs.some(
-              (later) =>
-                later.ordinal > run.ordinal &&
-                later.status !== "queued" &&
-                later.status !== "preparing" &&
-                !(later.status === "cancelled" && later.startedAt === null),
-            ))),
-    )
-  );
-}
-
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.
