@@ -2209,6 +2209,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect(
+      "does not report a successful remote switch that detaches HEAD beside an untracked local branch",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const remote = yield* makeTmpDir("git-remote-");
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["branch", "--no-track", "feature"]);
+          yield* git(cwd, ["remote", "add", "upstream", remote]);
+          yield* git(cwd, ["push", "upstream", "feature:refs/heads/feature"]);
+          yield* git(cwd, ["fetch", "upstream"]);
+
+          const exit = yield* (yield* GitVcsDriver.GitVcsDriver)
+            .switchRef({ cwd, refName: "upstream/feature" })
+            .pipe(Effect.exit);
+
+          if (Exit.isSuccess(exit)) {
+            assert.equal(exit.value.refName, "feature");
+            assert.equal(yield* git(cwd, ["symbolic-ref", "HEAD"]), "refs/heads/feature");
+          }
+        }),
+    );
+
     it.effect.each([
       // Git cannot tell a missing revision from a missing file in these.
       { label: "an argument that may be a path", args: ["log", "-1", "missing"] },
