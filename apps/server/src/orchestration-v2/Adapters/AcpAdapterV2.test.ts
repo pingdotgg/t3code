@@ -521,6 +521,10 @@ const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapter
 const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
   readonly runtimeMode?: "full-access" | "approval-required";
+  readonly wrapPrompt?: (
+    prompt: AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"],
+  ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
+  readonly cancelled?: Deferred.Deferred<void>;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -540,7 +544,14 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
         environment: input.environment,
         wrapRuntime: (runtime) => {
           natives.push(runtime);
-          return runtime;
+          return {
+            ...runtime,
+            prompt: input.wrapPrompt?.(runtime.prompt) ?? runtime.prompt,
+            cancel:
+              input.cancelled === undefined
+                ? runtime.cancel
+                : Deferred.succeed(input.cancelled, undefined).pipe(Effect.andThen(runtime.cancel)),
+          };
         },
       }),
     },
@@ -571,6 +582,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   return {
     runtime,
     natives,
+    providerThread,
     startTurn,
     /** A turn still running makes the next start fail, without waiting on time. */
     nextTurnRejected: (ordinal: number) =>
@@ -2270,6 +2282,182 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  const textChunk = (
+    sessionUpdate: "agent_message_chunk" | "agent_thought_chunk",
+    messageId: string | undefined,
+    text: string,
+  ) => ({
+    sessionUpdate,
+    ...(messageId === undefined ? {} : { messageId }),
+    content: { type: "text" as const, text },
+  });
+  const answer = (messageId: string | undefined, text: string) =>
+    textChunk("agent_message_chunk", messageId, text);
+  const thought = (messageId: string | undefined, text: string) =>
+    textChunk("agent_thought_chunk", messageId, text);
+  const agentMessage = (messageId: string, text: string) => ({
+    sessionUpdate: "agent_message" as const,
+    messageId,
+    content: [{ type: "text" as const, text }],
+  });
+  type ScriptedTextStep = EffectAcpSchema.SessionUpdate | { readonly advance: Duration.Input };
+
+  const runScriptedTextTurn = Effect.fnUntraced(function* (steps: ReadonlyArray<ScriptedTextStep>) {
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let handler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const instanceId = ProviderInstanceId.make("acp-named-text-resume");
+    const path = yield* Path.Path;
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          mockAgentPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+          ),
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleSessionUpdate: (next) =>
+              Effect.sync(() => {
+                handler = next;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+            prompt: () =>
+              Effect.gen(function* () {
+                assert.isDefined(handler);
+                for (const step of steps) {
+                  if ("advance" in step) yield* TestClock.adjust(step.advance);
+                  else yield* handler!({ sessionId: "mock-session-1", update: step });
+                }
+                return { stopReason: "end_turn" as const };
+              }),
+          }),
+        }),
+      },
+    });
+    const threadId = ThreadId.make("thread-acp-named-text-resume");
+    const modelSelection = { instanceId, model: "default" };
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("session-acp-named-text-resume"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+    yield* runtime.startTurn(
+      makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+        ordinal: 1,
+      }),
+    );
+    return yield* runtime.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runCollect,
+    );
+  });
+
+  it.effect.each([
+    {
+      label: "a thought with its own id interrupts a named assistant message",
+      steps: [
+        answer("answer", "First. "),
+        { advance: "1 second" },
+        thought("thought", "Thinking"),
+        answer("answer", "Second."),
+      ],
+      expected: [
+        ["assistant_message", "First. Second."],
+        ["reasoning", "Thinking"],
+      ],
+    },
+    {
+      label: "named assistant messages interleave",
+      steps: [answer("a", "A1 "), answer("b", "B1"), answer("a", "A2")],
+      expected: [
+        ["assistant_message", "A1 A2"],
+        ["assistant_message", "B1"],
+      ],
+    },
+    {
+      label: "a resumed message continues from authoritative text",
+      steps: [
+        answer("answer", "stale"),
+        thought("thought", "Thinking"),
+        agentMessage("answer", "fresh "),
+        thought("thought", " more"),
+        answer("answer", "tail"),
+      ],
+      expected: [
+        ["assistant_message", "fresh tail"],
+        ["reasoning", "Thinking more"],
+      ],
+    },
+  ] satisfies ReadonlyArray<{
+    readonly label: string;
+    readonly steps: ReadonlyArray<ScriptedTextStep>;
+    readonly expected: ReadonlyArray<readonly [string, string]>;
+  }>)("resumes ACP text segments when $label", ({ steps, expected }) =>
+    Effect.gen(function* () {
+      const events = yield* runScriptedTextTurn(steps);
+      const history = new Map<string, Array<OrchestrationV2TurnItem>>();
+      for (const event of events) {
+        if (event.type !== "turn_item.updated") continue;
+        const item = event.turnItem;
+        if (item.nativeItemRef?.nativeId?.includes(":turn:") !== true) continue;
+        history.set(item.id, [...(history.get(item.id) ?? []), item]);
+      }
+      const texts = [...history.values()].flatMap((snapshots) => {
+        const last = snapshots.at(-1);
+        return last !== undefined && "text" in last ? [[last.type, last.text]] : [];
+      });
+      assert.deepEqual(texts, expected);
+      for (const snapshots of history.values()) {
+        assert.equal(new Set(snapshots.map((item) => item.ordinal)).size, 1);
+        assert.equal(new Set(snapshots.map((item) => DateTime.formatIso(item.startedAt!))).size, 1);
+        assert.equal(snapshots.at(-1)?.status, "completed");
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("ignores a text flush scheduled before an ACP segment resumed", () =>
+    Effect.gen(function* () {
+      const events = yield* runScriptedTextTurn([
+        answer("answer", "A"),
+        answer("answer", "B"),
+        thought("thought", "Thinking"),
+        { advance: "30 millis" },
+        answer("answer", "C"),
+        answer("answer", "D"),
+        { advance: "20 millis" },
+        answer("answer", "E"),
+        { advance: "30 millis" },
+      ]);
+      const snapshots = events.flatMap((event) =>
+        event.type === "message.updated" && event.message.role === "assistant"
+          ? [[event.message.text, event.message.streaming]]
+          : [],
+      );
+      assert.deepEqual(snapshots, [
+        ["A", true],
+        ["AB", false],
+        ["ABC", true],
+        ["ABCDE", true],
+        ["ABCDE", false],
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3921,6 +4109,90 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("delivers a follow-up the agent rejects while it is still processing", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const rejected = yield* Deferred.make<void>();
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({}),
+        // pi-agent-core based agents (oh-my-pi) end a turn but keep background work running.
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return promptCalls === 2
+            ? Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    EffectAcpErrors.AcpRequestError.internalError(
+                      "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+                    ),
+                  ),
+                ),
+              )
+            : prompt(payload, options);
+        },
+      });
+      yield* harness.startTurn(1);
+      const [first] = yield* harness.terminals(1);
+      assert.equal(first?.status, "completed");
+
+      const followUp = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(2);
+      yield* Deferred.await(rejected);
+      yield* TestClock.adjust("1 minute");
+      const [delivered] = yield* Fiber.join(followUp);
+      assert.equal(delivered?.status, "completed");
+      assert.equal(promptCalls, 3);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("sends no more prompts once a follow-up waiting on a busy agent is stopped", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const rejected = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({}),
+        cancelled,
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return promptCalls === 1
+            ? prompt(payload, options)
+            : Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    EffectAcpErrors.AcpRequestError.internalError(
+                      "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+                    ),
+                  ),
+                ),
+              );
+        },
+      });
+      yield* harness.startTurn(1);
+      yield* harness.terminals(1);
+
+      const stopped = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(2);
+      yield* Deferred.await(rejected);
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(
+          ProviderInstanceId.make("acp-prompt-inactivity"),
+          "mock-session-1:turn:2",
+        ),
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(cancelled);
+      yield* TestClock.adjust("1 second");
+      const [terminal] = yield* Fiber.join(stopped);
+      yield* Fiber.join(interrupt);
+      assert.equal(terminal?.status, "interrupted");
+      assert.equal(promptCalls, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("holds the inactivity timeout while the agent waits on an approval", () =>
     Effect.gen(function* () {
       const harness = yield* makePromptInactivityHarness({
@@ -4532,7 +4804,25 @@ describe("AcpAdapterV2", () => {
       kind: "other",
       granted: false,
     },
-  ] as const)("$label", ({ kind, granted }) =>
+    {
+      label: "grants an explicit execute approval",
+      kind: "execute",
+      requestKind: "execute",
+      granted: true,
+    },
+    {
+      label: "does not grant execution to an approved mode switch",
+      kind: "execute",
+      requestKind: "switch_mode",
+      granted: false,
+    },
+    {
+      label: "does not grant execution to an approved explicit other tool",
+      kind: "other",
+      requestKind: "other",
+      granted: false,
+    },
+  ] as const)("$label", ({ kind, granted, ...testCase }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -4619,7 +4909,10 @@ describe("AcpAdapterV2", () => {
       const permissionFiber = yield* requestPermission(
         {
           sessionId: "mock-session-1",
-          toolCall: { toolCallId: "tracked-tool-call" },
+          toolCall: {
+            toolCallId: "tracked-tool-call",
+            ...("requestKind" in testCase ? { kind: testCase.requestKind } : {}),
+          },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
         },
         { requestId: "id-only-permission-request", method: "session/request_permission" },
@@ -4661,8 +4954,12 @@ describe("AcpAdapterV2", () => {
         { requestId: "id-only-permission-terminal", method: "terminal/create" },
       ).pipe(Effect.exit);
       assert.deepEqual(
-        { prompt: approval.prompt, terminalCreated: Exit.isSuccess(terminalExit) },
-        { prompt: "git status", terminalCreated: granted },
+        {
+          prompt: approval.prompt,
+          requestKind: approval.requestKind,
+          terminalCreated: Exit.isSuccess(terminalExit),
+        },
+        { prompt: "git status", requestKind: "command", terminalCreated: granted },
       );
 
       yield* runtime.interruptTurn({ providerThread, providerTurnId });
