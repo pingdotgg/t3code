@@ -249,6 +249,8 @@ function PanelTabStrip({
 
 function PanelTabsNotch(props: {
   notched: boolean;
+  /** A pane's second strip, beside its own (the pull request beside its list). */
+  secondStrip: boolean;
   addButton: ReactNode;
   pinnedTab: ReactNode;
   children: ReactNode;
@@ -257,7 +259,9 @@ function PanelTabsNotch(props: {
   return (
     <PaneNotch>
       {props.pinnedTab}
-      <LayoutPaneTabStrip>{props.children}</LayoutPaneTabStrip>
+      <LayoutPaneTabStrip role={props.secondStrip ? "panel" : undefined}>
+        {props.children}
+      </LayoutPaneTabStrip>
       {props.addButton ? (
         <span data-pane-notch-add="" className="flex shrink-0">
           {props.addButton}
@@ -1061,6 +1065,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       >
         <PanelTabsNotch
           notched={notched}
+          secondStrip={props.mode !== "embedded"}
           addButton={addSurfaceMenu}
           pinnedTab={
             pinnedChatTab ? (
