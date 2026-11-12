@@ -139,6 +139,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  isDirectory: boolean,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -146,7 +147,9 @@ function resolveCommandEditorArgs(
     case "direct-path":
       return [target];
     case "goto":
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      // Without a window flag, VS Code's window settings may replace the user's last active window.
+      return isDirectory ? ["--new-window", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
@@ -506,11 +509,17 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     const { command, baseArgs } = resolved.value;
     const target =
       editorDef.id === "github-desktop" ? yield* resolveRepositoryTarget(input.cwd) : input.cwd;
+    const isDirectory =
+      editorDef.launchStyle === "goto" &&
+      (yield* (yield* FileSystem.FileSystem).stat(target).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ));
     return {
       editor: editorDef.id,
       target,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, target)],
+      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, target, isDirectory)],
     };
   }
 
