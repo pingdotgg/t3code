@@ -146,6 +146,14 @@ export const EDITORS = [
     jetbrainsProductCode: "WS",
   },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
+  // Listed after the file manager so it never becomes the default editor on its own.
+  {
+    id: "github-desktop",
+    label: "GitHub Desktop",
+    commands: ["github"],
+    baseArgs: ["open"],
+    launchStyle: "direct-path",
+  },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
