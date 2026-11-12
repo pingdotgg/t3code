@@ -172,8 +172,9 @@ it.effect.each([
     const summary = yield* readChecks(requiredChecksInput);
     const detail = yield* provider.getChangeRequest(requiredChecksInput);
     const snapshot = yield* provider.getChangeRequestSummary!(requiredChecksInput);
-    assert.strictEqual(snapshot.checksState, "pending");
-    assert.strictEqual(detail.checksState, "pending");
+    // Matches the client's all-checks rollup: an optional failure outranks passing required checks.
+    assert.strictEqual(snapshot.checksState, supported ? "failing" : "pending");
+    assert.strictEqual(detail.checksState, supported ? "failing" : "pending");
     for (const checks of [summary.checks, detail.checks]) {
       assert.deepStrictEqual(
         checks.map((check) => [check.name, check.status, check.required]),
@@ -221,13 +222,11 @@ it.effect(
       ["failure", "release/1.x", "failing"],
       ["pending", "release/1.x", "pending"],
       ["missing", "release/1.x", "pending"],
-      ["skipped", "release/1.x", "passing"],
-      ["warning", "release/1.x", "passing"],
-      ["success", "unprotected", "failing"],
-      ["empty", "unprotected", undefined],
+      ["success", "unprotected", "passing"],
+      ["empty", "unprotected", null],
       ["unavailable", "release/1.x", undefined],
       ["success", "unavailable", undefined],
-      ["success", "forbidden", undefined],
+      ["success", "forbidden", "passing"],
     ] as const;
     const pulls = cases.map(([sha, base], index) => ({
       ...requiredChecksPullRequest,
@@ -322,7 +321,7 @@ it.effect(
                       ...(state === "missing"
                         ? []
                         : [{ ...requiredChecksStatuses[0], status: state }]),
-                      requiredChecksStatuses[1],
+                      { ...requiredChecksStatuses[1], status: "success" },
                     ];
             } else return Effect.die(`Unexpected Forgejo request: ${input.path}`);
             return encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));

@@ -128,32 +128,20 @@ export function forgejoActor(
     : null;
 }
 
-function checksStateOf(
-  checks: ReadonlyArray<PullRequestCheck>,
-): PullRequestChecksState | undefined {
-  if (checks.length === 0) return undefined;
-  const required = checks.filter((check) => check.required === true);
-  const gate = required.length > 0 ? required : checks;
-  if (
-    gate.some(
-      (check) =>
-        check.status === "failure" ||
-        check.status === "cancelled" ||
-        check.status === "action-required",
-    )
-  )
-    return "failing";
-  if (gate.some((check) => check.status === "pending")) return "pending";
-  return "passing";
+// Matches the web client's rollup of `detail.checks`, which it compares with this value.
+function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
 }
 
 export function forgejoChangeRequest(
   pr: typeof ForgejoPullRequest.Type,
   checks?: ReadonlyArray<PullRequestCheck>,
 ) {
-  const checksState = checks === undefined ? undefined : checksStateOf(checks);
   return {
-    ...(checksState === undefined ? {} : { checksState }),
+    ...(checks === undefined ? {} : { checksState: checksStateOf(checks) }),
     number: pr.number,
     title: pr.title,
     url: pr.html_url,
