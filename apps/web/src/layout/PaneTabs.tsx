@@ -100,10 +100,14 @@ const EMPTY_TABS: readonly LayoutTab[] = [];
 interface PaneStrip {
   readonly strip: HTMLDivElement;
   readonly join: HTMLSpanElement;
-  /** Where the joined shape sits, in the strip's scrolled content. */
+  /** Where the joined shape sits or is heading, in the strip's scrolled content. */
   shown: { tabId: string | null; x: number; w: number } | null;
-  /** The slide in flight: the labels' fades follow it onto re-rendered tabs. */
-  motion: { from: string | null; to: string | null; slide: Animation } | null;
+  /** The tab whose label reads as joined: the shape's, once it has landed there. */
+  joinedId: string | null;
+  /** The slide in flight, if any. */
+  slide: Animation | null;
+  /** The holding header's panel animation duration, for a slide begun on a press. */
+  motionMs: number;
 }
 
 const paneStrips = new Map<string, PaneStrip>();
@@ -131,6 +135,8 @@ function schedulePlacement(strip: HTMLElement, motionMs: number): void {
 const PANE_JOIN_RADIUS_PX = 10;
 const PANE_JOIN_EAR_PX = 10;
 const PANE_JOIN_TAIL_PX = 36;
+/** The strip's edge fade (index.css), which the revealed tab's ears stay clear of. */
+const PANE_STRIP_FADE_PX = 24;
 
 function joinPiece(name: string, value = ""): HTMLElement {
   const piece = document.createElement("i");
@@ -165,6 +171,8 @@ function createPaneStrip(): PaneStrip {
   body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
   join.append(body, joinPiece("data-jp"));
   strip.append(join);
+  const entry: PaneStrip = { strip, join, shown: null, joinedId: null, slide: null, motionMs: 0 };
+  stripEntries.set(strip, entry);
   strip.addEventListener(
     "wheel",
     (event) => {
@@ -182,25 +190,37 @@ function createPaneStrip(): PaneStrip {
     },
     { passive: false },
   );
+  strip.addEventListener("scroll", () => markStripOverflow(strip), { passive: true });
+  // The shape leaves on the press, before the switch's render: a click lands
+  // on its release, after the incoming chat has been laid out.
+  strip.addEventListener("pointerdown", (event) => slideOnPress(entry, event));
   setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
   // A tab opening, closing or changing size moves the others without a render here.
   // Not observeResize: no React state changes, and its flushSync would force the
   // incoming chat's pending render into the tab switch's task.
   // oxlint-disable-next-line t3code/no-raw-resize-observer -- Places a DOM node only; see above.
-  const resize = new ResizeObserver(() => stripPlacers.get(strip)?.(0));
+  const resize = new ResizeObserver(() => {
+    stripPlacers.get(strip)?.(0);
+    markStripOverflow(strip);
+  });
   resize.observe(strip);
   new MutationObserver(() => {
     for (const tab of strip.querySelectorAll(":scope > [data-strip-layer] > *")) {
       resize.observe(tab);
     }
-    // A tab rendered again mid-slide fades with it from its first frame.
-    const entry = stripEntries.get(strip);
-    if (entry) fadePaneTabLabels(entry);
+    // A tab rendered again (a header swap) reads as joined from its first frame.
+    markJoinedLabel(entry);
     schedulePlacement(strip, 0);
   }).observe(strip, { childList: true, subtree: true });
-  const entry: PaneStrip = { strip, join, shown: null, motion: null };
-  stripEntries.set(strip, entry);
   return entry;
+}
+
+/** How much of the strip is scrolled out at each end, for its edge fade. */
+function markStripOverflow(strip: HTMLElement): void {
+  const end = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
+  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
+  strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
+  strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
 }
 
 function paneStripFor(key: string): PaneStrip {
@@ -210,6 +230,17 @@ function paneStripFor(key: string): PaneStrip {
     paneStrips.set(key, entry);
   }
   return entry;
+}
+
+/** The shown header places the strip's joined tab, with its own motion setting. */
+function holdPaneStrip(
+  entry: PaneStrip,
+  place: (motionMs: number) => void,
+  motionMs: number,
+): void {
+  stripPlacers.set(entry.strip, place);
+  entry.motionMs = motionMs;
+  schedulePlacement(entry.strip, motionMs);
 }
 
 /** Forget a pane's strip once no header holds it, after the commit that may hand it on. */
@@ -251,10 +282,99 @@ function findStripTab(strip: HTMLElement, tabId: string | null): HTMLElement | n
   );
 }
 
+/** The label under the landed shape reads as the active one (index.css, [data-joined]). */
+function markJoinedLabel(entry: PaneStrip): void {
+  for (const tab of entry.strip.querySelectorAll<HTMLElement>(STRIP_TAB_SELECTOR)) {
+    const joined = entry.joinedId !== null && stripTabId(tab) === entry.joinedId;
+    if (tab.hasAttribute("data-joined") !== joined) tab.toggleAttribute("data-joined", joined);
+  }
+}
+
+function stripBoxOf(strip: HTMLElement, tab: HTMLElement): { x: number; w: number } | null {
+  const bounds = strip.getBoundingClientRect();
+  // Layout pixels, also while the overview scales the pane.
+  const scale = strip.offsetWidth > 0 ? bounds.width / strip.offsetWidth : 1;
+  if (scale <= 0) return null;
+  const rect = tab.getBoundingClientRect();
+  return {
+    x: Math.round((rect.left - bounds.left) / scale + strip.scrollLeft),
+    w: Math.round(rect.width / scale),
+  };
+}
+
 /**
- * Place the joined shape under the active tab, and slide it there from the
- * tab it was under, transform only. Reads layout once per call.
+ * Put the joined shape on a tab, sliding there from where it is when motion
+ * is on, transform only. The label switches when the shape lands.
  */
+function moveJoin(
+  entry: PaneStrip,
+  to: { tabId: string | null; x: number; w: number },
+  motionMs: number,
+): void {
+  const { join } = entry;
+  const was = entry.shown;
+  // Already heading there (a slide begun on the press): let it land.
+  if (entry.slide && was?.tabId === to.tabId && was.x === to.x && was.w === to.w) return;
+  entry.shown = to;
+  join.hidden = false;
+  const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
+  join.style.setProperty("--jx", `${to.x}px`);
+  join.style.setProperty("--jw", `${to.w}px`);
+  join.style.setProperty("--jm", String(middle(to.w)));
+  const land = () => {
+    entry.slide = null;
+    entry.joinedId = to.tabId;
+    markJoinedLabel(entry);
+  };
+  // Under black chrome and on phones the notch draws the tab and no shape shows.
+  if (!was || motionMs <= 0 || join.getClientRects().length === 0) {
+    entry.slide?.cancel();
+    land();
+    return;
+  }
+  // From where the shape is drawn now, mid-slide included.
+  const capBox = join.querySelector('[data-jc="l"]')?.getBoundingClientRect();
+  const stripBox = entry.strip.getBoundingClientRect();
+  const fromX =
+    entry.slide && capBox
+      ? Math.round(capBox.left - stripBox.left + entry.strip.scrollLeft + PANE_JOIN_EAR_PX)
+      : was.x;
+  const from = { x: fromX, w: was.w };
+  entry.slide?.cancel();
+  const timing = { duration: motionMs, easing: PANE_JOIN_EASING };
+  const r = PANE_JOIN_RADIUS_PX;
+  const e = PANE_JOIN_EAR_PX;
+  const piece = (selector: string) => join.querySelector<HTMLElement>(selector);
+  for (const animation of join.getAnimations({ subtree: true })) animation.cancel();
+  piece('[data-jc="l"]')?.animate(
+    [{ translate: `${from.x - e}px 0` }, { translate: `${to.x - e}px 0` }],
+    timing,
+  );
+  piece('[data-jc="r"]')?.animate(
+    [{ translate: `${from.x + from.w - r - 1}px 0` }, { translate: `${to.x + to.w - r - 1}px 0` }],
+    timing,
+  );
+  const slide = piece("[data-jm]")?.animate(
+    [
+      { translate: `${from.x + r}px 0`, scale: `${middle(from.w)} 1` },
+      { translate: `${to.x + r}px 0`, scale: `${middle(to.w)} 1` },
+    ],
+    timing,
+  );
+  if (!slide) {
+    land();
+    return;
+  }
+  entry.slide = slide;
+  void slide.finished.then(
+    () => {
+      if (entry.slide === slide) land();
+    },
+    () => {},
+  );
+}
+
+/** Place the joined shape under the header's active tab. Reads layout once. */
 function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number): void {
   const { strip, join } = entry;
   const active =
@@ -262,104 +382,40 @@ function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number)
   if (!active) {
     join.hidden = true;
     entry.shown = null;
+    entry.joinedId = null;
+    markJoinedLabel(entry);
     return;
   }
-  const bounds = strip.getBoundingClientRect();
-  // Layout pixels, also while the overview scales the pane.
-  const scale = strip.offsetWidth > 0 ? bounds.width / strip.offsetWidth : 1;
-  if (scale <= 0) return;
-  const boxOf = (tab: HTMLElement) => {
-    const rect = tab.getBoundingClientRect();
-    return {
-      x: Math.round((rect.left - bounds.left) / scale + strip.scrollLeft),
-      w: Math.round(rect.width / scale),
-    };
-  };
+  const box = stripBoxOf(strip, active);
+  if (!box) return;
   const activeId = stripTabId(active);
-  const { x, w } = boxOf(active);
-  const was = entry.shown;
-  entry.shown = { tabId: activeId, x, w };
-  join.hidden = false;
-  const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
-  join.style.setProperty("--jx", `${x}px`);
-  join.style.setProperty("--jw", `${w}px`);
-  join.style.setProperty("--jm", String(middle(w)));
   // Only a change of tab moves it; a tab growing or the strip scrolling places it.
-  if (!was || was.tabId === activeId || motionMs <= 0) {
-    fadePaneTabLabels(entry);
-    return;
-  }
-  // Under black chrome and on phones the notch draws the tab and no shape shows.
-  if (join.getClientRects().length === 0) return;
-  // The tabs re-flow as the active one changes (its title gets more room), so
-  // the shape leaves from where the old tab sits now.
-  const previous = [...strip.querySelectorAll<HTMLElement>(STRIP_TAB_SELECTOR)].find(
-    (candidate) => stripTabId(candidate) === was.tabId,
-  );
-  const from = previous ? boxOf(previous) : was;
-  const timing = { duration: motionMs, easing: PANE_JOIN_EASING };
-  const r = PANE_JOIN_RADIUS_PX;
-  const e = PANE_JOIN_EAR_PX;
-  const piece = (selector: string) => join.querySelector<HTMLElement>(selector);
-  piece('[data-jc="l"]')?.animate(
-    [{ translate: `${from.x - e}px 0` }, { translate: `${x - e}px 0` }],
-    timing,
-  );
-  const slide = piece("[data-jm]")?.animate(
-    [
-      { translate: `${from.x + r}px 0`, scale: `${middle(from.w)} 1` },
-      { translate: `${x + r}px 0`, scale: `${middle(w)} 1` },
-    ],
-    timing,
-  );
-  piece('[data-jc="r"]')?.animate(
-    [{ translate: `${from.x + from.w - r - 1}px 0` }, { translate: `${x + w - r - 1}px 0` }],
-    timing,
-  );
-  entry.motion = slide ? { from: was.tabId, to: activeId, slide } : null;
-  fadePaneTabLabels(entry);
+  moveJoin(entry, { tabId: activeId, ...box }, entry.shown?.tabId === activeId ? 0 : motionMs);
 }
 
-const PANE_TAB_LABEL_FADE = "pane-tab-label";
-
 /**
- * The labels change tier with the shape, not before it arrives. A thread's
- * header renders its tab again mid-slide (its stand-in, then the chat), so
- * each new tab element picks the fade up on the slide's own clock.
+ * A press on another tab sends the shape there at once. A press that does
+ * not end in that tab showing (a drag, a press that slides off) brings the
+ * shape back once the release has been handled.
  */
-function fadePaneTabLabels(entry: PaneStrip): void {
-  const { motion, strip } = entry;
-  if (!motion) return;
-  const { slide } = motion;
-  if (slide.playState === "finished" || slide.playState === "idle") {
-    entry.motion = null;
+function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
     return;
-  }
-  for (const tab of strip.querySelectorAll<HTMLElement>(STRIP_TAB_SELECTOR)) {
-    const id = stripTabId(tab);
-    if (id !== motion.from && id !== motion.to) continue;
-    if (tab.getAnimations().some((animation) => animation.id === PANE_TAB_LABEL_FADE)) continue;
-    const color = id === motion.to ? "var(--pane-tab-idle-color)" : "var(--pane-tab-active-color)";
-    const fade = tab.animate([{ color }, {}], {
-      id: PANE_TAB_LABEL_FADE,
-      duration: Number(slide.effect?.getTiming().duration ?? 0),
-      easing: PANE_JOIN_EASING,
-    });
-    // Same clock as the slide. A slide still waiting for its first frame (a
-    // tab switch's chat render, the strip moving to the new header) holds the
-    // label at its start until the shape moves.
-    if (slide.startTime !== null) {
-      fade.startTime = slide.startTime;
-      continue;
-    }
-    fade.pause();
-    void slide.ready.then(
-      () => {
-        if (fade.playState === "paused") fade.startTime = slide.startTime;
-      },
-      () => fade.cancel(),
-    );
-  }
+  if (!(event.target instanceof Element) || event.target.closest("[data-tab-close]")) return;
+  const tab = event.target.closest<HTMLElement>(STRIP_TAB_SELECTOR);
+  if (!tab || !entry.strip.contains(tab)) return;
+  const tabId = stripTabId(tab);
+  if (tabId === null || tabId === entry.shown?.tabId) return;
+  const box = stripBoxOf(entry.strip, tab);
+  if (!box) return;
+  moveJoin(entry, { tabId, ...box }, entry.motionMs);
+  const settle = () => {
+    window.removeEventListener("pointerup", settle, true);
+    window.removeEventListener("pointercancel", settle, true);
+    window.setTimeout(() => schedulePlacement(entry.strip, entry.motionMs), 0);
+  };
+  window.addEventListener("pointerup", settle, true);
+  window.addEventListener("pointercancel", settle, true);
 }
 
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
@@ -370,7 +426,7 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
   const rect = tab.getBoundingClientRect();
   // Room for the joined tab's ears inside the strip's clip, and at the end for
   // its rim's tail, which the next control on the bar overlaps.
-  const start = bounds.left + PANE_JOIN_EAR_PX;
+  const start = bounds.left + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
   const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
   if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
@@ -422,8 +478,7 @@ export function LayoutPaneTabStrip({
       revealPaneTab(strip, tabId);
       placePaneJoin(entry, tabId, motion);
     };
-    stripPlacers.set(strip, place);
-    schedulePlacement(strip, motionMs);
+    holdPaneStrip(entry, place, motionMs);
   }, [entry, holds, layer, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
   useLayoutEffect(
