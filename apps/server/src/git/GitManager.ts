@@ -2519,7 +2519,7 @@ export const make = Effect.gen(function* () {
     string,
     {
       readonly url: string;
-      readonly dirs: { readonly commonDir: string; readonly gitDir: string };
+      readonly files: ReadonlyArray<string>;
       readonly fingerprint: string;
       readonly confirmedAtMs: number;
     }
@@ -2589,36 +2589,52 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.map((result) => result.stdout)),
     );
-  const readSettledPrLookupGitDirs = (cacheCwd: string) =>
-    gitCore
-      .execute({
-        operation: "GitManager.branchPullRequest.gitDirs",
-        cwd: cacheCwd,
-        args: ["rev-parse", "--git-common-dir", "--git-dir"],
-      })
-      .pipe(
-        Effect.map((result) => {
-          const [commonDir = ".git", gitDir = commonDir] = result.stdout.trim().split("\n");
-          return {
-            commonDir: path.resolve(cacheCwd, commonDir),
-            gitDir: path.resolve(cacheCwd, gitDir),
-          };
-        }),
-      );
-  // Stats, not git, so sweeps over a settled answer spawn nothing. Git rewrites these files
-  // through a lock and rename when the branch moves or a remote or upstream changes.
-  const readSettledPrLookupFingerprint = (
-    dirs: { readonly commonDir: string; readonly gitDir: string },
-    branch: string,
-  ) =>
-    Effect.forEach(
+  // Git rewrites these through a lock and rename when the branch moves or a remote or upstream
+  // changes. Config files come from git itself, so included files are watched too.
+  const readSettledPrLookupFiles = (cacheCwd: string, branch: string) =>
+    Effect.all(
       [
-        path.join(dirs.commonDir, "refs", "heads", branch),
-        path.join(dirs.commonDir, "packed-refs"),
-        path.join(dirs.commonDir, "reftable", "tables.list"),
-        path.join(dirs.commonDir, "config"),
-        path.join(dirs.gitDir, "config.worktree"),
+        gitCore.execute({
+          operation: "GitManager.branchPullRequest.gitDirs",
+          cwd: cacheCwd,
+          args: ["rev-parse", "--git-common-dir", "--git-dir"],
+        }),
+        gitCore.execute({
+          operation: "GitManager.branchPullRequest.configFiles",
+          cwd: cacheCwd,
+          args: ["config", "--list", "--show-origin", "-z"],
+          allowNonZeroExit: true,
+        }),
       ],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(([dirs, config]) => {
+        const [commonDirOutput = ".git", gitDirOutput = commonDirOutput] = dirs.stdout
+          .trim()
+          .split("\n");
+        const commonDir = path.resolve(cacheCwd, commonDirOutput);
+        const gitDir = path.resolve(cacheCwd, gitDirOutput);
+        // `-z` output alternates `<origin>` and `<key>\n<value>` fields.
+        const configFiles = config.stdout
+          .split("\u0000")
+          .filter((field, index) => index % 2 === 0 && field.startsWith("file:"))
+          .map((field) => path.resolve(cacheCwd, field.slice("file:".length)));
+        return [
+          ...new Set([
+            path.join(commonDir, "refs", "heads", branch),
+            path.join(commonDir, "packed-refs"),
+            path.join(commonDir, "reftable", "tables.list"),
+            path.join(commonDir, "config"),
+            path.join(gitDir, "config.worktree"),
+            ...configFiles,
+          ]),
+        ];
+      }),
+    );
+  // Stats, not git, so sweeps over a settled answer spawn nothing.
+  const readSettledPrLookupFingerprint = (files: ReadonlyArray<string>) =>
+    Effect.forEach(
+      files,
       (file) =>
         fileSystem.stat(file).pipe(
           Effect.map((info) =>
@@ -2818,13 +2834,13 @@ export const make = Effect.gen(function* () {
       settled !== undefined &&
       settled.url === pullRequest.url &&
       now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL) &&
-      (yield* readSettledPrLookupFingerprint(settled.dirs, branch)) === settled.fingerprint
+      (yield* readSettledPrLookupFingerprint(settled.files)) === settled.fingerprint
     ) {
       return pullRequest;
     }
-    const dirs = yield* readSettledPrLookupGitDirs(cacheCwd);
+    const files = yield* readSettledPrLookupFiles(cacheCwd, branch);
     // Read before any fresh lookup, so a change made during it forces another one.
-    const fingerprint = yield* readSettledPrLookupFingerprint(dirs, branch);
+    const fingerprint = yield* readSettledPrLookupFingerprint(files);
     const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
@@ -2837,7 +2853,7 @@ export const make = Effect.gen(function* () {
       }
       settledPrLookupByBranchKey.set(settledKey, {
         url: confirmed.url,
-        dirs,
+        files,
         fingerprint,
         confirmedAtMs: now,
       });
