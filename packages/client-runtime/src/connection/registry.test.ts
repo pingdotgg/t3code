@@ -525,10 +525,7 @@ function registrySpanNames<A, E, R>(effect: Effect.Effect<A, E, R>) {
       return new Tracer.NativeSpan(options);
     },
   });
-  return effect.pipe(
-    Effect.withTracer(tracer),
-    Effect.map(() => names),
-  );
+  return effect.pipe(Effect.withTracer(tracer), Effect.as(names));
 }
 
 function awaitConnectionState(
