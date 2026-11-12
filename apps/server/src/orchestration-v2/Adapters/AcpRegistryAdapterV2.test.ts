@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -208,6 +209,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
+  agentId = "claude-acp",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -248,7 +250,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
-    settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+    settings: yield* decodeAcpRegistryAdapterSettings({ agentId }),
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
@@ -470,11 +472,15 @@ describe("AcpRegistryAdapterV2", () => {
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
+      readonly agentId?: string;
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
+      readonly storedOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
+      readonly failsConfiguration?: boolean;
+      readonly liveConfiguration?: AcpRegistryLiveConfiguration;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -521,7 +527,7 @@ describe("AcpRegistryAdapterV2", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
-          agentId: "fixture-agent",
+          agentId: input.agentId ?? "fixture-agent",
           authMethodId: "test",
           customModels: input.customModels ?? [],
         }),
@@ -542,6 +548,8 @@ describe("AcpRegistryAdapterV2", () => {
             layerInjectedRuntimeCatalog,
             Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
               withForegroundStartup: (_startupKey, effect) => effect,
+              getLiveConfiguration: () =>
+                Effect.sync(() => Option.fromUndefinedOr(published ?? input.liveConfiguration)),
               publishLiveConfiguration: (_instanceId, configuration) =>
                 Effect.sync(() => {
                   published = configuration;
@@ -562,6 +570,7 @@ describe("AcpRegistryAdapterV2", () => {
         ...(input.storedModePick === undefined
           ? {}
           : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
+        ...(input.storedOptions === undefined ? {} : { options: input.storedOptions }),
       };
       const configurations: Array<AcpRegistryLiveConfiguration | undefined> = [];
       yield* Effect.gen(function* () {
@@ -615,13 +624,17 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(
         Effect.match({
           onFailure: (error) => {
+            if (input.failsConfiguration === true) return;
             assert.isDefined(input.rejectedModel);
             assert.equal(
               makeProviderFailure({ cause: error }).message,
               `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
             );
           },
-          onSuccess: () => assert.isUndefined(input.rejectedModel),
+          onSuccess: () => {
+            assert.isUndefined(input.rejectedModel);
+            assert.notEqual(input.failsConfiguration, true, "configuration should have failed");
+          },
         }),
         Effect.scoped,
       );
@@ -791,6 +804,85 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
+    // Copilot's session/new reports its built-in default, not the model it will run
+    // (github/copilot-cli#5363), so the selected model must be written even when it matches,
+    // and an unset effort gets the value the composer shows.
+    it.effect(
+      "writes the selected Copilot model and the shown effort when session/new reports defaults",
+      () => {
+        const copilotModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["claude-sonnet-5.5", "claude-haiku-4.5"].map((value) => ({
+            value,
+            name: value,
+          })),
+        });
+        const effort = (currentValue: string) => ({
+          id: "reasoning_effort",
+          name: "Reasoning effort",
+          category: "thought_level",
+          type: "select",
+          currentValue,
+          options: ["medium", "xhigh"].map((value) => ({ value, name: value })),
+        });
+        return openWithStoredPicks({
+          agentId: "github-copilot-cli",
+          setup: { configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")] },
+          storedModel: "claude-sonnet-5.5",
+          liveConfiguration: {
+            models: [],
+            currentModelId: null,
+            configOptions: [
+              {
+                id: "reasoning_effort",
+                label: "Reasoning effort",
+                type: "select",
+                role: "reasoning",
+                currentValue: "xhigh",
+                options: [
+                  { id: "medium", label: "medium" },
+                  { id: "xhigh", label: "xhigh" },
+                ],
+              },
+            ],
+          },
+          pickFrames: [
+            // The new session's own update replaces the shared live configuration.
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "agent-session",
+                  update: {
+                    sessionUpdate: "config_option_update",
+                    configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+                  },
+                },
+              },
+            },
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "claude-sonnet-5.5",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "reasoning_effort",
+              value: "xhigh",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5"), effort("xhigh")],
+            }),
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
+    );
+
     it.effect.each([
       "config",
       "legacy",
@@ -901,6 +993,55 @@ describe("AcpRegistryAdapterV2", () => {
           ["hermes", "hermes", "hermes", "other", "other", "other", "other", "other"],
         );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+    it.effect(
+      "fails configuration when an option write errors for a reason other than refusal",
+      () => {
+        const sessionModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["default", "named"].map((value) => ({ value, name: value })),
+        });
+        const thinking = {
+          id: "thinking",
+          name: "Thinking",
+          category: "thought_level",
+          type: "select",
+          currentValue: "low",
+          options: ["low", "high"].map((value) => ({ value, name: value })),
+        };
+        return openWithStoredPicks({
+          setup: { configOptions: [sessionModel("default")] },
+          storedModel: "named",
+          storedOptions: [
+            { id: "thinking", value: "high" },
+            { id: "unavailable", value: "x" },
+          ],
+          failsConfiguration: true,
+          pickFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "named",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [sessionModel("named"), thinking],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "thinking",
+              value: "high",
+            }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/set_config_option",
+                error: { code: -32603, message: "Internal error" },
+              },
+            },
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
     );
     const modelOptions = [
       { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
@@ -1209,7 +1350,10 @@ describe("AcpRegistryAdapterV2", () => {
           type: "http",
           name: "t3-code",
           url: endpoint,
-          headers: [{ name: "Authorization", value: authorization }],
+          headers: [
+            { name: "Authorization", value: authorization },
+            { name: "t3-tool-exposure", value: "deferred" },
+          ],
         },
       ];
       const stdio = (authorization: string) => [
@@ -1808,6 +1952,290 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("retains streamed child tool output through the generic Devin route", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          ...claudeFrames.prompt(1),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "early-tool",
+            status: "in_progress",
+            rawInput: { command: "echo early" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "early-tool",
+            content: { type: "content", content: { type: "text", text: "early" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "early-tool",
+            status: "completed",
+          }),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Review" } },
+          }),
+          ...[CLAUDE_ROOT_SESSION, "child-1"].map((sessionId) =>
+            update(sessionId, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "shared-tool",
+              title: "Read package",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: { command: "cat package.json" },
+              ...(sessionId === "child-1"
+                ? { content: [{ type: "content", content: { type: "text", text: "one" } }] }
+                : {}),
+            }),
+          ),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "shared-tool",
+            content: { type: "content", content: { type: "text", text: "two" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            status: "completed",
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "replacement" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            rawOutput: { stdout: "structured", stderr: "" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "display" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            rawOutput: { type: "Text", text: "vendor" },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-tool",
+            content: [{ type: "content", content: { type: "text", text: "display" } }],
+          }),
+          claudeMarker("tools complete"),
+          claudeFrames.idle("end_turn"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("tools complete");
+      const child = events.find((event) => event.type === "subagent.updated");
+      if (child?.type !== "subagent.updated") throw new Error("Missing child");
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      const childTools = tools.filter((item) => item.threadId === child.subagent.childThreadId);
+      assert.deepEqual(
+        childTools.map((item) => item.output),
+        [
+          [{ type: "content", content: { type: "text", text: "one" } }],
+          [{ type: "content", content: { type: "text", text: "onetwo" } }],
+          [{ type: "content", content: { type: "text", text: "onetwo" } }],
+          [{ type: "content", content: { type: "text", text: "replacement" } }],
+          [],
+          { stdout: "structured", stderr: "" },
+          { stdout: "structured", stderr: "" },
+          { type: "Text", text: "vendor" },
+          { type: "Text", text: "vendor" },
+        ],
+      );
+      assert.equal(new Set(childTools.map((item) => item.id)).size, 1);
+      assert.equal(childTools.at(-1)?.nativeItemRef?.nativeId, "child-1:tool:shared-tool");
+      assert.equal(childTools.at(-1)?.status, "completed");
+      assert.deepEqual(childTools.at(-1)?.input, { command: "cat package.json" });
+      const parentTools = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "command_execution" &&
+        event.turnItem.threadId === session.turnInput(1).threadId &&
+        event.turnItem.nativeItemRef?.nativeId === "shared-tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(parentTools, 1);
+      assert.isUndefined(parentTools[0]?.output);
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
+        ),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Review" } },
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            status: "in_progress",
+          }),
+          claudeMarker("before cancel"),
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "notification",
+              method: "session/cancel",
+              params: { sessionId: CLAUDE_ROOT_SESSION },
+            },
+          },
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            status: "failed",
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "stopped-tool",
+            content: [{ type: "content", content: { type: "text", text: "stopping" } }],
+          }),
+          update("child-1", {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "stopped-tool",
+            content: { type: "content", content: { type: "text", text: "cancelled" } },
+          }),
+          claudeMarker("late output"),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "failed",
+            _meta: { "cognition.ai/subagent_completed": { agentId: "child-1", success: false } },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "cancelled" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      const starting = yield* session.runtime
+        .startTurn(session.turnInput(1))
+        .pipe(Effect.forkScoped);
+      const started = yield* session.throughMarker("before cancel");
+      const running = started.findLast((event) => event.type === "provider_turn.updated");
+      if (running?.type !== "provider_turn.updated") throw new Error("Missing active turn");
+      const closing = yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: running.providerTurn.id,
+        })
+        .pipe(Effect.forkScoped);
+      const events = yield* session.throughMarker("late output");
+      yield* Fiber.join(closing);
+      yield* Fiber.join(starting);
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        tools.map((item) => item.status),
+        ["interrupted", "interrupted", "interrupted"],
+      );
+      assert.deepEqual(tools.at(-1)?.output, [
+        { type: "content", content: { type: "text", text: "stoppingcancelled" } },
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps native child tools interrupted after idle and late output", () =>
+    Effect.gen(function* () {
+      const { update, childState } = claudeFrames;
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        ...claudeChild.slice(0, -1),
+        update("child-1", {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "unfinished",
+          status: "in_progress",
+        }),
+        childState(CLAUDE_ROOT_SESSION, "child-1", "idle"),
+        update("child-1", {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "unfinished",
+          content: { type: "content", content: { type: "text", text: "late" } },
+        }),
+        claudeMarker("late native output"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("late native output");
+      const tools = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        tools.map((tool) => tool.status),
+        ["running", "interrupted", "interrupted"],
+      );
+      assert.deepEqual(tools.at(-1)?.output, [
+        { type: "content", content: { type: "text", text: "late" } },
+      ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each(["error", "end_turn"])(
     "hands live Claude child tools to the next run after %s and keeps nested output in the child",
     (stopReason) =>
@@ -1898,6 +2326,18 @@ describe("AcpRegistryAdapterV2", () => {
               kind: "execute",
               status: "in_progress",
               rawInput: { command: "cat nested/package.json" },
+            }),
+            ...["one", "two"].map((text) =>
+              update("grandchild", {
+                sessionUpdate: "tool_call_content_chunk",
+                toolCallId: "nested-tool",
+                content: { type: "content", content: { type: "text", text } },
+              }),
+            ),
+            update("grandchild", {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "nested-tool",
+              status: "completed",
             }),
             update("grandchild", {
               sessionUpdate: "agent_message_chunk",
@@ -1996,7 +2436,7 @@ describe("AcpRegistryAdapterV2", () => {
         if (messages[0]?.type === "message.updated") {
           assert.equal(messages[0].message.threadId, row.subagent.childThreadId);
         }
-        const nestedTool = nested.find(
+        const nestedTool = nested.findLast(
           (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "dynamic_tool" &&
@@ -2006,9 +2446,36 @@ describe("AcpRegistryAdapterV2", () => {
         assert.isDefined(nestedTool);
         if (nestedTool?.type === "turn_item.updated") {
           assert.equal(nestedTool.turnItem.threadId, row.subagent.childThreadId);
-          if (nestedTool.turnItem.type === "dynamic_tool")
+          if (nestedTool.turnItem.type === "dynamic_tool") {
             assert.deepEqual(nestedTool.turnItem.input, { command: "cat nested/package.json" });
+            assert.equal(nestedTool.turnItem.status, "completed");
+          }
+          const toolUpdates = nested.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.id === nestedTool.turnItem.id
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            toolUpdates.map((item) => item.output),
+            [
+              null,
+              [{ type: "content", content: { type: "text", text: "one" } }],
+              [{ type: "content", content: { type: "text", text: "onetwo" } }],
+              [{ type: "content", content: { type: "text", text: "onetwo" } }],
+            ],
+          );
         }
+        assert.isFalse(
+          nested.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.threadId === session.turnInput(1).threadId &&
+              event.turnItem.type === "dynamic_tool" &&
+              JSON.stringify(event.turnItem.output).includes("onetwo"),
+          ),
+        );
         assert.isTrue(
           nested.some(
             (event) =>
