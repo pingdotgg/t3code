@@ -150,11 +150,13 @@ export const storeServedToolOutputImages = Effect.fn(
     blocks,
     Effect.fnUntraced(function* (block, index) {
       const image = readToolOutputImage(block);
-      if (image === null) return;
-      const reference = { type: "image", mimeType: image.mimeType };
-      // Provider output must not point at another thread's stored file.
+      if (image === null || !Predicate.isObject(block)) return;
+      // Provider output must not point at another thread's stored file, on any path below.
+      if (Object.hasOwn(block, "attachmentId")) {
+        const { attachmentId: _providerId, ...rest } = block;
+        replacements.set(block, rest);
+      }
       if (image.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH) {
-        if (image.attachmentId !== undefined) replacements.set(block, reference);
         return;
       }
       const decoded = Base64.decode(image.data);
@@ -191,7 +193,8 @@ export const storeServedToolOutputImages = Effect.fn(
           }).pipe(Effect.as(false)),
         ),
       );
-      if (stored) replacements.set(block, { ...reference, attachmentId });
+      if (stored)
+        replacements.set(block, { type: "image", mimeType: image.mimeType, attachmentId });
     }),
     { concurrency: 1, discard: true },
   );

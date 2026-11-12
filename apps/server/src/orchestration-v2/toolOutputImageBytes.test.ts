@@ -225,6 +225,27 @@ describe("stripUnservedToolOutputImageBytes", () => {
 });
 
 describe("storeServedToolOutputImages", () => {
+  effectIt.effect("drops attachment ids the provider put in its own image blocks", () =>
+    Effect.gen(function* () {
+      const attachmentId = "other-thread-00000000-0000-4000-8000-000000000001-png";
+      for (const data of [undefined, "A".repeat(MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH + 4)]) {
+        const item = toolItem({
+          content: [{ type: "image", mimeType: "image/png", data, attachmentId }],
+        });
+        const stored = stripUnservedToolOutputImageBytes(yield* storeServedToolOutputImages(item));
+        expect(
+          toolOutputImages(stored.type === "dynamic_tool" ? stored.output : null)[0]?.attachmentId,
+        ).toBeUndefined();
+      }
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "tool-output-images-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   effectIt.effect("keeps an image inline until a retried write stores all of its bytes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
