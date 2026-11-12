@@ -134,7 +134,7 @@ const deliveries = [
 ] as const;
 
 it.effect.each(deliveries)(
-  "delivers %s with Claude's native pending-tool cancellation behavior",
+  "delivers %s without Claude cancelling the pending tool calls in its batch",
   (delivery) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -407,7 +407,7 @@ it.effect.each(deliveries)(
           yield* worker.drain();
           const explicitSteer =
             delivery === "user steering" || delivery === "promoted queued message";
-          assert.equal(batchAbort.signal.aborted, explicitSteer);
+          assert.equal(batchAbort.signal.aborted, false);
           assert.equal(offers.length, explicitSteer ? 2 : 1);
           const finished = yield* watch(
             (event) =>
@@ -418,7 +418,6 @@ it.effect.each(deliveries)(
           yield* Queue.offer(sdkMessages, toolResult("build", false));
           for (const id of statusIds)
             yield* Queue.offer(sdkMessages, toolResult(id, batchAbort.signal.aborted));
-          if (explicitSteer) yield* Queue.offer(sdkMessages, result("aborted", true));
           yield* Queue.offer(sdkMessages, result("completed", false));
           yield* Fiber.join(finished);
           yield* worker.drain();
@@ -451,15 +450,12 @@ it.effect.each(deliveries)(
           );
           assert.equal(reads.length, 4);
           for (const read of reads) {
-            assert.equal(read.status, explicitSteer ? "cancelled" : "completed");
-            assert.equal(read.toolNonExecutionKind, explicitSteer ? "cancelled" : undefined);
-            assert.equal(read.type === "dynamic_tool" && read.output === refusal, explicitSteer);
+            assert.equal(read.status, "completed");
+            assert.equal(read.toolNonExecutionKind, undefined);
+            assert.equal(read.type === "dynamic_tool" && read.output === refusal, false);
           }
           assert.equal(offers.length, 2);
-          assert.equal(
-            offers.filter((offer) => offer.priority === "now").length,
-            explicitSteer ? 1 : 0,
-          );
+          assert.equal(offers.filter((offer) => offer.priority === "now").length, 0);
           if (!explicitSteer) {
             assert.equal(after.runs.length, 2);
             if (delivery === "child completion") {

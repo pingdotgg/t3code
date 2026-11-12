@@ -2477,7 +2477,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             },
           });
 
-          assert.equal(offeredMessages[1]?.priority, "now");
+          assert.equal(offeredMessages[1]?.priority, "next");
           assert.deepEqual(offeredMessages[1]?.message.content, expectedContent);
           const documentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
           for (const scenario of [
@@ -5151,7 +5151,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         });
         const attachmentNote = `\n\n[Attached file "requirements.pdf" is saved at: ${path.join(harness.attachmentsDir, attachmentRelativePath(attachment)!)}]`;
-        assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.equal(harness.offeredMessages[1]?.priority, "next");
         assert.deepEqual(harness.offeredMessages[1]?.message.content, [
           { type: "text", text: `${leadingText}${attachmentNote}` },
           { type: "text", text: `/implement the fixes${attachmentNote}` },
@@ -5166,6 +5166,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("steering does not hand Claude an input that cancels the running tool calls", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("steer-priority"),
+        text: "Run the slow commands",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${input.attemptId}`,
+      });
+      for (const [createdBy, creationSource] of [
+        ["user", "web"],
+        ["agent", "mcp"],
+      ] as const) {
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId,
+          message: {
+            createdBy,
+            creationSource,
+            messageId: MessageId.make(`steer-priority-${createdBy}`),
+            text: "Progress note, nothing to change.",
+            attachments: [],
+          },
+        });
+      }
+      // Claude Code aborts in-flight and waiting tool calls for a "now" input and
+      // reports the waiting ones as "The user doesn't want to take this action".
+      assert.notEqual(harness.offeredMessages[1]?.priority, "now");
+      assert.notEqual(harness.offeredMessages[2]?.priority, "now");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // regression: #29750 Claude sets a goal only from a prompt that opens with /goal
@@ -5242,7 +5293,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         }),
       );
-      // Past task_started the CLI queues a "now" steer until the call returns.
+      // Past task_started the CLI queues a steer until the call returns.
       yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
@@ -5420,7 +5471,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           user_message_uuid: harness.promptUuid(0),
         }),
       );
+      // Claude answers the unread steer as its next native turn, which belongs to this turn.
+      assert.equal(harness.terminalEvents().length, 0);
+      yield* expectSteers({
+        "message-steer-read": "completed",
+        "message-steer-unread": "pending",
+      });
+      const decision = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          "Read",
+          { file_path: "README.md" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "steer-read",
+            requestId: "request-steer-read",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(Effect.as("request")),
+        Fiber.join(decision).pipe(Effect.map((result) => result?.behavior)),
+      );
+      assert.notEqual(first, "deny");
+      yield* harness.offerAndWait(
+        makeAssistantTextFrame({
+          uuid: "00000000-0000-4000-8000-000000002397",
+          text: "Steer reply.",
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000002398", result: "Done." }),
+          user_message_uuid: harness.promptUuid(2),
+        }),
+      );
       yield* harness.awaitTerminal(1);
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      assert.ok(
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.text === "Steer reply.",
+        ),
+      );
       yield* expectSteers({
         "message-steer-read": "completed",
         "message-steer-unread": "completed",
@@ -5444,7 +5535,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       let settleDuringOffer: (message: SDKUserMessage) => Effect.Effect<void> = () => Effect.void;
       const harness = yield* makeWakeHarnessWithOptions({
         offer: (message) =>
-          message.priority === "now"
+          message.priority === "next"
             ? Effect.suspend(() => settleDuringOffer(message))
             : Effect.void,
       });
@@ -7169,7 +7260,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attachments: [],
             },
           });
-          assert.equal(harness.offeredMessages[1]?.priority, "now");
+          assert.equal(harness.offeredMessages[1]?.priority, "next");
         }
         const partialText = "The audit covers the `integ";
         if (!queryExits)
