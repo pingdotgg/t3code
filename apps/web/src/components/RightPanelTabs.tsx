@@ -77,6 +77,7 @@ import {
   PANE_INACTIVE_TAB_TITLE_CLASS,
   PANE_TAB_TITLE_CLASS,
   PaneNotch,
+  useConnectedPaneTabs,
 } from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -251,6 +252,8 @@ function PanelTabStrip({
 
 function PanelTabsNotch(props: {
   notched: boolean;
+  /** The active tab's breadcrumb slot, on the bar after the tabs (connected pane tabs). */
+  breadcrumb: ReactNode;
   /** A pane's second strip, beside its own (the pull request beside its list). */
   secondStrip: boolean;
   addButton: ReactNode;
@@ -264,6 +267,7 @@ function PanelTabsNotch(props: {
       <LayoutPaneTabStrip role={props.secondStrip ? "panel" : undefined}>
         {props.children}
       </LayoutPaneTabStrip>
+      {props.breadcrumb}
       {props.addButton ? (
         <span data-pane-notch-add="" className="flex shrink-0">
           {props.addButton}
@@ -476,6 +480,8 @@ function RightPanelTab(
     layoutTabId: string | null;
     threadTitle: string | null;
     onBreadcrumbSlotChange: (element: HTMLSpanElement | null) => void;
+    /** The breadcrumb sits on the pane's bar, outside the tab. */
+    breadcrumbOnBar: boolean;
   },
 ) {
   const {
@@ -489,6 +495,7 @@ function RightPanelTab(
     canRename,
     threadTitle,
     onBreadcrumbSlotChange,
+    breadcrumbOnBar,
     surface,
     audio,
     audioRuntimeTabId,
@@ -684,7 +691,7 @@ function RightPanelTab(
             </TooltipPopup>
           </Tooltip>
         )}
-        {active ? (
+        {active && !breadcrumbOnBar ? (
           <span
             ref={onBreadcrumbSlotChange}
             className={cn(
@@ -740,6 +747,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
   // A layout pane's tabs sit in its notch (pen JiaZk), like a chat's.
   const notched = props.mode === "embedded" || props.pane === true;
+  // On the connected bar the tab names its kind and its breadcrumb sits beside it.
+  const breadcrumbOnBar = useConnectedPaneTabs() && notched;
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
@@ -1068,6 +1077,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       >
         <PanelTabsNotch
           notched={notched}
+          breadcrumb={
+            breadcrumbOnBar ? (
+              <span
+                ref={setBreadcrumbSlot}
+                data-pane-bar-crumb=""
+                className="flex min-w-0 shrink-100 items-center gap-1 ps-1 empty:hidden"
+              />
+            ) : null
+          }
           secondStrip={props.mode !== "embedded"}
           addButton={addSurfaceMenu}
           pinnedTab={
@@ -1128,6 +1146,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     layoutTabId={layoutTabId}
                     threadTitle={props.threadTitle ?? null}
                     onBreadcrumbSlotChange={setBreadcrumbSlot}
+                    breadcrumbOnBar={breadcrumbOnBar}
                     onActivate={onActivateTab}
                     onClose={onCloseTab}
                     onAuxClick={onTabAuxClick}
