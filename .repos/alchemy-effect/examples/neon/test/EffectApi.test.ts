@@ -1,20 +1,20 @@
-import type { QueryAIGatewayClient, LanguageModelOptions } from "alchemy/Neon";
-import { FunctionRequest } from "alchemy/Neon";
-import { RuntimeContext } from "alchemy/RuntimeContext";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, test as bunTest } from "bun:test";
+import type { QueryAIGatewayClient, LanguageModelOptions } from "@alchemy.run/neon";
+import { FunctionRequest } from "@alchemy.run/neon";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { RuntimeContext } from "alchemy/RuntimeContext";
+import { AiError, LanguageModel, Response } from "effect/ai";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Sse from "effect/encoding/Sse";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { AiError, LanguageModel, Response } from "effect/ai";
-import * as Sse from "effect/encoding/Sse";
-import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { chat } from "../src/ai/EffectApi.ts";
 
 const test = {
@@ -46,10 +46,9 @@ const textParts: Array<Response.StreamPartEncoded> = [
   { type: "finish", reason: "stop", usage },
 ];
 const mockModel = (
-  stream: Stream.Stream<
-    Response.StreamPartEncoded,
-    AiError.AiError
-  > = Stream.fromIterable(textParts),
+  stream: Stream.Stream<Response.StreamPartEncoded, AiError.AiError> = Stream.fromIterable(
+    textParts,
+  ),
 ) => {
   const calls: Array<LanguageModelOptions> = [];
   const prompts: Array<LanguageModel.ProviderOptions["prompt"]> = [];
@@ -63,8 +62,7 @@ const mockModel = (
           const runtime = yield* RuntimeContext;
           runtimeIds.push(runtime.id);
           return yield* LanguageModel.make({
-            generateText: () =>
-              Effect.die("Example should use LanguageModel.streamText"),
+            generateText: () => Effect.die("Example should use LanguageModel.streamText"),
             streamText: (options) => {
               prompts.push(options.prompt);
               return stream;
@@ -112,8 +110,7 @@ const invoke = (
     );
   });
 const bodyStream = (response: HttpServerResponse.HttpServerResponse) => {
-  if (response.body._tag !== "Stream")
-    return Stream.die("Expected SSE response body");
+  if (response.body._tag !== "Stream") return Stream.die("Expected SSE response body");
   return response.body.stream;
 };
 const text = (response: HttpServerResponse.HttpServerResponse) =>
@@ -134,9 +131,7 @@ const events = (wire: string) =>
     Stream.pipeThroughChannel(Sse.decode<never, unknown>()),
     Stream.map((event) => event.data),
     Stream.filter((data) => data !== "[DONE]"),
-    Stream.mapEffect((data) =>
-      Schema.decodeUnknownEffect(Schema.fromJsonString(UiEvent))(data),
-    ),
+    Stream.mapEffect((data) => Schema.decodeUnknownEffect(Schema.fromJsonString(UiEvent))(data)),
     Stream.runCollect,
   );
 
@@ -144,20 +139,13 @@ for (const [name, authorization] of [
   ["missing", undefined],
   ["wrong", "Bearer wrong"],
 ] as const) {
-  test.effect(
-    `Effect example returns 401 for ${name} authorization before validation`,
-    () =>
-      Effect.gen(function* () {
-        const mock = mockModel();
-        const response = yield* invoke(
-          mock.ai,
-          environment,
-          "not JSON",
-          authorization ?? null,
-        );
-        expect(response.status).toBe(401);
-        expect(mock.calls).toHaveLength(0);
-      }).pipe(Effect.scoped),
+  test.effect(`Effect example returns 401 for ${name} authorization before validation`, () =>
+    Effect.gen(function* () {
+      const mock = mockModel();
+      const response = yield* invoke(mock.ai, environment, "not JSON", authorization ?? null);
+      expect(response.status).toBe(401);
+      expect(mock.calls).toHaveLength(0);
+    }).pipe(Effect.scoped),
   );
 }
 
@@ -169,35 +157,28 @@ for (const [name, body] of [
   ["blank prompt", '{"prompt":"   "}'],
   ["oversized prompt", JSON.stringify({ prompt: "x".repeat(4001) })],
 ] as const) {
-  test.effect(
-    `Effect example returns 400 for ${name} before the paid gate`,
-    () =>
-      Effect.gen(function* () {
-        const mock = mockModel();
-        const response = yield* invoke(mock.ai, environment, body);
-        expect(response.status).toBe(400);
-        expect(mock.calls).toHaveLength(0);
-      }).pipe(Effect.scoped),
+  test.effect(`Effect example returns 400 for ${name} before the paid gate`, () =>
+    Effect.gen(function* () {
+      const mock = mockModel();
+      const response = yield* invoke(mock.ai, environment, body);
+      expect(response.status).toBe(400);
+      expect(mock.calls).toHaveLength(0);
+    }).pipe(Effect.scoped),
   );
 }
 
 for (const [name, env] of [
   ["disabled inference", environment],
-  [
-    "missing model",
-    { ...environment, NEON_AI_ALLOW_PAID: "true", NEON_AI_MODEL: undefined },
-  ],
+  ["missing model", { ...environment, NEON_AI_ALLOW_PAID: "true", NEON_AI_MODEL: undefined }],
   ["non-explicit opt-in", { ...environment, NEON_AI_ALLOW_PAID: "1" }],
 ] as const) {
-  test.effect(
-    `Effect example returns 503 for ${name} without constructing a model`,
-    () =>
-      Effect.gen(function* () {
-        const mock = mockModel();
-        const response = yield* invoke(mock.ai, env);
-        expect(response.status).toBe(503);
-        expect(mock.calls).toHaveLength(0);
-      }).pipe(Effect.scoped),
+  test.effect(`Effect example returns 503 for ${name} without constructing a model`, () =>
+    Effect.gen(function* () {
+      const mock = mockModel();
+      const response = yield* invoke(mock.ai, env);
+      expect(response.status).toBe(503);
+      expect(mock.calls).toHaveLength(0);
+    }).pipe(Effect.scoped),
   );
 }
 
@@ -213,9 +194,7 @@ test.effect(
       expect(response.status).toBe(200);
       expect(response.headers["content-type"]).toBe("text/event-stream");
       expect(response.headers["x-vercel-ai-ui-message-stream"]).toBe("v1");
-      expect(mock.calls).toEqual([
-        { model: "mock-model", parameters: { maxTokens: 128 } },
-      ]);
+      expect(mock.calls).toEqual([{ model: "mock-model", parameters: { maxTokens: 128 } }]);
       expect(mock.prompts).toHaveLength(0);
       // Consume after invoke's request-service provision has ended.
       const wire = yield* text(response);
@@ -234,9 +213,7 @@ test.effect(
         "finish-step",
         "finish",
       ]);
-      expect(parsed.find((event) => event.type === "text-delta")?.delta).toBe(
-        "Hello 🌍",
-      );
+      expect(parsed.find((event) => event.type === "text-delta")?.delta).toBe("Hello 🌍");
       expect(wire).toContain("data: [DONE]");
     }).pipe(Effect.scoped),
 );
@@ -266,9 +243,9 @@ test.effect(
       const wire = yield* text(response);
       const parsed = yield* events(wire);
       expect(parsed.filter((event) => event.type === "error")).toHaveLength(1);
-      expect(
-        parsed.find((event) => event.type === "error")?.errorText,
-      ).toContain("Gateway rejected the request");
+      expect(parsed.find((event) => event.type === "error")?.errorText).toContain(
+        "Gateway rejected the request",
+      );
       expect(parsed.some((event) => event.type === "finish")).toBe(false);
       expect(wire).not.toContain("UPSTREAM_TOKEN_SENTINEL");
       expect(wire).not.toContain("example-secret");
@@ -302,10 +279,7 @@ test.effect(
         undefined,
         controller.signal,
       );
-      const consumer = yield* bodyStream(response).pipe(
-        Stream.runDrain,
-        Effect.forkChild,
-      );
+      const consumer = yield* bodyStream(response).pipe(Stream.runDrain, Effect.forkChild);
       yield* Deferred.await(started);
       yield* Effect.sync(() => controller.abort());
       yield* Fiber.join(consumer);
@@ -373,10 +347,7 @@ test.effect(
         new URL("../src/ai/EffectApi.ts", import.meta.url),
       );
       const gatewayPath = yield* path.fromFileUrl(
-        new URL(
-          "../../../packages/alchemy/src/Neon/AIGateway.ts",
-          import.meta.url,
-        ),
+        new URL("../../../packages/neon/src/AIGateway.ts", import.meta.url),
       );
       const source = yield* fs.readFileString(examplePath);
       expect(source).toContain("const model = ai.model(");
@@ -384,11 +355,7 @@ test.effect(
       expect(source).toContain("Stream.provideContext(context)");
       expect(source).not.toContain("@neon/ai-sdk-provider");
       expect(source).not.toContain('from "ai"');
-      for (const name of [
-        "NEON_EXAMPLE_API_KEY",
-        "NEON_AI_MODEL",
-        "NEON_AI_ALLOW_PAID",
-      ]) {
+      for (const name of ["NEON_EXAMPLE_API_KEY", "NEON_AI_MODEL", "NEON_AI_ALLOW_PAID"]) {
         expect(source).toContain(`environment.${name}`);
         expect(source).toContain(`("${name}")`);
       }

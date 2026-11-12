@@ -797,6 +797,98 @@ it.effect("a message the user sends after Stop releases the held queue; an agent
 );
 
 it.effect(
+  "an agent's auto send queues behind a run that is still stopping instead of steering it",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = ThreadId.make("thread:stop-mcp-send");
+      yield* createWatchingThread(threadId, 6);
+      yield* send(threadId, "active", "start_immediately");
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const run = initial.runs[0]!;
+      const providerSessionId = ProviderSessionId.make("session:stop-mcp-send");
+      const now = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:session"),
+        type: "provider-session.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerSessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...initial.providerThreads[0]!, providerSessionId },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:running"),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "running", startedAt: now },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-mcp-send:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:stop-mcp-send"),
+          providerThreadId: run.providerThreadId!,
+          nodeId: run.rootNodeId!,
+          runAttemptId: run.activeAttemptId!,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* send(threadId, "queued before the stop", "queue_after_active");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-mcp-send"),
+        threadId,
+      });
+      assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held"]);
+
+      const result = yield* threads.sendToThread({
+        projectId: ProjectId.make("project:thread-stop"),
+        commandId: CommandId.make("command:stop-mcp-send"),
+        threadId,
+        messageId: MessageId.make("message:stop-mcp-send"),
+        text: "Follow up after Stop",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal(result.delivery, "queued");
+      assert.deepEqual((yield* threadState(threadId)).runs, [
+        "running",
+        "queued:held",
+        "queued:held",
+      ]);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
   "thread.stop ends an idle thread's watches and accepts a thread with nothing to stop",
   () =>
     Effect.gen(function* () {
@@ -1150,7 +1242,7 @@ it.effect.each([
         (projection) => projection.runtimeRequests[0],
       );
 
-      yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+      yield* orchestrator.recoverDelegatedTask(childThreadId, { sourceRunId: childRun.id });
       assert.equal((yield* request)?.status, "pending");
       if (ending === "interrupted") {
         yield* orchestrator.dispatch({
@@ -1168,7 +1260,7 @@ it.effect.each([
           payload: { ...childRun, status: ending, startedAt: now, completedAt: now },
         });
       }
-      yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+      yield* orchestrator.recoverDelegatedTask(childThreadId, { sourceRunId: childRun.id });
       assert.equal((yield* request)?.status, question);
       assert.equal((yield* request)?.decision, question === "resolved" ? "cancel" : undefined);
     }).pipe(Effect.provide(layerTest)),
@@ -1663,4 +1755,82 @@ it.effect("an unanswered Stop is flagged until Force stop ends the run with its 
     });
     assert.lengthOf(late.storedEvents, 0);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["Stop", "Force stop"] as const)(
+  "%s ends a running run whose provider turn already completed",
+  (action) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:stop-completed-turn");
+      yield* createWatchingThread(threadId, 7);
+      yield* send(threadId, "go", "start_immediately");
+      const now = yield* DateTime.now;
+      const started = yield* orchestrator.getThreadProjection(threadId);
+      const run = started.runs[0]!;
+      const attempt = started.attempts[0]!;
+      const providerThreadId = run.providerThreadId!;
+      const providerTurnId = ProviderTurnId.make("provider-turn:stop-completed-turn");
+      const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId">) =>
+        projections.apply({
+          ...event,
+          id: EventId.make(`event:stop-completed-turn:${event.type}`),
+          threadId,
+        } as OrchestrationV2DomainEvent);
+      yield* apply({
+        type: "run.updated",
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "running", startedAt: now, activeAttemptId: attempt.id },
+      });
+      yield* apply({
+        type: "run-attempt.updated",
+        occurredAt: now,
+        payload: { ...attempt, status: "completed", startedAt: now, completedAt: now },
+      });
+      yield* apply({
+        type: "provider-turn.updated",
+        occurredAt: now,
+        payload: {
+          id: providerTurnId,
+          providerThreadId,
+          nodeId: run.rootNodeId!,
+          runAttemptId: attempt.id,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      // The provider session was already released.
+      yield* apply({
+        type: "provider-thread.updated",
+        occurredAt: now,
+        payload: {
+          ...started.providerThreads.find((thread) => thread.id === providerThreadId)!,
+          providerSessionId: ProviderSessionId.make("session:gone"),
+        },
+      });
+      yield* send(threadId, "follow", "queue_after_active");
+
+      if (action === "Stop") {
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-completed-turn"),
+          threadId,
+        });
+      } else {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        yield* threads.forceStopThread({ threadId });
+      }
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      assert.notEqual(stopped.runs[0]?.status, "running", "the stopped run is still running");
+      assert.deepInclude(stopped.attempts[0], { status: "completed", completedAt: now });
+      assert.isTrue(
+        stopped.turnItems.some((item) => item.type === "run_interrupt_result"),
+        "the stopped run has no interrupt result",
+      );
+    }).pipe(Effect.provide(layerTest)),
 );

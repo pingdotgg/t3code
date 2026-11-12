@@ -162,12 +162,21 @@ export function applyTerminalAttachStreamEvent(
   maxBufferBytes = DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
 ): TerminalBufferState {
   switch (event.type) {
-    case "snapshot":
-      return {
-        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
-        lifecycleVersion:
-          current.version === 0 ? current.lifecycleVersion : current.lifecycleVersion + 1,
+    case "snapshot": {
+      if (current.version === 0) {
+        return terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current);
+      }
+      // A later snapshot is a new server attachment, as after a socket reconnect. It starts a
+      // new generation because viewers replay their measured grid once per generation.
+      const reattached = {
+        ...current,
+        output: { ...current.output, generation: ++terminalAttachGeneration },
       };
+      return {
+        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, reattached),
+        lifecycleVersion: current.lifecycleVersion + 1,
+      };
+    }
     case "restarted":
       return {
         ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),

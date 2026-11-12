@@ -1,7 +1,7 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
- * Vendored from `@astrojs/cloudflare` v14.1.3
+ * Vendored from `@astrojs/cloudflare` v14.4.2
  * (`src/entrypoints/image-passthrough-endpoint.ts`).
  *
  * The production image endpoint for the `passthrough` image service: serves

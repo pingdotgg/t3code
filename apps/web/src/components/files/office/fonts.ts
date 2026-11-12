@@ -1,5 +1,4 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
-import { pipe } from "effect/Function";
 import type { BundledFontProvider } from "@betteroffice/docx/layout";
 import {
   loadBundledFontBytes,
@@ -8,73 +7,42 @@ import {
   resolveMetricCompatFace,
   resolveScriptFallbackFace,
   type BundledFontFace,
-  type BundledFontScript,
 } from "@betteroffice/fonts";
 
-// Every face loads from the app's own files, so no font request leaves the machine. The Chinese, Japanese and Korean
-// faces are an add-on the app does not ship (see `fonts-cjk.ts`), yet the font package still maps East Asian families
-// such as Microsoft YaHei or Yu Gothic Medium to them, so every lookup passes through `shippedFace`.
-function shipped(script: BundledFontScript) {
-  return !script.startsWith("cjk-");
-}
+// Every face loads from the app's own files, so no font request leaves the machine. The engines draw only with the
+// faces they are handed, never the system's, so CJK text needs the `@betteroffice/fonts-cjk` faces to show at all.
 
 /** The faces Word substitutes for a document's fonts: metric-compatible ones first, then Word's own fallbacks. */
 export function wordFonts(): BundledFontProvider {
   const loader = (face: BundledFontFace | undefined) => (face ? () => loadFace(face) : undefined);
 
   return {
-    resolve: (family, bold, italic) =>
-      pipe(resolveMetricCompatFace(family, bold, italic), shippedFace, loader),
-    resolveFamily: (family, bold, italic) =>
-      pipe(resolveBundledFamilyFace(family, bold, italic), shippedFace, loader),
-    resolveScriptFallback: (script, bold, italic) => loader(scriptFace(script, bold, italic)),
+    resolve: (family, bold, italic) => loader(resolveMetricCompatFace(family, bold, italic)),
+    resolveFamily: (family, bold, italic) => loader(resolveBundledFamilyFace(family, bold, italic)),
+    resolveScriptFallback: (script, bold, italic) =>
+      loader(resolveScriptFallbackFace(script, bold, italic)),
     resolveLastResort: (family, bold, italic) => () =>
-      loadFace(lastResortFace(family, bold, italic, "word")),
+      loadFace(resolveLastResortFace(family, bold, italic, "word")),
   };
 }
 
 /** The face PowerPoint draws a family with: its metric-compatible or bundled face, else PowerPoint's substitute. */
 export function presentationFace(family: string, bold: boolean, italic: boolean): BundledFontFace {
   return (
-    shippedFace(resolveMetricCompatFace(family, bold, italic)) ??
-    shippedFace(resolveBundledFamilyFace(family, bold, italic)) ??
-    lastResortFace(family, bold, italic, "powerpoint")
+    resolveMetricCompatFace(family, bold, italic) ??
+    resolveBundledFamilyFace(family, bold, italic) ??
+    resolveLastResortFace(family, bold, italic, "powerpoint")
   );
 }
 
-function shippedFace(face: BundledFontFace | undefined) {
-  return face && (!face.script || shipped(face.script)) ? face : undefined;
-}
-
-/**
- * The substitute an application picks for a family it lacks. Only a weight variant of an East Asian family, such as
- * Yu Mincho Light, resolves to a face the app does not ship; its name without the weight still tells serif from sans.
- */
-function lastResortFace(
-  family: string,
-  bold: boolean,
-  italic: boolean,
-  office: "word" | "powerpoint",
-) {
-  const face = resolveLastResortFace(family, bold, italic, office);
-
-  if (shippedFace(face)) return face;
-
-  const base = family
-    .trim()
-    .split(/[\s-]+/)
-    .slice(0, -1)
-    .join(" ");
-
+/** The face Excel's cells draw a family with when it is missing: its metric-compatible or bundled face, if any. */
+export function sheetFace(family: string, bold: boolean, italic: boolean) {
   return (
-    shippedFace(resolveLastResortFace(base, bold, italic, office)) ??
-    resolveLastResortFace("", bold, italic, office)
+    resolveMetricCompatFace(family, bold, italic) ??
+    resolveBundledFamilyFace(family, bold, italic) ??
+    resolveBundledFamilyFace(family, bold, false) ??
+    resolveBundledFamilyFace(family, false, false)
   );
-}
-
-/** The face that covers a script the Latin faces lack, or undefined when the app ships none. */
-export function scriptFace(script: BundledFontScript, bold: boolean, italic: boolean) {
-  return shipped(script) ? resolveScriptFallbackFace(script, bold, italic) : undefined;
 }
 
 /**
