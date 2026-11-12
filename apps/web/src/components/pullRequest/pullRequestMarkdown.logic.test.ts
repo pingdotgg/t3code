@@ -3,7 +3,11 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestCommentPreview, remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
+import {
+  pullRequestCommentPreview,
+  pullRequestMarkdownPlugins,
+  remarkPullRequestAutolinks,
+} from "./pullRequestMarkdown.logic";
 
 type Node = {
   type: string;
@@ -42,6 +46,27 @@ describe("remarkPullRequestAutolinks", () => {
       ["abcdef1", "https://github.com/team/repo/commit/abcdef1", "commit"],
       ["#13", "https://example.com", undefined],
     ]);
+  });
+});
+
+describe("pullRequestMarkdownPlugins", () => {
+  it("renders the host's emoji shortcodes as emoji", async () => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(
+        pullRequestMarkdownPlugins({
+          provider: "github",
+          url: "https://github.com/team/repo/pull/8",
+        }),
+      );
+    const tree = (await processor.run(processor.parse("Nice :thumbsup: :tada: `:tada:`"))) as Node;
+    const text: string[] = [];
+    const visit = (node: Node) => {
+      if (node.value !== undefined) text.push(node.value);
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+    expect(text.join("")).toBe("Nice 👍 🎉 :tada:");
   });
 });
 
