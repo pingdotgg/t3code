@@ -1501,6 +1501,49 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  // A background child can ask after its root turn settled, leaving no active turn to own the ask.
+  it.effect("reports a child question it cannot route once routing gives up", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("unroutable-child", "ses_root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "ses_root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: "ses_child", parentID: "ses_root" } }),
+        },
+        question: { reject: async () => ({ data: true }) },
+      });
+      const received: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      yield* harness.runtime.events.pipe(
+        Stream.runForEach((event) => Effect.sync(() => received.push(event))),
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "question.asked",
+          properties: {
+            id: "que_child",
+            sessionID: "ses_child",
+            questions: [{ header: "Choice", question: "Which?", options: [] }],
+          },
+        }),
+      );
+      for (let step = 0; step < 10; step += 1) yield* TestClock.adjust("1 second");
+      assert.isTrue(
+        received.some(
+          (event) =>
+            (event.type === "provider_session.updated" &&
+              event.providerSession.status === "error") ||
+            event.type === "runtime_request.updated",
+        ),
+        "an unroutable child question must surface instead of being dropped",
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("projects OpenCode read output and search titles from native tool calls", () =>
     Effect.gen(function* () {
       const directoryOutput =
