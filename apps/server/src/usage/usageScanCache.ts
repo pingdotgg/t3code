@@ -298,10 +298,8 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v14 uses Codex request ledgers, including compaction spending omitted by context snapshots.
-    // v15 repairs skipped Codex requests whose counters rewound; clean v14 entries stay served while unchanged.
-    // v10 adds Claude advisor calls; before v12 a repeated Claude key kept its first, possibly partial, copy.
-    // v13 adds Claude 1-hour cache writes.
+    // v13 adds Claude 1-hour cache writes; v14 uses Codex request ledgers.
+    // v15 repairs skipped Codex requests whose counters rewound; clean v14 entries stay served.
     const legacy =
       (entry.p === "claude" && version < 13) ||
       (format.state !== undefined &&
