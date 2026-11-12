@@ -94,6 +94,12 @@ it.each([
       "https://x.com/a_ https://x.com/b_",
       `${link("https://x.com/a_")} ${link("https://x.com/b_")}`,
     ],
+    [
+      "可以看了：**http://localhost:18780**（已重启）。",
+      `可以看了：**${link("http://localhost:18780")}**（已重启）。`,
+    ],
+    ["打开 http://localhost:18780，然后刷新", `打开 ${link("http://localhost:18780")}，然后刷新`],
+    ["URL：https://example.com/a。下一句", `URL：${link("https://example.com/a")}。下一句`],
   ] as const) {
     expect(shape(processor.runSync(processor.parse(markdown), markdown) as Root), markdown).toBe(
       expected,
