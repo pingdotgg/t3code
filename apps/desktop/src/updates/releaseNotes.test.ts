@@ -241,14 +241,20 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
-  it("does not throw on out-of-range numeric entities and keeps the literal", () => {
+  it("keeps unsupported entities literal, including out-of-range and Object.prototype names", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
-      "- Broken entity &#9999999999;",
+      "- Broken entity &#9999999999;\n- Mentions &constructor; and &toString;",
       "1.0.0",
       "latest",
     );
     expect(result).toEqual({
-      releaseNotes: [{ version: "1.0.0", items: ["Broken entity &#9999999999;"], totalItems: 1 }],
+      releaseNotes: [
+        {
+          version: "1.0.0",
+          items: ["Mentions &constructor; and &toString;", "Broken entity &#9999999999;"],
+          totalItems: 2,
+        },
+      ],
       omittedReleaseCount: 0,
     });
   });

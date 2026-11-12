@@ -32,14 +32,17 @@ const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import
 
 const log = (scope: string, message: string) => NodeProcess.stderr.write(`[${scope}] ${message}\n`);
 
-/** This machine's Tailscale address (100.64.0.0/10), which pool devices reach it on. */
-function tailnetAddress(): string {
-  for (const addresses of Object.values(NodeOS.networkInterfaces())) {
-    for (const address of addresses ?? []) {
-      const [first, second] = address.address.split(".").map(Number);
-      if (address.family === "IPv4" && first === 100 && second! >= 64 && second! < 128)
-        return address.address;
-    }
+/** This machine's Tailscale address, which pool devices reach it on. */
+async function tailnetAddress(): Promise<string> {
+  // Other VPNs share 100.64.0.0/10, so ask Tailscale instead of matching interface ranges.
+  // The macOS app bundles its CLI without putting a launcher on PATH.
+  for (const cli of ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]) {
+    const stdout = await run(cli, ["ip", "-4"]).then(
+      (result) => result.stdout,
+      () => "",
+    );
+    const address = stdout.trim().split("\n")[0];
+    if (address) return address;
   }
   throw new Error("No Tailscale IPv4 address: pool devices reach Metro and the fixture over it.");
 }
@@ -173,7 +176,7 @@ async function main() {
     throw new Error(
       "Set SIMLOCK_AGENT_DEVICE_URL (<gateway>/v1/agent-device) and AGENT_DEVICE_DAEMON_AUTH_TOKEN (a Simlock agent token) to run on the device pool.",
     );
-  const host = tailnetAddress();
+  const host = await tailnetAddress();
 
   const runId = new Date().toISOString().replaceAll(/[:.]/g, "-");
   const outputDirectory = NodePath.join(REPO_ROOT, "artifacts/mobile-e2e", runId);
