@@ -41,6 +41,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import packageJson from "../../package.json" with { type: "json" };
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -1156,6 +1157,7 @@ it.layer(
 
       process.emitData("prompt ");
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
+      process.emitData("\u001b[=c\u001b[=0c");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
@@ -1853,6 +1855,51 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      platform: "linux",
+      parentEnv: { TERM_PROGRAM: "Apple_Terminal", TERM_PROGRAM_VERSION: "455" },
+      runtimeEnv: { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+    },
+    {
+      platform: "win32",
+      parentEnv: { term_program: "Apple_Terminal", Term_Program_Version: "455" },
+      runtimeEnv: { Term_Program: "", term_program_version: "custom-version" },
+    },
+  ] as const)(
+    "identifies as T3 Code unless the terminal env overrides it on $platform",
+    ({ platform, parentEnv, runtimeEnv }) =>
+      Effect.gen(function* () {
+        const originalEnv = { ...parentEnv };
+        const env = Object.freeze(parentEnv);
+        const { manager, ptyAdapter } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform(platform)),
+        );
+
+        yield* manager.open(openInput());
+        yield* manager.open(openInput({ terminalId: "override", env: runtimeEnv }));
+
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        for (const [index, expected] of [
+          { TERM_PROGRAM: "t3code", TERM_PROGRAM_VERSION: packageJson.version },
+          { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+        ].entries()) {
+          const spawnEnv = ptyAdapter.spawnInputs[index]!.env;
+          for (const [key, value] of Object.entries(expected)) {
+            expect
+              .soft(
+                Object.entries(spawnEnv)
+                  .filter(([candidate]) => candidate.toUpperCase() === key)
+                  .map(([, entryValue]) => entryValue),
+                `${index === 0 ? "default" : "override"} ${key}`,
+              )
+              .toEqual([value]);
+          }
+        }
+        expect(env).toEqual(originalEnv);
+      }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1942,6 +1989,20 @@ it.layer(
       expect(snapshot).not.toHaveProperty("env");
       expect(snapshot).not.toHaveProperty("providerInstanceId");
     }),
+  );
+
+  it.effect("expands a provider home named in any case on Windows", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = yield* HostProcess.HomeDirectory;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { GROK_HOME: "C:\\inherited-grok" },
+      });
+
+      yield* manager.open(openInput({ env: { grok_home: "~/.grok-work" } }));
+
+      expect(ptyAdapter.spawnInputs[0]?.env.GROK_HOME).toBe(path.join(home, ".grok-work"));
+    }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
   );
 
   it.effect("fails closed when a provider instance is missing", () =>
