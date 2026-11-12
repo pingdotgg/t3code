@@ -477,6 +477,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           "src/app/game/[id]/index.tsx",
           "src/foo{bar}.ts",
         ]);
+        expect(yield* search("*.{ts}")).toEqual(["src/foo{bar}.ts"]);
+        expect(yield* search("src/{foo{bar},notes}.md")).toEqual(["src/notes.md"]);
       }),
     );
 
