@@ -122,6 +122,25 @@ describe("composerSubmissionIntentForKey", () => {
     ).toBe(expected);
   });
 
+  it.each([
+    ["mod-enter", "one line"],
+    ["mod-enter-multiline", "two\nlines"],
+  ] as const)(
+    "starts a new thread in the foreground on Mod+Enter with %s",
+    (sendShortcut, prompt) => {
+      const draft = { ...input, isDraftThread: true, sendShortcut, prompt };
+      expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+        "foreground",
+      );
+      expect(
+        composerSubmissionIntentForKey({
+          ...draft,
+          event: { ...enter, ctrlKey: true, altKey: true },
+        }),
+      ).toBe("background");
+    },
+  );
+
   it("honors the send preference with an existing install's saved alternate binding", () => {
     const keybindings = mergeWithDefaultKeybindings(
       compileResolvedKeybindingsConfig([
@@ -552,7 +571,7 @@ describe("extendReplacementRangeForTrailingSpace", () => {
 
 describe("side chat slash commands", () => {
   it("are not offered after the start of a message", () => {
-    const items = (["side", "btw", "clear", "plan"] as const).map((command) => ({
+    const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
       id: `slash:${command}`,
       type: "slash-command" as const,
       command,
@@ -560,7 +579,7 @@ describe("side chat slash commands", () => {
       description: "",
     }));
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
-      "slash:plan",
+      "slash:model",
     ]);
   });
 });
