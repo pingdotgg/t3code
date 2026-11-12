@@ -106,7 +106,7 @@ export const layerExecutor: Layer.Layer<
               Effect.tapError(() =>
                 willRetry
                   ? Effect.void
-                  : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
+                  : threads.recoverDelegatedTask(effect.threadId, { sourceRunId }),
               ),
               Effect.mapError(
                 (cause) =>
@@ -506,6 +506,12 @@ export const layerExecutor: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                // Completion bookkeeping must survive a missed live run update, including capture retries.
+                Effect.andThen(
+                  threads.recoverDelegatedTask(effect.threadId, {
+                    completedRunId: effect.request.runId,
+                  }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

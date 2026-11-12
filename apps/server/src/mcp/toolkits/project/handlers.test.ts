@@ -642,6 +642,40 @@ it.effect("a launch into a new worktree creates nothing when its branch collides
   }),
 );
 
+it.effect("a launch into an unknown project says the project was not found", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    for (const workspaceStrategy of [
+      undefined,
+      { type: "worktree", baseRef: "main", startFromOrigin: false } as const,
+    ]) {
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          message: "Fix the bug",
+          projectId: ProjectId.make("current"),
+          modelSelection,
+          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(result.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: "The project was not found.",
+      });
+    }
+    expect(launched).toHaveLength(0);
+  }),
+);
+
 it.effect("a retried worktree launch replays after its base ref is gone", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];

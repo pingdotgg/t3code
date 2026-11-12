@@ -21,6 +21,7 @@ import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-te
 import { isComposerVimActive } from "~/composer-vim-editor";
 import { createTextareaVimHost } from "~/textarea-vim";
 import { isMacPlatform } from "~/lib/utils";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
@@ -39,14 +40,14 @@ function Composer({
   skills,
   onChange,
   vimModeEnabled = false,
-  onCommandKeyDown,
+  onCommandKeyDown = () => false,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
   vimModeEnabled?: boolean;
-  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"];
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -56,7 +57,6 @@ function Composer({
       cursor={prompt.cursor}
       richTextEnabled={richTextEnabled}
       vimModeEnabled={vimModeEnabled}
-      {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
       contextRecords={new Map()}
       skills={skills}
       disabled={false}
@@ -66,6 +66,7 @@ function Composer({
         onChange?.(...args);
       }}
       onPaste={() => {}}
+      onCommandKeyDown={onCommandKeyDown}
     />
   );
 }
@@ -75,9 +76,16 @@ function composer(
   richTextEnabled = true,
   skills: ReadonlyArray<ServerProviderSkill> = [],
   onChange?: ComposerPromptEditorProps["onChange"],
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"],
 ) {
   return (
-    <Composer value={value} richTextEnabled={richTextEnabled} skills={skills} onChange={onChange} />
+    <Composer
+      value={value}
+      richTextEnabled={richTextEnabled}
+      skills={skills}
+      onChange={onChange}
+      onCommandKeyDown={onCommandKeyDown}
+    />
   );
 }
 
@@ -262,6 +270,55 @@ it.each([
   },
 );
 
+it.each([
+  ["e", false, false],
+  ["i", false, false],
+  ["e", true, false],
+  ["e", false, true],
+])(
+  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s, declined capture command: %s)",
+  async (key, composerClaimsKey, declinedCapture) => {
+    const openUsage = vi.fn((event: KeyboardEvent) => {
+      if (declinedCapture) return false;
+      event.preventDefault();
+    });
+    using _commands = {
+      [Symbol.dispose]: registerCommands(
+        { "usage.open": openUsage },
+        {
+          keybindings: () => [
+            {
+              command: "usage.open",
+              shortcut: {
+                key,
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+          capture: declinedCapture,
+        },
+      ),
+    };
+    const composerCommand = vi.fn(() => composerClaimsKey);
+    await using screen = await mountEditor("word", true, [], undefined, composerCommand);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus();
+      editor.commands.setTextSelection({ from: 1, to: 5 });
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}${key}{/${modifier}}`);
+    expect(composerCommand).toHaveBeenCalled();
+    expect(openUsage).toHaveBeenCalledTimes(composerClaimsKey ? 0 : 1);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(declinedCapture ? "`word`" : "word");
+  },
+);
+
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
   async (richTextEnabled) => {
@@ -369,6 +426,26 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(editor.state.doc.textContent).toBe(value.replace("$babysit", ""));
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
+
+it.each(["x\r\n\r\ny", "x\r\ry"])(
+  "pastes %j with the same blank line as x\\n\\ny",
+  async (text) => {
+    await using screen = await mountEditor("");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    const paragraphs: string[] = [];
+    editor.state.doc.forEach((node) => paragraphs.push(node.textContent));
+    expect(paragraphs).toEqual(["x", "", "y"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("x\n\ny");
+  },
+);
 
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
