@@ -84,6 +84,7 @@ const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_STARTUP_MAX_OUTPUT_CHARS = 64 * 1024;
 const OPENCODE_SERVER_EXIT_DRAIN_TIMEOUT = "500 millis";
+const OPENCODE_SERVER_TERMINATE_GRACE = "1 second";
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly serverPassword?: string;
@@ -225,10 +226,78 @@ export const loadOpenCodeCommands = (client: OpencodeClient) =>
     ),
   );
 
+const loadOpenCodeProviders = (client: OpencodeClient) =>
+  runOpenCodeSdk("provider.list", (signal) => client.provider.list(undefined, { signal })).pipe(
+    Effect.filterMapOrFail(
+      (list) =>
+        list.data
+          ? Result.succeed(list.data)
+          : Result.fail(
+              new OpenCodeRuntimeError({
+                operation: "provider.list",
+                detail: "OpenCode provider list was empty.",
+              }),
+            ),
+      (result) => result,
+    ),
+  );
+
+const loadOpenCodeAgents = (client: OpencodeClient) =>
+  runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
+    Effect.map((result): ReadonlyArray<Agent> => result.data ?? []),
+  );
+
+/** The providers and agents OpenCode resolves for the client's directory. Fails if either read does. */
+export const loadOpenCodeProviderCatalog = Effect.fn("OpenCodeRuntime.loadOpenCodeProviderCatalog")(
+  (client: OpencodeClient) =>
+    Effect.all(
+      { providerList: loadOpenCodeProviders(client), agents: loadOpenCodeAgents(client) },
+      { concurrency: "unbounded" },
+    ),
+);
+
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
   readonly modelID: string;
 }
+
+export type OpenCodeVariantCache = Map<string, ReadonlySet<string> | undefined>;
+
+export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
+  client: OpencodeClient,
+  model: ParsedOpenCodeModelSlug | undefined,
+  variant: string | undefined,
+  abortSignal?: AbortSignal,
+  cache?: OpenCodeVariantCache,
+) {
+  if (!variant || !model) return variant;
+
+  const key = `${model.providerID}/${model.modelID}`;
+  const cached = cache?.get(key);
+  if (cache?.has(key)) {
+    return cached !== undefined && !cached.has(variant) ? undefined : variant;
+  }
+
+  // Only a confirmed catalog mismatch can invalidate a persisted selection.
+  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
+    client.provider.list(undefined, {
+      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (response?.data === undefined) return variant;
+
+  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
+    ?.models[model.modelID];
+  const variants = catalogModel ? new Set(Object.keys(catalogModel.variants ?? {})) : undefined;
+  if (cache !== undefined) {
+    // Keep only this model's names; provider.list can return several megabytes.
+    cache.set(key, variants);
+  }
+  return variants !== undefined && !variants.has(variant) ? undefined : variant;
+});
 
 export interface OpenCodeSkill {
   readonly name?: string | null;
@@ -555,19 +624,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ),
       );
 
-    const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
-      hostPlatform === "win32"
-        ? child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid)
-        : Effect.sync(() => {
-            try {
-              signalProcessGroup(Number(child.pid), signal);
-            } catch {}
-          });
-    const terminateChild = killOpenCodeProcessGroup("SIGTERM").pipe(
-      Effect.andThen(Effect.sleep("1 second")),
-      Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
-      Effect.ignore,
-    );
+    // Signals the server's own group and force-kills only what outlives the grace,
+    // so a group that exits promptly does not hold up the scope that closes it.
+    const terminateChild = child
+      .kill({ killSignal: "SIGTERM", forceKillAfter: OPENCODE_SERVER_TERMINATE_GRACE })
+      .pipe(Effect.ignore);
     // Registered before recording, so an interrupt while the ledger writes
     // still stops the group.
     yield* Scope.addFinalizer(runtimeScope, terminateChild);
@@ -770,28 +831,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     );
   };
 
-  const loadProviders = (client: OpencodeClient) =>
-    runOpenCodeSdk("provider.list", (signal) => client.provider.list(undefined, { signal })).pipe(
-      Effect.filterMapOrFail(
-        (list) =>
-          list.data
-            ? Result.succeed(list.data)
-            : Result.fail(
-                new OpenCodeRuntimeError({
-                  operation: "provider.list",
-                  detail: "OpenCode provider list was empty.",
-                }),
-              ),
-        (result) => result,
-      ),
-    );
-
-  const loadAgents = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
-      Effect.map((result) => result.data ?? []),
-      Effect.orElseSucceed((): ReadonlyArray<Agent> => []),
-    );
-
   const loadOpenCodeSkills: OpenCodeRuntime["Service"]["loadOpenCodeSkills"] = (client) =>
     runOpenCodeSdk("app.skills", (signal) => client.app.skills(undefined, { signal })).pipe(
       Effect.map((result) =>
@@ -808,8 +847,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const loadOpenCodeInventory: OpenCodeRuntime["Service"]["loadOpenCodeInventory"] = (client) =>
     Effect.all(
       [
-        loadProviders(client),
-        loadAgents(client),
+        loadOpenCodeProviders(client),
+        loadOpenCodeAgents(client).pipe(Effect.orElseSucceed((): ReadonlyArray<Agent> => [])),
         loadSkills(client),
         loadOpenCodeCommands(client).pipe(Effect.orElseSucceed(() => [])),
       ],
