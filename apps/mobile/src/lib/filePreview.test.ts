@@ -59,6 +59,7 @@ const audio = vi.hoisted(() => ({
   videoRequestListeners: new Set<(event: { isPlaybackRequested: boolean }) => void>(),
   navigate: vi.fn(),
   query: vi.fn(),
+  presentVideo: vi.fn(),
 }));
 vi.mock("expo-audio", () => ({
   AudioModule: { setAudioSessionOwner: audio.setSessionOwner },
@@ -245,7 +246,12 @@ vi.mock("../components/ui/FilePreviewModal", () => ({
   FilePreviewModal: (props: { source: { name: string } | null }) =>
     props.source ? createElement("div", { "data-file-preview": props.source.name }) : null,
 }));
-vi.mock("../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
+vi.mock("../components/ui/VideoPreviewModal", () => ({
+  VideoPreviewModal: (props: { source: unknown }) => {
+    if (props.source) audio.presentVideo(props.source);
+    return null;
+  },
+}));
 vi.mock("../components/ComposerContextSheet", () => ({}));
 vi.mock("../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => vi.fn() }));
 vi.mock("../native/useMarkdownImageSource", () => ({ useMarkdownImageSource: () => vi.fn() }));
@@ -385,23 +391,12 @@ describe("ThreadInlineFilePreview playback", () => {
   it.each(
     (["user", "assistant"] as const).flatMap((role) =>
       (["attachment", "markdown"] as const).flatMap((origin) =>
-        (["audio", "video"] as const).flatMap((kind) =>
-          (kind === "video"
-            ? ["initial play", "native resume", "continued playback"]
-            : ["initial play"]
-          ).map((playback) => ({
-            role,
-            origin,
-            kind,
-            playback,
-            outcome: playback === "continued playback" ? "preserves" : "cancels",
-          })),
-        ),
+        (["audio", "video"] as const).map((kind) => ({ role, origin, kind })),
       ),
     ),
   )(
-    "$outcome a pending file lookup on $role $origin $kind $playback",
-    async ({ role, origin, kind, playback }) => {
+    "cancels a pending file lookup on $role $origin $kind initial play",
+    async ({ role, origin, kind }) => {
       (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
       const environmentId = EnvironmentId.make("environment-1");
       const threadId = ThreadId.make("thread-1");
@@ -473,69 +468,26 @@ describe("ThreadInlineFilePreview playback", () => {
       const playLabel = kind === "audio" ? "Play audio" : `Play ${name}`;
       const play = () =>
         container.querySelector<HTMLButtonElement>(`[aria-label="${playLabel}"]`)!.click();
-      if (playback !== "initial play") {
-        await act(async () => play());
-        expect(audio.video.playing).toBe(true);
-        if (playback === "native resume") {
-          await act(async () => audio.video.pause());
-          expect(audio.video.playing).toBe(false);
-        } else {
-          await act(async () => {
-            for (const listener of audio.videoRequestListeners)
-              listener({ isPlaybackRequested: true });
-          });
-        }
-      }
       await act(async () => link.click());
       const signal: AbortSignal = audio.query.mock.calls[0]![2].signal;
       expect(signal.aborted).toBe(false);
       expect(audio.navigate).not.toHaveBeenCalled();
-      await act(async () => {
-        if (playback === "native resume") {
-          // Native resume requests playback before buffering advances the clock.
-          audio.video.playbackRequested = true;
-          for (const listener of audio.videoRequestListeners)
-            listener({ isPlaybackRequested: true });
-          expect(audio.video.playing).toBe(false);
-        } else if (playback === "continued playback") {
-          for (const isPlaying of [false, true, false, true]) {
-            audio.video.playing = isPlaying;
-            for (const listener of audio.videoListeners) listener({ isPlaying });
-            for (const listener of audio.videoRequestListeners)
-              listener({ isPlaybackRequested: true });
-          }
-          expect(signal.aborted).toBe(false);
-        } else play();
-      });
-      expect(kind === "audio" ? audio.played : audio.video.play).toHaveBeenCalled();
-      expect(audio.sessionOwned).toBe(true);
+      await act(async () => play());
+      // iOS opens thread video in the native fullscreen player instead of playing inline.
+      expect(kind === "audio" ? audio.played : audio.presentVideo).toHaveBeenCalled();
+      if (kind === "audio") expect(audio.sessionOwned).toBe(true);
       await act(async () =>
         finishLookup({
           _tag: "Success",
           value: { entries: [{ path: "src/target.ts", kind: "file" }] },
         }),
       );
-      if (playback === "continued playback") {
-        expect(audio.navigate).toHaveBeenCalledExactlyOnceWith("ThreadFile", {
-          environmentId,
-          threadId,
-          path: ["src", "target.ts"],
-        });
-        expect(signal.aborted).toBe(false);
-      } else {
-        expect(audio.navigate).not.toHaveBeenCalled();
-        expect(signal.aborted).toBe(true);
-      }
-      expect(container.querySelector(`[aria-label="${playLabel}"]`)).toBeNull();
-      if (kind === "audio")
+      expect(audio.navigate).not.toHaveBeenCalled();
+      expect(signal.aborted).toBe(true);
+      if (kind === "audio") {
+        expect(container.querySelector(`[aria-label="${playLabel}"]`)).toBeNull();
         expect(container.querySelector('[aria-label="Pause audio"]')).not.toBeNull();
-      else {
-        if (playback === "native resume") {
-          audio.video.playing = true;
-          for (const listener of audio.videoListeners) listener({ isPlaying: true });
-        }
-        expect(audio.video.playing).toBe(true);
-      }
+      } else expect(audio.video.play).not.toHaveBeenCalled();
     },
   );
 

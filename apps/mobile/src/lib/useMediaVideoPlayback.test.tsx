@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn<() => Promise<string | null>>(),
   replace: vi.fn<() => Promise<void>>(),
   thumbnail: vi.fn<(key: string, source: unknown, signal: AbortSignal) => Promise<null>>(),
+  presentVideo: vi.fn<(source: unknown) => void>(),
 }));
 vi.mock("@react-navigation/native", () => ({ useIsFocused: () => mocks.focused }));
 vi.mock("react-native", () => ({
@@ -107,7 +108,12 @@ vi.mock("../components/ui/FilePreviewGallery", () => ({
   useFilePreviewGallery: () => (value: unknown) => value,
 }));
 vi.mock("../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
-vi.mock("../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
+vi.mock("../components/ui/VideoPreviewModal", () => ({
+  VideoPreviewModal: (props: { source: unknown }) => {
+    if (props.source) mocks.presentVideo(props.source);
+    return null;
+  },
+}));
 vi.mock("../features/threads/ThreadMarkdownImage", () => ({ ThreadMarkdownImageView: () => null }));
 
 import {
@@ -159,6 +165,7 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
   mocks.refresh.mockReset().mockResolvedValue("https://media.example/clip.mp4");
   mocks.replace.mockReset().mockResolvedValue();
   mocks.thumbnail.mockReset().mockResolvedValue(null);
+  mocks.presentVideo.mockReset();
   const container = document.createElement("div");
   const root = createRoot(container);
   // Configured like the app's registry: the React default keeps unmounted atoms for 400ms,
@@ -166,6 +173,7 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
   const registry = AtomRegistry.make();
   const environmentId = EnvironmentId.make("test");
   return {
+    container,
     render(visible = true) {
       if (kind === "files") mocks.focused = visible;
       act(() =>
@@ -238,45 +246,48 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
   };
 }
 
-it.each(["thread", "PR"] as const)(
-  "retains the %s player and position while hidden and requires deliberate resume",
-  async (kind) => {
-    using screen = setup(kind);
-    screen.render();
-    const player = await screen.open();
-    expect(player.playing).toBe(true);
-    player.currentTime = 37;
-    screen.render(false);
-    expect(player.playing).toBe(false);
-    screen.render(true);
-    expect(mocks.players).toEqual([player]);
-    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
-    expect(player.currentTime).toBe(37);
-    expect(player.playing).toBe(false);
-  },
-);
+it("opens a thread video in the native fullscreen player instead of playing inline", async () => {
+  using screen = setup("thread");
+  screen.render();
+  const button = screen.container.querySelector("button");
+  await act(async () => button!.click());
+  expect(mocks.players).toEqual([]);
+  expect(mocks.presentVideo).toHaveBeenCalledWith(expect.objectContaining({ name: "clip.mp4" }));
+});
 
-it.each(["thread", "PR"] as const)(
-  "does not start a hidden %s video when signing or native loading finishes late",
-  async (kind) => {
-    using screen = setup(kind);
-    const signed = Promise.withResolvers<string | null>();
-    const replaced = Promise.withResolvers<void>();
-    mocks.refresh.mockReturnValue(signed.promise);
-    mocks.replace.mockReturnValue(replaced.promise);
-    screen.render();
-    const player = await screen.open();
-    screen.render(false);
-    await act(async () => signed.resolve("https://media.example/renewed.mp4"));
-    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
-    expect(player.play).not.toHaveBeenCalled();
-    await act(async () => replaced.resolve());
-    expect(player.play).not.toHaveBeenCalled();
-    screen.render(true);
-    expect(player.playing).toBe(false);
-    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
-  },
-);
+it("retains the PR player and position while hidden and requires deliberate resume", async () => {
+  using screen = setup("PR");
+  screen.render();
+  const player = await screen.open();
+  expect(player.playing).toBe(true);
+  player.currentTime = 37;
+  screen.render(false);
+  expect(player.playing).toBe(false);
+  screen.render(true);
+  expect(mocks.players).toEqual([player]);
+  expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+  expect(player.currentTime).toBe(37);
+  expect(player.playing).toBe(false);
+});
+
+it("does not start a hidden PR video when signing or native loading finishes late", async () => {
+  using screen = setup("PR");
+  const signed = Promise.withResolvers<string | null>();
+  const replaced = Promise.withResolvers<void>();
+  mocks.refresh.mockReturnValue(signed.promise);
+  mocks.replace.mockReturnValue(replaced.promise);
+  screen.render();
+  const player = await screen.open();
+  screen.render(false);
+  await act(async () => signed.resolve("https://media.example/renewed.mp4"));
+  expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+  expect(player.play).not.toHaveBeenCalled();
+  await act(async () => replaced.resolve());
+  expect(player.play).not.toHaveBeenCalled();
+  screen.render(true);
+  expect(player.playing).toBe(false);
+  expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+});
 
 it.each([
   ["PR", false],
@@ -307,7 +318,7 @@ it.each([
 );
 
 it("pauses on screen blur and app inactivity without resuming on return", async () => {
-  using screen = setup("thread");
+  using screen = setup("PR");
   screen.render();
   const player = await screen.open();
   for (const reason of ["blur", "inactive", "background"] as const) {
@@ -327,29 +338,26 @@ it("pauses on screen blur and app inactivity without resuming on return", async 
   expect(player.replaceAsync).toHaveBeenCalledTimes(1);
 });
 
-it.each(["thread", "PR"] as const)(
-  "keeps the %s play request cancelled when loading finishes after returning",
-  async (kind) => {
-    using screen = setup(kind);
-    const signed = Promise.withResolvers<string | null>();
-    const replaced = Promise.withResolvers<void>();
-    mocks.refresh.mockReturnValue(signed.promise);
-    mocks.replace.mockReturnValue(replaced.promise);
-    screen.render();
-    const player = await screen.open();
-    screen.render(false);
-    screen.render(true);
-    await act(async () => signed.resolve("https://media.example/renewed.mp4"));
-    await act(async () => replaced.resolve());
-    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
-    expect(player.play).not.toHaveBeenCalled();
-    act(() => player.play());
-    expect(player.playing).toBe(true);
-  },
-);
+it("keeps the PR play request cancelled when loading finishes after returning", async () => {
+  using screen = setup("PR");
+  const signed = Promise.withResolvers<string | null>();
+  const replaced = Promise.withResolvers<void>();
+  mocks.refresh.mockReturnValue(signed.promise);
+  mocks.replace.mockReturnValue(replaced.promise);
+  screen.render();
+  const player = await screen.open();
+  screen.render(false);
+  screen.render(true);
+  await act(async () => signed.resolve("https://media.example/renewed.mp4"));
+  await act(async () => replaced.resolve());
+  expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+  expect(player.play).not.toHaveBeenCalled();
+  act(() => player.play());
+  expect(player.playing).toBe(true);
+});
 
 it("pauses when native fullscreen exits while the app remains in the background", async () => {
-  using screen = setup("thread");
+  using screen = setup("PR");
   screen.render();
   const player = await screen.open();
   player.currentTime = 37;
