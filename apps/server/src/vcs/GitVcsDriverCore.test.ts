@@ -1069,12 +1069,24 @@ describe("pullCurrentBranch", () => {
     ).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["diverged", "interrupted", "spawn-failure", "fetch-failure"] as const)(
+  const claimedFetchFallbacks = [
+    "diverged",
+    "interrupted",
+    "spawn-failure",
+    "fetch-failure",
+    "upstream-only",
+  ] as const;
+
+  it.effect.each(claimedFetchFallbacks)(
     "falls back to the claimed status fetch when Pull is %s",
     (failure) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { cwd } = yield* cloneBehindRemote;
+          const { cwd, updater, remoteHead } = yield* cloneBehindRemote;
+          if (failure === "upstream-only") {
+            yield* git(updater, ["push", "origin", "HEAD:refs/heads/other"]);
+            yield* writeTextFile(cwd, ".git/refs/remotes/origin/other.lock", "");
+          }
           if (failure === "diverged") {
             yield* writeTextFile(cwd, "local.txt", "local\n");
             yield* git(cwd, ["add", "local.txt"]);
@@ -1186,6 +1198,11 @@ describe("pullCurrentBranch", () => {
               yield* Fiber.interrupt(pull);
               const exit = yield* Fiber.await(pull);
               assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+            } else if (failure === "upstream-only") {
+              assert.equal((yield* driver.pullCurrentBranch(cwd)).status, "pulled");
+              yield* (yield* FileSystem.FileSystem).remove(
+                `${cwd}/.git/refs/remotes/origin/other.lock`,
+              );
             } else {
               const error = yield* Effect.flip(driver.pullCurrentBranch(cwd));
               assert.equal(error.operation, "GitVcsDriver.pullCurrentBranch.pull");
@@ -1206,6 +1223,9 @@ describe("pullCurrentBranch", () => {
             assert.isDefined(targetFetchExitCode);
             if (failure === "fetch-failure") assert.notEqual(targetFetchExitCode, 0);
             else assert.equal(targetFetchExitCode, 0);
+            if (failure === "upstream-only") {
+              assert.equal(yield* git(cwd, ["rev-parse", "refs/remotes/origin/other"]), remoteHead);
+            }
           }).pipe(
             Effect.ensuring(
               Effect.all([

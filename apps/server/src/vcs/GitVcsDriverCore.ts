@@ -2873,6 +2873,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     const remote = yield* readConfigValue(cwd, `branch.${refName}.remote`);
+    // The upstream-only retry leaves other remote-tracking refs stale, so a claimed status
+    // fetch must still run after it.
+    let fetchedUpstreamOnly = false;
     if (remote) {
       const gitCommonDir = yield* resolveGitCommonDir(cwd);
       const pending = statusFetches.get(`${gitCommonDir}\0${remote}`);
@@ -2884,7 +2887,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             if (pending.state.phase !== "queued") return false;
             pending.state.phase = "claimed";
             yield* Effect.addFinalizer((exit) =>
-              Deferred.succeed(pending.state.finished, Exit.isSuccess(exit)),
+              Deferred.succeed(
+                pending.state.finished,
+                Exit.isSuccess(exit) && !fetchedUpstreamOnly,
+              ),
             );
             yield* Deferred.succeed(pending.state.claimed, undefined);
             return true;
@@ -2944,6 +2950,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         currentSha === beforeSha
       ) {
         args = ["pull", "--ff-only", "--", remote, mergeRef];
+        fetchedUpstreamOnly = true;
         result = yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.pullCurrentBranch.pull",
           cwd,
