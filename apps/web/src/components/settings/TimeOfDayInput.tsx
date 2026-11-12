@@ -2,6 +2,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 
 import { resolveHour12 } from "../../timestampFormat";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { readTimeOfDay, writeTimeOfDay } from "./TimeOfDayInput.logic";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 const HOURS_24 = Array.from({ length: 24 }, (_, hour) => pad(hour));
@@ -25,10 +26,7 @@ export function TimeOfDayInput({
   onChange: (value: string) => void;
 }) {
   const hour12 = resolveHour12(timestampFormat);
-  const separator = value.indexOf(":");
-  const hour = Number(value.slice(0, separator));
-  const minute = value.slice(separator + 1);
-  const period = hour < 12 ? "AM" : "PM";
+  const parts = readTimeOfDay(value, hour12);
 
   return (
     <div
@@ -40,26 +38,23 @@ export function TimeOfDayInput({
       <TimePart
         id={id}
         label={`${label} hours`}
-        value={pad(hour12 ? hour % 12 || 12 : hour)}
+        value={parts.hour}
         options={hour12 ? HOURS_12 : HOURS_24}
-        onChange={(next) => {
-          const nextHour = hour12 ? (Number(next) % 12) + (hour >= 12 ? 12 : 0) : Number(next);
-          onChange(`${pad(nextHour)}:${minute}`);
-        }}
+        onChange={(next) => onChange(writeTimeOfDay(value, "hour", next, hour12))}
       />
       <span aria-hidden="true">:</span>
       <TimePart
         label={`${label} minutes`}
-        value={minute}
+        value={parts.minute}
         options={MINUTES}
-        onChange={(next) => onChange(`${pad(hour)}:${next}`)}
+        onChange={(next) => onChange(writeTimeOfDay(value, "minute", next, hour12))}
       />
       {hour12 ? (
         <TimePart
           label={`${label} period`}
-          value={period}
+          value={parts.period}
           options={PERIODS}
-          onChange={(next) => onChange(`${pad((hour % 12) + (next === "PM" ? 12 : 0))}:${minute}`)}
+          onChange={(next) => onChange(writeTimeOfDay(value, "period", next, hour12))}
         />
       ) : null}
     </div>
