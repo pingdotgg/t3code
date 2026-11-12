@@ -28,6 +28,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
+import { antigravityWindowLimitsModel } from "../provider/antigravityUsageLimits.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -222,7 +223,10 @@ export function hubPoolResetAt(
     // An unread account may be the one still blocked, so its refill is unknown.
     if (account.usageLimits.unavailable) return null;
     const spent = account.usageLimits.windows.filter(
-      (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
+      (window) =>
+        window.usedPercent >= 100 &&
+        windowLimitsModel(window, model) &&
+        (account.driver !== "antigravity" || antigravityWindowLimitsModel(window, model)),
     );
     if (spent.length === 0) return null;
     const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));

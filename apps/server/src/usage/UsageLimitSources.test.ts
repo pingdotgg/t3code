@@ -242,6 +242,18 @@ it("waits for the first refill only when every pooled account of the driver is s
   expect(
     UsageLimitSources.hubPoolResetAt(hub([...routed, unlisted]), claude, "claude-opus-5-5", now),
   ).toBeNull();
+  // regression: #30778 a spent Gemini quota does not hold back Claude on an Antigravity account
+  const antigravity = {
+    ...account("ag", [
+      { ...session(100, "2026-11-06T13:00:00.000Z"), id: "3p-5h" },
+      { ...session(100, "2026-11-07T12:00:00.000Z"), id: "gemini-5h" },
+    ]),
+    driver: ProviderDriverKind.make("antigravity"),
+    models: ["claude-opus-4-6-thinking", "gemini-3-pro"],
+  };
+  expect(
+    UsageLimitSources.hubPoolResetAt(hub([antigravity]), claude, "claude-opus-4-6-thinking", now),
+  ).toBe("2026-11-06T13:00:00.000Z");
 });
 
 it.effect("takes a reset only from the hub at the instance's endpoint", () => {

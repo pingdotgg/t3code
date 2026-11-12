@@ -879,13 +879,11 @@ export function collectProviderUsageLimits(
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected) return null;
   // Only an instance sent to a hub is known to reach the accounts that hub routes its model to.
-  const routes = hubRoutes(
-    sources,
-    selected.driver,
-    instanceHubs(selected, sources).length > 0 ? model : null,
-  );
+  const hubs = instanceHubs(selected, sources);
+  const routes = hubRoutes(hubs, selected.driver, hubs.length > 0 ? model : null);
+  const shownHubs = hubs.length > 0 ? hubs : sources;
   const drivers = new Set(
-    sources.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
+    shownHubs.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
   );
   if (drivers.size === 0) drivers.add(selected.driver);
   if (![...drivers].some((driver) => hasProviderUsageLimits(driver, providers, sources))) {
@@ -980,7 +978,7 @@ export function collectProviderUsageLimits(
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
-  for (const source of sources) {
+  for (const source of shownHubs) {
     const matching = source.accounts.filter(routes);
     for (const account of matching) {
       const key = resolveKey(account);
