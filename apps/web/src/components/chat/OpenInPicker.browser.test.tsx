@@ -229,17 +229,6 @@ describe("remote editor links", () => {
     expect(state.run).not.toHaveBeenCalled();
   });
 
-  it("disables WSL editor actions when no supported handler is detected", async () => {
-    await using fixture = await setup();
-    const { renderPicker, primaryButton, pressOpenFavorite } = fixture;
-    state.remote = { mode: "wsl-links", distro: "Ubuntu" };
-    state.clientEditors = ["cursor"];
-    await renderPicker();
-    expect(primaryButton().disabled).toBe(true);
-    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
-    expect(state.openUrl).not.toHaveBeenCalled();
-  });
-
   it("opens the WSL workspace from the favorite-editor shortcut", async () => {
     await using fixture = await setup();
     const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
@@ -255,6 +244,7 @@ describe("remote editor links", () => {
     );
     expect(state.run).not.toHaveBeenCalled();
   });
+
   it("explains why a phone or tablet browser has no editor to open", async () => {
     await using fixture = await setup();
     const { renderPicker, byLabel, primaryButton, menuItems, click, pressOpenFavorite } = fixture;

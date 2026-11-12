@@ -36,10 +36,8 @@ export type DesktopBootstrapsRead =
       readonly cause: unknown;
     };
 
-export type DesktopSecondaryBootstrapsRead = DesktopBootstrapsRead;
-
 export interface DesktopSecondaryBootstrapsReader {
-  readonly readResult: () => DesktopSecondaryBootstrapsRead;
+  readonly readResult: () => DesktopBootstrapsRead;
   readonly readSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
   readonly readAllResult: () => DesktopBootstrapsRead;
   readonly readAllSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
@@ -93,7 +91,7 @@ export function createDesktopSecondaryBootstrapsReader(
     }
   };
 
-  const readResult = (): DesktopSecondaryBootstrapsRead => {
+  const readResult = (): DesktopBootstrapsRead => {
     const result = readAllResult();
     return result._tag === "Success" ? { _tag: "Success", bootstraps: snapshot } : result;
   };
@@ -114,7 +112,7 @@ export function createDesktopSecondaryBootstrapsReader(
 
 const desktopBootstrapsReader = createDesktopSecondaryBootstrapsReader(() => window.desktopBridge);
 
-export function readDesktopSecondaryBootstrapsResult(): DesktopSecondaryBootstrapsRead {
+export function readDesktopSecondaryBootstrapsResult(): DesktopBootstrapsRead {
   return desktopBootstrapsReader.readResult();
 }
 

@@ -193,17 +193,14 @@ const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> | null
   return null;
 }).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
 
-export function wslCapableEditors(editors: ReadonlyArray<EditorId>): ReadonlyArray<EditorId> {
-  return editors.filter((editor) => WSL_REMOTE_EDITOR_IDS.some((id) => id === editor));
-}
-
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const editors = useAtomValue(remoteCapableEditorsAtom);
   return editors && editors.length > 0 ? editors : remoteFallbackEditors(navigator);
 }
 
 export function useWslCapableEditors(): ReadonlyArray<EditorId> {
-  return wslCapableEditors(useAtomValue(remoteCapableEditorsAtom) ?? []);
+  const editors = useAtomValue(remoteCapableEditorsAtom) ?? [];
+  return editors.filter((editor) => WSL_REMOTE_EDITOR_IDS.some((id) => id === editor));
 }
 
 /** Resolves false when the desktop refuses the URL, including unsupported editor schemes. */

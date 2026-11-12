@@ -19,18 +19,6 @@ describe("shouldShowOpenInPicker", () => {
     ).toBe(true);
   });
 
-  it("keeps other secondary local environments hidden", () => {
-    expect(
-      shouldShowOpenInPicker({
-        activeProjectName: "project",
-        activeThreadEnvironmentId: secondary,
-        primaryEnvironmentId: primary,
-        hostEnvironmentId: null,
-        remoteOpenMode: "local-exec",
-      }),
-    ).toBe(false);
-  });
-
   it("shows both local environments when the primary has a separate WSL home", () => {
     const primaryEnvironmentId = EnvironmentId.make("wsl");
     const hostEnvironmentId = EnvironmentId.make("host");

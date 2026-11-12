@@ -58,7 +58,7 @@ import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatenc
 import {
   desktopLocalConnectionId,
   readDesktopSecondaryBootstrapsResult,
-  type DesktopSecondaryBootstrapsRead,
+  type DesktopBootstrapsRead,
 } from "./desktopLocal";
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
@@ -610,7 +610,7 @@ export function isRejectedBootstrapCredentialError(error: ConnectionAttemptError
 
 export function secondaryRegistrationsToRetainAfterTopologyRead(
   previous: ReadonlyMap<string, CachedPlatformRegistration>,
-  topologyRead: DesktopSecondaryBootstrapsRead,
+  topologyRead: DesktopBootstrapsRead,
   nowEpochMs: number,
 ): ReadonlyMap<string, CachedPlatformRegistration> {
   if (topologyRead._tag === "Success") {

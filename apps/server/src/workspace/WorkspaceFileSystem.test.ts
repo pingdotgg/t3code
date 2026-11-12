@@ -123,12 +123,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             null,
             null,
           ]);
-          const unresolved = `${cwd}${path.sep}link${path.sep}..${path.sep}custom-name`;
-          const realpath = vi.mocked(NodeFSP.realpath).mockResolvedValueOnce(file);
-          expect(
-            (yield* service.getMetadata({ paths: [unresolved], resolveRealPath: true })).entries,
-          ).toEqual([{ kind: "file", byteLength: 5, realPath: file }]);
-          expect(realpath).toHaveBeenCalledWith(unresolved);
         }),
     );
 

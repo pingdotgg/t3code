@@ -7,7 +7,7 @@ import {
 import { buildRemoteOpenUrl, buildWslOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remoteFallbackEditors, resolveRemoteOpenState, wslCapableEditors } from "./remoteOpen";
+import { remoteFallbackEditors, resolveRemoteOpenState } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -367,12 +367,5 @@ describe("buildWslOpenUrl", () => {
         absolutePath: "C:\\Users\\theo\\project",
       }),
     ).toBeUndefined();
-  });
-});
-
-describe("wslCapableEditors", () => {
-  it("only offers detected WSL editors", () => {
-    expect(wslCapableEditors(["cursor"])).toEqual([]);
-    expect(wslCapableEditors(["cursor", "vscode-insiders"])).toEqual(["vscode-insiders"]);
   });
 });

@@ -21,8 +21,10 @@ export const desktopLocalBootstrapsAtom = Atom.make((get) => {
   return readDesktopLocalBootstraps();
 }).pipe(Atom.withLabel("desktop-local-bootstraps"));
 
+const desktopSecondaryBootstrapsAtom = Atom.make((get) =>
+  get(desktopLocalBootstrapsAtom).filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID),
+).pipe(Atom.withLabel("desktop-secondary-bootstraps"));
+
 export function useDesktopLocalBootstraps() {
-  return useAtomValue(desktopLocalBootstrapsAtom).filter(
-    (entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID,
-  );
+  return useAtomValue(desktopSecondaryBootstrapsAtom);
 }
