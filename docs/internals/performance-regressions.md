@@ -19,7 +19,8 @@ The v2 checks pin these invariants:
   large work groups until expansion. Messages and items outside those groups remain in normal
   history paging. Required control records and
   the at-least-one-row rule can exceed the byte target; it is not a hard cap.
-- The bounded snapshot does not retain the full duplicate conversation-message table.
+- The bounded snapshot does not retain the full duplicate conversation-message table. Messages of
+  a run that is still in progress are the exception: all of them accompany the window.
 - Older activity is fetched in bounded HTTP pages and merged without disturbing the live scroll
   window.
 - Clients with confirmed history paging opt into socket snapshot fallbacks that use the same
@@ -68,13 +69,22 @@ These are neither compressed WebSocket captures nor measurements of server RSS, 
 fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
 these tests so regressions fail locally. The transfer budget integration test
 (`apps/server/integration/transferBudgetV2.integration.test.ts`) sends the opt-ins current clients
-send and caps the decoded bytes and rows of the bounded snapshot and one older page for a 900-row
-agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. It
-also caps the bytes and the node, subagent, plan, provider turn and checkpoint counts of the
-bounded snapshot for a thread of 40 finished runs behind one working run, so finished runs cannot
-ride along with a window. The working run has a ready context handoff, so its history cannot ride
-along either. When clients gain an opt-in, add it to the test's client queries and give a fixture
-the data it saves.
+send. Its opt-in objects are typed `Required` against the contracts, so an opt-in added to a
+contract fails typecheck until the test sends it; give a fixture the data the opt-in saves. The
+test caps decoded bytes and rows for a 900-row agent turn in both states: while the turn runs (the
+bounded snapshot and one older page) and after it finishes (the deferred cold open over HTTP and
+over the socket alone, and the first page of its deferred work). It caps the socket bytes of three
+resumes that must not send a snapshot: a thread after one ordinary turn, an idle thread, and a
+shell cursor too old to replay. It caps the cold-connect shell for a sidebar of settled threads and
+idle subagents, and the subscription a client opens from that snapshot. It also caps the bytes and
+the node, subagent, plan, provider turn and checkpoint counts of the bounded snapshot for a thread
+of 40 finished runs behind one working run, so finished runs cannot ride along with a window. The
+working run has a ready context handoff, so its history cannot ride along either.
+
+CI prints every row in the job summary. The pull request comment compares the budgeted rows with
+`main`, lists the rows that changed or failed, and names each ceiling a pull request raises. A row
+added to `scenarioRows` in `TransferBudgetReport.integration.ts` reaches the pass/fail check, the
+summary and the comment.
 
 The server config has its own budget in `apps/server/src/ws.test.ts`. A client that asks for
 catalog digests and status deltas gets the provider list of its first config in under 1 KiB, for a
