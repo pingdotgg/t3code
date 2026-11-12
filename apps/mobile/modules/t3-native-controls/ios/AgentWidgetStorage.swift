@@ -102,9 +102,11 @@ enum AgentWidgetStorage {
   static func observe(_ props: String, entries: [[String: Any]], in defaults: UserDefaults) -> Bool {
     let previous = defaults.string(forKey: "t3_agent_widget_local_observation")
     defaults.set(props, forKey: "t3_agent_widget_local_observation")
-    let stored = (defaults.array(forKey: timelineKey) as? [[String: Any]])?.first?["props"] as? [String: Any]
+    let storedEntries = defaults.array(forKey: timelineKey) as? [[String: Any]]
+    let stored = storedEntries?.first?["props"] as? [String: Any]
     if let previous, let old = presentation(previous), let current = presentation(props), old.isEqual(current),
-       let stored, let next = entries.first?["props"] as? [String: Any], presentation(stored).isEqual(presentation(next)) {
+       let stored, let storedEntries, let next = entries.first?["props"] as? [String: Any], presentation(stored).isEqual(presentation(next)),
+       storedEntries.dropFirst().map({ $0["timestamp"] as? Int }) == entries.dropFirst().map({ $0["timestamp"] as? Int }) {
       return false
     }
     return commit(entries, generation: generation(in: defaults), in: defaults)
