@@ -5339,6 +5339,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "remote.fork-seed.url",
         ])).stdout.trim(),
       ).toBe(forkDir);
+
+      const worktreePath = result.worktreePath as string;
+      const unshared = () => manager.isUnsharedPullRequestCheckout({ cwd: repoDir, worktreePath });
+      expect(yield* unshared()).toBe(true);
+      const reused = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "81",
+        mode: "worktree",
+      });
+      expect(reused).toMatchObject({ worktreePath, createdWorktree: false });
+      expect(yield* unshared()).toBe(false);
     }),
   );
 

@@ -142,6 +142,11 @@ export class GitManager extends Context.Service<
       options?: { readonly refresh?: boolean; readonly freshGitState?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     /** Whether T3 checked this pull request out onto the branch, which ties it to later threads. */
+    /** Whether a worktree prepare created has not since been handed to another checkout. */
+    readonly isUnsharedPullRequestCheckout: (input: {
+      readonly cwd: string;
+      readonly worktreePath: string;
+    }) => Effect.Effect<boolean>;
     readonly checkedOutPullRequest: (input: {
       readonly cwd: string;
       readonly branch: string;
@@ -2764,6 +2769,26 @@ export const make = Effect.gen(function* () {
   });
 
   const checkedOutPullRequestKey = (branch: string) => `branch.${branch}.t3-pull-request`;
+  // "true" while only the checkout that created the branch's worktree has been handed it.
+  const unsharedCheckoutKey = (branch: string) => `branch.${branch}.t3-unshared-checkout`;
+  const markUnsharedCheckout = (cwd: string, branch: string, unshared: boolean) =>
+    gitCore
+      .writeConfigValue({ cwd, key: unsharedCheckoutKey(branch), value: String(unshared) })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("GitManager could not mark the checkout's sharing", { branch, cause }),
+        ),
+      );
+
+  const isUnsharedPullRequestCheckout: GitManager["Service"]["isUnsharedPullRequestCheckout"] =
+    Effect.fn("isUnsharedPullRequestCheckout")(
+      function* ({ cwd, worktreePath }) {
+        const { branch } = yield* gitCore.statusDetails(worktreePath);
+        if (branch === null) return false;
+        return (yield* gitCore.readConfigValue(cwd, unsharedCheckoutKey(branch))) === "true";
+      },
+      Effect.orElseSucceed(() => false),
+    );
 
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
@@ -2967,6 +2992,8 @@ export const make = Effect.gen(function* () {
         worktreePath: string,
         checkedOutBranch: string,
       ) {
+        // Another draft, possibly on another client, now uses this worktree too.
+        yield* markUnsharedCheckout(input.cwd, checkedOutBranch, false);
         if (checkedOutBranch !== localPullRequestBranch) {
           // Bare-name matches may be unrelated local branches; preserve their work and tracking config.
           return {
@@ -3148,6 +3175,7 @@ export const make = Effect.gen(function* () {
         },
       );
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
+      yield* markUnsharedCheckout(input.cwd, worktree.worktree.refName, true);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
@@ -3440,6 +3468,7 @@ export const make = Effect.gen(function* () {
     invalidateStatus,
     resolvePullRequest,
     preparePullRequestThread,
+    isUnsharedPullRequestCheckout,
     runStackedAction,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),

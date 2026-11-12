@@ -25,7 +25,15 @@ function removeReleasedWorktree(released: ReleasedCheckoutWorktree): void {
   void runAtomCommand(
     appAtomRegistry,
     vcsEnvironment.removeWorktree,
-    { environmentId, input: { cwd: project.workspaceRoot, path: worktreePath } },
+    {
+      environmentId,
+      input: {
+        cwd: project.workspaceRoot,
+        path: worktreePath,
+        // Drafts on other clients are invisible here; the server knows whether one reused it.
+        onlyUnsharedPullRequestCheckout: true,
+      },
+    },
     { reportFailure: false, reportDefect: false },
   );
 }

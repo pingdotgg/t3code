@@ -473,7 +473,12 @@ export const make = Effect.gen(function* () {
     ),
     removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {
       return ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
-        Effect.andThen(git.removeWorktree(input)),
+        Effect.andThen(
+          input.onlyUnsharedPullRequestCheckout
+            ? gitManager.isUnsharedPullRequestCheckout({ cwd: input.cwd, worktreePath: input.path })
+            : Effect.succeed(true),
+        ),
+        Effect.flatMap((removable) => (removable ? git.removeWorktree(input) : Effect.void)),
       );
     }),
     pruneWorktrees: Effect.fn("GitWorkflowService.pruneWorktrees")(function (input) {
