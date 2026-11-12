@@ -38,6 +38,7 @@ let saved = selections;
 let hydration: Promise<void> | null = null;
 // The chat a tab switch or a cold start reopened by itself, while it stays the remembered one.
 let reopened: WorkspaceSelections["threads"];
+let reopenings = 0;
 
 function save() {
   const writing = selections;
@@ -102,14 +103,19 @@ function sameThread(
 /** Marks the chat a tab switch reopened by itself; see `threadReopenedByTab`. */
 export function markWorkspaceThreadReopened(thread: WorkspaceSelections["threads"]) {
   reopened = thread;
+  if (thread) reopenings += 1;
 }
 
 /**
- * Whether the workspace reopened this chat by itself. Nobody asked for it, so its screen closes
- * it when it turns out archived or deleted, where a chat somebody opened shows what it has.
+ * The number of the reopening that put this chat on screen, or null when somebody opened it.
+ * Nobody asked for a reopened chat, so its screen closes it when it turns out archived or
+ * deleted, where a chat somebody opened shows what it has. iOS keeps a screen mounted across tab
+ * switches, so what the screen learned counts for one reopening only.
  */
-export function workspaceThreadWasReopened(environmentId: EnvironmentId, threadId: ThreadId) {
-  return reopened !== undefined && sameThread(reopened, { environmentId, threadId });
+export function workspaceThreadReopening(environmentId: EnvironmentId, threadId: ThreadId) {
+  return reopened !== undefined && sameThread(reopened, { environmentId, threadId })
+    ? reopenings
+    : null;
 }
 
 function environmentRemoved(environmentId: string) {
@@ -183,10 +189,9 @@ export async function launchWorkspaceURL(): Promise<string | null> {
   }
   await metrics;
   if (!thread || !workspaceHasColumns() || !workspaceSelectionCheck.thread(thread)) return null;
-  reopened = thread;
-  return Linking.createURL(
-    `threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`,
-  );
+  markWorkspaceThreadReopened(thread);
+  // Not `createURL(path)`: it encodes the path again, and a subagent's id holds `%` and `:`.
+  return `${Linking.createURL("/")}threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }
 
 /** Whether the workspace shows its first detail page, directly above its list. */

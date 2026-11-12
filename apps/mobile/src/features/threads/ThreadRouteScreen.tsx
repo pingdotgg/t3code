@@ -129,7 +129,7 @@ import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspec
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import {
   forgetWorkspaceThread,
-  workspaceThreadWasReopened,
+  workspaceThreadReopening,
 } from "../layout/workspace/workspace-selection-store";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
@@ -236,11 +236,15 @@ function ReopenedThreadClose(props: {
   readonly threadId: ThreadId;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
+  const navigation = useNavigation();
+  const routeKey = useRoute().key;
   const close = useEffectEvent(() => {
     forgetWorkspaceThread(props.environmentId, props.threadId);
-    goBack();
+    // iOS keeps this screen mounted after a tab switch dropped its route; going back from there
+    // would act on the page in front.
+    if (navigation.getState()?.routes.some((route) => route.key === routeKey)) goBack();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops this route off the navigation stack on mount, because its thread was archived or deleted
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaves this route for the list on mount: the workspace reopened the chat by itself and it cannot open
   useEffect(() => {
     close();
   }, []);
@@ -288,18 +292,19 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
-  // A shell row proves a reopened chat exists. Until one arrives, its detail can still close it.
-  const [listedThreadKey, setListedThreadKey] = useState<string | null>(null);
-  if (selectedThreadListed && routeThreadKey !== null && listedThreadKey !== routeThreadKey) {
-    setListedThreadKey(routeThreadKey);
-  }
-  const reopenedUnproven =
+  const reopening =
     routeName === "Thread" &&
     !props.inspectorPresentation &&
     environmentId !== null &&
-    threadIdRaw !== null &&
-    listedThreadKey !== routeThreadKey &&
-    workspaceThreadWasReopened(environmentId, ThreadId.make(threadIdRaw));
+    threadIdRaw !== null
+      ? workspaceThreadReopening(environmentId, ThreadId.make(threadIdRaw))
+      : null;
+  // A shell row proves a reopened chat exists. Until one arrives, its detail can still close it.
+  const [provenReopening, setProvenReopening] = useState<number | null>(null);
+  if (reopening !== null && selectedThreadListed && provenReopening !== reopening) {
+    setProvenReopening(reopening);
+  }
+  const reopenedUnproven = reopening !== null && provenReopening !== reopening;
   const detailError = selectedThreadDetailState.error;
   const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
     routeConnectionState === "connected" ? Option.none<string>() : detailError,
