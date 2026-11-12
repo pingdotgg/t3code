@@ -5257,7 +5257,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? yield* executeGit(
               "GitVcsDriver.switchRef.localTrackingBranch",
               input.cwd,
-              ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
+              // `:short` prefixes a name a tag shares with `heads/`, so names are unambiguous here.
+              ["for-each-ref", "--format=%(refname:lstrip=2)\t%(upstream)", "refs/heads"],
               {
                 timeoutMs: 5_000,
                 allowNonZeroExit: true,
@@ -5265,7 +5266,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ).pipe(
               Effect.map((result) =>
                 result.exitCode === 0
-                  ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
+                  ? parseTrackingBranchByUpstreamRef(result.stdout, `refs/remotes/${input.refName}`)
                   : null,
               ),
             )
@@ -5307,15 +5308,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // Created before the checkout so the shared-config lock is not held while files are written.
       // Not rolled back on failure: Git may already have switched HEAD to it (post-checkout hooks).
       if (newTrackingBranch) {
-        yield* executeGit(
+        const startRef = `refs/remotes/${input.refName}`;
+        yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.switchRef.createTrackingBranch",
           input.cwd,
-          ["branch", "--track", "--", newTrackingBranch, input.refName],
-          {
-            timeoutMs: 10_000,
-            fallbackErrorDetail: "git branch create failed",
-            writesSharedConfig: true,
-          },
+          ["branch", "--no-track", "--", newTrackingBranch, startRef],
+          { fallbackErrorDetail: "git branch create failed" },
+        );
+        // An untracked branch of this name would make every later switch to the remote detach.
+        yield* executeGitWithStableDiagnostics(
+          "GitVcsDriver.switchRef.trackRemote",
+          input.cwd,
+          ["branch", `--set-upstream-to=${startRef}`, "--", newTrackingBranch],
+          { writesSharedConfig: true },
+        ).pipe(
+          retryWhileConfigLocked,
+          Effect.tapError(() =>
+            executeGit(
+              "GitVcsDriver.switchRef.removeUntrackedBranch",
+              input.cwd,
+              ["update-ref", "-d", `refs/heads/${newTrackingBranch}`, startRef],
+              { allowNonZeroExit: true },
+            ),
+          ),
         );
       }
 
