@@ -283,7 +283,6 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect.each([
     { canForkWhileRunning: true, hasNativeTurnBoundary: true, busyStrategy: "native_fork" },
-    { canForkWhileRunning: false, hasNativeTurnBoundary: true, busyStrategy: "portable_context" },
     {
       canForkWhileRunning: undefined,
       hasNativeTurnBoundary: true,

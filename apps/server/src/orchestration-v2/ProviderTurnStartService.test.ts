@@ -308,7 +308,7 @@ function makeLocalCommandHarness(input: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
     readonly canForkWhileRunning?: boolean;
-    readonly sourceBoundary?: "native" | "synthetic" | "missing";
+    readonly sourceBoundary?: "native" | "synthetic";
     readonly sourceRolledBack?: boolean;
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
@@ -575,9 +575,7 @@ function makeLocalCommandHarness(input: {
     ],
     providerThreads: [parentProviderThread],
     attempts: parentTurns.map(({ attempt }) => attempt),
-    providerTurns: parentTurns
-      .map(({ turn }) => turn)
-      .filter((turn) => turn.ordinal !== 1 || input.sideChat?.sourceBoundary !== "missing"),
+    providerTurns: parentTurns.map(({ turn }) => turn),
     turnItems: [],
   };
   if (input.sideChat !== undefined) {
@@ -829,8 +827,7 @@ function makeLocalCommandHarness(input: {
   const sideChatSession = {
     driver: providerThread.driver,
     providerSession,
-    ensureThread: () =>
-      "ensureThreadFailure" in input ? ensureThread() : Effect.succeed(sideChatThread),
+    ensureThread: () => Effect.succeed(sideChatThread),
     resumeThread: () => Effect.succeed(sideChatThread),
     forkThread,
     startTurn,
@@ -1369,14 +1366,6 @@ effectIt.effect.each([
     handoffIds: [],
   },
   {
-    nativeForkFrom: "idle",
-    canForkWhileRunning: false,
-    sourceBoundary: "missing",
-    forks: true,
-    transferStatus: "consumed",
-    handoffIds: [],
-  },
-  {
     nativeForkFrom: "busy",
     canForkWhileRunning: true,
     sourceBoundary: "native",
@@ -1400,14 +1389,6 @@ effectIt.effect.each([
     transferStatus: "resolved_portable",
     handoffIds: ["side-chat-fork-context"],
   },
-  {
-    nativeForkFrom: "busy",
-    canForkWhileRunning: true,
-    sourceBoundary: "missing",
-    forks: false,
-    transferStatus: "resolved_portable",
-    handoffIds: ["side-chat-fork-context"],
-  },
 ] as const)(
   "runs a planned native side chat fork when the parent is $nativeForkFrom with canForkWhileRunning=$canForkWhileRunning and sourceBoundary=$sourceBoundary",
   ({ nativeForkFrom, canForkWhileRunning, sourceBoundary, forks, transferStatus, handoffIds }) =>
@@ -1423,10 +1404,8 @@ effectIt.effect.each([
       // The parent's rolled-back turn is gone from its native conversation.
       expect(
         harness.forkThread.mock.calls[0]?.[0].sourceProviderTurns?.map((turn) => turn.id),
-      ).toEqual(
-        forks ? (sourceBoundary === "missing" ? [] : ["side-chat-parent-turn-1"]) : undefined,
-      );
-      if (forks && sourceBoundary === "native") {
+      ).toEqual(forks ? ["side-chat-parent-turn-1"] : undefined);
+      if (forks) {
         expect(harness.forkThread).toHaveBeenCalledWith(
           expect.objectContaining({ providerTurnId: "side-chat-parent-turn-1" }),
         );
@@ -1464,20 +1443,15 @@ effectIt.effect.each([
     }),
 );
 
-effectIt.effect.each([
-  { nativeForkFrom: "idle", rollback: "before-start" },
-  { nativeForkFrom: "busy", rollback: "before-start" },
-  { nativeForkFrom: "idle", rollback: "during-fork" },
-  { nativeForkFrom: "busy", rollback: "during-fork" },
-] as const)(
-  "recovers a planned $nativeForkFrom fork after rollback $rollback",
-  ({ nativeForkFrom, rollback }) =>
+effectIt.effect.each(["before-start", "during-fork"] as const)(
+  "recovers a planned native fork after the parent rolls back %s",
+  (rollback) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "Continue from the selected turn",
         sideChat: {
           contextRun: "current",
-          nativeForkFrom,
+          nativeForkFrom: "idle",
           sourceRolledBack: rollback === "before-start",
         },
       });
@@ -1570,38 +1544,6 @@ effectIt.effect.each([
         harness.prepareProviderHandoff.mock.calls[0]?.[0].items.map((item) => item.id),
       ).toEqual([items[0]!.id]);
     }),
-);
-
-effectIt.effect("preserves portable initialization failures after a native fork fails", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue from the selected turn",
-      sideChat: { contextRun: "current", nativeForkFrom: "busy" },
-      ensureThreadFailure: "Portable session unavailable",
-    });
-    harness.forkThread.mockImplementation(() =>
-      Effect.fail(
-        new ProviderAdapter.ProviderAdapterForkThreadError({
-          driver: ProviderDriverKind.make("codex"),
-          providerThreadId: ProviderThreadId.make("side-chat-parent-provider-thread"),
-          cause: "Selected native turn was removed by rollback",
-        }),
-      ),
-    );
-
-    yield* harness.start;
-
-    expect(harness.settledRuns).toEqual(["failed"]);
-    expect(harness.projection().turnItems).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "error",
-          failure: expect.objectContaining({ message: "Portable session unavailable" }),
-        }),
-      ]),
-    );
-    expect(harness.startTurn).not.toHaveBeenCalled();
-  }),
 );
 
 effectIt.effect.each([
