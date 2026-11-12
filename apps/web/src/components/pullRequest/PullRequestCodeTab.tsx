@@ -641,7 +641,25 @@ function PullRequestCodeTab({
     const fileKey = buildFileDiffRenderKey(fileDiff);
     const path = resolveFileDiffPath(fileDiff);
     const groups = new Map<string, MutableAnnotationGroup>();
-    const groupAt = (side: PullRequestDiffSide, line: number) => {
+    // Stacked view draws a context row once, so its old side shares the new side's annotation.
+    const contextNewLines = new Map<number, number>();
+    const stackedContextLine = (line: number) => {
+      if (contextNewLines.size === 0) {
+        for (const row of fileDiffRows(fileDiff)) {
+          if (row.oldLine !== null && row.newLine !== null) {
+            contextNewLines.set(row.oldLine, row.newLine);
+          }
+        }
+      }
+      return contextNewLines.get(line);
+    };
+    const groupAt = (anchorSide: PullRequestDiffSide, anchorLine: number) => {
+      const contextLine =
+        anchorSide === "left" && diffLayout !== "split"
+          ? stackedContextLine(anchorLine)
+          : undefined;
+      const side = contextLine === undefined ? anchorSide : "right";
+      const line = contextLine ?? anchorLine;
       const key = `${side}:${line}`;
       const existing = groups.get(key);
       if (existing) return existing;
@@ -656,26 +674,9 @@ function PullRequestCodeTab({
       return created;
     };
 
-    const fileThreads = threadsByPath.get(path) ?? [];
-    // Stacked view draws a context row once, so its old side's conversations join the new side's.
-    const contextNewLines =
-      diffLayout !== "split" && fileThreads.some((thread) => thread.side === "left")
-        ? new Map(
-            fileDiffRows(fileDiff).flatMap((row) =>
-              row.oldLine !== null && row.newLine !== null
-                ? [[row.oldLine, row.newLine] as const]
-                : [],
-            ),
-          )
-        : null;
-    for (const thread of fileThreads) {
+    for (const thread of threadsByPath.get(path) ?? []) {
       if (thread.line === null || !placedThreadIds.has(thread.id)) continue;
-      const contextLine = thread.side === "left" ? contextNewLines?.get(thread.line) : undefined;
-      const group =
-        contextLine === undefined
-          ? groupAt(thread.side, thread.line)
-          : groupAt("right", contextLine);
-      group.threads.push(thread);
+      groupAt(thread.side, thread.line).threads.push(thread);
     }
     if (commit === null) {
       for (const comment of pendingComments) {

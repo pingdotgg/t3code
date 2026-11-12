@@ -184,7 +184,11 @@ export function InlineReviewThreads({
 }) {
   const [choices, setChoices] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   // Folding swaps the focused control for another, so focus is handed to its replacement.
-  const [focus, setFocus] = useState<"marker" | { readonly threadId: string } | null>(null);
+  // Each collapse remounts the marker, so one already on the line takes focus too.
+  const [focus, setFocus] = useState<
+    { readonly marker: number } | { readonly threadId: string } | null
+  >(null);
+  const markerFocus = focus !== null && "marker" in focus ? focus.marker : 0;
   // A conversation seen open starts expanded, so resolving it does not fold it under the reader.
   const seenOpen = threads.filter((thread) => !thread.isResolved && !choices.has(thread.id));
   if (seenOpen.length > 0) {
@@ -197,8 +201,9 @@ export function InlineReviewThreads({
     <>
       {folded.length > 0 ? (
         <ResolvedThreadsMarker
+          key={markerFocus}
           threads={folded}
-          autoFocus={focus === "marker"}
+          autoFocus={markerFocus > 0}
           onOpen={() => {
             setChoices(
               new Map([...choices, ...folded.map((thread) => [thread.id, true] as const)]),
@@ -211,11 +216,11 @@ export function InlineReviewThreads({
         renderThread(thread, {
           expanded: isExpanded(thread),
           folded: folded.includes(thread),
-          focusHeader: focus !== null && focus !== "marker" && focus.threadId === thread.id,
+          focusHeader: focus !== null && "threadId" in focus && focus.threadId === thread.id,
           onToggle: () => {
             const expanded = !isExpanded(thread);
             setChoices(new Map(choices).set(thread.id, expanded));
-            if (!expanded && thread.isResolved) setFocus("marker");
+            if (!expanded && thread.isResolved) setFocus({ marker: markerFocus + 1 });
           },
         }),
       )}
