@@ -28,6 +28,7 @@ import {
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
   type ServerProviderModel,
+  type ServerProviderSkill,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -48,6 +49,8 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
 import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import {
+  appendCursorInvokedSkills,
+  cursorSlashSkillNames,
   discoverCursorSkills,
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
@@ -2309,23 +2312,36 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           return next;
         });
 
-        let cursorSkillNames: ReadonlySet<string> | undefined;
+        let cursorSkills: ReadonlyMap<string, ServerProviderSkill> | undefined;
         const resolveCursorSkillText = Effect.fn("CursorAdapterV2.resolveCursorSkillText")(
           function* (rawText: string, cwd: string | undefined) {
-            if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
+            if (
+              cursorSkills === undefined &&
+              (hasCursorSkillMention(rawText) || cursorSlashSkillNames(rawText).size > 0)
+            ) {
               const skills = yield* discoverCursorSkills(cwd, adapterOptions.environment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
               );
-              cursorSkillNames = new Set(
+              cursorSkills = new Map(
                 skills
                   .filter((skill) => skill.enabled && skill.userInvocable !== false)
-                  .map((skill) => skill.name),
+                  .map((skill) => [skill.name, skill]),
               );
             }
-            return cursorSkillNames === undefined
-              ? rawText
-              : rewriteCursorSkillMentions(rawText, cursorSkillNames);
+            if (cursorSkills === undefined) return rawText;
+            const skillsByName = cursorSkills;
+            const text = rewriteCursorSkillMentions(rawText, new Set(skillsByName.keys()));
+            const invoked = yield* Effect.forEach(cursorSlashSkillNames(text), (name) => {
+              const skill = skillsByName.get(name);
+              return skill?.userInvocationOnly === true
+                ? fileSystem.readFileString(skill.path).pipe(
+                    Effect.map((contents) => [{ name, contents }]),
+                    Effect.orElseSucceed(() => []),
+                  )
+                : Effect.succeed([]);
+            });
+            return appendCursorInvokedSkills(text, invoked.flat());
           },
         );
         const resolveUserMessage = Effect.fnUntraced(function* (
