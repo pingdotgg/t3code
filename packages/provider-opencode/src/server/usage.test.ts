@@ -228,7 +228,7 @@ describe("readOpenCodeUsage", () => {
       // A backup restored in place keeps the inode and birth time, like `cp -p`.
       yield* write("backup.db", 500);
       yield* fileSystem.copyFile(path.join(dir, "backup.db"), path.join(dir, "opencode.db"));
-      yield* fileSystem.utimes(path.join(dir, "opencode.db"), new Date(0), new Date(0));
+      yield* fileSystem.utimes(path.join(dir, "opencode.db"), 0, 0);
       assert.strictEqual(yield* input, 500);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
