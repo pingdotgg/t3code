@@ -7,12 +7,14 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { DurableDeferred, type WorkflowEngine } from "effect/workflow";
@@ -21,6 +23,7 @@ import { checkOutput } from "../orchestration-v2/runOutput.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
+  END_STEP,
   type EngineWorkflow,
   engineTag,
   engineWorkflow,
@@ -45,6 +48,8 @@ const DEFAULT_SIGNAL_TTL = Duration.days(7);
 const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
 const WATCH_SETTLE = Duration.millis(100);
+const END_TRIES = 5;
+const CANCEL_WAITS = Duration.seconds(30);
 // Times of day are the server's own, as they are for scheduled tasks.
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
@@ -52,6 +57,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   registered: ReadonlyArray<readonly [WorkflowDefinition, EngineWorkflow]>,
 ) {
   const store = yield* WorkflowStore.WorkflowStore;
+  const scope = yield* Scope.Scope;
   const agents = yield* WorkflowAgents;
   const random = yield* SecureRandom.SecureRandom;
   const digest = yield* Digest.Digest;
@@ -122,6 +128,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         version: definition.version,
         engineTag: engineTag(definition),
         idempotencyKey: options.idempotencyKey,
+        input: payload.input,
       });
       return { runId };
     },
@@ -238,6 +245,36 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     );
   });
 
+  // A cancelled run's body is gone, so its `onEnd` runs here, outside the engine. The sweep asks
+  // again after a failure or a restart, and `ending` keeps the two from running it at once.
+  const ending = new Set<string>();
+  const endCancelled = Effect.fn("WorkflowEngine.endCancelled")(function* (
+    row: WorkflowStore.RunRow,
+  ) {
+    const definition = definitionByTag.get(row.engine_tag);
+    if (definition?.onEnd === undefined || ending.has(row.run_id)) return;
+    const onEnd = definition.onEnd;
+    ending.add(row.run_id);
+    yield* store.stepStarted(row.run_id, END_STEP, "step");
+    const payloadCodec = Schema.toCodecJson(definition.payload);
+    const decode = Schema.decodeEffect(payloadCodec);
+    yield* decode(row.input_json === null ? null : WorkflowStore.jsonValue(row.input_json)).pipe(
+      Effect.flatMap((input) =>
+        onEnd(input as never, {
+          id: row.run_id,
+          outcome: "cancelled",
+          reason: row.detail ?? undefined,
+        }),
+      ),
+      Effect.matchCauseEffect({
+        onSuccess: () => store.stepEnded(row.run_id, END_STEP, "completed", null),
+        onFailure: (cause) =>
+          store.stepEnded(row.run_id, END_STEP, "failed", text(Cause.squash(cause))),
+      }),
+      Effect.ensuring(Effect.sync(() => ending.delete(row.run_id))),
+    );
+  });
+
   const sweep: Workflows["Service"]["sweep"] = Effect.gen(function* () {
     for (const wait of yield* store.waitsPastDeadline) {
       if (yield* store.waitSignalled(wait.run_id, wait.name)) {
@@ -246,6 +283,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
     yield* store.mailExpire;
     yield* fireSchedules;
+    for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) yield* endCancelled(row);
     for (const row of yield* store.runs("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
     for (const row of yield* store.runs("paused")) {
@@ -345,6 +383,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       yield* Effect.forEach(threads, (thread) => Effect.ignore(agents.interrupt(thread)), {
         discard: true,
       });
+      yield* store.stepsCancelled(runId);
+      // Waited for briefly, so the caller usually hears of a run that is cleaned up. A cleanup
+      // can take minutes; it goes on by itself, and the sweep finishes one that is cut short.
+      const cleanup = yield* Effect.forkIn(endCancelled({ ...row, detail: reason }), scope);
+      yield* Fiber.join(cleanup).pipe(Effect.timeoutOption(CANCEL_WAITS));
     }),
     get: Effect.fn("Workflows.get")(function* (runId) {
       const row = yield* requireRun(runId);
