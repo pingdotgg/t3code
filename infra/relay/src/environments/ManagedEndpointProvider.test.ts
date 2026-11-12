@@ -1210,7 +1210,8 @@ describe("ManagedEndpointProvider", () => {
   it.effect("restores Cloudflare ingress that drifted from the recorded origin", () => {
     const tunnelCalls: TunnelCall[] = [];
     const configuration: { current: TunnelConfiguration | null } = { current: null };
-    const layer = layerProvider(makePersistentTunnelClient(tunnelCalls, configuration));
+    const dnsClient = makeDnsClient();
+    const layer = layerProvider(makePersistentTunnelClient(tunnelCalls, configuration), dnsClient);
 
     return Effect.gen(function* () {
       const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -1270,6 +1271,13 @@ describe("ManagedEndpointProvider", () => {
         hostname: expectedManagedHostname("env_ABC"),
         service: "http://127.0.0.1:3773",
       });
+
+      const hostname = expectedManagedHostname("env_ABC");
+      for (const record of yield* dnsClient.listRecords(hostname)) {
+        yield* dnsClient.deleteRecord(record.id);
+      }
+      yield* reconcile;
+      expect(yield* dnsClient.listRecords(hostname)).not.toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
