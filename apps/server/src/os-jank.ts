@@ -186,38 +186,34 @@ const readLoginShellOutput = Effect.fn("readLoginShellOutput")(
   Effect.timeoutOption(LOGIN_SHELL_TIMEOUT),
 );
 
-/**
- * Re-reads PATH from the login shell so tools installed after startup become
- * spawnable without restarting. Unlike the startup hydration it never blocks
- * the event loop, and it runs even when the desktop prepared the environment,
- * because that capture was taken once at launch. Failure leaves PATH alone.
- */
+// Runs even when the desktop prepared the environment: that capture was taken
+// once at launch. Only the user's own shell counts; a fallback shell's PATH is
+// not their environment. Failure leaves PATH alone.
 export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(function* () {
   const platform = yield* HostProcess.Platform;
   if (platform !== "darwin" && platform !== "linux") return;
   const env = yield* HostProcess.Environment;
+  const [shell] = listLoginShellCandidates(platform, env.SHELL);
+  if (!shell) return;
 
-  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
-    const output = yield* readLoginShellOutput(shell).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning(`Failed to read PATH from login shell ${shell}.`, cause).pipe(
-          Effect.as(Option.some("")),
-        ),
+  const output = yield* readLoginShellOutput(shell).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning(`Failed to read PATH from login shell ${shell}.`, cause).pipe(
+        Effect.as(Option.some("")),
       ),
+    ),
+  );
+  if (Option.isNone(output)) {
+    yield* Effect.logWarning(
+      `Timed out reading PATH from login shell ${shell} after ${Duration.format(LOGIN_SHELL_TIMEOUT)}; PATH is unchanged.`,
     );
-    // A slow profile is the user's real environment; a fallback shell's PATH
-    // would not be, and trying it would multiply the wait.
-    if (Option.isNone(output)) {
-      yield* Effect.logWarning(
-        `Timed out reading PATH from login shell ${shell} after ${Duration.format(LOGIN_SHELL_TIMEOUT)}; PATH is unchanged.`,
-      );
-      return;
-    }
-    const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
-    if (shellEnvironment.PATH) {
-      applyLoginShellEnvironment(env, platform, shellEnvironment);
-      return;
-    }
+    return;
+  }
+  const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
+  if (shellEnvironment.PATH) {
+    applyLoginShellEnvironment(env, platform, shellEnvironment);
+  } else {
+    yield* Effect.logWarning(`Login shell ${shell} printed no PATH; PATH is unchanged.`);
   }
 });
 
