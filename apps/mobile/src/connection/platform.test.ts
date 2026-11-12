@@ -6,7 +6,12 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-type NativeNetworkStateShape = { type: string; isConnected: boolean; isInternetReachable: boolean };
+type NativeNetworkStateShape = {
+  type: string;
+  isConnected: boolean;
+  isInternetReachable: boolean;
+  isVpn?: boolean;
+};
 
 vi.mock("effect/Queue", async (importOriginal) => {
   const actual = await importOriginal<typeof import("effect/Queue")>();
@@ -64,16 +69,16 @@ vi.mock("../state/thread-composer-error", () => ({ clearThreadComposerErrorsForE
 
 import { layer } from "./platform";
 
-it.effect("wakes connections when a VPN starts over Wi-Fi, not on same-type updates", () =>
+it.effect("wakes connections when a VPN starts over Wi-Fi, not on repeated updates", () =>
   Effect.gen(function* () {
     const wakeups = yield* Wakeups.ConnectionWakeups;
     const subscribed = yield* Deferred.make<void>();
     network.subscribed = () => Deferred.doneUnsafe(subscribed, Effect.void);
     yield* wakeups.changes.pipe(Stream.runDrain, Effect.forkScoped);
     yield* Deferred.await(subscribed);
-    const emit = (type: string) => {
+    const emit = (type: string, isVpn = false) => {
       for (const listener of network.listeners) {
-        listener({ type, isConnected: true, isInternetReachable: true });
+        listener({ type, isConnected: true, isInternetReachable: true, isVpn });
       }
     };
     const networkChangedOffers = () =>
@@ -85,8 +90,8 @@ it.effect("wakes connections when a VPN starts over Wi-Fi, not on same-type upda
     emit("WIFI");
     expect(networkChangedOffers()).toHaveLength(0);
 
-    // The patched expo-network reports a VPN network as VPN before its underlying Wi-Fi.
-    emit("VPN");
+    // Android reports a VPN over Wi-Fi as WIFI; only isVpn changes.
+    emit("WIFI", true);
     expect(networkChangedOffers()).toHaveLength(1);
   }).pipe(Effect.provide(layer)),
 );
