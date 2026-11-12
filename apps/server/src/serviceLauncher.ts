@@ -805,6 +805,7 @@ export class Launcher {
   readonly #serviceUnit: ServiceUnit | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #stateDirOwnerPollMs: number;
+  #stateDirFreeProbes = 0;
   readonly #output: number | undefined;
   readonly #lockPath: string | undefined;
   readonly #stopChildOverIpc: boolean;
@@ -1312,6 +1313,7 @@ export class Launcher {
     this.#log(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
+    this.#stateDirFreeProbes = 0;
     // The interval also keeps Node alive: signal listeners alone do not.
     this.#timer = setInterval(
       () => this.#enqueue(() => this.#reclaimStateDir()),
@@ -1325,8 +1327,12 @@ export class Launcher {
       return;
     }
     if (this.#timer === undefined || this.#child !== null) return;
+    const owned = await stateDirOwned(this.#baseDir);
     // A stop during the probe clears the timer.
-    if ((await stateDirOwned(this.#baseDir)) || this.#timer === undefined) return;
+    if (this.#timer === undefined) return;
+    // A relaunching desktop app frees the home for a few seconds; leave it that gap.
+    this.#stateDirFreeProbes = owned ? 0 : this.#stateDirFreeProbes + 1;
+    if (this.#stateDirFreeProbes < 2) return;
     this.#clearTimer();
     this.#log("[service-launcher] The T3 home is free again. Starting the server.\n");
     const update = this.#state.update;
