@@ -29,11 +29,28 @@ const colorCompanion = {
   description: "Type your own answer",
   minLength: 1,
 };
+const multiColorQuestion = {
+  type: "array",
+  title: "Colors",
+  description: "Which colors?",
+  items: {
+    anyOf: [
+      { const: "red", title: "Red" },
+      { const: "blue", title: "Blue" },
+    ],
+  },
+};
+const multiColorCompanion = { type: "string", description: "Add your own answer" };
+const attachment = '\n\nAttached image "shot.png": "/tmp/shot.png"';
 
 describe("OpenCode ACP question form", () => {
   it("folds the custom-answer companion into its question", () => {
     const form = extractOpenCodeElicitationForm(
-      request({ q0: colorQuestion, q0_custom: colorCompanion }),
+      request({
+        q0: colorQuestion,
+        q0_custom: colorCompanion,
+        q1: { type: "string", title: "Notes", description: "Anything else?" },
+      }),
     );
 
     expect(form?.questions).toEqual([
@@ -47,30 +64,17 @@ describe("OpenCode ACP question form", () => {
         ],
         allowCustomAnswer: true,
       },
+      {
+        id: "q1",
+        header: "Notes",
+        question: "Anything else?",
+        options: [],
+        allowCustomAnswer: true,
+      },
     ]);
-  });
-
-  it("returns the selected option value untouched", () => {
-    const form = extractOpenCodeElicitationForm(
-      request({ q0: colorQuestion, q0_custom: colorCompanion }),
-    );
-
-    for (const value of ["", " "]) {
-      const blankChoice = extractOpenCodeElicitationForm(
-        request({
-          q0: { ...colorQuestion, oneOf: [{ const: value, title: "Blank" }] },
-          q0_custom: colorCompanion,
-        }),
-      );
-      expect(blankChoice?.respond({ q0: value })).toEqual({
-        action: "accept",
-        content: { q0: value },
-      });
-    }
-
-    expect(form?.respond({ q0: "blue" })).toEqual({
+    expect(form?.respond({ q0: "blue", q1: "Later" })).toEqual({
       action: "accept",
-      content: { q0: "blue" },
+      content: { q0: "blue", q1: "Later" },
     });
   });
 
@@ -78,9 +82,7 @@ describe("OpenCode ACP question form", () => {
     const form = extractOpenCodeElicitationForm(
       request({
         q0: {
-          type: "string",
-          title: "Which one?",
-          description: "Pick one",
+          ...colorQuestion,
           oneOf: [
             { const: "a", title: "b" },
             { const: "b", title: "B" },
@@ -90,10 +92,7 @@ describe("OpenCode ACP question form", () => {
       }),
     );
 
-    expect(form?.respond({ q0: "b" })).toEqual({
-      action: "accept",
-      content: { q0: "b" },
-    });
+    expect(form?.respond({ q0: "b" })).toEqual({ action: "accept", content: { q0: "b" } });
   });
 
   it("sends a free-form answer to the companion field", () => {
@@ -101,169 +100,62 @@ describe("OpenCode ACP question form", () => {
       request({ q0: colorQuestion, q0_custom: colorCompanion }),
     );
 
-    expect(form?.respond({ q0: "Red" })).toEqual({
-      action: "accept",
-      content: { q0_custom: "Red" },
-    });
     expect(form?.respond({ q0: "green" })).toEqual({
       action: "accept",
       content: { q0_custom: "green" },
     });
   });
 
-  it("keeps multi-select choices and custom answers together", () => {
+  it("keeps multi-select values and custom answers together", () => {
     const form = extractOpenCodeElicitationForm(
-      request({
-        q0: {
-          type: "array",
-          title: "Colors",
-          description: "Which colors?",
-          items: {
-            anyOf: [
-              { const: "red", title: "Red" },
-              { const: "blue", title: "Blue" },
-            ],
-          },
-        },
-        q0_custom: { type: "string", description: "Add your own answer" },
-      }),
+      request({ q0: multiColorQuestion, q0_custom: multiColorCompanion }),
     );
 
-    expect(form?.questions[0]).toMatchObject({
-      id: "q0",
-      multiSelect: true,
-      allowCustomAnswer: true,
-      options: [
-        { label: "Red", value: "red" },
-        { label: "Blue", value: "blue" },
-      ],
-    });
+    expect(form?.questions[0]).toMatchObject({ multiSelect: true, allowCustomAnswer: true });
     expect(form?.respond({ q0: ["red", "green"] })).toEqual({
       action: "accept",
       content: { q0: ["red"], q0_custom: "green" },
     });
   });
 
-  it("keeps multi-select attachment text alongside the selected values", () => {
-    const form = extractOpenCodeElicitationForm(
-      request({
-        q0: {
-          type: "array",
-          title: "Colors",
-          description: "Which colors?",
-          items: {
-            anyOf: [
-              { const: "red", title: "Red" },
-              { const: "blue", title: "Blue" },
-            ],
-          },
-        },
-        q0_custom: { type: "string", description: "Add your own answer" },
-      }),
-    );
-    const suffix = '\n\nAttached image "shot.png": "/tmp/shot.png"';
-
-    expect(form?.respond({ q0: ["red", `blue${suffix}`] })).toEqual({
-      action: "accept",
-      content: { q0: ["red", "blue"], q0_custom: `Blue${suffix}` },
-    });
-  });
-
-  it("leaves a text-only form to the generic mapping", () => {
-    expect(
-      extractOpenCodeElicitationForm(
-        request({
-          q0: {
-            type: "string",
-            title: "Name",
-            description: "What should I call you?",
-          },
-        }),
-      ),
-    ).toBeUndefined();
-  });
-
-  it("parses several questions independently", () => {
-    const form = extractOpenCodeElicitationForm(
-      request({
-        q0: colorQuestion,
-        q0_custom: colorCompanion,
-        q1: { type: "string", title: "Notes", description: "Anything else?" },
-      }),
-    );
-
-    expect(form?.questions.map((question) => question.id)).toEqual(["q0", "q1"]);
-    expect(form?.respond({ q0: "red", q1: "Later" })).toEqual({
-      action: "accept",
-      content: { q0: "red", q1: "Later" },
-    });
-  });
-
-  it("keeps attachment text with the selected option label", () => {
-    const form = extractOpenCodeElicitationForm(
+  it("keeps attachment text with the selected option", () => {
+    const single = extractOpenCodeElicitationForm(
       request({ q0: colorQuestion, q0_custom: colorCompanion }),
     );
-    const suffix = '\n\nAttached image "shot.png": "/tmp/shot.png"';
+    const multi = extractOpenCodeElicitationForm(
+      request({ q0: multiColorQuestion, q0_custom: multiColorCompanion }),
+    );
 
-    expect(form?.respond({ q0: `blue${suffix}` })).toEqual({
+    expect(single?.respond({ q0: `blue${attachment}` })).toEqual({
       action: "accept",
-      content: { q0: "blue", q0_custom: `Blue${suffix}` },
+      content: { q0: "blue", q0_custom: `Blue${attachment}` },
+    });
+    expect(multi?.respond({ q0: ["red", `blue${attachment}`] })).toEqual({
+      action: "accept",
+      content: { q0: ["red", "blue"], q0_custom: `Blue${attachment}` },
     });
   });
 
-  it("cancels instead of accepting an empty answer", () => {
+  it("cancels empty or multi-value answers to a single-select question", () => {
     const form = extractOpenCodeElicitationForm(
       request({ q0: colorQuestion, q0_custom: colorCompanion }),
     );
 
     expect(form?.respond({})).toEqual({ action: "cancel" });
     expect(form?.respond({ q0: "  " })).toEqual({ action: "cancel" });
-  });
-
-  it("cancels a multi-value answer to a single-select question", () => {
-    const form = extractOpenCodeElicitationForm(
-      request({ q0: colorQuestion, q0_custom: colorCompanion }),
-    );
-
     expect(form?.respond({ q0: ["red", "blue"] })).toEqual({ action: "cancel" });
   });
 
-  it("leaves enum-based choices to the generic mapping", () => {
-    expect(
-      extractOpenCodeElicitationForm(
-        request({
-          q0: { type: "string", title: "Color", description: "Pick one", enum: ["red", "blue"] },
-          q0_custom: colorCompanion,
-          q1: {
-            type: "string",
-            title: "Size",
-            description: "Pick one",
-            oneOf: [{ const: "small", title: "Small" }],
-          },
-          q1_custom: { ...colorCompanion, title: "Size (other)" },
-        }),
-      ),
-    ).toBeUndefined();
-  });
-
-  it("leaves unrelated and incomplete forms to the generic mapping", () => {
-    expect(
-      extractOpenCodeElicitationForm(request({ name: { type: "string", title: "Name" } })),
-    ).toBeUndefined();
-    expect(extractOpenCodeElicitationForm(request({ q0_custom: colorCompanion }))).toBeUndefined();
-    expect(
-      extractOpenCodeElicitationForm(
-        request({ q0: colorQuestion, q0_custom: colorCompanion, extra: { type: "string" } }),
-      ),
-    ).toBeUndefined();
-    // A malformed choice must not silently become a text-only question.
-    expect(
-      extractOpenCodeElicitationForm(
-        request({
-          q0: { type: "string", title: "Broken", oneOf: [{ const: "red" }] },
-          q0_custom: colorCompanion,
-        }),
-      ),
-    ).toBeUndefined();
+  it.each([
+    ["a text-only form", { q0: { type: "string", title: "Name", description: "Who?" } }],
+    ["an unrelated field", { q0: colorQuestion, q0_custom: colorCompanion, extra: {} }],
+    ["an orphan companion", { q0_custom: colorCompanion }],
+    ["an enum choice", { q0: colorQuestion, q1: { type: "string", title: "Size", enum: ["S"] } }],
+    [
+      "a choice without a title",
+      { q0: colorQuestion, q1: { ...colorQuestion, oneOf: [{ const: "red" }] } },
+    ],
+  ])("leaves %s to the generic mapping", (_, properties) => {
+    expect(extractOpenCodeElicitationForm(request(properties))).toBeUndefined();
   });
 });

@@ -69,7 +69,6 @@ export const extractOpenCodeElicitationForm: NonNullable<
   const { properties } = request.requestedSchema;
   const questions: Array<OrchestrationV2UserInputQuestion> = [];
   const withCompanion = new Set<string>();
-  let recognized = 0;
   let choices = 0;
   for (const [id, field] of Object.entries(properties)) {
     if (!questionId.test(id)) {
@@ -102,7 +101,6 @@ export const extractOpenCodeElicitationForm: NonNullable<
     }));
     if (options.length > 0) choices += 1;
     if (hasCompanion) withCompanion.add(id);
-    recognized += hasCompanion ? 2 : 1;
     questions.push({
       id,
       header: field.title,
@@ -112,10 +110,8 @@ export const extractOpenCodeElicitationForm: NonNullable<
       allowCustomAnswer: hasCompanion || options.length === 0,
     });
   }
-  // Recognize only complete question forms; leave every other schema to the ACP fallback.
-  if (questions.length === 0 || choices === 0 || recognized !== Object.keys(properties).length) {
-    return undefined;
-  }
+  // Recognize only question forms with a choice; leave every other schema to the ACP fallback.
+  if (choices === 0) return undefined;
   return {
     questions,
     respond: (answers) => {

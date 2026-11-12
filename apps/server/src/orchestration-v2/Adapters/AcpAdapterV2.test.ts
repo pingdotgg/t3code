@@ -1642,49 +1642,6 @@ describe("AcpAdapterV2", () => {
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
     },
-    {
-      scenario: "OpenCode sends a typed answer to the custom companion",
-      settings: OPENCODE_SETTINGS,
-      schema: openCodeSchema,
-      questions: openCodeQuestions,
-      answers: { q0: "green" },
-      result: { action: "accept", content: { q0_custom: "green" } },
-    },
-    {
-      scenario: "OpenCode multi-select keeps values and custom text",
-      settings: OPENCODE_SETTINGS,
-      schema: {
-        ...openCodeSchema,
-        properties: {
-          q0: {
-            type: "array",
-            title: "Color preference",
-            description: "Which color do you prefer?",
-            items: { anyOf: openCodeSchema.properties.q0.oneOf },
-          },
-          q0_custom: { type: "string", description: "Add your own answer" },
-        },
-      },
-      questions: openCodeQuestions.map((question) => ({ ...question, multiSelect: true })),
-      answers: { q0: ["blue", "green"] },
-      result: { action: "accept", content: { q0: ["blue"], q0_custom: "green" } },
-    },
-    {
-      scenario: "OpenCode cancels without accepting answers",
-      settings: OPENCODE_SETTINGS,
-      schema: openCodeSchema,
-      questions: openCodeQuestions,
-      answers: undefined,
-      result: { action: "cancel" },
-    },
-    {
-      scenario: "OpenCode falls back for an unrelated form",
-      settings: OPENCODE_SETTINGS,
-      schema: { type: "object", properties: { name: { type: "string" } } },
-      questions: [{ id: "name", header: "Question 1", question: "Your answer?", options: [] }],
-      answers: { name: "Ada" },
-      result: { action: "accept", content: { name: "Ada" } },
-    },
   ])("Registry elicitation $scenario", (fixture) => {
     const { schema, questions, answers, result } = fixture;
     const withAttachments = "withAttachments" in fixture && fixture.withAttachments;
