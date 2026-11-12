@@ -2697,8 +2697,11 @@ it.effect("a finished turn leaves another project's cached listing in place", ()
     yield* service.refreshAfterTurn("p2" as ProjectId);
     yield* service.list(webListing);
     yield* service.list(everyListing);
-
     assert.deepStrictEqual(reads, []);
+
+    yield* service.refreshAfterTurn("p2" as ProjectId, { pushed: true });
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/web"]);
   }),
 );
 
