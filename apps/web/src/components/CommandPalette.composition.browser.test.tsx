@@ -11,11 +11,13 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   draftEnvironment: null as string | null,
+  draftProjectId: null as string | null,
   openExtensionCommand: vi.fn(),
 }));
 const setup = (deniedScope?: string) => {
   scopes.denied = deniedScope;
   scopes.draftEnvironment = null;
+  scopes.draftProjectId = null;
   scopes.openExtensionCommand.mockClear();
 };
 
@@ -42,7 +44,11 @@ vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => unde
 vi.mock("../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
     activeDraftThread: scopes.draftEnvironment
-      ? { environmentId: scopes.draftEnvironment, threadId: "draft-thread", projectId: null }
+      ? {
+          environmentId: scopes.draftEnvironment,
+          threadId: "draft-thread",
+          projectId: scopes.draftProjectId,
+        }
       : null,
     activeThread: null,
     defaultProjectRef: null,
@@ -167,19 +173,23 @@ vi.mock("../state/extensions", () => ({
 vi.mock("./ExtensionCommandHost", () => ({ openExtensionCommand: scopes.openExtensionCommand }));
 
 it("shows and opens extension commands on a draft's owning environment", async () => {
-  setup();
-  scopes.draftEnvironment = "remote";
-  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-  await act(() => openCommandPalette({ query: "Run remote extension" }));
-  const command = page.getByRole("option", { name: /Run remote extension/ });
-  await expect.element(command).toBeVisible();
-  await command.click();
-  expect(scopes.openExtensionCommand).toHaveBeenCalledWith(
-    expect.objectContaining({
-      environmentId: "remote",
-      command: expect.objectContaining({ id: "run" }),
-    }),
-  );
+  for (const projectId of [null, "remote-project"]) {
+    setup();
+    scopes.draftEnvironment = "remote";
+    scopes.draftProjectId = projectId;
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ query: "Run remote extension" }));
+    const command = page.getByRole("option", { name: /Run remote extension/ });
+    await expect.element(command).toBeVisible();
+    await command.click();
+    expect(scopes.openExtensionCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: "remote",
+        command: expect.objectContaining({ id: "run" }),
+        context: projectId === null ? { surface: "web" } : { surface: "web", projectId },
+      }),
+    );
+  }
 });
 
 // The real palette and Base UI input must agree that confirming composition is typing.

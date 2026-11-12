@@ -272,8 +272,8 @@ export function CommandPalette(props: {
   );
   const serverConfigs = useServerConfigs();
   const newTaskFlow = useNewTaskFlow();
-  const draftEnvironmentId =
-    useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
+  const draftProject = useActiveNewTask() === null ? null : newTaskFlow.selectedProject;
+  const draftEnvironmentId = draftProject?.environmentId ?? null;
   const extensionEnvironmentId =
     activeThreadRef?.environmentId ?? draftEnvironmentId ?? searchEnvironmentIds[0];
   const extensionSupported =
@@ -496,12 +496,15 @@ export function CommandPalette(props: {
                 command,
                 activeThread
                   ? { threadId: activeThread.id, projectId: activeThread.projectId }
-                  : undefined,
+                  : draftProject
+                    ? { projectId: draftProject.id }
+                    : undefined,
               ),
           });
       }
     return [...actions, ...projectItems, ...threadItems];
   }, [
+    draftProject,
     extensionEnvironmentId,
     extensions.data,
     invokeExtension,

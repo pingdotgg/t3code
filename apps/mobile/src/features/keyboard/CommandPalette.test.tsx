@@ -91,7 +91,9 @@ vi.mock("../threads/thread-search-match", () => ({ ThreadSearchMatchExcerpt: () 
 vi.mock("../threads/threadMessageJump", () => ({ requestThreadMessageJump: () => {} }));
 vi.mock("../triage/useStartTriage", () => ({ useStartTriage: () => vi.fn() }));
 vi.mock("../threads/new-task-flow-provider", () => ({
-  useNewTaskFlow: () => ({ selectedProject: { environmentId: draft.environmentId } }),
+  useNewTaskFlow: () => ({
+    selectedProject: { environmentId: draft.environmentId, id: "remote-project" },
+  }),
 }));
 vi.mock("../../state/active-new-task", () => ({
   useActiveNewTask: () => (draft.active ? {} : null),
@@ -153,6 +155,6 @@ it("lists and invokes commands on the draft owner with another environment conne
       manifest: { id: "fixture", name: "Fixture", commands: expect.any(Array) },
     }),
     expect.objectContaining({ id: "read" }),
-    undefined,
+    { projectId: "remote-project" },
   );
 });

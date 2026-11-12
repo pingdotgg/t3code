@@ -1314,7 +1314,9 @@ function OpenCommandPaletteDialog(props: {
                 surface: extensionClientSurface,
                 ...(activeThread
                   ? { threadId: activeThread.id, projectId: activeThread.projectId }
-                  : {}),
+                  : activeDraftThread?.projectId
+                    ? { projectId: activeDraftThread.projectId }
+                    : {}),
               },
             });
           },
