@@ -6,6 +6,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
+import { cn } from "~/lib/utils";
 
 /**
  * Where a notice sits in the stack. The machine comes first, then what needs you; the
@@ -224,15 +225,24 @@ function NoticeCard({
       textSize={item.textSize ?? "compact"}
       detached={detached}
       density="comfortable"
+      // Body-size titles take an icon as large as the dismiss button's.
+      className={
+        item.textSize === "body" ? "[--composer-banner-icon-column:--spacing(3.5)]" : undefined
+      }
       data-chat-composer-collapsed-controls="true"
     >
       <ComposerBanner.Row layout="wrap-actions">
-        {/* Narrow cards stack: title and dismiss, then the description in full, then the buttons. */}
-        <ComposerBanner.Icon className="h-lh @min-[480px]:h-7 @min-[480px]:sm:h-6">
+        {/* Narrow cards stack the title and dismiss over the buttons, and drop the description. */}
+        <ComposerBanner.Icon
+          className={cn(
+            "h-lh @min-[480px]:h-7 @min-[480px]:sm:h-6",
+            item.textSize === "body" && "[&>svg]:size-3.5",
+          )}
+        >
           {item.icon}
         </ComposerBanner.Icon>
         <span className="flex min-w-0 flex-col items-start gap-2 @min-[480px]:flex-row @min-[480px]:flex-wrap @min-[480px]:items-center @min-[480px]:gap-x-2 @min-[480px]:gap-y-1.5">
-          <ComposerBanner.Content className="w-full max-w-full flex-col items-start gap-0.5 @max-[480px]:**:data-notice-details:hidden @min-[480px]:min-h-7 @min-[480px]:w-auto @min-[480px]:grow-999 @min-[480px]:flex-row @min-[480px]:items-center @min-[480px]:gap-2 @min-[480px]:whitespace-nowrap @min-[480px]:sm:min-h-6">
+          <ComposerBanner.Content className="w-full max-w-full @max-[480px]:**:data-notice-details:hidden @min-[480px]:min-h-7 @min-[480px]:w-auto @min-[480px]:grow-999 @min-[480px]:whitespace-nowrap @min-[480px]:sm:min-h-6">
             {item.description ? (
               <>
                 <span className="min-w-0 text-foreground @min-[480px]:truncate">{item.title}</span>
@@ -244,7 +254,7 @@ function NoticeCard({
                   }
                   details={item.descriptionDetails}
                   detailsHeading={<span className="block text-foreground">{item.title}</span>}
-                  className="min-w-0 font-medium text-muted-foreground @min-[480px]:w-0 @min-[480px]:grow @min-[480px]:truncate"
+                  className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[480px]:sr-only"
                 >
                   {item.description}
                 </NoticeText>
