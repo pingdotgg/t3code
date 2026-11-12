@@ -125,6 +125,38 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
     ),
   );
 
+  it.effect("publishes the skills Muse reports so the composer pickers can offer them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const skill = {
+          id: "dependency-updater",
+          name: "dependency-updater",
+          description: "Update dependencies",
+          scope: "user",
+          path: "/home/muse-test/.agents/skills/dependency-updater/SKILL.md",
+          activation: "on",
+          enabled: true,
+        };
+        // Muse reports skills both through `muse skills list --json` and MSP `skill/list`.
+        const binaryPath = yield* fakeCli(
+          `process.stdout.write(process.argv.includes("skills") ? ${JSON.stringify(JSON.stringify({ skills: [skill] }))} : "muse 1.4.14-R7309.1\\n");`,
+        );
+        const host = makeHost(metaCatalog);
+        vi.mocked(host.connection.request).mockImplementation(async (method: string) =>
+          method === "skill/list" ? { skills: [skill] } : metaCatalog,
+        );
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath }),
+          undefined,
+          undefined,
+          async () => host,
+        );
+        expect(snapshot.status).toBe("ready");
+        expect(snapshot.skills.map((entry) => entry.name)).toEqual(["dependency-updater"]);
+      }),
+    ),
+  );
+
   it.effect("keeps an empty discovered catalog empty instead of advertising a fallback model", () =>
     Effect.scoped(
       Effect.gen(function* () {
