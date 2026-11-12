@@ -285,7 +285,14 @@ export function mergeLearnedRoutes(input: {
           : withNetwork(route, tailscaleOrigins.has(normalized(url))),
       ];
     }
-    if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
+    if (url === null || known.has(normalized(url))) return [];
+    if (!reported.has(normalized(url))) {
+      // TLS proves an HTTPS address still names this server, so a gap in the
+      // report (a restart, one failed Serve probe) keeps it where the user put it.
+      if (!routeKeepsItsHost(route)) return [];
+      known.add(normalized(url));
+      return [route];
+    }
     if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
     known.add(normalized(url));
     return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
