@@ -1206,6 +1206,8 @@ interface ActiveCodexTurnContext {
   hookStopReason?: string;
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
+  /** Codex started this root turn from its own queue, so its prompt is not a T3 message. */
+  startedByCodex?: boolean;
   closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
@@ -1780,7 +1782,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
-        const client = yield* clientFactory.open({
+        const openedClient = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
@@ -1788,6 +1790,38 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
+        // Root turns Codex started on its own (`codex queue`) wait here for T3 to open a run.
+        // Their notifications are held in order and replayed once the run owns the turn.
+        const codexStartedTurns = new Map<
+          string,
+          {
+            readonly nativeThreadId: string;
+            readonly nativeTurnId: string;
+            readonly startedAt: DateTime.Utc;
+            readonly held: Array<Effect.Effect<void, CodexErrors.CodexAppServerError>>;
+            readonly registered: Deferred.Deferred<boolean>;
+          }
+        >();
+        const client: typeof openedClient = {
+          ...openedClient,
+          handleServerNotification: (method, handler) =>
+            openedClient.handleServerNotification(method, (payload) => {
+              const turnId =
+                "turnId" in payload && typeof payload.turnId === "string"
+                  ? payload.turnId
+                  : "turn" in payload &&
+                      typeof payload.turn === "object" &&
+                      payload.turn !== null &&
+                      "id" in payload.turn &&
+                      typeof payload.turn.id === "string"
+                    ? payload.turn.id
+                    : undefined;
+              const waiting = turnId === undefined ? undefined : codexStartedTurns.get(turnId);
+              if (waiting === undefined) return handler(payload);
+              waiting.held.push(handler(payload));
+              return Effect.void;
+            }),
+        };
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -2341,6 +2375,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (context !== undefined || attemptsRemaining <= 0) {
             return context;
           }
+          // Approvals for a queue-started turn wait for its run; held notifications never reach here.
+          const codexStarted = codexStartedTurns.get(nativeTurnId);
+          if (codexStarted !== undefined) {
+            yield* Deferred.await(codexStarted.registered);
+            return (yield* Ref.get(activeTurns)).get(nativeTurnId);
+          }
           yield* Effect.yieldNow;
           return yield* awaitActiveTurn(nativeTurnId, attemptsRemaining - 1);
         });
@@ -2355,6 +2395,68 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const context = yield* awaitActiveTurn(nativeTurnId);
             return context === undefined ? undefined : ({ context, settled: false } as const);
           });
+
+        const releaseCodexStartedTurn = Effect.fnUntraced(function* (nativeTurnId: string) {
+          const waiting = codexStartedTurns.get(nativeTurnId);
+          if (waiting === undefined) return;
+          codexStartedTurns.delete(nativeTurnId);
+          yield* Deferred.succeed(waiting.registered, false);
+        });
+
+        const awaitRunForCodexStartedTurn = Effect.fn("CodexAdapterV2.awaitRunForCodexStartedTurn")(
+          function* (input: {
+            readonly appThreadId: ThreadId;
+            readonly providerThread: OrchestrationV2ProviderThread;
+            readonly nativeThreadId: string;
+            readonly nativeTurnId: string;
+            readonly startedAt: DateTime.Utc;
+          }) {
+            if (continuationRequests === undefined) return;
+            codexStartedTurns.set(input.nativeTurnId, {
+              nativeThreadId: input.nativeThreadId,
+              nativeTurnId: input.nativeTurnId,
+              startedAt: input.startedAt,
+              held: [],
+              registered: yield* Deferred.make<boolean>(),
+            });
+            yield* continuationRequests.offer({
+              threadId: input.appThreadId,
+              providerThreadId: input.providerThread.id,
+              driver: CODEX_PROVIDER,
+              detail: null,
+              clearIfCurrent: () => releaseCodexStartedTurn(input.nativeTurnId),
+              onRunEndedWithoutStarting: () => releaseCodexStartedTurn(input.nativeTurnId),
+            });
+          },
+        );
+
+        /** Gives a queue-started Codex turn to the continuation run T3 opened for it. */
+        const adoptCodexStartedTurn = Effect.fn("CodexAdapterV2.adoptCodexStartedTurn")(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) {
+          if (
+            turnInput.message.createdBy !== "agent" ||
+            turnInput.message.creationSource !== "provider"
+          )
+            return false;
+          const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
+          const waiting = [...codexStartedTurns.values()].find(
+            (candidate) => candidate.nativeThreadId === nativeThreadId,
+          );
+          if (waiting === undefined || (yield* Deferred.isDone(waiting.registered))) return false;
+          const context = yield* registerRootTurn({
+            turnInput,
+            nativeTurnId: waiting.nativeTurnId,
+            startedAt: waiting.startedAt,
+          });
+          context.startedByCodex = true;
+          yield* Deferred.succeed(waiting.registered, true);
+          while (waiting.held.length > 0) {
+            yield* waiting.held.shift()!.pipe(Effect.ignore);
+          }
+          codexStartedTurns.delete(waiting.nativeTurnId);
+          return true;
+        });
 
         const trackRunningCommandItem = (nativeTurnId: string, item: TrackedRunningCommandItem) =>
           Ref.update(runningCommandItemsByTurn, (current) => {
@@ -3726,7 +3828,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             >,
             nativeStartedAt?: DateTime.Utc,
           ) {
-            if (context.subagent === null || context.providerTurnOrdinal === 1) {
+            if (
+              context.subagent === null
+                ? context.startedByCodex !== true
+                : context.providerTurnOrdinal === 1
+            ) {
               return false;
             }
             const text = codexUserMessageText(item.content);
@@ -3739,7 +3845,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeStartedAt,
             );
             const artifacts = makeSubagentConversationArtifacts({
-              senderThreadId: context.subagent.parentContext.projectionThreadId,
+              ...(context.subagent === null
+                ? {}
+                : { senderThreadId: context.subagent.parentContext.projectionThreadId }),
               messageId: idAllocator.derive.messageFromProviderItem({
                 driver: CODEX_PROVIDER,
                 nativeItemId: item.id,
@@ -3758,15 +3866,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ordinal,
               now: startedAt,
             });
+            const runId = context.subagent === null ? context.projectionRunId : null;
             yield* emitProviderEvent({
               type: "message.updated",
               driver: CODEX_PROVIDER,
-              message: artifacts.message,
+              message: { ...artifacts.message, runId },
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,
-              turnItem: artifacts.turnItem,
+              turnItem: { ...artifacts.turnItem, runId },
             });
             return true;
           });
@@ -4906,6 +5015,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ),
                   Effect.forkIn(scope),
                 );
+              return;
+            }
+            const rootProviderThread = rootProviderThreads.get(payload.threadId);
+            if (
+              continuationRequests !== undefined &&
+              rootProviderThread?.appThreadId != null &&
+              !(yield* Ref.get(subagentThreads)).has(payload.threadId) &&
+              (yield* findActiveTurnByNativeThreadId(payload.threadId)) === undefined
+            ) {
+              yield* awaitRunForCodexStartedTurn({
+                appThreadId: rootProviderThread.appThreadId,
+                providerThread: rootProviderThread,
+                nativeThreadId: payload.threadId,
+                nativeTurnId: payload.turn.id,
+                startedAt: codexTimestamp(payload.turn.startedAt),
+              });
               return;
             }
             yield* rememberSubagentTurnStarted({
@@ -7642,6 +7767,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
+              if (yield* adoptCodexStartedTurn(turnInput)) return;
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined

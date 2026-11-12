@@ -2200,6 +2200,29 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(harness.continuationRequests, 1);
       assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
       assert.equal(harness.continuationRequests[0]?.providerThreadId, harness.providerThread.id);
+
+      // The continuation run takes over the running native turn instead of sending turn/start.
+      const continuation = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("queue-continuation-attempt"),
+        text: "Background task completed.",
+      });
+      yield* harness.runtime.startTurn({
+        ...continuation,
+        providerTurnOrdinal: 2,
+        message: { ...continuation.message, createdBy: "agent", creationSource: "provider" },
+      });
+      yield* harness.awaitTerminal(2);
+      const queuedMessages = harness.events.flatMap((event) =>
+        event.type === "message.updated" && event.message.runId === continuation.runId
+          ? [[event.message.role, event.message.text]]
+          : [],
+      );
+      assert.deepInclude(queuedMessages, ["user", "Reply with the word QUEUED."]);
+      assert.deepInclude(queuedMessages, ["assistant", "QUEUED"]);
+      assert.equal(harness.terminalEvents()[1]?.status, "completed");
     }).pipe(
       Effect.scoped,
       Effect.provide(
