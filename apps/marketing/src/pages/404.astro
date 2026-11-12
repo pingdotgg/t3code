@@ -1,0 +1,44 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Page not found | T3 Code" description="This page does not exist on t3.codes." noindex>
+  <section class="not-found container">
+    <p class="eyebrow">404</p>
+    <h1 class="display">This page does not exist.</h1>
+    <p class="not-found-lede">
+      t3.codes is the only official T3 Code website. Download builds from this site, GitHub releases,
+      or the app stores.
+    </p>
+    <div class="not-found-actions">
+      <a class="btn btn-primary btn-lg" href="/download">Download T3 Code</a>
+      <a class="btn btn-ghost btn-lg" href="/">Home</a>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .not-found {
+    padding-top: 18vh;
+    padding-bottom: 18vh;
+    max-width: 720px;
+  }
+
+  .not-found h1 {
+    margin: 14px 0 18px;
+    font-size: clamp(2.25rem, 5vw, 3.5rem);
+  }
+
+  .not-found-lede {
+    color: var(--fg-muted);
+    font-size: 1.05rem;
+    line-height: 1.7;
+  }
+
+  .not-found-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 32px;
+  }
+</style>

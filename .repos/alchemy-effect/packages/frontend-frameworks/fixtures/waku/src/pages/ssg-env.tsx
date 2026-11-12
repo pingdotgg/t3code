@@ -9,9 +9,7 @@ export default async function SsgEnvPage() {
   return (
     <div>
       <div data-testid="ssg-env-marker">SSG_ENV_MARKER</div>
-      <div data-testid="ssg-env-message">
-        MESSAGE={String(env.MESSAGE ?? "unset")}
-      </div>
+      <div data-testid="ssg-env-message">MESSAGE={String(env.MESSAGE ?? "unset")}</div>
     </div>
   );
 }

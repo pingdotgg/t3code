@@ -96,7 +96,7 @@ function setSession() {
 function clerkToken(expiresAtSeconds: number): string {
   const encode = (value: unknown) =>
     btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
-  return `${encode({ alg: "none" })}.${encode({ exp: expiresAtSeconds })}.signature`;
+  return `${encode({ alg: "RS256" })}.${encode({ exp: expiresAtSeconds })}.c2lnbmF0dXJl`;
 }
 
 describe("createManagedRelayQueryManager", () => {
