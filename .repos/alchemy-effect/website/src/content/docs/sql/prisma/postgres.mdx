@@ -3,9 +3,9 @@ title: Postgres
 description: Connect Prisma ORM v8 to Postgres and run Effect-native queries, streams, prepared statements, and transactions independently of your cloud provider.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const deps = `@prisma/orm-postgres@8.0.0-rc.11`;
+export const deps = `@alchemy.run/prisma @prisma/orm-postgres@8.0.0-rc.11`;
 export const devDeps = `prisma@8.0.0-rc.15`;
 
 Prisma ORM v8 uses a contract to type queries and plan migrations. The same
@@ -19,22 +19,9 @@ and CLI release candidates pinned by your Alchemy release; expect breaking
 changes between RC versions.
 :::
 
-Prisma ORM and its CLI are optional Alchemy peers:
+Install `@alchemy.run/prisma` with Prisma ORM and its CLI, which are optional Alchemy peers:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} dev={devDeps} />
 
 ## Start with a contract
 
@@ -47,7 +34,7 @@ query APIs and [migration resources](/sql/prisma/migrations).
 
 ```typescript
 // src/queries.ts
-import * as PrismaPostgres from "alchemy/Prisma/ORM/Postgres";
+import * as PrismaPostgres from "@alchemy.run/prisma/ORM/Postgres";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import { contract } from "./prisma/contract.ts";
