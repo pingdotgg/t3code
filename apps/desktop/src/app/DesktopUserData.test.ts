@@ -42,6 +42,33 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("seeds the V2 profile from t3code when a stale Alpha profile also exists", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-profile-" });
+    const stableState = '{"os_crypt":{"encrypted_key":"stable-key"}}';
+    yield* fs.makeDirectory(path.join(directory, "T3 Code (Alpha)"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(directory, "T3 Code (Alpha)", "Local State"),
+      '{"os_crypt":{"encrypted_key":"stale-alpha-key"}}',
+    );
+    yield* fs.makeDirectory(path.join(directory, "t3code"), { recursive: true });
+    yield* fs.writeFileString(path.join(directory, "t3code", "Local State"), stableState);
+
+    yield* resolveUserDataPath({
+      appDataDirectory: directory,
+      isDevelopment: false,
+      platform: "win32",
+    });
+
+    assert.equal(
+      yield* fs.readFileString(path.join(directory, "t3code-v2", "Local State")),
+      stableState,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const gpuCacheDirectories = [
   "GPUCache",
   "GrShaderCache",
