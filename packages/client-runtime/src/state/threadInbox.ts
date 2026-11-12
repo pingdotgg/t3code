@@ -1,4 +1,9 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
+import {
+  backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
@@ -9,6 +14,7 @@ type WorkingThreadInput = Pick<
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "pendingSubagentRequest"
+  | "pendingGuestMessageCount"
   | "interactionMode"
   | "latestRun"
   | "runtime"
@@ -17,6 +23,7 @@ type WorkingThreadInput = Pick<
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
+  if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   const run = thread.latestRun;
   const runSettled =
@@ -28,6 +35,17 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
     run.status !== "waiting" &&
     thread.runtime?.activeRunId !== run.runId;
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
+}
+
+/** For a working thread: parked between wakes with only pull request watches holding it. */
+export function isThreadWatchingPullRequests(
+  thread: Pick<EnvironmentThreadShell, "runtime" | "pendingBackgroundTasks">,
+): boolean {
+  if (thread.runtime?.status !== "idle") return false;
+  const holding = thread.pendingBackgroundTasks.filter((task) =>
+    backgroundWorkHoldsCompletion([task]),
+  );
+  return holding.length > 0 && holding.every(isPullRequestWatchTask);
 }
 
 /**
