@@ -25,9 +25,11 @@ const decodeOutput = Schema.decodeUnknownEffect(
 
 /** 16 kHz mono Float32 PCM to a 16-bit WAV that AVAudioFile reads. */
 function encodeSpeechWav(pcmBytes: Uint8Array): Uint8Array {
-  // Float32Array needs a 4-byte-aligned offset; copy a view that is not.
+  // Float32Array needs a 4-byte-aligned offset; copy a view that is not (Buffer.slice is a view).
   const aligned =
-    pcmBytes.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0 ? pcmBytes : pcmBytes.slice();
+    pcmBytes.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0
+      ? pcmBytes
+      : new Uint8Array(pcmBytes);
   const samples = new Float32Array(
     aligned.buffer,
     aligned.byteOffset,
