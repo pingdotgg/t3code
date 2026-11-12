@@ -241,14 +241,28 @@ describe("createThreadFamilyAtoms", () => {
         const woken = row("woken", "woken", child.id, parent.id);
         const sibling = row("woken-sibling", "woken-sibling", child.id, parent.id);
         registry.set(shellState, AsyncResult.success(shellAt(2, [parent, woken, sibling])));
+        const wokenFamily = families.familyAtom(TARGET.environmentId, woken.id);
+        const settleWoken = AtomRegistry.getResult(registry, wokenFamily, {
+          suspendOnWaiting: true,
+        }).pipe(
+          Effect.ignore,
+          Effect.tap(() => Effect.yieldNow),
+        );
+        yield* Queue.offer(
+          replies,
+          Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "read failed" })),
+        );
+        yield* settleWoken;
+        expect(threadFamilyRead(registry.get(wokenFamily))).toBe("failed");
+        expect(mergedIds()).toEqual(["parent", "woken", "woken-sibling"]);
+
+        // The next delta retries the failed read instead of keeping the gap until reconnect.
+        registry.set(shellState, AsyncResult.success(shellAt(2, [parent, { ...woken }, sibling])));
         yield* Queue.offer(
           replies,
           Effect.succeed({ snapshotSequence: 6, threads: [parent, child, woken, sibling] }),
         );
-        const wokenFamily = families.familyAtom(TARGET.environmentId, woken.id);
-        yield* AtomRegistry.getResult(registry, wokenFamily, { suspendOnWaiting: true }).pipe(
-          Effect.tap(() => Effect.yieldNow),
-        );
+        yield* settleWoken;
         expect(mergedIds()).toEqual(["parent", "woken", "woken-sibling", "idle-child"]);
 
         // Opening the woken child mounts that same read. It answers only once it is mounted.

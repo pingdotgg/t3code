@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { type ThreadFamilyRead, visibilityParentKey } from "@t3tools/client-runtime/state/threads";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { isListedThreadLineage, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
@@ -32,8 +32,8 @@ const NO_OPEN_FAMILY = Atom.make<ThreadFamilyRead>("settled");
 
 /**
  * Keeps the family of an open thread the shell leaves out (an older settled thread, an idle
- * subagent) in the shell rows until the route leaves it, so every reader of its shell row finds
- * it. Returns whether those rows can still arrive.
+ * subagent), or whose parent it leaves out, in the shell rows until the route leaves it, so every
+ * reader of its shell row finds it. Returns whether those rows can still arrive.
  */
 function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean): boolean {
   const key = threadRef === null ? null : scopedThreadKey(threadRef);
@@ -118,9 +118,19 @@ export function ThreadRouteView({
     unlistedThreadRef?.environmentId ?? null,
     unlistedThreadRef?.threadId ?? null,
   );
+  // A woken child can arrive before the idle parent the shell left out; its family brings it.
+  const listedParentRef =
+    serverThreadRef === null ||
+    serverThreadShell === null ||
+    serverThreadShell.lineage.parentThreadId === null ||
+    isListedThreadLineage(serverThreadShell.lineage)
+      ? null
+      : { ...serverThreadRef, threadId: serverThreadShell.lineage.parentThreadId };
+  const listedParentShell = useQuietThreadShell(listedParentRef);
+  const parentMissing = listedParentRef !== null && listedParentShell === null;
   const familyPending = useOpenThreadFamily(
     serverThreadRef,
-    bootstrapComplete && unlistedThreadRef !== null,
+    bootstrapComplete && (unlistedThreadRef !== null || parentMissing),
   );
   const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
   const unlistedThread = Option.getOrNull(Option.map(unlistedThreadDetail.data, (p) => p.thread));
@@ -222,7 +232,8 @@ export function ThreadRouteView({
       redirect = <Navigate to="/" replace />;
     }
   } else if (hiddenByTagFilter) {
-    redirect = <Navigate to="/" replace />;
+    // A thread whose parent row has not arrived yet reads as hidden until its family read settles.
+    if (!familyPending) redirect = <Navigate to="/" replace />;
   } else if (offShellBlocked) {
     // Before the shell bootstraps, a listed visible thread can still look off-shell. So can an
     // idle subagent until its family read brings in the parent the shell left out.

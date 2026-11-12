@@ -243,11 +243,18 @@ export function createThreadFamilyAtoms<R, ER, E>(
       const mounts = get(mountsAtom(environmentId));
       if (snapshot === null || state === null) return snapshot;
       if (orphans?.threads !== snapshot.threads) {
+        const orphanIds = threadsWithMissingParents(snapshot.threads);
+        // Like a remount, a shell change retries a failed read instead of keeping the gap.
+        for (const threadId of orphanIds) {
+          if (
+            threadFamilyRead(get.once(familyAtom(familyKey(environmentId, threadId)))) === "failed"
+          ) {
+            get.refresh(queryFor(environmentId, threadId, state.generation));
+          }
+        }
         orphans = {
           threads: snapshot.threads,
-          rows: threadsWithMissingParents(snapshot.threads).map((threadId) =>
-            familyRowsAtom(familyKey(environmentId, threadId)),
-          ),
+          rows: orphanIds.map((threadId) => familyRowsAtom(familyKey(environmentId, threadId))),
         };
       }
       if (mounts.size === 0 && orphans.rows.length === 0) return snapshot;
