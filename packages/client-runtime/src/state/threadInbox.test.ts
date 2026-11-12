@@ -80,6 +80,26 @@ describe("createInboxReturnTracker", () => {
     unsubscribe();
   });
 
+  it("moves a thread whose run ended long ago at once, as after a reconnect", () => {
+    const tracker = createInboxReturnTracker();
+    const finished = {
+      ...thread("a", false),
+      latestRun: {
+        runId: RunId.make("ended-while-away"),
+        status: "completed" as const,
+        requestedAt: "1970-01-01T00:00:02.000Z",
+        startedAt: "1970-01-01T00:00:02.000Z",
+        completedAt: "1970-01-01T00:00:09.000Z",
+        assistantMessageId: null,
+      },
+    };
+    tracker.observe([thread("a", true)]);
+    vi.setSystemTime(200_000);
+    tracker.observe([finished]);
+    expect(tracker.isWorking(finished)).toBe(false);
+    expect(tracker.returnedAt(finished)).toBe(200_000);
+  });
+
   it("cancels a transient return on resume and grants a fresh grace after the next finish", () => {
     const tracker = createInboxReturnTracker();
     tracker.observe([thread("a", false)]);
