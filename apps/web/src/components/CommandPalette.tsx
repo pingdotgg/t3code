@@ -77,6 +77,7 @@ import {
   PinOffIcon,
   PlugIcon,
   SquarePenIcon,
+  StickyNoteIcon,
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
@@ -257,6 +258,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openThreadNote } from "./chat/ThreadNoteButton";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -1476,6 +1478,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:edit-thread-note",
+      searchTerms: ["note", "memo", "thread note", "remember"],
+      title: "Edit thread note",
+      description: "Add a private note to this thread",
+      icon: <StickyNoteIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openThreadNote(threadRef);
       },
     });
   }
