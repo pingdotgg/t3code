@@ -219,14 +219,16 @@ export const layer: Layer.Layer<
 
       const { worktreePath, branch } = context.thread;
       // Recreated only where the server would have made it, as turn start does.
+      // A failed removal can leave the folder behind without its checkout.
       if (
         worktreePath != null &&
         branch != null &&
-        !(yield* fileSystem.exists(worktreePath)) &&
+        !(yield* fileSystem.exists(path.join(worktreePath, ".git"))) &&
         (yield* isManagedWorktreePath(worktreePath))
       ) {
         const project = yield* projects.get(context.thread.projectId);
         if (Option.isSome(project)) {
+          yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
           yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
           yield* gitWorkflow.createWorktree({
             cwd: project.value.workspaceRoot,
