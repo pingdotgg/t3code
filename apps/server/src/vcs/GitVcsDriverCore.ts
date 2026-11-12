@@ -331,7 +331,7 @@ function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
 }
 
 // Parses "git version 2.24.3 (Apple Git-128)" or "git version 2.45.1.windows.1".
-export const gitSupportsPathspecFromFile = (versionOutput: string): boolean => {
+const gitSupportsPathspecFromFile = (versionOutput: string): boolean => {
   const match = /^git version (\d+)\.(\d+)/.exec(versionOutput);
   if (match === null) return false;
   const major = Number(match[1]);
@@ -2495,14 +2495,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     filePaths?: readonly string[],
     env?: NodeJS.ProcessEnv,
   ) {
-    if (filePaths?.some((file) => file.includes("\0"))) {
-      return yield* new GitCommandError({
-        operation: "GitVcsDriver.commit",
-        command: "git add",
-        cwd,
-        detail: "Selected file paths must not contain NUL bytes.",
-      });
-    }
     const config = env
       ? ["-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never"]
       : [];

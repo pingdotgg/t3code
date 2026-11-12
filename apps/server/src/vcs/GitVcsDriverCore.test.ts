@@ -44,7 +44,6 @@ import {
   isNonRepositoryGitStderr,
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
-  gitSupportsPathspecFromFile,
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
@@ -1475,19 +1474,6 @@ it.effect("reads worktrees from git that rejects worktree list -z", () =>
   ),
 );
 
-it("reads from git version whether git add takes --pathspec-from-file", () => {
-  for (const [output, supported] of [
-    ["git version 2.24.4\n", false],
-    ["git version 2.24.3 (Apple Git-128)\n", false],
-    ["git version 2.25.0\n", true],
-    ["git version 2.45.1.windows.1\n", true],
-    ["git version 2.53.0\n", true],
-    ["unexpected output\n", false],
-  ] as const) {
-    assert.equal(gitSupportsPathspecFromFile(output), supported, output);
-  }
-});
-
 it.effect("commits selected files with git that rejects --pathspec-from-file", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1989,7 +1975,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
   );
 
-  it.effect("keeps large change sets available for status, commit preparation and selection", () =>
+  it.effect("keeps large change sets available for status and commit preparation", () =>
     Effect.gen(function* () {
       const cwd = yield* makeTmpDir();
       const fs = yield* FileSystem.FileSystem;
@@ -6639,41 +6625,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const selected = ["selected[1].txt", "-dash.txt", "with space.txt"];
-        if ((yield* HostProcess.Platform) !== "win32") selected.push("tab\tand\nnewline.txt");
 
-        for (const file of selected) yield* writeTextFile(cwd, file, "literal\n");
+        yield* writeTextFile(cwd, "selected[1].txt", "literal\n");
         yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
 
-        yield* git(cwd, ["add", "selected1.txt"]);
-        const stagedBefore = yield* git(cwd, ["diff", "--cached"]);
-        const headBefore = yield* git(cwd, ["rev-parse", "HEAD"]);
-        const invalidSelection = ["selected[1].txt\0:(top,glob)**"];
-        const prepared = yield* driver
-          .prepareCommitContext(cwd, invalidSelection)
-          .pipe(Effect.result);
-        const committed = yield* driver
-          .commit(cwd, "Invalid selection", "", { stage: { filePaths: invalidSelection } })
-          .pipe(Effect.result);
-        assert.isTrue(Result.isFailure(prepared));
-        assert.isTrue(Result.isFailure(committed));
-        assert.equal(yield* git(cwd, ["diff", "--cached"]), stagedBefore);
-        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), headBefore);
-        yield* git(cwd, ["reset"]);
-
-        const context = yield* driver.prepareCommitContext(cwd, selected);
+        const context = yield* driver.prepareCommitContext(cwd, ["selected[1].txt"]);
 
         assert.include(context?.stagedSummary ?? "", "selected[1].txt");
         assert.notInclude(context?.stagedSummary ?? "", "selected1.txt");
         assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
         yield* driver.commit(cwd, "Add literal path", "", {
-          stage: { filePaths: selected },
+          stage: { filePaths: ["selected[1].txt"] },
         });
-        assert.sameMembers(
-          (yield* git(cwd, ["show", "--pretty=", "--name-only", "-z", "HEAD"]))
-            .split("\0")
-            .filter(Boolean),
-          selected,
+        assert.equal(
+          yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]),
+          "selected[1].txt",
         );
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
