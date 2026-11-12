@@ -268,7 +268,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   ref={searchInputRef}
                   nativeInput
                   size="compact"
-                  placeholder="Search settings"
+                  placeholder={gt("Search settings")}
                   // Native search inputs clear on Escape even during IME composition.
                   type="text"
                   value={query}
