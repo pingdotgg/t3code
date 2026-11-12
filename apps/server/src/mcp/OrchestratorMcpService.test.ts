@@ -3886,6 +3886,13 @@ describe("OrchestratorMcpService thread list", () => {
     shell("thread:a-snoozed", "project:a", true),
     shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true),
+    {
+      ...shell("thread:a-awaiting-command", "project:a", false),
+      activityRunStatus: null,
+      pendingBackgroundTasks: [
+        { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
+      ],
+    },
   ];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
@@ -3928,6 +3935,20 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:a-snoozed", "project:a"],
           ["thread:b-snoozed", "project:b"],
         ],
+      );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("counts a thread holding awaited background work as live in the status filter", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:a"),
+        statuses: ["preparing", "queued", "starting", "running", "waiting"],
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => thread.threadId),
+        ["thread:a-awaiting-command"],
       );
     }).pipe(Effect.provide(service)),
   );
