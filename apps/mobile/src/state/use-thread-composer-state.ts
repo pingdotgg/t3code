@@ -770,9 +770,16 @@ export function useThreadComposerState(input: {
       alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
       activeTurnDefault,
     });
-    const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
-      (status) => status === "preparing" || status === "starting",
+    // A stopped worktree setup still holds new sends on the server.
+    const worktreePending = orchestrationV2WorktreePending(
+      selectedThreadShell.worktreePath ?? null,
+      selectedThreadProjection?.projection.runs ?? [],
     );
+    const setupRunning =
+      worktreePending ||
+      [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
+        (status) => status === "preparing" || status === "starting",
+      );
     const followUpDispatchMode = setupRunning
       ? "queue"
       : followUpAction === "auto"
