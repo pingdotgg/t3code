@@ -29,6 +29,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -45,6 +46,28 @@ function projectFailure(error: Project.ProjectServiceError) {
           ? "The workspace is already registered to a project."
           : "The project is not empty; force=true is required to delete it.";
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
+}
+
+function worktreeCheckHint(
+  error:
+    | ThreadLaunch.ThreadLaunchBaseRefError
+    | ThreadLaunch.ThreadLaunchBranchConflictError
+    | ThreadLaunch.ThreadLaunchNotRepositoryError,
+  strategy: { readonly startFromOrigin?: boolean | undefined },
+) {
+  if (error._tag === "ThreadLaunchNotRepositoryError")
+    return `Use workspaceStrategy: {type: "root"}, or pass the projectId of a Git repository.`;
+  if (error._tag === "ThreadLaunchBranchConflictError") {
+    const sibling = error.branch.replaceAll("/", "-");
+    return `Use a name that does not nest under or contain an existing branch${
+      sibling === error.branch ? "" : `, such as "${sibling}"`
+    }.`;
+  }
+  return `Pass a branch, tag, or commit that exists there${
+    strategy.startFromOrigin === true
+      ? "; the project has no usable remote to fetch it from."
+      : ", or set startFromOrigin:true if it exists only on a remote."
+  }`;
 }
 
 /** Require project worktrees so launches cannot target arbitrary host directories. */
@@ -152,7 +175,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             });
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         }
-        // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
+        if (!replaying && input.modelSelection !== undefined) {
+          const { instanceId, model } = input.modelSelection;
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+          if (provider !== undefined)
+            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+        }
+        // Reject unresolved base refs and blocked branch names before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
@@ -163,11 +193,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (error) =>
                 new OrchestratorMcpFailure({
                   code: "invalid_request",
-                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
-                    strategy.startFromOrigin === true
-                      ? "; the project has no usable remote to fetch it from."
-                      : ", or set startFromOrigin:true if it exists only on a remote."
-                  }`,
+                  message: `${error.message} No thread was created. ${worktreeCheckHint(error, strategy)}`,
                 }),
             ),
           );
@@ -379,7 +405,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     (input) =>
       Effect.gen(function* () {
         const repositories = yield* Repositories.SourceControlRepositoryService;
-        return yield* repositories.cloneRepository(input).pipe(
+        // Agents' MCP calls have their own long budget, and an aborted call interrupts git.
+        return yield* repositories.cloneRepository(input, { timeoutMs: null }).pipe(
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({
