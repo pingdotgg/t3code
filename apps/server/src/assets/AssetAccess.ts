@@ -667,10 +667,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           ? inlinePreviewMimeTypeForExtension(extension)
           : undefined;
       // Committed ids never change bytes, so mints in one window share a browser-cached URL.
-      // Pending ids can be re-uploaded with different bytes and keep a URL per mint.
+      // Pending ids can be re-uploaded with different bytes and keep a URL per mint, as do
+      // older clients that retry a failed image only by minting a new URL.
       if (
+        input.resource.reuseUrl === true &&
         parseThreadSegmentFromAttachmentId(input.resource.attachmentId) !==
-        PENDING_ATTACHMENT_THREAD_SEGMENT
+          PENDING_ATTACHMENT_THREAD_SEGMENT
       ) {
         expiresAt -= expiresAt % COMMITTED_ATTACHMENT_TOKEN_BUCKET_MS;
       }
