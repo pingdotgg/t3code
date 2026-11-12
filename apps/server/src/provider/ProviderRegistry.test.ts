@@ -3953,7 +3953,7 @@ it.layer(
       ),
     );
 
-    it.effect("warns that a settings file Claude skipped is not in effect", () =>
+    it.effect("says a settings file Claude skipped is not in effect, and stays usable", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
           defaultClaudeSettings,
@@ -3963,7 +3963,7 @@ it.layer(
             ],
           }),
         );
-        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
         assert.include(status.message, "nothing in them is in effect");
         assert.include(status.message, "/home/u/.claude/settings.json: Invalid or malformed JSON");

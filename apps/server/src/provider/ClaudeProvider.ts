@@ -866,7 +866,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probe: {
       installed: true,
       version: parsedVersion,
-      status: settingsErrorsMessage ? "warning" : "ready",
+      status: "ready",
       auth: {
         status: "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
