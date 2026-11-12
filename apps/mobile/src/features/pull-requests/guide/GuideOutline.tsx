@@ -1,14 +1,14 @@
+import { Button } from "../../../components/ui/Button";
 import type { PullRequestReviewGuide } from "@t3tools/contracts";
 import { stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
 import { Pressable, View } from "react-native";
-import { AppText as Text } from "../../../components/AppText";
-import { SymbolView } from "../../../components/AppSymbol";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PullRequestMarkdown } from "../PullRequestMarkdown";
-import { ControlPillMenu } from "../../../components/ControlPillMenu";
+import { Menu } from "../../../components/ui/Menu";
 
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 
-/** The stops are a reading sequence, with file context kept beside each idea. */
 export function GuideOutline({
   guide,
   onOpen,
@@ -29,7 +29,7 @@ export function GuideOutline({
             through {files.size} {files.size === 1 ? "file" : "files"}
           </Text>
         </View>
-        <ControlPillMenu
+        <Menu
           title="Guide options"
           actions={[
             {
@@ -55,11 +55,11 @@ export function GuideOutline({
           >
             <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
           </Pressable>
-        </ControlPillMenu>
+        </Menu>
       </View>
       {guide.stops[0]?.summary ? (
         <View className="mb-6">
-          <PullRequestMarkdown markdown={guide.stops[0].summary} />
+          <PullRequestMarkdown lineBreaks={false} markdown={guide.stops[0].summary} />
         </View>
       ) : null}
       {guide.stops.map((stop, position) => {
@@ -101,14 +101,9 @@ export function GuideOutline({
         );
       })}
       {guide.stops.length ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => onOpen(0)}
-          className="min-h-11 flex-row items-center justify-end gap-2 active:opacity-60"
-        >
-          <Text className="text-sm font-t3-medium">Start tour</Text>
-          <SymbolView name="arrow.right" size={17} tintColorClassName="accent-foreground" />
-        </Pressable>
+        <View className="self-end">
+          <Button label="Start tour" tone="text" onPress={() => onOpen(0)} icon="arrow.right" />
+        </View>
       ) : null}
     </View>
   );

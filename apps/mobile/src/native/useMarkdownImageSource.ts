@@ -13,7 +13,6 @@ import { assetEnvironment } from "../state/assets";
 import { environmentSession, usePreparedConnection } from "../state/session";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
-/** Native nested images use the same signed asset queries as app-owned media. */
 export function useMarkdownImageSource(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId | null;

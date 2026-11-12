@@ -8,10 +8,6 @@ import {
   CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT,
 } from "../claude_background_subagent_lifecycle/input.ts";
 
-// Without an echo nothing tells a queued wake turn from the prompt's turn
-// until the wake's result, so the adapter streams it as before: the wake
-// reply shows under the prompt that was waiting behind it. The echo gate must
-// never hold output on such a CLI, and this pins that it does not.
 export function assertClaudeBackgroundWakeBeforeQueuedPromptNoEchoOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

@@ -10,13 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { formatComposerContextReference } from "./composerContextReferences.ts";
 
-/**
- * Upgrades a message written before inline context references: trailing
- * `<terminal_context>`, `<element_context>` and `<preview_annotation>` blocks, inline or
- * trailing `<review_comment>` blocks, and U+FFFC terminal placeholders. Produces canonical
- * reference links plus records so old messages render and copy through the new path.
- * Event history is never rewritten; this runs in memory on read.
- */
+/** Converts in memory on read; never rewrites event history. */
 
 export interface UpgradedLegacyContext {
   text: string;
@@ -70,7 +64,6 @@ function parseEntries(block: string): ParsedEntry[] | null {
   return entries;
 }
 
-/** The inline label the old send path wrote for a terminal excerpt: `@terminal-1:509-514`. */
 function inlineTerminalLabel(record: TerminalContextRecord): string {
   const slug = record.terminalLabel.trim().toLowerCase().replace(/\s+/g, "-");
   const range =
@@ -161,10 +154,7 @@ function elementRecord(entry: ParsedEntry, index: number): ElementContextRecord 
 
 function previewRecord(body: string, index: number): PreviewAnnotationContextRecord | null {
   const lines = body.split("\n");
-  // A legacy comment was written verbatim, so it can run over several lines and hold blank
-  // lines and markup of its own. Its value is every line up to the next field or the block that
-  // follows it — anything else is text the author typed, and dropping it loses instructions the
-  // chip that replaces this block cannot show.
+  // Preserve multiline comments, including blank lines and markup, until the next field or context block.
   const FIELD_PREFIXES = ["Preview annotation:", "Id: ", "Page: ", "Comment: ", "Targets: "];
   const BLOCK_DELIMITER =
     /^<\/?(?:terminal_context|element_context|preview_annotation|review_comment)\b/;
@@ -329,20 +319,14 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
   const reviewTokenPattern = new RegExp(`${reviewToken}(\\d+)${reviewToken}`, "g");
   const trailingReviewTokenPattern = new RegExp(`(?:\\s*${reviewToken}\\d+${reviewToken})+\\s*$`);
 
-  // Review blocks become tokens in place first so they neither hide the trailing blocks
-  // behind them nor lose their position. Unparseable blocks stay as text.
   let rest = replaceReviewBlocks(text, (whole, attributes, rawBody) => {
     const record = reviewRecord(attributes, rawBody, reviews.length + 1);
-    // Keep the original prose if converting it would produce a record the wire drops.
     if (!record || !isReviewCommentContextRecord(record)) return whole;
     reviews.push(record);
     return `${reviewToken}${reviews.length - 1}${reviewToken}`;
   });
 
-  // Blocks were appended in send order (terminal, element, preview, review), so they peel
-  // off the end in reverse. Each peel exposes the next block as trailing.
-  // Peel reviews only when they hide another trailing context block. A review at the end
-  // of ordinary prose can still be inline; keep its original spacing and line breaks.
+  // Peel appended blocks in reverse send order. Peel reviews only to expose context blocks, preserving inline prose spacing.
   const trailingReviewTokens: number[] = [];
   const tokens = trailingReviewTokenPattern.exec(rest);
   if (tokens && tokens[0].length > 0) {
@@ -404,23 +388,24 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     formatComposerContextReference(reviews[Number(index)]!),
   );
 
-  // Placeholders bind to terminal entries in order, like the old materialize step did.
   let placeholderIndex = 0;
   body = body.replace(new RegExp(PLACEHOLDER, "g"), () => {
     const record = terminals[placeholderIndex];
     placeholderIndex += 1;
     return record ? formatComposerContextReference(record) : "";
   });
-  // Sent messages carry the materialized `@terminal-1:509-514` label instead of the
-  // placeholder; each such label becomes the chip in place.
+
   const placedTerminals = new Set(terminals.slice(0, placeholderIndex));
   for (const record of terminals) {
     if (placedTerminals.has(record)) continue;
     const label = inlineTerminalLabel(record);
     let at = body.indexOf(label);
+    // Alternation instead of a character class: on Electron 44's V8 (15.2) a class
+    // directly before `$` with the `u` flag never matches a code point outside the
+    // BMP, so `𐐀@build:7` would become a chip.
     while (
       at !== -1 &&
-      (/[\p{L}\p{N}\p{M}_@.-]$/u.test(body.slice(0, at)) ||
+      (/(?:\p{L}|\p{N}|\p{M}|[_@.-])$/u.test(body.slice(0, at)) ||
         /^(?:[\p{L}\p{N}\p{M}_-]|[.@]+[\p{L}\p{N}\p{M}_-])/u.test(body.slice(at + label.length)))
     ) {
       at = body.indexOf(label, at + 1);

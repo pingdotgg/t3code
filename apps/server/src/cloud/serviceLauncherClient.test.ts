@@ -12,12 +12,13 @@ import {
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
-  readonly connected = true;
+  readonly connected: boolean;
   readonly env: Record<string, string | undefined>;
   readonly sent: ServiceLauncherChildMessage[] = [];
   readonly #listeners = new Map<string, Set<(...args: ReadonlyArray<unknown>) => void>>();
 
-  constructor(context: unknown) {
+  constructor(context: unknown, connected = true) {
+    this.connected = connected;
     this.env = { [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) };
   }
 
@@ -48,34 +49,33 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provideService(HostProcess.Environment, host.env),
   );
 
-it.effect("waits for the launcher to durably commit the trial update ID", () =>
-  Effect.gen(function* () {
-    const pending = {
-      id: "update-1",
-      fromVersion: "1.0.0",
-      targetVersion: "1.1.0",
-      dbPath: "/tmp/state.sqlite",
-      status: "pending" as const,
-    };
-    const host = new FakeLauncherProcess({
-      protocol: SERVICE_LAUNCHER_PROTOCOL,
-      childVersion: "1.1.0",
-      update: pending,
-    });
-    const client = yield* makeClient(host, "1.1.0");
-    const prepared = yield* Effect.forkChild(client.prepareTrial, { startImmediately: true });
-    yield* Effect.yieldNow;
-    expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
+// regression: #34502 a remote update never replaces the launcher, so an installed one stays protocol 3
+it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
+  "waits for a protocol-%i launcher to durably commit the trial update ID",
+  (protocol) =>
+    Effect.gen(function* () {
+      const pending = {
+        id: "update-1",
+        fromVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        dbPath: "/tmp/state.sqlite",
+        status: "pending" as const,
+      };
+      const host = new FakeLauncherProcess({ protocol, childVersion: "1.1.0", update: pending });
+      const client = yield* makeClient(host, "1.1.0");
+      const prepared = yield* Effect.forkChild(client.prepareTrial, { startImmediately: true });
+      yield* Effect.yieldNow;
+      expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
 
-    const committed = {
-      id: pending.id,
-      fromVersion: pending.fromVersion,
-      targetVersion: pending.targetVersion,
-      status: "committed" as const,
-    };
-    host.emit({ type: "committed", updateId: committed.id });
-    expect(yield* Fiber.join(prepared)).toEqual(committed);
-  }),
+      const committed = {
+        id: pending.id,
+        fromVersion: pending.fromVersion,
+        targetVersion: pending.targetVersion,
+        status: "committed" as const,
+      };
+      host.emit({ type: "committed", updateId: committed.id });
+      expect(yield* Fiber.join(prepared)).toEqual(committed);
+    }),
 );
 
 it.effect("returns the launcher-generated ID only after update acceptance", () =>
@@ -119,6 +119,24 @@ it.effect("preserves a launcher rejection as a distinct error", () =>
   }),
 );
 
+it.effect("stops the server when the launcher asks over IPC", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: "1.0.0",
+    });
+    const stopped = yield* Effect.forkChild(
+      ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
+        Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
+        Effect.provideService(HostProcess.Environment, host.env),
+      ),
+      { startImmediately: true },
+    );
+    host.emit({ type: "stop" });
+    yield* Fiber.join(stopped);
+  }),
+);
+
 it.effect("rejects contradictory trial context instead of leaving activation closed", () =>
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
@@ -134,5 +152,20 @@ it.effect("rejects contradictory trial context instead of leaving activation clo
     });
     const error = yield* makeClient(host, "1.1.0").pipe(Effect.flip);
     expect(error.message).toBe("The service launcher supplied invalid startup context.");
+  }),
+);
+
+it.effect("ignores launcher context inherited without an IPC channel", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess(
+      { protocol: SERVICE_LAUNCHER_PROTOCOL, childVersion: "1.0.0" },
+      false,
+    );
+    const client = yield* makeClient(host, "1.1.0");
+    const error = yield* client
+      .requestUpdate({ targetVersion: "1.2.0", dbPath: "/tmp/state.sqlite" })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({ _tag: "ServiceLauncherClientError", operation: "unmanaged" });
+    expect(host.sent).toEqual([]);
   }),
 );

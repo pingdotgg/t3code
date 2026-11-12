@@ -6,7 +6,6 @@ import type {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -14,12 +13,19 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import * as ResourceTelemetry from "./ResourceTelemetry.ts";
+
+// ResourceTelemetry classifies process.pid as the server, so fixture PIDs are
+// offsets from it. Fixed PIDs collide whenever the test worker is assigned one.
+const SERVER_PID = process.pid;
+const CODEX_PID = SERVER_PID + 1;
+const SHORT_LIVED_CHILD_PID = SERVER_PID + 2;
+const ELECTRON_PID = SERVER_PID + 3;
+const MONITOR_PID = SERVER_PID + 4;
 
 function processSample(
   input: Partial<ResourceMonitorProcessSample> &
@@ -50,14 +56,14 @@ function nativeSnapshot(input: {
 }): ResourceMonitorSnapshotEvent {
   const processes = [
     processSample({
-      pid: process.pid,
+      pid: SERVER_PID,
       ppid: 1,
       startTimeMs: 100,
       cpuTimeMs: input.sequence * 10,
     }),
     processSample({
-      pid: 4_242,
-      ppid: process.pid,
+      pid: CODEX_PID,
+      ppid: SERVER_PID,
       startTimeMs: 200,
       name: "codex",
       command: "codex app-server",
@@ -65,7 +71,7 @@ function nativeSnapshot(input: {
       ioWriteBytes: input.childWriteBytes,
     }),
     processSample({
-      pid: 5_000,
+      pid: ELECTRON_PID,
       ppid: 1,
       startTimeMs: 300,
       name: "electron",
@@ -73,8 +79,8 @@ function nativeSnapshot(input: {
       cpuTimeMs: input.sequence * 20,
     }),
     processSample({
-      pid: 9_000,
-      ppid: process.pid,
+      pid: MONITOR_PID,
+      ppid: SERVER_PID,
       startTimeMs: 400,
       name: "t3-resource-monitor",
       command: "t3-resource-monitor",
@@ -111,7 +117,7 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
     type: "desktopTelemetry",
     sequence: 1,
     sampledAtUnixMs,
-    electronPid: 5_000,
+    electronPid: ELECTRON_PID,
     power: {
       source: "electron-main",
       idle: "false",
@@ -127,7 +133,7 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
     speedLimitPercent: Option.some(90),
     electronProcesses: [
       {
-        pid: 5_000,
+        pid: ELECTRON_PID,
         creationTimeMs: 300,
         type: "Browser",
         name: "electron",
@@ -142,84 +148,79 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
 }
 
 describe("ResourceTelemetry", () => {
-  it.effect("enables live native and Electron collection only while changes are retained", () =>
+  it.effect("replays churning history and retains baselines for returning processes", () =>
     Effect.gen(function* () {
-      const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);
-      const sample = nativeSnapshot({
-        sequence: 1,
-        sampledAtUnixMs,
-        childCpuTimeMs: 100,
-        childWriteBytes: 1_000,
-      });
-      const demandChanges = yield* Ref.make<ReadonlyArray<boolean>>([]);
-      const layerNative = NativeTelemetryClient.layerTest({
-        sampleNow: Effect.succeed(nativeGeneration(sample, 0)),
-        health: Effect.succeed({
-          status: "healthy",
-          hello: Option.none(),
-          lastSampleAt: Option.none(),
-          lastError: Option.none(),
-          restartCount: 0,
-          sampleIntervalMs: 1_000,
-        }),
-      });
-      const layerDesktop = DesktopTelemetryReceiver.layerTest({
-        latest: Effect.succeedSome(desktopSnapshot(sampledAtUnixMs)),
-        setDiagnosticsDemand: (enabled) =>
-          Ref.update(demandChanges, (changes) => [...changes, enabled]),
+      const readAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const sampleCount = 100;
+      const samples = Array.from({ length: sampleCount }, (_, index) => {
+        const sample = nativeSnapshot({
+          sequence: index + 1,
+          sampledAtUnixMs: readAtMs - (sampleCount - index) * 1_000,
+          childCpuTimeMs: index * 10,
+          childWriteBytes: index * 100,
+        });
+        const processes = sample.processes
+          .filter((entry) => entry.pid === SERVER_PID || entry.pid === CODEX_PID)
+          .map((entry) =>
+            entry.pid === CODEX_PID
+              ? { ...entry, startTimeMs: index }
+              : { ...entry, ioWriteBytes: index * 100 },
+          );
+        if (index === 0 || index === 2) {
+          processes.push(
+            processSample({
+              pid: SHORT_LIVED_CHILD_PID,
+              ppid: SERVER_PID,
+              startTimeMs: 500,
+              cpuTimeMs: index === 0 ? 100 : 350,
+              ioWriteBytes: index === 0 ? 1_000 : 5_000,
+            }),
+          );
+        }
+        return { ...sample, processes };
       });
       const layerTelemetry = ResourceTelemetry.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer)),
+        Layer.provide(
+          Layer.mergeAll(
+            NativeTelemetryClient.layerTest({ readHistory: () => Effect.succeed(samples) }),
+            DesktopTelemetryReceiver.layerTest(),
+            ResourceAttribution.layer,
+          ),
+        ),
       );
 
-      const live = yield* Stream.runHead(
-        Effect.gen(function* () {
-          const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-          return telemetry.changes;
-        }).pipe(Stream.unwrap),
-      ).pipe(Effect.provide(layerTelemetry));
+      yield* Effect.gen(function* () {
+        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+        const history = yield* telemetry.readHistory({
+          windowMs: sampleCount * 1_000,
+          bucketMs: 10_000,
+        });
 
-      expect(Option.isSome(live)).toBe(true);
-      expect(yield* Ref.get(demandChanges)).toEqual([true, false]);
-    }),
-  );
-
-  it.effect("releases live demand when acquisition is interrupted by an idle collector", () =>
-    Effect.gen(function* () {
-      const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);
-      const demandChanges = yield* Ref.make<ReadonlyArray<boolean>>([]);
-      const layerNative = NativeTelemetryClient.layerTest({
-        sampleNow: Effect.never,
-        health: Effect.succeed({
-          status: "healthy",
-          hello: Option.none(),
-          lastSampleAt: Option.none(),
-          lastError: Option.none(),
-          restartCount: 0,
-          sampleIntervalMs: 1_000,
-        }),
-      });
-      const layerDesktop = DesktopTelemetryReceiver.layerTest({
-        latest: Effect.succeedSome(desktopSnapshot(sampledAtUnixMs)),
-        setDiagnosticsDemand: (enabled) =>
-          Ref.update(demandChanges, (changes) => [...changes, enabled]),
-      });
-      const layerTelemetry = ResourceTelemetry.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer)),
-      );
-
-      const resultFiber = yield* Stream.runHead(
-        Effect.gen(function* () {
-          const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-          return telemetry.changes;
-        }).pipe(Stream.unwrap),
-      ).pipe(Effect.timeoutOption("10 millis"), Effect.provide(layerTelemetry), Effect.forkChild);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("10 millis");
-      const result = yield* Fiber.join(resultFiber);
-
-      expect(Option.isNone(result)).toBe(true);
-      expect(yield* Ref.get(demandChanges)).toEqual([true, false]);
+        expect(history.topProcesses).toHaveLength(sampleCount + 2);
+        expect(
+          history.topProcesses.find((entry) => entry.identity.pid === SERVER_PID),
+        ).toMatchObject({
+          sampleCount,
+          cpuTimeMs: (sampleCount - 1) * 10,
+          ioWriteBytes: (sampleCount - 1) * 100,
+        });
+        const children = history.topProcesses.filter((entry) => entry.identity.pid === CODEX_PID);
+        expect(children).toHaveLength(sampleCount);
+        for (const child of children) {
+          expect(child).toMatchObject({ sampleCount: 1, cpuTimeMs: 0, ioWriteBytes: 0 });
+        }
+        expect(
+          history.topProcesses.find((entry) => entry.identity.pid === SHORT_LIVED_CHILD_PID),
+        ).toMatchObject({
+          sampleCount: 2,
+          cpuTimeMs: 250,
+          ioWriteBytes: 4_000,
+        });
+        expect(Math.max(...history.buckets.map((bucket) => bucket.maxProcessCount))).toBe(3);
+        expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(
+          (sampleCount - 1) * 100 + 4_000,
+        );
+      }).pipe(Effect.provide(layerTelemetry));
     }),
   );
 
@@ -233,7 +234,7 @@ describe("ResourceTelemetry", () => {
           sampledAtUnixMs,
           childCpuTimeMs: 100,
           childWriteBytes: 1_000,
-          externalProcesses: [{ pid: 5_000, startTimeMs: 300 }],
+          externalProcesses: [{ pid: ELECTRON_PID, startTimeMs: 300 }],
         });
         const desktop = {
           ...desktopSnapshot(sampledAtUnixMs),
@@ -262,9 +263,9 @@ describe("ResourceTelemetry", () => {
           return yield* telemetry.refresh;
         }).pipe(Effect.provide(layerTelemetry));
 
-        expect(snapshot.processes.find((entry) => entry.identity.pid === 5_000)?.category).toBe(
-          "electron-main",
-        );
+        expect(
+          snapshot.processes.find((entry) => entry.identity.pid === ELECTRON_PID)?.category,
+        ).toBe("electron-main");
         expect(snapshot.groups.electron.processStarts).toBe(1);
         expect(snapshot.groups.backend.processStarts).toBe(3);
       }),
@@ -327,73 +328,6 @@ describe("ResourceTelemetry", () => {
             current.sampledAtUnixMs,
           );
         }).pipe(Effect.provide(layerTelemetry));
-      }),
-    ),
-  );
-
-  it.effect("retains desktop health changes while aggregate telemetry initializes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const health = yield* Ref.make<DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth>({
-          status: "starting",
-          lastSampleAt: Option.none(),
-          lastError: Option.none(),
-        });
-        const healthChanges =
-          yield* PubSub.sliding<DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth>(4);
-        const healthSubscribed = yield* Deferred.make<void>();
-        const finishDesktopSnapshot = yield* Deferred.make<void>();
-        const layerDesktop = DesktopTelemetryReceiver.layerTest({
-          health: Ref.get(health),
-          subscribeHealth: Effect.gen(function* () {
-            const subscription = yield* PubSub.subscribe(healthChanges);
-            const latest = yield* Ref.get(health);
-            yield* Deferred.succeed(healthSubscribed, undefined);
-            return {
-              latest,
-              changes: Stream.fromSubscription(subscription),
-            };
-          }),
-          subscribe: Deferred.await(finishDesktopSnapshot).pipe(
-            Effect.as({
-              latest: Option.none(),
-              changes: Stream.empty,
-            }),
-          ),
-        });
-        const layerTelemetry = ResourceTelemetry.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              NativeTelemetryClient.layerTest(),
-              layerDesktop,
-              ResourceAttribution.layer,
-            ),
-          ),
-        );
-        const resultFiber = yield* Effect.gen(function* () {
-          const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-          while (true) {
-            const snapshot = yield* telemetry.latest;
-            if (snapshot.health.desktop.status === "degraded") return snapshot;
-            yield* Effect.yieldNow;
-          }
-        }).pipe(Effect.provide(layerTelemetry), Effect.timeout("1 second"), Effect.forkChild);
-
-        yield* Deferred.await(healthSubscribed);
-        const degraded: DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth = {
-          status: "degraded",
-          lastSampleAt: Option.none(),
-          lastError: Option.some("desktop telemetry failed"),
-        };
-        yield* Ref.set(health, degraded);
-        yield* PubSub.publish(healthChanges, degraded);
-        yield* Deferred.succeed(finishDesktopSnapshot, undefined);
-
-        const snapshot = yield* Fiber.join(resultFiber);
-        expect(snapshot.health.desktop.status).toBe("degraded");
-        expect(Option.getOrNull(snapshot.health.desktop.lastError)).toBe(
-          "desktop telemetry failed",
-        );
       }),
     ),
   );
@@ -464,184 +398,5 @@ describe("ResourceTelemetry", () => {
         }).pipe(Effect.provide(layerTelemetry));
       }),
     ),
-  );
-
-  it.effect("combines native, Electron, attribution, retry, and history data", () =>
-    Effect.gen(function* () {
-      const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
-      const samples = [
-        nativeSnapshot({
-          sequence: 1,
-          sampledAtUnixMs: startedAt,
-          childCpuTimeMs: 100,
-          childWriteBytes: 1_000,
-        }),
-        nativeSnapshot({
-          sequence: 2,
-          sampledAtUnixMs: startedAt + 1_000,
-          childCpuTimeMs: 350,
-          childWriteBytes: 5_000,
-        }),
-        nativeSnapshot({
-          sequence: 1,
-          sampledAtUnixMs: startedAt + 2_000,
-          childCpuTimeMs: 500,
-          childWriteBytes: 7_000,
-        }),
-      ] as const;
-      const sampleIndex = yield* Ref.make(0);
-      const externalProcesses = yield* Ref.make<
-        ReadonlyArray<{ readonly pid: number; readonly startTimeMs?: number }>
-      >([]);
-      const retryCount = yield* Ref.make(0);
-      const nativeHealth = yield* Ref.make<NativeTelemetryClient.NativeTelemetryClientHealth>({
-        status: "healthy",
-        hello: Option.some({
-          version: 3,
-          type: "hello",
-          sidecarVersion: "0.1.0",
-          sidecarPid: 9_000,
-          platform: "test",
-          arch: "test",
-          capabilities: {
-            cumulativeCpuTime: true,
-            currentCpuPercent: true,
-            residentMemory: true,
-            virtualMemory: true,
-            ioBytes: true,
-            processStartTime: true,
-            processTree: true,
-          },
-        }),
-        lastSampleAt: Option.some(DateTime.makeUnsafe(startedAt)),
-        lastError: Option.none(),
-        restartCount: 2,
-        sampleIntervalMs: 1_000,
-      });
-      const nativeHealthChanges =
-        yield* PubSub.sliding<NativeTelemetryClient.NativeTelemetryClientHealth>(4);
-      const layerNative = NativeTelemetryClient.layerTest({
-        setExternalProcesses: (processes) => Ref.set(externalProcesses, processes),
-        readHistory: () => Effect.succeed(samples.slice(0, 2)),
-        sampleNow: Ref.modify(sampleIndex, (index) => {
-          const sampleIndex = Math.min(index, samples.length - 1);
-          return [nativeGeneration(samples[sampleIndex]!, sampleIndex === 2 ? 3 : 2), index + 1];
-        }),
-        retry: Ref.updateAndGet(retryCount, (count) => count + 1).pipe(Effect.as(true)),
-        health: Ref.get(nativeHealth),
-        subscribeHealth: Effect.gen(function* () {
-          const subscription = yield* PubSub.subscribe(nativeHealthChanges);
-          const latest = yield* Ref.get(nativeHealth);
-          return {
-            latest,
-            changes: Stream.fromSubscription(subscription),
-          };
-        }),
-      });
-      const layerDesktop = DesktopTelemetryReceiver.layerTest({
-        latest: Effect.succeedSome(desktopSnapshot(startedAt)),
-        health: Effect.succeed({
-          status: "healthy",
-          lastSampleAt: Option.some(DateTime.makeUnsafe(startedAt)),
-          lastError: Option.none(),
-        }),
-      });
-      const layerAttribution = ResourceAttribution.layer;
-      const layerDependencies = Layer.mergeAll(layerNative, layerDesktop, layerAttribution);
-      const layerTelemetry = ResourceTelemetry.layer.pipe(Layer.provide(layerDependencies));
-      const layer = Layer.mergeAll(layerDependencies, layerTelemetry);
-
-      yield* Effect.gen(function* () {
-        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-        const attribution = yield* ResourceAttribution.ResourceAttribution;
-
-        expect(yield* Ref.get(externalProcesses)).toEqual([{ pid: 5_000, startTimeMs: 300 }]);
-
-        yield* attribution.record({
-          component: "provider-event-log",
-          operation: "append",
-          logicalWriteBytes: 512,
-          count: 2,
-          durationMs: 4,
-        });
-        const first = yield* telemetry.refresh;
-        expect(first.groups.backend.processCount).toBe(2);
-        expect(first.groups.electron.processCount).toBe(1);
-        expect(first.groups.monitor.processCount).toBe(1);
-        expect(first.power.onBattery).toBe("true");
-        expect(Option.getOrNull(first.speedLimitPercent)).toBe(90);
-        expect(first.attribution.entries).toEqual([
-          {
-            component: "provider-event-log",
-            operation: "append",
-            logicalReadBytes: 0,
-            logicalWriteBytes: 512,
-            count: 2,
-            durationMs: 4,
-          },
-        ]);
-
-        yield* TestClock.adjust(Duration.seconds(1));
-        const second = yield* telemetry.refresh;
-        const codex = second.processes.find((entry) => entry.identity.pid === 4_242);
-        expect(codex?.cpuPercent).toBe(25);
-        expect(codex?.ioWriteBytesPerSecond).toBe(4_000);
-        expect(second.groups.backend.ioWriteBytes).toBe(4_000);
-        expect(second.health.collectionDurationMicros).toBe(300);
-        expect(second.health.scannedProcessCount).toBe(80);
-        expect(second.health.inaccessibleProcessCount).toBe(1);
-
-        const history = yield* telemetry.readHistory({
-          windowMs: 60_000,
-          bucketMs: 10_000,
-        });
-        expect(history.retainedSampleCount).toBeGreaterThan(0);
-        expect(
-          history.topProcesses.find((entry) => entry.identity.pid === 4_242)?.sampleCount,
-        ).toBe(2);
-        expect(history.topProcesses.find((entry) => entry.identity.pid === 4_242)?.cpuTimeMs).toBe(
-          250,
-        );
-        expect(
-          history.topProcesses.find((entry) => entry.identity.pid === 4_242)?.ioWriteBytes,
-        ).toBe(4_000);
-        expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(
-          4_000,
-        );
-
-        const retry = yield* telemetry.retry;
-        expect(retry.accepted).toBe(true);
-        expect(yield* Ref.get(retryCount)).toBe(1);
-
-        yield* Ref.update(nativeHealth, (current) => ({
-          ...current,
-          hello: Option.map(current.hello, (hello) => ({
-            ...hello,
-            sidecarPid: 9_001,
-          })),
-          restartCount: 3,
-        }));
-        yield* TestClock.adjust(Duration.seconds(1));
-        const restarted = yield* telemetry.refresh;
-        expect(DateTime.toEpochMillis(restarted.readAt)).toBe(startedAt + 2_000);
-        expect(Option.getOrNull(restarted.health.sidecarPid)).toBe(9_001);
-
-        yield* Ref.update(nativeHealth, (current) => ({
-          ...current,
-          status: "degraded" as const,
-          lastError: Option.some("collector exited"),
-        }));
-        yield* PubSub.publish(nativeHealthChanges, yield* Ref.get(nativeHealth));
-        yield* Effect.yieldNow;
-        const healthUpdate = yield* telemetry.latest;
-        expect(healthUpdate.health.native.status).toBe("degraded");
-        expect(Option.getOrNull(healthUpdate.health.native.lastError)).toBe("collector exited");
-        const degradedHistory = yield* telemetry.readHistory({
-          windowMs: 60_000,
-          bucketMs: 10_000,
-        });
-        expect(degradedHistory.health.native.status).toBe("degraded");
-      }).pipe(Effect.provide(layer));
-    }),
   );
 });

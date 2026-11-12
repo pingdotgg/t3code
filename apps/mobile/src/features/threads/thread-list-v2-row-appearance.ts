@@ -62,7 +62,6 @@ export function getThreadListV2RowAppearance(
     cardStyle: sidebarPane ? { ...style, ...THREAD_LIST_V2_SIDEBAR_ROW_STYLE } : undefined,
     swipeContainerStyle,
     swipeBackgroundColor: theme[sidebarPane ? "--color-drawer" : "--color-screen"],
-    // Provider badges blend into the surface beneath them.
     providerIconSurfaceColor: sidebarPane
       ? selected
         ? selectedBackgroundColor

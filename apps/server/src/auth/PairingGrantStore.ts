@@ -1,8 +1,12 @@
 import {
-  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
+  type AuthMcpClientAccess,
   type AuthPairingLink,
+  mcpApprovalCode,
+  PAIRING_CODE_ALPHABET,
+  PAIRING_CODE_LENGTH,
+  parseMcpApprovalCode,
   type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
 import {
@@ -10,9 +14,10 @@ import {
   isValidDesktopBootstrapToken,
 } from "@t3tools/shared/desktopBootstrapToken";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -214,11 +219,9 @@ export class PairingGrantStore extends Context.Service<
       readonly subject?: string;
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
-      /**
-       * "startup" marks the credential the server mints for itself at boot,
-       * which gets the long dev TTL when a dev URL is configured.
-       */
       readonly purpose?: "startup";
+      /** Issues a hidden `<LEVEL>-` code that only an agent sign-in at this level can spend. */
+      readonly mcpApproval?: AuthMcpClientAccess;
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
     readonly listActive: () => Effect.Effect<
       ReadonlyArray<AuthPairingLink>,
@@ -231,6 +234,10 @@ export class PairingGrantStore extends Context.Service<
       input?: {
         readonly proofKeyThumbprint?: string;
         readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
+        /** All scopes must be granted; requestedScopes only requires an overlap for OAuth. */
+        readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
+        /** Also spends a code issued for an agent sign-in at this level; others refuse them. */
+        readonly mcpApproval?: AuthMcpClientAccess;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
@@ -252,40 +259,27 @@ type ConsumeResult =
     };
 
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
-// The desktop-bootstrap grant rides on a trusted IPC channel (fd3 or
-// stdin) at backend launch, so it doesn't have to be short-lived the
-// way a user-facing pairing link does. Letting it live for the
-// lifetime of the backend process (24h is more than long enough for
-// practical desktop use, and well under "forever" in case the seed
-// gets logged anywhere by accident) means a page reload past the 5-min
-// window can still recover by re-bootstrapping rather than locking
-// the user out of the backend.
 const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
-// A dev server's startup token is read off a log by whoever (or whatever) is
-// driving the session, often minutes later — after a `node --watch` restart, a
-// detour into another task, or a hand-off to the person actually doing the
-// testing. Five minutes turns that into a restart-the-server loop for no
-// security benefit: the token only unlocks a local dev backend, and its holder
-// could read the log anyway. Same reasoning (and duration) as the desktop
-// bootstrap grant above. Only applies when a dev URL is configured; user-issued
-// pairing links and real servers keep the 5-minute default.
 const DEV_STARTUP_TTL_HOURS = Duration.hours(24);
-const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
-  Math.floor(256 / PAIRING_TOKEN_ALPHABET.length) * PAIRING_TOKEN_ALPHABET.length;
+  Math.floor(256 / PAIRING_CODE_ALPHABET.length) * PAIRING_CODE_ALPHABET.length;
 
-export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+const PAIRING_TOKEN_PATTERN = new RegExp(
+  `^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}}$`,
+  "i",
+);
+
+const make = Effect.gen(function* () {
+  const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
-    while (credential.length < PAIRING_TOKEN_LENGTH) {
-      const bytes = yield* crypto
-        .randomBytes(PAIRING_TOKEN_LENGTH)
+    while (credential.length < PAIRING_CODE_LENGTH) {
+      const bytes = yield* random
+        .randomBytes(PAIRING_CODE_LENGTH)
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -296,8 +290,8 @@ export const make = Effect.gen(function* () {
         if (byte >= PAIRING_TOKEN_REJECTION_LIMIT) {
           continue;
         }
-        credential += PAIRING_TOKEN_ALPHABET[byte % PAIRING_TOKEN_ALPHABET.length]!;
-        if (credential.length === PAIRING_TOKEN_LENGTH) {
+        credential += PAIRING_CODE_ALPHABET[byte % PAIRING_CODE_ALPHABET.length]!;
+        if (credential.length === PAIRING_CODE_LENGTH) {
           return credential;
         }
       }
@@ -324,28 +318,26 @@ export const make = Effect.gen(function* () {
       id,
     }).pipe(Effect.asVoid);
 
-  // A desktop that sends its secret rotates the renderer's token, so accept
-  // whichever token the secret derives for the current window instead of
-  // seeding one fixed token. Older desktops only send the token.
+  // Accept tokens derived from the rotating desktop secret; older desktops send only a token.
   const desktopBootstrapSecret = config.desktopBootstrapSecret;
+  const mac = yield* Mac.Mac;
   const consumeRotatingDesktopToken = (credential: string, nowMs: number) =>
-    desktopBootstrapSecret !== undefined &&
-    isValidDesktopBootstrapToken(desktopBootstrapSecret, credential, nowMs);
+    desktopBootstrapSecret === undefined
+      ? Effect.succeed(false)
+      : isValidDesktopBootstrapToken(desktopBootstrapSecret, credential, nowMs).pipe(
+          Effect.provideService(Mac.Mac, mac),
+        );
 
   if (config.desktopBootstrapToken && desktopBootstrapSecret === undefined) {
     const now = yield* DateTime.now;
     yield* seedGrant(config.desktopBootstrapToken, {
       method: "desktop-bootstrap",
-      scopes: AuthAdministrativeScopes,
+      scopes: AuthStandardClientScopes,
       subject: "desktop-bootstrap",
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),
-      // Unbounded uses so the renderer can re-exchange the seed for a
-      // fresh bearer session after a page reload (or after the prior
-      // bearer expires). The seed itself stays inside the desktop
-      // process and the rendered page, both of which the user already
-      // implicitly trusts.
+      // Reloads and expired bearer sessions must be able to re-exchange the desktop seed.
       remainingUses: "unbounded",
     });
   }
@@ -398,12 +390,17 @@ export const make = Effect.gen(function* () {
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
   )(function* (input) {
-    const id = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError(
-        (cause) => new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
-      ),
-    );
-    const credential = yield* generatePairingToken;
+    const id = yield* random
+      .uuidV4()
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
+        ),
+      );
+    const token = yield* generatePairingToken;
+    const mcpApproval = input?.mcpApproval;
+    const credential = mcpApproval ? mcpApprovalCode(mcpApproval, token) : token;
     const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
     const ttl =
       input?.ttl ??
@@ -417,7 +414,9 @@ export const make = Effect.gen(function* () {
       ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
       expiresAt,
     };
-    const subject = input?.subject ?? "one-time-token";
+    const subject = mcpApproval
+      ? `${AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX}${mcpApproval}`
+      : (input?.subject ?? "one-time-token");
     yield* pairingLinks
       .create({
         id,
@@ -441,24 +440,27 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    yield* emitUpsert({
-      id,
-      scopes: input?.scopes ?? AuthStandardClientScopes,
-      subject: input?.subject ?? "one-time-token",
-      ...(input?.label ? { label: input.label } : {}),
-      createdAt: now,
-      expiresAt,
-    });
+    // Approval codes stay out of the pairing links and QR codes that clients show.
+    if (!mcpApproval) {
+      yield* emitUpsert({
+        id,
+        scopes: input?.scopes ?? AuthStandardClientScopes,
+        subject,
+        ...(input?.label ? { label: input.label } : {}),
+        createdAt: now,
+        expiresAt,
+      });
+    }
     return issued;
   });
 
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
-      if (consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
+      if (yield* consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
         return {
           method: "desktop-bootstrap",
-          scopes: AuthAdministrativeScopes,
+          scopes: AuthStandardClientScopes,
           subject: "desktop-bootstrap",
           expiresAt: DateTime.add(now, {
             milliseconds: DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
@@ -505,8 +507,10 @@ export const make = Effect.gen(function* () {
           }
 
           if (
-            input?.requestedScopes !== undefined &&
-            !input.requestedScopes.some((scope) => grant.scopes.includes(scope))
+            (input?.requestedScopes !== undefined &&
+              !input.requestedScopes.some((scope) => grant.scopes.includes(scope))) ||
+            (input?.requiredScopes !== undefined &&
+              !input.requiredScopes.every((scope) => grant.scopes.includes(scope)))
           ) {
             return [
               {
@@ -556,15 +560,24 @@ export const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
-      // The scope check is part of the UPDATE's WHERE clause so a rejected
-      // request cannot consume a one-time link. The re-check below only
-      // explains why nothing matched.
+      // Only credentials in the issued pairing-code formats are case-insensitive.
+      const pairingCredential = PAIRING_TOKEN_PATTERN.test(credential)
+        ? credential.toUpperCase()
+        : (parseMcpApprovalCode(credential)?.code ?? credential);
+
+      // Check scopes in the UPDATE so rejected requests cannot spend one-time links.
       const consumed = yield* pairingLinks
         .consumeAvailable({
-          credential,
+          credential: pairingCredential,
           proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
           ...(input?.requestedScopes !== undefined
             ? { requestedScopes: input.requestedScopes }
+            : {}),
+          ...(input?.requiredScopes !== undefined ? { requiredScopes: input.requiredScopes } : {}),
+          ...(input?.mcpApproval
+            ? {
+                mcpApprovalSubject: `${AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX}${input.mcpApproval}`,
+              }
             : {}),
           consumedAt: now,
           now,
@@ -572,7 +585,9 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new BootstrapCredentialConsumeAvailableError({ cause })));
 
       if (Option.isSome(consumed)) {
-        yield* emitRemoved(consumed.value.id);
+        if (!consumed.value.subject.startsWith(AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX)) {
+          yield* emitRemoved(consumed.value.id);
+        }
         return {
           method: consumed.value.method,
           scopes: consumed.value.scopes,
@@ -586,7 +601,7 @@ export const make = Effect.gen(function* () {
       }
 
       const matching = yield* pairingLinks
-        .getByCredential({ credential })
+        .getByCredential({ credential: pairingCredential })
         .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
       if (Option.isNone(matching)) {
         return yield* new UnknownBootstrapCredentialError({});
@@ -612,8 +627,10 @@ export const make = Effect.gen(function* () {
       }
 
       if (
-        input?.requestedScopes !== undefined &&
-        !input.requestedScopes.some((scope) => matching.value.scopes.includes(scope))
+        (input?.requestedScopes !== undefined &&
+          !input.requestedScopes.some((scope) => matching.value.scopes.includes(scope))) ||
+        (input?.requiredScopes !== undefined &&
+          !input.requiredScopes.every((scope) => matching.value.scopes.includes(scope)))
       ) {
         return yield* new BootstrapCredentialScopeNotGrantedError({});
       }

@@ -1,7 +1,9 @@
 import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
+import { cancelledTurnItemWork } from "../../../RestartBackgroundNote.ts";
 import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
@@ -12,10 +14,8 @@ import {
 } from "../shared.ts";
 import { GROK_MONITOR_PROMPT, GROK_MONITOR_TICKS } from "./input.ts";
 
-// Grok streams each monitor tick as an in_progress Bash result that already
-// carries exit_code 0 and ends the monitor only through `_x.ai/task_completed`.
-// Run 1 is held open until that end; Grok's own reply to the finished monitor
-// then arrives as a continuation run, like Claude and Codex background wakes.
+// Monitor ticks report in_progress with exit_code 0; only _x.ai/task_completed ends them.
+// Hold run 1 until then; Grok's later reply is a continuation.
 export function assertGrokMonitorOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -39,7 +39,6 @@ export function assertGrokMonitorOutput(
   assert.equal(monitor?.status, "completed");
   assert.equal(monitor?.output, GROK_MONITOR_TICKS.map((tick) => `${tick}\n`).join(""));
 
-  // Every tick before the end is shown running, with the output so far.
   const monitorUpdates = result.domainEvents.flatMap((event) =>
     event.type === "turn-item.updated" &&
     event.payload.id === monitor?.id &&
@@ -55,7 +54,20 @@ export function assertGrokMonitorOutput(
     assert.equal(monitorUpdates[tickUpdate]?.status, "running", `${tick} must show running`);
   }
 
-  // Run 1 settles only after the monitor's structured end.
+  // A persistent monitor keeps running after its run ends. Background work and
+  // the restart note must then name it a monitor, as they do for Claude's Monitor.
+  const runningMonitor = monitorUpdates.find((update) => update.status === "running");
+  assert.isDefined(runningMonitor);
+  assert.deepEqual(
+    derivePendingBackgroundWork({
+      latestRun: rootRun,
+      providerThreads: [],
+      turnItems: [runningMonitor],
+    }).map((task) => task.kind),
+    ["monitor"],
+  );
+  assert.equal(cancelledTurnItemWork(runningMonitor)?.kind, "monitor");
+
   const monitorCompletedAt = result.domainEvents.findIndex(
     (event) =>
       event.type === "turn-item.updated" &&
@@ -76,8 +88,6 @@ export function assertGrokMonitorOutput(
   );
   assert.include(rootTexts, "ROOT_DONE");
 
-  // Full access approves the monitor prompt for T3. It must answer with
-  // Grok's allow-once: Grok saves `always-allow` for the whole project.
   const permissionAnswer = transcript.entries.find(
     (entry) =>
       entry.type === "expect_outbound" &&
@@ -91,7 +101,6 @@ export function assertGrokMonitorOutput(
     { outcome: { outcome: "selected", optionId: "allow-once" } },
   );
 
-  // The timeline names the monitor from Grok's task_completed snapshot.
   assert.deepEqual(backgroundNotifications(projection), [
     {
       summary: 'Monitor "Watch three tick echoes" finished',
@@ -100,7 +109,6 @@ export function assertGrokMonitorOutput(
     },
   ]);
 
-  // Grok's own wake reply is a provider continuation, not more of run 1.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);
   assert.equal(`${wakeMessage?.createdBy}:${wakeMessage?.creationSource}`, "agent:provider");
   assert.isNotEmpty(

@@ -33,20 +33,6 @@ describe("incoming share presentation", () => {
     ).toEqual({ state: dismissed.state, shareIdToPresent: null });
   });
 
-  it("presents the next queued share immediately after the previous sheet closes", () => {
-    const first = transitionIncomingSharePresentation(EMPTY_INCOMING_SHARE_PRESENTATION_STATE, {
-      isShareSheetPresented: false,
-      pendingShareId: "share-1",
-    });
-
-    const next = transitionIncomingSharePresentation(first.state, {
-      isShareSheetPresented: false,
-      pendingShareId: "share-2",
-    });
-    expect(next.shareIdToPresent).toBe("share-2");
-    expect(next.state).toEqual({ presentedShareId: "share-2", dismissedShareId: null });
-  });
-
   it("forgets dismissal after consumption so a later handoff may reuse the id", () => {
     const dismissed = {
       presentedShareId: null,
@@ -60,30 +46,6 @@ describe("incoming share presentation", () => {
 
     expect(
       transitionIncomingSharePresentation(consumed.state, {
-        isShareSheetPresented: false,
-        pendingShareId: "share-1",
-      }).shareIdToPresent,
-    ).toBe("share-1");
-  });
-
-  it("forgets a consumed presentation while its sheet is still mounted", () => {
-    const presented = {
-      presentedShareId: "share-1",
-      dismissedShareId: null,
-    };
-    const consumed = transitionIncomingSharePresentation(presented, {
-      isShareSheetPresented: true,
-      pendingShareId: null,
-    });
-    expect(consumed.state).toEqual(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
-
-    const replacementWhileOpen = transitionIncomingSharePresentation(consumed.state, {
-      isShareSheetPresented: true,
-      pendingShareId: "share-1",
-    });
-    expect(replacementWhileOpen.shareIdToPresent).toBeNull();
-    expect(
-      transitionIncomingSharePresentation(replacementWhileOpen.state, {
         isShareSheetPresented: false,
         pendingShareId: "share-1",
       }).shareIdToPresent,

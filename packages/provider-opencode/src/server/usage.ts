@@ -1,10 +1,3 @@
-/**
- * Usage history for OpenCode, read from its SQLite databases and legacy JSON
- * message store under each data directory.
- *
- * @module provider-opencode/server/usage
- */
-
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   totalTokens,
@@ -36,7 +29,10 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-/** OpenCode stores uncached input and reasoning separately from input/output. */
+// OpenCode provider IDs whose bare model IDs LiteLLM prices under its own prefix.
+const LITELLM_PREFIXES = new Map([["opencode-go", "opencode_go"]]);
+const OPENCODE_GATEWAYS = new Set(["opencode", "opencode-go"]);
+
 function parseOpenCodeMessage(
   source: string,
   fallback: {
@@ -57,6 +53,7 @@ function parseOpenCodeMessage(
   const cache = object(usage.cache);
   const modelReference = object(message.model);
   const model = text(modelReference.id) || text(modelReference.modelID) || text(message.modelID);
+  const providerId = text(modelReference.providerID) || text(message.providerID);
   const timestampMs = object(message.time).created ?? fallback.timestampMs;
   if (!model || typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) return null;
   const reasoningTokens = tokens(usage.reasoning);
@@ -70,15 +67,21 @@ function parseOpenCodeMessage(
   if (totalTokens(totals) === 0) return null;
   const id = fallback.id || text(message.id);
   const cost = message.cost;
+  const prefix = LITELLM_PREFIXES.get(providerId);
+  const free = OPENCODE_GATEWAYS.has(providerId) && model.endsWith("-free");
   return {
     provider: "opencode",
     timestampMs,
     model,
+    ...(prefix !== undefined && !model.includes("/") ? { rateModel: `${prefix}/${model}` } : {}),
     sessionId: fallback.sessionId || text(message.sessionID),
     totals,
-    // OpenCode writes zero for models without a known rate, including paid
-    // subscription models. Let the shared price table estimate those records.
-    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    // OpenCode records zero for unknown rates and paid subscriptions alike, so only its own
+    // gateways' free models report zero; shared pricing estimates every other zero.
+    reportedCostUsd:
+      typeof cost === "number" && Number.isFinite(cost) && (cost > 0 || (free && cost === 0))
+        ? cost
+        : null,
     speed: "standard",
     dedupeKey: id ? `opencode:${id}` : null,
   };
@@ -93,13 +96,11 @@ export interface OpenCodeUsageReadResult {
 const isNotFound = (cause: PlatformError.PlatformError) => cause.reason._tag === "NotFound";
 const MESSAGE_PAGE_SIZE = 64;
 
-/** Whether the path is itself a symlink, without following it. */
 const isSymbolicLink = Effect.fnUntraced(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* Effect.isSuccess(fileSystem.readLink(path));
 });
 
-/** Stat of a regular file or directory; a symlink reports as itself and is never followed. */
 const entryInfo = Effect.fn("entryInfo")(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   if (yield* isSymbolicLink(path))
@@ -107,16 +108,11 @@ const entryInfo = Effect.fn("entryInfo")(function* (path: string) {
   return yield* fileSystem.stat(path);
 });
 
-/**
- * Stats run in the libuv thread pool, so a few at a time cut the walk's wall
- * time without lengthening any event-loop turn.
- */
 const LEGACY_STAT_CONCURRENCY = 4;
 
-/** Entries stat'd before any is processed, so one huge directory is not held in memory at once. */
+// Batch stats so huge directories do not stay in memory.
 const LEGACY_STAT_BATCH = 256;
 
-/** Reads current SQLite and pre-migration JSON stores without modifying either. */
 export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   root: string,
   sinceMs: number,
@@ -127,6 +123,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   const seen = new Set<string>();
   let found = false;
   let error = false;
+  let databaseRows = 0;
+  let databasePages = 0;
   const append = (records: UsageRecord[], record: UsageRecord | null) => {
     if (record === null || record.timestampMs < sinceMs) return;
     if (record.dedupeKey !== null) {
@@ -140,7 +138,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     Effect.flatMap((names) =>
       Effect.filter(
         names.filter((name) => /^opencode(?:-[a-zA-Z0-9_-]+)?\.db$/.test(name)),
-        // One database removed between listing and stat must not hide the rest.
         (name) =>
           entryInfo(path.join(root, name)).pipe(
             Effect.map((info) => info.type === "File"),
@@ -169,8 +166,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     files.push(file);
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      // A busy live provider should fail this source promptly rather than
-      // stalling the server while SQLite waits for its writer.
+      // Fail promptly on live-writer locks instead of stalling the server.
       yield* sql.unsafe("PRAGMA busy_timeout = 100");
       const tables = new Set(
         (yield* sql.unsafe<{ readonly name: unknown }>(
@@ -188,34 +184,39 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        const lastRowId = (yield* sql.unsafe<{ readonly last_row_id: number | null }>(
-          `SELECT MAX(rowid) AS last_row_id FROM ${table}`,
-        ))[0]?.last_row_id;
-        if (lastRowId === null || lastRowId === undefined) continue;
-        let afterRowId: number | undefined;
-        // SqlClient materializes each result with StatementSync.all(). Keep
-        // message bodies in small pages, and exclude rows appended mid-scan.
-        while (true) {
-          const pagePredicates = [
-            ...predicates,
-            "rowid <= ?",
-            ...(afterRowId === undefined ? [] : ["rowid > ?"]),
-          ];
-          const rows = yield* sql.unsafe<{
-            readonly row_id: number;
-            readonly id: unknown;
-            readonly session_id: unknown;
-            readonly data: unknown;
-            readonly created: unknown;
-          }>(
-            `SELECT rowid AS row_id, id, session_id, data, ${timestamp} AS created
-             FROM ${table} WHERE ${pagePredicates.join(" AND ")} ORDER BY rowid LIMIT ${MESSAGE_PAGE_SIZE}`,
-            [
-              ...(timestamp === "NULL" ? [] : [sinceMs]),
-              lastRowId,
-              ...(afterRowId === undefined ? [] : [afterRowId]),
-            ],
-          );
+        // List only rowids so SQLite can use time indexes without reading message bodies.
+        const listed = (yield* sql.unsafe<{ readonly row_id: number }>(
+          `SELECT rowid AS row_id FROM ${table}
+           ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}`,
+          timestamp === "NULL" ? [] : [sinceMs],
+        )).toSorted((a, b) => a.row_id - b.row_id);
+        databaseRows += listed.length;
+        // Filter and project in SQLite: user diffs and assistant bodies can be hundreds of MB.
+        const validAssistant = `CASE WHEN typeof(data) = 'text' AND json_valid(data)
+          THEN json_type(data, '$.role') IS NULL OR data ->> '$.role' = 'assistant' END`;
+        // Omit per-page spans; the enclosing scan records row and page counts.
+        for (let start = 0; start < listed.length; start += MESSAGE_PAGE_SIZE) {
+          const page = listed.slice(start, start + MESSAGE_PAGE_SIZE);
+          databasePages++;
+          const rows = yield* sql
+            .unsafe<{
+              readonly id: unknown;
+              readonly session_id: unknown;
+              readonly data: unknown;
+              readonly created: unknown;
+            }>(
+              `SELECT id, session_id, ${timestamp} AS created, json_object(
+                 'tokens', data -> '$.tokens', 'cost', data -> '$.cost',
+                 'model', data -> '$.model', 'modelID', data -> '$.modelID',
+                 'providerID', data -> '$.providerID',
+                 'time', data -> '$.time', 'id', data -> '$.id', 'sessionID', data -> '$.sessionID'
+               ) AS data
+               FROM ${table}
+               WHERE rowid IN (${page.map(() => "?").join(", ")}) AND ${validAssistant}
+               ORDER BY rowid`,
+              page.map((row) => row.row_id),
+            )
+            .pipe(Effect.withTracerEnabled(false));
           for (const row of rows) {
             append(
               file.records,
@@ -226,12 +227,11 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
               }),
             );
           }
-          if (rows.length < MESSAGE_PAGE_SIZE) break;
-          afterRowId = rows[rows.length - 1]!.row_id;
           yield* Effect.yieldNow;
         }
       }
     }).pipe(
+      (read) => Effect.flatMap(SqlClient.SqlClient, (sql) => sql.withTransaction(read)),
       Effect.provide(NodeSqliteClient.layer({ filename: file.path, readonly: true })),
       Effect.catchTags({
         SqlError: () => {
@@ -242,8 +242,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     );
   }
 
-  // Do not follow symlinks, including cycles. Database records win over their
-  // old JSON copies when OpenCode has migrated a store in place.
   const directories = [path.join(root, "storage", "message")];
   while (directories.length > 0) {
     const directory = directories.pop()!;
@@ -252,15 +250,12 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
       for (let start = 0; start < names.length; start += LEGACY_STAT_BATCH) {
         const batch = names.slice(start, start + LEGACY_STAT_BATCH);
         const entries = batch.map((name) => path.join(directory, name));
-        // `stat` follows symlinks and `readLink` fails, expensively, for
-        // everything else. Stat a batch, then ask whether an entry is a symlink
-        // only where the answer changes the result.
+        // stat follows symlinks; avoid expensive readLink failures unless link identity matters.
         const infos = yield* Effect.forEach(
           entries,
           (entry) =>
             fileSystem.stat(entry).pipe(
               Effect.catchTags({
-                // A symlink whose target cannot be stat'd is skipped, not an error.
                 PlatformError: (cause) =>
                   isNotFound(cause)
                     ? Effect.succeed(null)
@@ -281,12 +276,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
             if (!(yield* isSymbolicLink(entry))) directories.push(entry);
           } else if (info?.type === "File" && name.endsWith(".json")) {
             const id = name.slice(0, -5);
-            // A message cannot be created after its file was last written, so a
-            // file untouched since the window opened holds nothing in range.
+            // Messages cannot postdate file mtime; older files hold no in-window usage.
             const skip =
               seen.has(`opencode:${id}`) ||
               Option.exists(info.mtime, (mtime) => mtime.getTime() < sinceMs);
-            // A skipped file only matters as proof that the store exists.
             if (found && skip) continue;
             if (yield* isSymbolicLink(entry)) continue;
             found = true;
@@ -314,17 +307,18 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
       }),
     );
   }
+  yield* Effect.annotateCurrentSpan({
+    "usage.database_rows": databaseRows,
+    "usage.database_pages": databasePages,
+  });
   return { files, missing: !found && !error, error };
 });
 
-/**
- * The data directories to read: `OPENCODE_DATA_DIR` (comma-separated) or the
- * XDG default, canonicalized so aliases count once.
- */
-const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* () {
+const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcess.Environment;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const roots = environment["OPENCODE_DATA_DIR"]
     ?.split(",")
@@ -352,8 +346,11 @@ export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
   provider: "opencode",
-  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ windowStartMs }) {
-    const roots = yield* resolveOpenCodeDataDirs();
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ instances, windowStartMs }) {
+    const roots = new Set<string>();
+    for (const instance of instances) {
+      for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
+    }
     return yield* Effect.forEach(
       roots,
       (dir) =>

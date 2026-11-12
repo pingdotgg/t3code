@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-/** Platforms opt in to storing selected query responses beside their other offline data. */
 export class EnvironmentQueryStore extends Context.Reference<{
   readonly load: (
     environmentId: EnvironmentId,
@@ -27,23 +26,24 @@ export interface QueryPersistence<A> {
 export function persistQuery<A, I>(schema: Schema.Codec<A, I>): QueryPersistence<A> {
   const codec = Schema.fromJsonString(Schema.toCodecJson(schema));
   return {
-    load: (environmentId, key) =>
-      Effect.gen(function* () {
-        const store = yield* EnvironmentQueryStore;
-        if (store === null) return Option.none<A>();
-        const stored = yield* store.load(environmentId, key);
-        if (Option.isNone(stored)) return Option.none<A>();
-        return yield* Schema.decodeUnknownEffect(codec)(stored.value).pipe(
-          Effect.map(Option.some),
-          Effect.catch(() => Effect.succeedNone),
-        );
-      }),
-    save: (environmentId, key, value) =>
-      Effect.gen(function* () {
+    load: Effect.fn("queryPersistence.load")(function* (environmentId, key) {
+      const store = yield* EnvironmentQueryStore;
+      if (store === null) return Option.none<A>();
+      const stored = yield* store.load(environmentId, key);
+      if (Option.isNone(stored)) return Option.none<A>();
+      return yield* Schema.decodeEffect(codec)(stored.value).pipe(
+        Effect.asSome,
+        Effect.catch(() => Effect.succeedNone),
+      );
+    }),
+    save: Effect.fn("queryPersistence.save")(
+      function* (environmentId, key, value) {
         const store = yield* EnvironmentQueryStore;
         if (store === null) return;
         const payload = yield* Schema.encodeEffect(codec)(value);
         yield* store.save(environmentId, key, payload);
-      }).pipe(Effect.catch(() => Effect.logWarning("Offline query cache save failed"))),
+      },
+      Effect.catch(() => Effect.logWarning("Offline query cache save failed")),
+    ),
   };
 }

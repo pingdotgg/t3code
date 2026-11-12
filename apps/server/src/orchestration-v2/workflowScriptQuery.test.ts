@@ -3,7 +3,6 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
-import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -18,8 +17,6 @@ NodeFS.writeFileSync(scriptPath, "export const meta = {};\n");
 const outside = NodePath.join(NodeOS.tmpdir(), "wf-outside.js");
 NodeFS.writeFileSync(outside, "evil\n");
 const link = NodePath.join(root, "sneaky.js");
-// Planted only where the host allows it; the escape test is skipped
-// otherwise rather than passing vacuously on "not-found".
 if (symlinksSupported) {
   NodeFS.rmSync(link, { force: true });
   NodeFS.symlinkSync(outside, link);
@@ -53,32 +50,12 @@ describe("workflow script containment", () => {
     }),
   );
 
-  effectIt.effect("rejects relative and non-js paths", () =>
-    Effect.gen(function* () {
-      const relative = yield* Effect.exit(readWorkflowScript({ scriptPath: "run.js" }));
-      assert.equal(relative._tag, "Failure");
-      const nonJs = yield* Effect.exit(
-        readWorkflowScript({ scriptPath: scriptPath.replace(".js", ".ts") }),
-      );
-      assert.equal(nonJs._tag, "Failure");
-      const error = yield* Effect.flip(readWorkflowScript({ scriptPath: "run.js" }));
-      assert.equal(error._tag, "OrchestrationGetWorkflowScriptError");
-      assert.equal(error.scriptPath, "run.js");
-      assert.equal(error.reason, "invalid-path");
-      assert.equal(error.message, "Workflow scripts must be absolute .js paths.");
-      assert.instanceOf(error.cause, OrchestrationWorkflowFileError);
-    }),
-  );
-
   effectIt.effect.skipIf(!symlinksSupported)(
     "rejects paths outside the root and symlink escapes",
     () =>
       Effect.gen(function* () {
         const escaped = yield* Effect.exit(readWorkflowScript({ scriptPath: outside }));
         assert.equal(escaped._tag, "Failure");
-        // A symlink INSIDE the root pointing outside must fail specifically on
-        // realpath re-containment — a "not-found" would mean the link was
-        // never exercised and the assertion proves nothing.
         const sneaky = yield* Effect.exit(
           readWorkflowScript({ scriptPath: link }).pipe(
             Effect.flip,

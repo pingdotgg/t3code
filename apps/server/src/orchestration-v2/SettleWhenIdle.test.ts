@@ -248,7 +248,7 @@ it.effect(
       yield* f.settle();
       const request = (yield* f.read()).settleWhenIdleAt!;
       yield* f.setRun("completed");
-      const recovered = yield* f.projections.getSettlementCandidates(undefined, true);
+      const recovered = yield* f.projections.getSettlementCandidates(undefined);
       assert.equal(recovered.length, 1);
       assert.equal(recovered[0]?.settledOverride, "active");
       assert.deepEqual(recovered[0]?.settleWhenIdleAt, request);
@@ -440,7 +440,7 @@ it.effect("a fork stays active when its source is filed and still has background
     const fork = yield* f.projections.getThread(targetThreadId);
     assert.isNull(fork.settleWhenIdleAt);
     assert.isNull(fork.settledOverride);
-    assert.isEmpty(yield* f.projections.getSettlementCandidates(targetThreadId, true));
+    assert.isEmpty(yield* f.projections.getSettlementCandidates(targetThreadId));
     assert.isNotNull((yield* f.read()).settleWhenIdleAt);
   }).pipe(Effect.provide(testLayer)),
 );
@@ -635,7 +635,7 @@ it.effect("a held automatic run cannot hide background work or prevent settlemen
     yield* f.setRun("completed");
     yield* f.setBackground("dynamic_tool", "running");
     assert.isNotEmpty(
-      (yield* f.projections.getSettlementCandidates(f.threadId, true))[0]?.pendingBackgroundTasks,
+      (yield* f.projections.getSettlementCandidates(f.threadId))[0]?.pendingBackgroundTasks,
     );
     assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
     assert.isNotNull((yield* f.read()).settleWhenIdleAt);
@@ -648,7 +648,7 @@ it.effect("a held automatic run cannot hide background work or prevent settlemen
 );
 
 it.effect.each([undefined, false, true])(
-  "SQL and memory settlement candidates agree for queued runs (queueHeld: %s)",
+  "settlement candidates exclude held queued runs (queueHeld: %s)",
   (queueHeld) =>
     Effect.gen(function* () {
       const f = yield* fixture();
@@ -678,30 +678,9 @@ it.effect.each([undefined, false, true])(
         ],
       });
 
-      const memory = yield* ProjectionStore.ProjectionStoreV2.pipe(
-        Effect.provide(ProjectionStore.layerMemory),
-      );
-      const eventStore = yield* EventStore.EventStoreV2;
-      yield* eventStore
-        .read({ threadId: f.threadId })
-        .pipe(Stream.runForEach(({ event }) => memory.apply(event)));
-
-      const sqlCandidates = yield* f.projections.getSettlementCandidates(f.threadId, true);
-      const memoryCandidates = yield* memory.getSettlementCandidates(f.threadId, true);
+      const sqlCandidates = yield* f.projections.getSettlementCandidates(f.threadId);
       assert.lengthOf(sqlCandidates, 1);
-      assert.lengthOf(memoryCandidates, 1);
       const sqlCandidate = sqlCandidates[0]!;
-      const memoryCandidate = memoryCandidates[0]!;
-      for (const key of [
-        "latestRunId",
-        "status",
-        "latestRunRequestedAt",
-        "latestRunStartedAt",
-        "latestRunCompletedAt",
-        "pendingBackgroundTasks",
-      ] as const) {
-        assert.deepEqual(sqlCandidate[key], memoryCandidate[key], key);
-      }
       assert.equal(sqlCandidate.latestRunId, queueHeld === true ? f.run.id : queuedRunId);
       assert.equal(sqlCandidate.status, queueHeld === true ? "completed" : "queued");
       if (queueHeld === true) {

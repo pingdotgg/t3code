@@ -1,6 +1,6 @@
 import type { ChatAttachment, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { imageMimeType } from "@t3tools/shared/image";
-import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
+import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
 import { markdownImageSources } from "../../lib/markdownImageSources";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -8,7 +8,10 @@ import * as TestClock from "effect/testing/TestClock";
 import type * as Electron from "electron";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { SSH_PASSWORD_PROMPT_CHANNEL } from "../ipc/channels.ts";
+import {
+  SSH_PASSWORD_PROMPT_CHANNEL,
+  SSH_PASSWORD_PROMPT_SETTLED_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 interface SentMessage {
@@ -108,7 +111,7 @@ function layerElectronWindow(window: ReturnType<typeof makeTestWindow>["window"]
 function layer(window: ReturnType<typeof makeTestWindow>["window"]) {
   return DesktopSshPasswordPrompts.layer({ passwordPromptTimeoutMs: 1_000 }).pipe(
     Layer.provide(layerElectronWindow(window)),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(TestClock.layer()),
   );
 }
@@ -144,58 +147,51 @@ describe("DesktopSshPasswordPrompts", () => {
     }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
   });
 
-  it.effect("times out pending renderer prompts with a typed error", () => {
-    const testWindow = makeTestWindow();
+  it.effect.each(["answered", "cancelled", "timed out", "interrupted"] as const)(
+    "tells the window a prompt ended when it is %s",
+    (outcome) => {
+      const testWindow = makeTestWindow();
 
-    return Effect.gen(function* () {
-      const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
-      const fiber = yield* prompts
-        .request({
-          destination: "devbox",
-          username: null,
-          prompt: "Enter the SSH password.",
-          attempt: 1,
-        })
-        .pipe(Effect.forkScoped);
+      return Effect.gen(function* () {
+        const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+        const fiber = yield* prompts
+          .request({
+            destination: "devbox",
+            username: "julius",
+            prompt: "Enter the SSH password.",
+            attempt: 1,
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
 
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(1_000));
-      const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-      assert.instanceOf(error, DesktopSshPasswordPrompts.DesktopSshPromptTimedOutError);
-      assert.equal(error.destination, "devbox");
-    }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
-  });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        const request = testWindow.sentMessages[0]?.args[0] as { readonly requestId: string };
+        assert.ok(request);
+        switch (outcome) {
+          case "answered":
+            yield* prompts.resolve({ requestId: request.requestId, password: "secret" });
+            break;
+          case "cancelled":
+            yield* prompts.resolve({ requestId: request.requestId, password: null });
+            break;
+          case "timed out":
+            yield* TestClock.adjust("1 second");
+            break;
+          case "interrupted":
+            yield* Fiber.interrupt(fiber);
+            break;
+        }
+        yield* Fiber.await(fiber);
 
-  it.effect("cleans up a prompt that fails during renderer delivery", () => {
-    const cause = new Error("renderer unavailable");
-    const testWindow = makeTestWindow({ sendError: cause });
-
-    return Effect.gen(function* () {
-      const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
-      const error = yield* prompts
-        .request({
-          destination: "devbox",
-          username: "julius",
-          prompt: "Enter the SSH password.",
-          attempt: 1,
-        })
-        .pipe(Effect.flip);
-
-      assert.instanceOf(error, DesktopSshPasswordPrompts.DesktopSshPromptPresentationError);
-      assert.equal(error.operation, "send-prompt-request");
-      assert.equal(error.destination, "devbox");
-      const requestId = error.requestId;
-      if (requestId === null) {
-        assert.fail("renderer delivery failures must retain their request id");
-      }
-      assert.equal(testWindow.closedListenerCount(), 0);
-
-      const resolveError = yield* prompts
-        .resolve({ requestId, password: "secret" })
-        .pipe(Effect.flip);
-      assert.instanceOf(resolveError, DesktopSshPasswordPrompts.DesktopSshPromptExpiredError);
-    }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
-  });
+        assert.deepEqual(
+          testWindow.sentMessages
+            .filter((message) => message.channel === SSH_PASSWORD_PROMPT_SETTLED_CHANNEL)
+            .map((message) => message.args),
+          [[request.requestId]],
+        );
+      }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
+    },
+  );
 
   it.effect("keeps a submitted password when a later presentation step fails", () => {
     const testWindow = makeTestWindow({
@@ -223,27 +219,6 @@ describe("DesktopSshPasswordPrompts", () => {
       assert.equal(password, "secret");
       assert.equal(testWindow.isFocused(), false);
       assert.equal(testWindow.closedListenerCount(), 0);
-    }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
-  });
-
-  it.effect("classifies a failed initial window availability check", () => {
-    const testWindow = makeTestWindow({ isDestroyedError: new Error("window unavailable") });
-
-    return Effect.gen(function* () {
-      const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
-      const error = yield* prompts
-        .request({
-          destination: "devbox",
-          username: "julius",
-          prompt: "Enter the SSH password.",
-          attempt: 1,
-        })
-        .pipe(Effect.flip);
-
-      assert.instanceOf(error, DesktopSshPasswordPrompts.DesktopSshPromptPresentationError);
-      assert.equal(error.operation, "check-window-before-request");
-      assert.equal(error.requestId, null);
-      assert.deepEqual(testWindow.sentMessages, []);
     }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
   });
 });

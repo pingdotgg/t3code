@@ -1,14 +1,7 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * Putting a label on, and taking one off, from the row that says which it already wears.
- *
- * The repository's labels are read only once this menu opens, for the reason the reviewer menu
- * reads its people then: they are worth a request when somebody wants them and worth nothing on
- * every pull request they merely open.
- */
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
 import { CheckIcon, TagIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -19,7 +12,6 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 
-/** Narrows only what arrived: the host is asked once, when the menu opens. */
 function matches(candidate: PullRequestLabelCandidate, query: string): boolean {
   if (query.length === 0) return true;
   const needle = query.toLowerCase();
@@ -36,15 +28,12 @@ export function PullRequestLabelPicker({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** False where the host would refuse this account's change. Disabled with the reason rather
-   * than hidden, like the reviewer control beside it. */
   allowed: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
 
-  // Mounted with the menu closed, so nothing is asked of the host until it opens.
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
   );
@@ -52,9 +41,8 @@ export function PullRequestLabelPicker({
     reportFailure: false,
   });
 
-  const candidates = useMemo(
-    () => (candidatesQuery.data?.candidates ?? []).filter((entry) => matches(entry, query)),
-    [candidatesQuery.data, query],
+  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
+    matches(entry, query),
   );
 
   const toggle = async (candidate: PullRequestLabelCandidate) => {

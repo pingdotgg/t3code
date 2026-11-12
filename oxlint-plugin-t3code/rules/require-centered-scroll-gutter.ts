@@ -4,8 +4,8 @@ import * as Option from "effect/Option";
 import { unwrapExpression } from "../utils.ts";
 
 const SCROLLS_VERTICALLY = /(?:^|:)overflow-(?:y-)?auto$/u;
-// Either utility keeps the content box the same width whether or not the scrollbar shows. Both
-// exemptions must be unprefixed: a variant such as lg: leaves every other state unprotected.
+// Both exemptions must be unprefixed: a variant such as lg: leaves every other state
+// unprotected.
 const RESERVES_GUTTER =
   /^(?:scrollbar-gutter-(?:stable|both)|\[scrollbar-gutter:stable(?:_both-edges)?\])$/u;
 const HIDES_SCROLLBAR = /^\[scrollbar-width:none\]$/u;
@@ -18,16 +18,10 @@ const CENTERS_ROW_ITEMS =
   /(?:^|:)(?:justify-center(?:-safe)?|\[justify-content:safe_center\]|place-items-center|place-content-center)$/u;
 
 interface ClassNames {
-  /** Classes that apply in at least one render. */
   readonly possible: Set<string>;
-  /** Classes that apply in every render, outside any conditional branch. */
   readonly always: Set<string>;
 }
 
-/**
- * The class names a className value can produce: string literals, template text, and the
- * branches and arguments of conditionals and cn()-style calls. Conditions themselves are skipped.
- */
 function collectClassNames(node: unknown, classNames: ClassNames, always: boolean) {
   const expression = unwrapExpression(node);
   if (Option.isNone(expression)) return;
@@ -92,11 +86,6 @@ function classNamesOf(element: ESTree.JSXElement): ClassNames {
 const hasClass = (classNames: ReadonlySet<string>, pattern: RegExp) =>
   [...classNames].some((className) => pattern.test(className));
 
-/**
- * Reports a native vertical scroller that centers its content without reserving the scrollbar
- * lane. A classic scrollbar narrows the scroller when it appears, so centered content jumps by
- * half its width whenever the content grows past the fold.
- */
 export default defineRule({
   meta: {
     type: "problem",
@@ -126,7 +115,6 @@ export default defineRule({
         if (possible.size === 0) return;
 
         if (hasClass(possible, SCROLLS_VERTICALLY)) {
-          // A responsive or conditional direction can render as either axis, so check both.
           const centersColumn =
             hasClass(possible, COLUMN) && hasClass(possible, CENTERS_COLUMN_ITEMS);
           const centersRow =
@@ -136,7 +124,6 @@ export default defineRule({
         }
 
         if (!hasClass(possible, CENTERED_BY_MARGIN)) return;
-        // The nearest enclosing scroller is the one whose scrollbar moves this element.
         for (let ancestor: ESTree.Node | null = node.parent; ancestor; ancestor = ancestor.parent) {
           // An element passed as a prop renders wherever that component puts it.
           if (ancestor.type === "JSXAttribute") return;

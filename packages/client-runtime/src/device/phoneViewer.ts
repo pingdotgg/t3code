@@ -106,12 +106,10 @@ export function createPhoneViewer(options: {
   let accessory: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let accessoryBounds: Box3 | null = null;
   let foldTurn: { from: number; to: number; startedAt: number } | null = null;
-  // The inner display's raw width over height. Cover frames leave the last unfolded shape.
   const rawAspect = () => options.source.width / options.source.height;
   let foldAspect = isFoldInnerAspect(rawAspect()) ? rawAspect() : DEFAULT_FOLD_INNER_ASPECT;
   const createFoldScene = (angle: number, displayLayout = layout) =>
     createAndroidFoldScene(texture, displayLayout, angle, foldAspect);
-  /** The hinge angle currently on screen, including an unfinished turn. */
   const visibleFoldAngle = (fallback: number) => {
     if (!foldTurn) return fallback;
     const progress = Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
@@ -229,7 +227,6 @@ export function createPhoneViewer(options: {
       next.rawLandscape !== layout.rawLandscape ||
       next.rotation !== layout.rotation
     ) {
-      // The model and renderer survive framebuffer rotation and native resolution changes.
       if (resized) {
         const previous = texture;
         texture = makeTexture();
@@ -238,12 +235,10 @@ export function createPhoneViewer(options: {
         phone.setDisplay(texture, next);
         previous.dispose();
       }
-      // Learn the inner display shape from any unfolded frame, including before fold mode.
       const frameAspect = rawAspect();
       const innerChanged = isFoldInnerAspect(frameAspect) && frameAspect !== foldAspect;
       if (innerChanged) foldAspect = frameAspect;
       if (!imported && "setAngle" in phone && innerChanged) {
-        // A new inner display shape resizes the body; the hinge keeps its visible angle.
         const angle = visibleFoldAngle(foldAngle ?? 180);
         scene.remove(phone.root);
         phone.dispose();
@@ -288,7 +283,6 @@ export function createPhoneViewer(options: {
     load: loadDeviceModel,
     onError: options.onModelError,
     install(model) {
-      // Validate and prepare the next scene before releasing the visible one.
       const next = disposed
         ? null
         : model
@@ -355,7 +349,6 @@ export function createPhoneViewer(options: {
       if (disposed || next === foldAngle) return;
       const previous = foldAngle;
       foldAngle = next;
-      // A loaded model owns the scene; install() reads foldAngle if it is removed.
       if (imported) return;
       if (next === null || !("setAngle" in phone)) {
         scene.remove(phone.root);

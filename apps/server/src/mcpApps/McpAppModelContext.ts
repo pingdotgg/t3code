@@ -1,12 +1,12 @@
 import type { ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Largest context one app may keep for the agent, in UTF-8 bytes. */
 export const MCP_APP_MODEL_CONTEXT_MAX_BYTES = 16 * 1024;
 
 export class McpAppModelContextError extends Schema.TaggedError<McpAppModelContextError>()(
@@ -21,15 +21,10 @@ export interface McpAppModelContextEntry {
   readonly text: string;
 }
 
-/**
- * What each MCP App told the agent through `ui/update-model-context`. The spec
- * replaces an app's context on every update, so there is one entry per app (its
- * tool call); the thread's next turn carries the entries to the provider.
- */
 export class McpAppModelContext extends Context.Service<
   McpAppModelContext,
   {
-    /** Replaces the app's context; empty text removes it. */
+    /** Empty text removes the app's context. */
     readonly set: (input: {
       readonly threadId: ThreadId;
       readonly itemId: TurnItemId;
@@ -72,11 +67,7 @@ export const layer = Layer.effect(
     });
 
     const forThread = Effect.fn("McpAppModelContext.forThread")(function* (threadId: ThreadId) {
-      // Only apps still in the thread's history count: an app whose item is
-      // gone, or whose run this thread rolled back, stops informing the agent.
-      // The item can live in a thread this one was forked from, so it is
-      // matched by id alone; that thread rolling the run back later leaves the
-      // fork's copy in place.
+      // Match by id across fork lineage; later source rollbacks leave the fork's copy intact.
       return yield* sql<McpAppModelContextEntry>`
         SELECT context.item_id AS "itemId", context.server, context.tool, context.text
         FROM mcp_app_model_context AS context
@@ -91,15 +82,21 @@ export const layer = Layer.effect(
             OR run.thread_id <> context.thread_id
           )
         ORDER BY context.updated_at, context.item_id
-      `.pipe(Effect.mapError(fail));
+      `.pipe(NodeSqliteClient.readOnly, Effect.mapError(fail));
     });
 
     return McpAppModelContext.of({ set, forThread });
   }),
 );
 
-/** No app context: for code paths and tests with no MCP Apps. */
 export const layerEmpty = Layer.succeed(
   McpAppModelContext,
-  McpAppModelContext.of({ set: () => Effect.void, forThread: () => Effect.succeed([]) }),
+  McpAppModelContext.of({
+    set: Effect.fn("McpAppModelContext.set")(function () {
+      return Effect.void;
+    }),
+    forThread: Effect.fn("McpAppModelContext.forThread")(function () {
+      return Effect.succeed([]);
+    }),
+  }),
 );

@@ -1,5 +1,3 @@
-/** Formats whose headers give extensionless files a useful icon. This is a
- * presentation hint, never a validation of a file's contents or safety. */
 export function fileHeaderMimeType(bytes: Uint8Array): string | undefined {
   const startsWith = (signature: readonly number[], offset = 0) =>
     signature.every((byte, index) => bytes[offset + index] === byte);

@@ -1,9 +1,9 @@
+import { toIsoUtc } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Schema from "effect/Schema";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import type {
   PullRequestActor,
   PullRequestCheck,
+  PullRequestCheckStatus,
   PullRequestComment,
   PullRequestCommit,
   PullRequestReaction,
@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import { forgejoHeadBranch } from "./forgejoPullRequests.ts";
 
 export const ForgejoUser = Schema.Struct({
   login: Schema.String,
@@ -32,9 +33,11 @@ export const ForgejoRepository = Schema.Struct({
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
+  default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
+  label: Schema.optional(Schema.String),
   sha: Schema.String,
   repo: Schema.NullOr(ForgejoRepository),
 });
@@ -46,6 +49,7 @@ export const ForgejoPullRequest = Schema.Struct({
   user: Schema.NullOr(ForgejoUser),
   state: Schema.String,
   draft: Schema.optional(Schema.Boolean),
+  flow: Schema.optional(Schema.Int),
   merged: Schema.Boolean,
   mergeable: Schema.optional(Schema.Boolean),
   is_locked: Schema.optional(Schema.Boolean),
@@ -68,6 +72,7 @@ export const ForgejoComment = Schema.Struct({
   body: Schema.String,
   user: Schema.NullOr(ForgejoUser),
   created_at: Schema.String,
+  updated_at: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.optional(Schema.String),
 });
 export const ForgejoReview = Schema.Struct({
@@ -75,6 +80,7 @@ export const ForgejoReview = Schema.Struct({
   body: Schema.String,
   user: Schema.NullOr(ForgejoUser),
   state: Schema.String,
+  dismissed: Schema.optional(Schema.Boolean),
   submitted_at: Schema.String,
   html_url: Schema.optional(Schema.String),
   comments_count: Schema.Int,
@@ -101,6 +107,7 @@ export const ForgejoCommit = Schema.Struct({
   ),
 });
 export const ForgejoStatus = Schema.Struct({
+  id: Schema.optional(Schema.Int),
   context: Schema.String,
   status: Schema.String,
   description: Schema.NullOr(Schema.String),
@@ -120,17 +127,13 @@ export function forgejoActor(
     : null;
 }
 
-function toIsoUtc(value: string): string {
-  return Option.match(DateTime.make(value), { onNone: () => value, onSome: DateTime.formatIso });
-}
-
 export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
   return {
     number: pr.number,
     title: pr.title,
     url: pr.html_url,
     author: forgejoActor(pr.user),
-    headBranch: pr.head.ref,
+    headBranch: forgejoHeadBranch(pr),
     baseBranch: pr.base.ref,
     headRepositoryNameWithOwner: pr.head.repo?.full_name ?? null,
     state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",
@@ -144,17 +147,24 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     closedAt: pr.closed_at === null ? null : toIsoUtc(pr.closed_at),
     mergedAt: pr.merged_at === null ? null : toIsoUtc(pr.merged_at),
     reviewRequestLogins: (pr.requested_reviewers ?? []).map((user) => user.login),
-    labels: (pr.labels ?? []).map((label) => ({ name: label.name, color: label.color ?? null })),
+    labels: (pr.labels ?? []).map((label) => ({
+      name: label.name,
+      color: label.color ?? null,
+      description: label.description || null,
+    })),
   } satisfies ProviderChangeRequest;
 }
 
 export function forgejoComment(comment: typeof ForgejoComment.Type): PullRequestComment {
+  const createdAt = toIsoUtc(comment.created_at);
+  const editedAt = comment.updated_at == null ? undefined : toIsoUtc(comment.updated_at);
   return {
     id: String(comment.id),
     kind: "issue-comment",
     author: forgejoActor(comment.user),
     body: comment.body,
-    createdAt: toIsoUtc(comment.created_at),
+    createdAt,
+    ...(editedAt === undefined || editedAt === createdAt ? {} : { editedAt }),
     url: comment.html_url || null,
     path: null,
     reviewState: null,
@@ -171,11 +181,13 @@ export function forgejoReview(review: typeof ForgejoReview.Type): PullRequestCom
     url: review.html_url || null,
     path: null,
     reviewState:
-      review.state === "REQUEST_CHANGES"
-        ? "CHANGES_REQUESTED"
-        : review.state === "COMMENT"
-          ? "COMMENTED"
-          : review.state,
+      review.dismissed === true
+        ? "DISMISSED"
+        : review.state === "REQUEST_CHANGES"
+          ? "CHANGES_REQUESTED"
+          : review.state === "COMMENT"
+            ? "COMMENTED"
+            : review.state,
   };
 }
 
@@ -208,23 +220,41 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
   };
 }
 
+// Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`,
+// and `warning` is finished without being a pass. Only `pending` and states we do not know may
+// hold a watch open.
+function forgejoCheckStatus(state: string): PullRequestCheckStatus {
+  switch (state) {
+    case "success":
+      return "success";
+    case "failure":
+    case "error":
+      return "failure";
+    case "skipped":
+      return "skipped";
+    case "warning":
+      return "neutral";
+    default:
+      return "pending";
+  }
+}
+
 export function forgejoChecks(
   statuses: ReadonlyArray<typeof ForgejoStatus.Type>,
+  pullRequestUrl: string,
 ): ReadonlyArray<PullRequestCheck> {
   return dedupeChecks(
     statuses.map((status) => ({
       workflowName: null,
       at: status.updated_at,
+      ...(status.id === undefined ? {} : { sequence: status.id }),
       check: {
         name: status.context || "check",
         description: status.description || null,
-        url: status.target_url || null,
-        status:
-          status.status === "success"
-            ? "success"
-            : status.status === "failure" || status.status === "error"
-              ? "failure"
-              : "pending",
+        url: status.target_url
+          ? (URL.parse(status.target_url, pullRequestUrl)?.href ?? null)
+          : null,
+        status: forgejoCheckStatus(status.status),
       },
     })),
   );

@@ -1,12 +1,9 @@
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-/** A 16-byte (128-bit) random hex-encoded string representing an physical instance of a logical resource */
-export class InstanceId extends Context.Service<InstanceId, string>()(
-  "instance-id",
-) {}
-
 /**
+ * Generate an instance ID: a 16-byte (128-bit) random hex-encoded string that
+ * identifies one physical instance of a logical resource. The running
+ * resource's instance ID is available as `ResourceContext.instanceId`.
  * @returns Hex-encoded instance ID (16 random bytes)
  */
 export const generateInstanceId = () =>

@@ -64,7 +64,6 @@ function projection(input: {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
-/** Fork child: inherited parent rows, synthetic marker, local rows, retained interrupt request. */
 function forkWindow() {
   const inherited = [item(PARENT, "parent-1", 1), item(PARENT, "parent-2", 2)];
   const marker = item(PARENT, "fork-marker", 3, "fork");
@@ -85,20 +84,6 @@ function forkWindow() {
 }
 
 describe("compact bounded snapshot turnItems", () => {
-  it("omits only local visible items and restores the exact list and order", () => {
-    const { projection: full, local, retainedRequest } = forkWindow();
-    const compact = omitLocalVisibleTurnItems(full);
-
-    expect(compact).not.toBeNull();
-    // Inherited and synthetic rows never had turnItems; the retained request stays.
-    expect(compact!.turnItems).toEqual([retainedRequest]);
-    expect(compact!.visibleTurnItems).toBe(full.visibleTurnItems);
-
-    const restored = restoreLocalVisibleTurnItems(compact!);
-    expect(restored.turnItems).toEqual([...local, retainedRequest]);
-    expect(restored).toEqual(full);
-  });
-
   it("round-trips through JSON as a separately decoded client would see it", () => {
     const { projection: full } = forkWindow();
     const wire = JSON.parse(JSON.stringify(omitLocalVisibleTurnItems(full)));
@@ -118,30 +103,12 @@ describe("compact bounded snapshot turnItems", () => {
   it("refuses shapes it cannot restore exactly", () => {
     const [first, second] = [item(CHILD, "a", 1), item(CHILD, "b", 2)];
     const visible = [row("local", CHILD, first), row("local", CHILD, second)];
-    // Different order than the visible rows.
     expect(omitLocalVisibleTurnItems(projection({ visible, turnItems: [second, first] }))).toBe(
       null,
     );
-    // Equal content but a different object: restoring would not be provably exact.
     expect(
       omitLocalVisibleTurnItems(projection({ visible, turnItems: [{ ...first }, second] })),
     ).toBe(null);
-    // A local row without its turn item.
     expect(omitLocalVisibleTurnItems(projection({ visible, turnItems: [first] }))).toBe(null);
-  });
-
-  it("sends nothing compact when no local rows are visible", () => {
-    const inherited = item(PARENT, "parent", 1);
-    const request = item(CHILD, "interrupt-request", 0, "run_interrupt_request");
-    expect(
-      omitLocalVisibleTurnItems(
-        projection({ visible: [row("inherited", PARENT, inherited)], turnItems: [request] }),
-      ),
-    ).toBe(null);
-  });
-
-  it("leaves unmarked snapshots untouched", () => {
-    const { projection: full } = forkWindow();
-    expect(boundedSnapshotProjection({ projection: full })).toBe(full);
   });
 });

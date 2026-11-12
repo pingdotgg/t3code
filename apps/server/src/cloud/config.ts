@@ -17,6 +17,7 @@ export const RELAY_ISSUER_SECRET = "cloud-relay-issuer";
 export const RELAY_ENVIRONMENT_CREDENTIAL_SECRET = "cloud-relay-environment-credential";
 export const PUBLISH_AGENT_ACTIVITY_SECRET = "cloud-publish-agent-activity";
 export const HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET = "cloud-hold-webhooks-while-offline";
+export const CLOUD_LINK_REVOKED = "cloud-link-revoked";
 
 export const encodeEndpointRuntimeConfigJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),
@@ -43,14 +44,14 @@ export function isAgentActivityPublishingEnabledValue(value: string | null): boo
   return value === "true";
 }
 
-/** Whether agent-activity publishes currently leave this environment: the
-    publish opt-in secret is enabled and the relay link credentials exist.
-    Mirrors the per-publish gate in AgentAwarenessRelay, so the descriptor
-    capability never advertises publishing that the publisher would skip. */
-export const readAgentActivityPublishingActive = (
+/**
+ * Mirrors the per-publish gate in AgentAwarenessRelay, so the descriptor
+    capability never advertises publishing that the publisher would skip.
+ */
+export const readAgentActivityPublishingActive: (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
+) => Effect.Effect<boolean> = Effect.fn("config.readAgentActivityPublishingActive")(
+  function* (secrets: ServerSecretStore.ServerSecretStore["Service"]) {
     const readSecretString = (name: string) =>
       secrets
         .get(name)
@@ -64,8 +65,7 @@ export const readAgentActivityPublishingActive = (
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
     ]);
-    // Empty strings are as unconfigured as missing files: the publisher's
-    // truthiness gate skips them, so the capability must too.
+    // Match the publisher, which treats empty strings as unconfigured.
     return (
       isAgentActivityPublishingEnabledValue(enabled) &&
       url !== null &&
@@ -73,9 +73,10 @@ export const readAgentActivityPublishingActive = (
       environmentCredential !== null &&
       environmentCredential !== ""
     );
-  }).pipe(Effect.orElseSucceed(() => false));
+  },
+  Effect.orElseSucceed(() => false),
+);
 
-/** A non-empty secret as text, or null when it is missing, empty or unreadable. */
 const readSecretString = (name: string) =>
   ServerSecretStore.ServerSecretStore.pipe(
     Effect.flatMap((secrets) => secrets.get(name)),
@@ -85,7 +86,6 @@ const readSecretString = (name: string) =>
     Effect.orElseSucceed(() => null),
   );
 
-/** The relay URL and environment credential, or null when not linked to T3 Connect. */
 export const readRelayConnection = Effect.all([
   readSecretString(RELAY_URL_SECRET),
   readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
@@ -95,7 +95,6 @@ export const readRelayConnection = Effect.all([
   ),
 );
 
-/** Whether this environment opted in to T3 Connect holding webhooks while it is offline. */
 export const readHoldWebhooksWhileOffline = readSecretString(
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
 ).pipe(Effect.map((value) => value === "true"));

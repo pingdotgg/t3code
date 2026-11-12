@@ -1,3 +1,5 @@
+import * as AWS from "@alchemy.run/aws";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 /**
  * An EKS-orchestrated SageMaker HyperPod cluster with every DX tier:
  *
@@ -16,8 +18,6 @@
  * takes ~10-15 minutes and the HyperPod cluster another ~10-20.
  */
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as Kubernetes from "alchemy/Kubernetes";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HyperPodEksInfra } from "./src/eks-infra.ts";

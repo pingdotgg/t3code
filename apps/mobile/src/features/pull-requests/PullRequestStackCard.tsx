@@ -1,19 +1,20 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { Platform, View } from "react-native";
-import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
-import { AppText as Text } from "../../components/AppText";
+import { View } from "react-native";
+import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
+import { AppText as Text } from "../../components/ui/AppText";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
+import { pullRequestLayerParams } from "./pullRequestStack";
 import { pullRequestStatus } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
 import type { PullRequestStackState } from "./usePullRequestStack";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 
 export function PullRequestStackCard(props: {
   readonly params: PullRequestParams;
   readonly state: PullRequestStackState;
 }) {
-  const navigation = useNavigation();
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const openDetail = useOpenWorkspaceDetail();
   const [expanded, setExpanded] = useState(false);
   const stack = props.state.stack;
   if (!stack) {
@@ -26,7 +27,7 @@ export function PullRequestStackCard(props: {
       <PullRequestCardGroup>
         <PullRequestCardRow
           title="Stack"
-          icon="square.3.layers.3d"
+          icon={PullRequestGlyph.stack}
           value={`${summary.position} of ${summary.size}`}
           last
         />
@@ -38,7 +39,7 @@ export function PullRequestStackCard(props: {
     <PullRequestCardGroup>
       <PullRequestCardRow
         title="Stack"
-        icon="square.3.layers.3d"
+        icon={PullRequestGlyph.stack}
         value={`${position} of ${stack.layers.length}`}
         accessibilityLabel={`Stack, ${position} of ${stack.layers.length}${props.state.isFresh ? "" : ", showing saved stack"}`}
         expanded={expanded}
@@ -64,12 +65,13 @@ export function PullRequestStackCard(props: {
                   onPress={
                     selected
                       ? undefined
-                      : () => {
-                          const params = { ...props.params, number: layer.number };
-                          if (Platform.OS === "android")
-                            selectAndroidWorkspace({ name: "PullRequest", params });
-                          else navigation.dispatch(StackActions.push("PullRequest", params));
-                        }
+                      : () =>
+                          openDetail({
+                            name: "PullRequest",
+                            params: withKnownPullRequestSummary(
+                              pullRequestLayerParams(props.params, layer.number),
+                            ),
+                          })
                   }
                   last={index === stack.layers.length - 1}
                 />

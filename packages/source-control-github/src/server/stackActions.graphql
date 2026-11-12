@@ -1,0 +1,13 @@
+# Whether the viewer can push to one stack layer's head branch. `GraphQLResolver.aliased` repeats
+# it under an alias per layer, so a stack's layers are checked in one request.
+query PullRequestBranchAccess($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRepository {
+        viewerPermission
+      }
+      # A fork's branch is writable without repository access when its owner allows it.
+      maintainerCanModify
+    }
+  }
+}

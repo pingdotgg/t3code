@@ -1,4 +1,4 @@
-import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "./filePreview.ts";
+import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "./mediaPreview.ts";
 
 export const PROJECT_FAVICON_FALLBACK_MARKER = "project-favicon-missing";
 
@@ -27,9 +27,7 @@ export function getProjectFaviconCacheKey(
   try {
     const pathname = new URL(url, "https://t3.invalid").pathname;
     revision = pathname.slice(pathname.lastIndexOf("/") + 1);
-  } catch {
-    // Keep the full value as a safe fallback for malformed URLs.
-  }
+  } catch {}
 
   return JSON.stringify([environmentId, workspaceRoot, revision]);
 }

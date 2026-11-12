@@ -1,3 +1,4 @@
+import { trimOptionalString } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -13,7 +14,6 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
-  /** The head commit, when the read asked for `headRefOid`. */
   readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
@@ -38,9 +38,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   isCrossRepository: Schema.optional(Schema.Boolean),
-  // gh < 2.47 exports headRepository as {id, name} only; nameWithOwner was
-  // added later. Both fields stay optional so a version-drifted gh CLI can
-  // never fail the decode and silently drop the PR from the list.
+  // gh < 2.47 omits headRepository.nameWithOwner.
   headRepository: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -57,11 +55,6 @@ const GitHubPullRequestSchema = Schema.Struct({
     ),
   ),
 });
-
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 function normalizeGitHubPullRequestState(input: {
   state?: string | null | undefined;
@@ -80,7 +73,7 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
-function normalizeGitHubPullRequestRecord(
+export function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
   const explicitNameWithOwner = trimOptionalString(raw.headRepository?.nameWithOwner);
@@ -118,11 +111,7 @@ function normalizeGitHubPullRequestRecord(
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
-/**
- * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
- * skipped, so one malformed pull request cannot hide the rest.
- */
-export function decodeGitHubPullRequestEntries(
+function decodeGitHubPullRequestEntries(
   entries: ReadonlyArray<unknown>,
 ): ReadonlyArray<NormalizedGitHubPullRequestRecord> {
   const pullRequests: NormalizedGitHubPullRequestRecord[] = [];

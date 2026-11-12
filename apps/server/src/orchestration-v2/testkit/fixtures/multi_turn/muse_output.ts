@@ -15,10 +15,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * Two turns in one Muse session. Muse streams reasoning beside each reply, and
- * its per-step skill-reminder child never shows as a row.
- */
 export function assertMuseMultiTurnOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -43,6 +39,5 @@ export function assertMuseMultiTurnOutput(
     ),
     `unexpected rows: ${projection.turnItems.map((item) => item.type).join(", ")}`,
   );
-  // Both turns ran on one native session.
   assert.lengthOf(projection.providerThreads, 1);
 }

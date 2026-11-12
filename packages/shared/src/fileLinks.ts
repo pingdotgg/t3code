@@ -5,15 +5,11 @@ import {
   stripSlashPrefixedWindowsDrive,
 } from "./path.ts";
 
-const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+))?$/;
+const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+)|-(\d+))?$/;
 
-const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
+const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+)|-L?(\d+))?$/i;
 
-/**
- * Turns a `file:` URL into a host path, still percent-encoded so callers that
- * decode every destination in one place do not decode file URLs twice. A
- * non-localhost authority becomes a UNC share.
- */
+/** Keeps paths percent-encoded to avoid double decoding; non-localhost authorities become UNC shares. */
 export function parseFileUrlHref(
   href: string,
 ): { readonly path: string; readonly hash: string } | null {
@@ -36,6 +32,8 @@ export interface FilePathPosition {
   readonly path: string;
   readonly line?: number;
   readonly column?: number;
+  /** The last line of a range such as `:42-64`. Editors open at `line`. */
+  readonly endLine?: number;
 }
 
 export function splitFilePathPosition(path: string, hash = ""): FilePathPosition {
@@ -45,10 +43,12 @@ export function splitFilePathPosition(path: string, hash = ""): FilePathPosition
 
   const line = Number.parseInt(match[1], 10);
   const column = match[2] === undefined ? undefined : Number.parseInt(match[2], 10);
+  const endLine = match[3] === undefined ? undefined : Number.parseInt(match[3], 10);
   return {
     path: suffixMatch ? path.slice(0, -suffixMatch[0].length) : path,
     ...(line > 0 ? { line } : {}),
     ...(column !== undefined && column > 0 ? { column } : {}),
+    ...(line > 0 && endLine !== undefined && endLine > line ? { endLine } : {}),
   };
 }
 
@@ -61,7 +61,7 @@ function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
 }
 
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
+export function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
@@ -80,7 +80,7 @@ function inferHomeFromCwd(cwd: string): string | undefined {
     return `/home/${posixHome[1]}`;
   }
 
-  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/);
+  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/i);
   if (windowsUser?.[1]) {
     return windowsUser[1];
   }
@@ -93,7 +93,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/")) {
+  if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
       const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
@@ -135,31 +135,26 @@ export function buildFileLinkParentSuffixByPath(
     const parentSegmentsByPath = new Map(
       uniquePaths.map((filePath) => [filePath, pathParentSegments(filePath)]),
     );
-    const minUniqueDepthByPath = new Map<string, number>();
+    const suffixCounts = new Map<string, number>();
+    for (const segments of parentSegmentsByPath.values()) {
+      for (let depth = 1; depth <= segments.length; depth += 1) {
+        const suffix = segments.slice(-depth).join("/");
+        suffixCounts.set(suffix, (suffixCounts.get(suffix) ?? 0) + 1);
+      }
+    }
 
     for (const filePath of uniquePaths) {
       const segments = parentSegmentsByPath.get(filePath) ?? [];
       let resolvedDepth = segments.length;
       for (let depth = 1; depth <= segments.length; depth += 1) {
         const candidate = segments.slice(-depth).join("/");
-        const collision = uniquePaths.some((otherPath) => {
-          if (otherPath === filePath) return false;
-          const otherSegments = parentSegmentsByPath.get(otherPath) ?? [];
-          return otherSegments.slice(-depth).join("/") === candidate;
-        });
-        if (!collision) {
+        if (suffixCounts.get(candidate) === 1) {
           resolvedDepth = depth;
           break;
         }
       }
-      minUniqueDepthByPath.set(filePath, resolvedDepth);
-    }
-
-    for (const filePath of uniquePaths) {
-      const segments = parentSegmentsByPath.get(filePath) ?? [];
       if (segments.length === 0) continue;
-      const minUniqueDepth = minUniqueDepthByPath.get(filePath) ?? 1;
-      const suffixDepth = Math.min(segments.length, Math.max(minUniqueDepth, 2));
+      const suffixDepth = Math.min(segments.length, Math.max(resolvedDepth, 2));
       suffixByPath.set(filePath, segments.slice(-suffixDepth).join("/"));
     }
   }
@@ -167,7 +162,6 @@ export function buildFileLinkParentSuffixByPath(
   return suffixByPath;
 }
 
-/** Visible text of a file chip, shared by Markdown rendering and thread search. */
 export function fileLinkLabel(
   file: FilePathPosition,
   parentSuffixByPath: ReadonlyMap<string, string>,
@@ -176,7 +170,9 @@ export function fileLinkLabel(
   return [
     fileBasename(file.path),
     suffix,
-    file.line ? `L${file.line}${file.column ? `:C${file.column}` : ""}` : undefined,
+    file.line
+      ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
+      : undefined,
   ]
     .filter(Boolean)
     .join(" · ");

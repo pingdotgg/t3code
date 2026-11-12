@@ -1,5 +1,6 @@
 import type { ChatAttachment } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 
 export type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system" | "reasoning";
@@ -12,21 +13,24 @@ const MAX_MESSAGE = 2_000;
 const OMITTED = "[Earlier content truncated]\n\n";
 const TRUNCATED = "\n[Content truncated]\n";
 
-/** Keep the request and its final constraints when a message is too long. */
 export function limitTitleMessage(text: string, budget: number): string {
   if (text.length <= budget) return text;
   if (budget <= TRUNCATED.length) return "";
   const available = budget - TRUNCATED.length;
-  const head = Math.ceil(available / 2);
-  const tail = available - head;
+  let head = Math.ceil(available / 2);
+  let tail = available - head;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(head - 1);
+  if (last >= 0xd800 && last <= 0xdbff) head -= 1;
+  const first = text.charCodeAt(text.length - tail);
+  if (tail > 0 && first >= 0xdc00 && first <= 0xdfff) tail -= 1;
   return `${text.slice(0, head)}${TRUNCATED}${tail > 0 ? text.slice(-tail) : ""}`;
 }
 
-/** Reserve space for user intent before adding assistant findings, in conversation order. */
 export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>) {
-  const sections = messages.flatMap((message, index) => {
-    // Thinking traces are working notes, not what the thread is about, and they
-    // dwarf the answer they precede. Titling on them would be worse and costlier.
+  const sections = messages.flatMap((source, index) => {
+    const message = isAttachmentOnlyBootstrapPrompt(source.text) ? { ...source, text: "" } : source;
+    // Thinking traces dwarf answers without identifying the thread subject.
     if (
       message.role === "system" ||
       message.role === "reasoning" ||
@@ -62,7 +66,6 @@ export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMess
 
   const firstUser = sections.find((section) => section.message.role === "user");
   if (firstUser) add(firstUser, MAX_MESSAGE);
-  // Up to 6,000 characters go to user messages. Assistant output cannot evict them.
   for (const section of sections.toReversed()) {
     if (section.message.role === "user") {
       add(section, Math.min(MAX_MESSAGE, remaining - 2_000));
@@ -71,7 +74,6 @@ export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMess
   for (const section of sections.toReversed()) {
     if (section.message.role === "assistant") add(section, MAX_MESSAGE);
   }
-  // Use spare space when the conversation has only a few messages.
   for (const role of ["user", "assistant"] as const) {
     for (const section of sections.toReversed()) {
       const previous = selected.get(section.index);

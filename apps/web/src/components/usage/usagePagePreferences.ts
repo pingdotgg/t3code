@@ -7,14 +7,10 @@ const STORAGE_KEY = "t3code:usage-page-preferences:v1";
 const UsagePagePreferencesSchema = Schema.Struct({
   metric: Schema.Literals(["cost", "tokens", "limits"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
-  /** Providers filtered out of the page. Stored as hidden so new providers show by default. */
   hiddenProviders: Schema.optional(Schema.Array(UsageProviderKind)),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 
-// Limits is what most people open the page for (how much subscription quota is
-// left, and when it resets), so it is the first-visit default; the last picked
-// tab sticks after that.
 const DEFAULT_PREFERENCES: UsagePagePreferences = { metric: "limits", windowDays: 30 };
 
 export function readUsagePagePreferences(): UsagePagePreferences {

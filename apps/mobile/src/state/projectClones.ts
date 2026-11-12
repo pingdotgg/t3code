@@ -1,17 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { serverEnvironment } from "./server";
 import { sourceControlEnvironment } from "./sourceControl";
 
-/**
- * `"pending"` while the environment's clone stream has not delivered its
- * first list yet: the draft opens right after a clone starts, and a caller
- * that treated the gap as "no clone" would enable Start for a moment.
- */
+/** pending means the clone stream has not loaded; treating it as absent would briefly enable Start. */
 export type ProjectCloneState = ProjectCloneSnapshot | "pending" | null;
 
 const EMPTY_CLONES: ReadonlyArray<ProjectCloneSnapshot> = [];
@@ -19,24 +14,17 @@ const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneState>(null).pipe(
   Atom.withLabel("mobile-project-clone:empty"),
 );
 
-/**
- * Latest clone list an environment has streamed, `"pending"` until the first
- * one, and never subscribed on servers that predate clone tracking.
- */
 const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> | "pending" => {
     const config = get(serverEnvironment.configValueAtom(environmentId));
-    if (config?.environment.capabilities.projectCloneTracking !== true) return EMPTY_CLONES;
+    if (!config) return EMPTY_CLONES;
     const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
-    // A failed subscription must not hold Start forever. Treating it as
-    // "no clone tracked" lets the server's own dispatch guard decide; the
-    // registry re-establishes the stream on reconnect.
+    // On subscription failure, let server dispatch guards decide rather than blocking Start until reconnect.
     if (result._tag === "Failure") return EMPTY_CLONES;
-    return Option.getOrElse(AsyncResult.value(result), () => "pending" as const);
+    return AsyncResult.getOrElse(result, () => "pending" as const);
   }).pipe(Atom.withLabel(`mobile-project-clones:${environmentId}`)),
 );
 
-/** The environment's tracked clones, empty until the stream's first list. */
 export const environmentProjectCloneListAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
     const clones = get(environmentProjectClonesAtom(environmentId));
@@ -54,10 +42,6 @@ const projectCloneAtom = Atom.family((key: string) => {
   }).pipe(Atom.withLabel(`mobile-project-clone:${key}`));
 });
 
-/**
- * The tracked clone for a project: `"pending"` before the stream's first
- * list, null once it finished or never started.
- */
 export function useProjectClone(ref: ScopedProjectRef | null): ProjectCloneState {
   return useAtomValue(ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(scopedProjectKey(ref)));
 }

@@ -1,35 +1,27 @@
-import { type ChangeEvent, type KeyboardEvent, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useRef, useState } from "react";
 
-/**
- * Buffer text input locally so keystrokes don't cause a settings-wide
- * re-render (and optionally a server RPC round-trip) on every character.
- * `onCommit` fires on blur and on Enter.
- *
- * The draft resynchronizes from the upstream `value` only when the input
- * is not focused, so an external push (e.g. an optimistic settings
- * update from the user's own commit, or a reset to defaults) doesn't
- * clobber an in-progress edit.
- *
- * Returns a bag of props that should be spread onto an `<Input>`:
- *
- *   const bag = useCommitOnBlur(instance.displayName ?? "", (next) => {...});
- *   <Input {...bag} placeholder="e.g. Work" />
- */
-export function useCommitOnBlur(value: string, onCommit: (next: string) => void) {
+export function useCommitOnBlur(
+  value: string,
+  onCommit: (next: string) => void,
+  normalizeDraft?: (previous: string, next: string) => string,
+) {
   const [draft, setDraft] = useState<string | null>(null);
+  const valueOnFocus = useRef(value);
 
   return {
     value: draft ?? value,
     onChange: (event: ChangeEvent<HTMLInputElement>) => {
-      setDraft(event.target.value);
+      const next = event.target.value;
+      setDraft(normalizeDraft ? normalizeDraft(draft ?? value, next) : next);
     },
     onFocus: () => {
+      valueOnFocus.current = value;
       setDraft(value);
     },
     onBlur: () => {
       const next = draft ?? value;
       setDraft(null);
-      if (next !== value) {
+      if (next !== valueOnFocus.current && next !== value) {
         onCommit(next);
       }
     },

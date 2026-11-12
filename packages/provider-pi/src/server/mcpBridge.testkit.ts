@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
@@ -29,9 +30,15 @@ interface RegisteredTool {
 }
 
 type AgentStartHook = (
-  event: { systemPrompt: string },
-  ctx: { ui: { notify: (message: string, severity: string) => void } },
-) => Promise<{ systemPrompt: string }>;
+  event: {
+    systemPrompt: string;
+    systemPromptOptions?: { sections?: Record<string, string> | null; forceSystemPrompt?: string };
+  },
+  ctx: {
+    model?: { api: string };
+    ui: { notify: (message: string, severity: string) => void };
+  },
+) => Promise<{ systemPrompt: string } | undefined>;
 
 export async function loadMcpBridge(
   options: {
@@ -41,6 +48,7 @@ export async function loadMcpBridge(
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
+    readonly inputSchema?: Record<string, unknown>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -69,7 +77,7 @@ export async function loadMcpBridge(
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
   ].map((tool) => ({
     ...tool,
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: options.inputSchema ?? { type: "object", properties: {} },
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
   const source = NodeModule.stripTypeScriptTypes(
@@ -88,6 +96,7 @@ export async function loadMcpBridge(
       },
     },
     AbortSignal,
+    NodeCrypto,
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
@@ -118,6 +127,7 @@ export async function loadMcpBridge(
     },
     pi: {
       on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
+      registerCommand: () => {},
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);

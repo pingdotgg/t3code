@@ -17,8 +17,6 @@ export function assertSkillInvocationCursorOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  // Replay matches outbound frames exactly, so reaching completion already
-  // proves the adapter sent `/review` for the discovered workspace skill.
   const sentMessages = transcript.entries.flatMap((entry) => {
     if (entry.type !== "expect_outbound") return [];
     const frame = entry.frame as { readonly type?: unknown; readonly message?: unknown };
@@ -33,7 +31,6 @@ export function assertSkillInvocationCursorOutput(
   assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
-  // The user's own text stays as typed; only the provider sees the rewrite.
   assertUserMessagesInclude(projection, [SKILL_INVOCATION_PROMPT]);
   assertAssistantTextIncludes(projection, SKILL_INVOCATION_FINAL);
 }

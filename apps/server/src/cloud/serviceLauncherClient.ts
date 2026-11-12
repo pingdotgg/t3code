@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -12,6 +13,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
+  type SupportedLauncherProtocol,
 } from "./serviceProtocol.ts";
 
 export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
@@ -20,7 +22,6 @@ export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLaunch
     operation: Schema.Literals([
       "decode-context",
       "version-mismatch",
-      "ipc-unavailable",
       "unmanaged",
       "send",
       "disconnect",
@@ -35,8 +36,6 @@ export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLaunch
         return "The service launcher supplied invalid startup context.";
       case "version-mismatch":
         return "The service launcher started a different t3 version.";
-      case "ipc-unavailable":
-        return "The service launcher IPC channel is unavailable.";
       case "unmanaged":
         return "This server is not managed by the launcher.";
       case "send":
@@ -100,6 +99,9 @@ export class ServiceLauncherClient extends Context.Service<
   ServiceLauncherClient,
   {
     readonly managed: boolean;
+    /** The supervising launcher's protocol. A remote update never replaces the launcher,
+        so it can be older than this runtime's own. */
+    readonly protocol: SupportedLauncherProtocol | undefined;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
       readonly dbPath: string;
@@ -116,7 +118,8 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
     const host = yield* ServiceLauncherHostProcess;
     const environment = yield* HostProcess.Environment;
     const currentVersion = options?.currentVersion ?? packageJson.version;
-    const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
+    // IPC channels are not inherited; without one, launcher context belongs to an ancestor.
+    const rawContext = host.connected ? environment[SERVICE_LAUNCHER_CONTEXT_ENV] : undefined;
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
 
     if (rawContext !== undefined && context === undefined) {
@@ -126,10 +129,7 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
       return yield* new ServiceLauncherClientError({ operation: "version-mismatch" });
     }
 
-    const managed = context !== undefined && host.connected;
-    if (context !== undefined && !managed) {
-      return yield* new ServiceLauncherClientError({ operation: "ipc-unavailable" });
-    }
+    const managed = context !== undefined;
 
     return { host, context, managed };
   },
@@ -139,6 +139,22 @@ export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_clie
   function* () {
     const { managed } = yield* resolveStartup();
     return { managed };
+  },
+);
+
+/** Completes when the launcher asks this server to stop, which Windows cannot signal. */
+export const awaitServiceLauncherStop = Effect.fn("cloud.service_launcher_client.await_stop")(
+  function* (options?: { readonly currentVersion?: string }) {
+    const startup = yield* resolveStartup(options).pipe(Effect.option);
+    if (Option.isNone(startup) || !startup.value.managed) return yield* Effect.never;
+    const { host } = startup.value;
+    return yield* Effect.callback<void>((resume) => {
+      const onMessage = (...args: ReadonlyArray<unknown>) => {
+        if (decodeServiceLauncherParentMessage(args[0])?.type === "stop") resume(Effect.void);
+      };
+      host.on("message", onMessage);
+      return Effect.sync(() => host.off("message", onMessage));
+    });
   },
 );
 
@@ -245,6 +261,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
 
   return ServiceLauncherClient.of({
     managed,
+    protocol: context?.protocol,
     requestUpdate,
     prepareTrial,
   });

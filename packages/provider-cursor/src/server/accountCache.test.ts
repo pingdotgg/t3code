@@ -47,7 +47,6 @@ describe("cursorAccountCache", () => {
       merged.records.map((entry) => entry.timestampMs),
       [50 * DAY_MS],
     );
-    // Then only the newest edge.
     assert.deepStrictEqual(cursorFetchRange(merged, 11 * DAY_MS, nowMs + DAY_MS), {
       sinceMs: nowMs - 60 * 60 * 1000,
       untilMs: nowMs + DAY_MS,
@@ -66,6 +65,16 @@ describe("cursorAccountCache", () => {
     assert.isFalse(
       mergeCursorFetch(cache, "a", range, [record(10 * DAY_MS)], 11 * DAY_MS, 0).changed,
     );
+    const pruned = mergeCursorFetch(
+      cache,
+      "a",
+      range,
+      [record(10 * DAY_MS)],
+      11 * DAY_MS,
+      2 * DAY_MS,
+    );
+    assert.isTrue(pruned.changed);
+    assert.deepStrictEqual(pruned.cache.records, [record(10 * DAY_MS)]);
     assert.isTrue(
       mergeCursorFetch(
         cache,

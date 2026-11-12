@@ -1,11 +1,4 @@
-/**
- * Work a draft has started but not finished — compressing a pasted image, downloading a pasted
- * attachment's bytes. Sending while any of it is outstanding snapshots a message whose chip has
- * nothing behind it, and the late result lands in whatever draft is open by then.
- *
- * Counted rather than flagged: two pastes can be in flight at once, and the first to finish must
- * not clear the second's claim.
- */
+// Count per draft so overlapping pastes cannot release each other and strand chips.
 class PendingDraftWork {
   private readonly counts = new Map<string, number>();
 
@@ -24,9 +17,5 @@ class PendingDraftWork {
   }
 }
 
-/**
- * Module-scoped, so a transfer keeps its claim on a draft across a remount of the composer.
- * Ownership belongs to the draft, which outlives any one mounted component; a per-instance
- * counter would come back empty while the download it was tracking was still running.
- */
+// Keep claims across composer remounts.
 export const pendingDraftWork = new PendingDraftWork();

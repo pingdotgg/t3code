@@ -1,8 +1,9 @@
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Crypto from "effect/Crypto";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -76,10 +77,11 @@ export class ApnsDeliveryQueue extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsDeliveryQueue") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const mac = yield* Mac.Mac;
 
   return ApnsDeliveryQueue.of({
     enqueueLiveActivity: Effect.fn("relay.apns_delivery_queue.enqueue_live_activity")(
@@ -89,7 +91,7 @@ export const make = Effect.gen(function* () {
           "relay.delivery.kind": input.kind,
         });
         const now = yield* DateTime.now;
-        const jobId = yield* crypto.randomUUIDv4.pipe(
+        const jobId = yield* random.uuidV4().pipe(
           Effect.mapError(
             (cause) =>
               new ApnsDeliveryQueueSendError({
@@ -111,10 +113,10 @@ export const make = Effect.gen(function* () {
           createdAt: DateTime.formatIso(now),
           expiresAt: expiresAtForJob(now.epochMilliseconds),
         });
-        const signed = signApnsDeliveryJob({
+        const signed = yield* signApnsDeliveryJob({
           secret: config.apnsDeliveryJobSigningSecret,
           payload,
-        });
+        }).pipe(Effect.provideService(Mac.Mac, mac));
         yield* sender.send(signed).pipe(
           Effect.mapError(
             (cause) =>
@@ -148,7 +150,7 @@ export const make = Effect.gen(function* () {
           "relay.thread_id": input.notification.threadId,
         });
         const now = yield* DateTime.now;
-        const jobId = yield* crypto.randomUUIDv4.pipe(
+        const jobId = yield* random.uuidV4().pipe(
           Effect.mapError(
             (cause) =>
               new ApnsDeliveryQueueSendError({
@@ -175,10 +177,10 @@ export const make = Effect.gen(function* () {
           createdAt: DateTime.formatIso(now),
           expiresAt: expiresAtForJob(now.epochMilliseconds),
         });
-        const signed = signApnsDeliveryJob({
+        const signed = yield* signApnsDeliveryJob({
           secret: config.apnsDeliveryJobSigningSecret,
           payload,
-        });
+        }).pipe(Effect.provideService(Mac.Mac, mac));
         yield* sender.send(signed).pipe(
           Effect.mapError(
             (cause) =>
@@ -217,10 +219,12 @@ export const layerCloudflareQueues = (
       Layer.succeed(
         ApnsDeliveryQueueSender,
         ApnsDeliveryQueueSender.of({
-          send: (body) =>
-            sender
-              .send(body)
-              .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+          send: Effect.fn("ApnsDeliveryQueueSender.send")(
+            function* (body) {
+              return yield* sender.send(body);
+            },
+            Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+          ),
         }),
       ),
     ),

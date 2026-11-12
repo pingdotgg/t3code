@@ -1,6 +1,8 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { useContext, useState } from "react";
 
 import { getRenderablePatch, resolveFileDiffPath } from "~/lib/diffRendering";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -10,21 +12,14 @@ import { pullRequestReviewKey } from "../pullRequestReviewStore";
 
 interface LoadedDiff {
   readonly key: string;
-  /** The page asked for next; null is the first. */
   readonly cursor: string | null;
-  /** No page left to ask for. */
   readonly done: boolean;
   readonly files: ReadonlyMap<string, FileDiffMetadata>;
+  readonly folded: unknown;
 }
 
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 
-/**
- * The pull request's parsed file diffs, read through the same paged query the Code tab uses, so
- * the pages are shared. Paging stops once every wanted path has arrived: a stop's excerpts are
- * usually in the first page, and a large change should not be read whole to show one of them.
- * Pages already read are kept, so going back to an earlier stop costs nothing.
- */
 export function useGuideDiffFiles({
   environmentId,
   reference,
@@ -33,7 +28,6 @@ export function useGuideDiffFiles({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** The guide's head. A push writes a new guide, whose excerpts must read the new diff. */
   headSha: string;
   wantedPaths: ReadonlyArray<string>;
 }) {
@@ -43,40 +37,37 @@ export function useGuideDiffFiles({
     cursor: null,
     done: false,
     files: NO_FILES,
+    folded: null,
   });
   const current: LoadedDiff =
-    loaded.key === key ? loaded : { key, cursor: null, done: false, files: NO_FILES };
-  const missing = wantedPaths.some((path) => !current.files.has(path));
-  const loading = missing && !current.done;
-  const query = useEnvironmentQuery(
-    loading
-      ? pullRequestEnvironment.diff({
-          environmentId,
-          input: { ...reference, ...(current.cursor === null ? {} : { cursor: current.cursor }) },
-        })
-      : null,
-  );
-
-  const data = query.data;
-  const cursor = current.cursor;
-  useEffect(() => {
-    if (data === null) return;
-    setLoaded((previous) => {
-      const base =
-        previous.key === key ? previous : { key, cursor: null, done: false, files: NO_FILES };
-      // A page is absorbed once; the query hands the same answer back on every render.
-      if (base.cursor !== cursor || base.done) return base;
-      const parsed = getRenderablePatch(
-        data.patch,
-        `pull-request-guide:${key}:${cursor ?? "first"}`,
-      );
-      const files = new Map(base.files);
-      if (parsed?.kind === "files") {
-        for (const file of parsed.files) files.set(resolveFileDiffPath(file), file);
-      }
-      return { key, cursor: data.nextCursor, done: data.nextCursor === null, files };
+    loaded.key === key ? loaded : { key, cursor: null, done: false, files: NO_FILES, folded: null };
+  const registry = useContext(RegistryContext);
+  const isMissing = (diff: LoadedDiff) => wantedPaths.some((path) => !diff.files.has(path));
+  const pageAtom = (cursor: string | null) =>
+    pullRequestEnvironment.diff({
+      environmentId,
+      input: { ...reference, ...(cursor === null ? {} : { cursor }) },
     });
-  }, [cursor, data, key]);
+  const loading = isMissing(current) && !current.done;
+  const query = useEnvironmentQuery(loading ? pageAtom(current.cursor) : null);
+
+  // One update for every settled page: an update per page trips React's re-render limit.
+  let next = current;
+  let data = query.isPending ? null : query.data;
+  while (data !== null && !next.done && next.folded !== data && isMissing(next)) {
+    const parsed = getRenderablePatch(
+      data.patch,
+      `pull-request-guide:${key}:${next.cursor ?? "first"}`,
+    );
+    const files = new Map(next.files);
+    if (parsed?.kind === "files") {
+      for (const file of parsed.files) files.set(resolveFileDiffPath(file), file);
+    }
+    next = { key, cursor: data.nextCursor, done: data.nextCursor === null, files, folded: data };
+    const result = next.done || !isMissing(next) ? null : registry.get(pageAtom(next.cursor));
+    data = result === null || result.waiting ? null : AsyncResult.getOrElse(result, () => null);
+  }
+  if (next !== current) setLoaded(next);
 
   return {
     files: current.files,

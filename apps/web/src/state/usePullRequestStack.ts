@@ -1,31 +1,36 @@
-import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { useMemo } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { ThreadPullRequestLink, type EnvironmentId, type PullRequestRef } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 import {
   savedPullRequestStack,
   pullRequestStackView,
 } from "../components/pullRequest/pullRequestStackSnapshot";
-import { useThreadShells } from "./entities";
 import { pullRequestStackAtom } from "./pullRequests";
 import { useEnvironmentQuery } from "./query";
+import { environmentThreadShells } from "./threads";
 
-/** Detail headers and list popovers keep saved navigation during an unavailable refresh. */
+const sameLinks = Schema.toEquivalence(Schema.Array(ThreadPullRequestLink));
+
+// Shell pushes recreate link arrays; reuse equal lists so streaming does not re-render the stack.
+const environmentPullRequestLinksAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous: ReadonlyArray<ThreadPullRequestLink> = [];
+  return Atom.make((get) => {
+    const next = get(environmentThreadShells.environmentThreadsAtom(environmentId)).flatMap(
+      (thread) => thread.pullRequests ?? [],
+    );
+    if (sameLinks(previous, next)) return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel(`web-environment-pull-request-links:${environmentId}`));
+});
+
 export function usePullRequestStack(
   environmentId: EnvironmentId,
   reference: PullRequestRef | null,
 ) {
-  const threads = useThreadShells();
-  const saved = useMemo(
-    () =>
-      reference === null
-        ? null
-        : savedPullRequestStack(
-            threads
-              .filter((thread) => thread.environmentId === environmentId)
-              .flatMap((thread) => thread.pullRequests ?? []),
-            reference,
-          ),
-    [environmentId, reference, threads],
-  );
+  const links = useAtomValue(environmentPullRequestLinksAtom(environmentId));
+  const saved = reference === null ? null : savedPullRequestStack(links, reference);
   const query = useEnvironmentQuery(
     reference === null ? null : pullRequestStackAtom({ environmentId, input: reference }),
   );

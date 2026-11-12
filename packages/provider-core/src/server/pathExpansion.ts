@@ -1,19 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 
-/**
- * Expand a leading `~` (or `~/…`, `~\…`) in a user-supplied path to `home`,
- * the current user's home directory (`HostProcess.HomeDirectory`). Spawned
- * processes don't get shell expansion, so env vars like
- * `CODEX_HOME=~/.codex-work` would be passed verbatim and treated as relative
- * paths by the receiver.
- *
- * Matches the behavior of the other `expandHomePath` helpers in the
- * workspace layers and CLI bootstrap: `~` alone and both `~/` and `~\`
- * separators are handled. Returns the input unchanged if it doesn't
- * start with `~` or is empty. Does not handle `~user` (other-user)
- * expansion.
- */
+// Spawned processes lack shell expansion and would treat literal ~/ paths as relative.
 export function expandHomePath(value: string, home: string): string {
   if (!value) return value;
   if (value === "~") return home;
@@ -21,4 +9,10 @@ export function expandHomePath(value: string, home: string): string {
     return NodePath.join(home, value.slice(2));
   }
   return value;
+}
+
+const HOME_PATH_VARIABLES = new Set(["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME"]);
+
+export function expandHomeVariable(name: string, value: string, home: string): string {
+  return HOME_PATH_VARIABLES.has(name) ? expandHomePath(value, home) : value;
 }

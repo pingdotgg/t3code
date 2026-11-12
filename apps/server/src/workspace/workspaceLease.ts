@@ -3,7 +3,6 @@ import * as Semaphore from "effect/Semaphore";
 
 const leases = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>();
 
-/** Coordinates checkout removal and startup across threads using the same resolved cwd. */
 export const withWorkspaceLease = <A, E, R>(
   cwd: string,
   effect: Effect.Effect<A, E, R>,

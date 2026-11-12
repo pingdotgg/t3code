@@ -44,40 +44,7 @@ export function getOnboardingProviderState(provider: ServerProvider | undefined)
   return "attention";
 }
 
-const PROVIDER_STATE_PRIORITY = {
-  checking: 0,
-  disabled: 1,
-  install: 2,
-  attention: 3,
-  signIn: 4,
-  ready: 5,
-} as const;
-
-/** Select the most usable configured instance for each provider driver. */
-export function selectOnboardingProvidersByDriver(
-  providers: ReadonlyArray<ServerProvider> | null | undefined,
-) {
-  const providersByDriver = new Map<string, ServerProvider>();
-
-  for (const provider of providers ?? []) {
-    const existing = providersByDriver.get(provider.driver);
-    if (
-      existing === undefined ||
-      PROVIDER_STATE_PRIORITY[getOnboardingProviderState(provider)] >
-        PROVIDER_STATE_PRIORITY[getOnboardingProviderState(existing)]
-    ) {
-      providersByDriver.set(provider.driver, provider);
-    }
-  }
-
-  return providersByDriver;
-}
-
-/**
- * Official standalone installers. Neither needs Node or npm, and both land in
- * the paths the server's provider maintenance recognizes as native, so the
- * one-click updater in Settings keeps working after install.
- */
+// These need no Node/npm and install where provider maintenance recognizes native binaries.
 const NATIVE_INSTALL_COMMANDS = {
   claudeAgent: {
     windows: "irm https://claude.ai/install.ps1 | iex",
@@ -89,12 +56,6 @@ const NATIVE_INSTALL_COMMANDS = {
   },
 } as const;
 
-/**
- * Install command for the setup terminal, keyed on the environment's platform
- * (not the client's): a Windows desktop driving a WSL server gets the shell
- * script. Unknown platforms get the shell script too, since the terminal there
- * is a POSIX shell in practice.
- */
 export function resolveOnboardingProviderInstallCommand(
   driver: keyof typeof NATIVE_INSTALL_COMMANDS,
   platform: ExecutionEnvironmentPlatformOs,
@@ -103,7 +64,6 @@ export function resolveOnboardingProviderInstallCommand(
   return platform === "windows" ? commands.windows : commands.posix;
 }
 
-/** Use the selected provider instance's binary when the setup terminal opens its login flow. */
 export function resolveOnboardingProviderLoginCommand(
   provider: ServerProvider,
   settings: ServerSettings,

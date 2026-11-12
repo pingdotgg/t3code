@@ -1,5 +1,6 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import { withDeviceHubQuery } from "@t3tools/client-runtime/state/deviceHubAccess";
+import * as Schema from "effect/Schema";
 
 export type AndroidFoldPosture = "closed" | "opened";
 
@@ -8,6 +9,11 @@ export interface AndroidFoldState {
   readonly posture: "closed" | "half_opened" | "opened" | "flipped" | "tent" | null;
   readonly hingeAngle: number | null;
 }
+
+export class AndroidFoldError extends Schema.TaggedError<AndroidFoldError>()("AndroidFoldError", {
+  message: Schema.String,
+  status: Schema.Number,
+}) {}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -54,9 +60,10 @@ const foldRequest = async (
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     const error = isRecord(payload) ? payload.error : null;
-    throw new Error(
-      typeof error === "string" ? error : `Fold command failed (${response.status}).`,
-    );
+    throw new AndroidFoldError({
+      message: typeof error === "string" ? error : `Fold command failed (${response.status}).`,
+      status: response.status,
+    });
   }
   return parseFold(await response.json());
 };

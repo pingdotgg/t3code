@@ -1,5 +1,5 @@
 export const MARKDOWN_IMAGE_MAX_WIDTH = 480;
-export const MARKDOWN_IMAGE_MAX_HEIGHT = 480;
+const MARKDOWN_IMAGE_MAX_HEIGHT = 480;
 
 export interface MarkdownImageDisplaySize {
   readonly width: number;
@@ -34,7 +34,6 @@ export function resolveSvgImageSize(props: Readonly<Record<string, unknown>>) {
   return { width: viewBox[2]!, height: viewBox[3]! };
 }
 
-/** Keeps small images intrinsic while fitting larger images inside the chat viewport. */
 export function resolveMarkdownImageDisplaySize(input: {
   readonly sourceWidth: number;
   readonly sourceHeight: number;

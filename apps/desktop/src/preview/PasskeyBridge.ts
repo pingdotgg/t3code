@@ -2,7 +2,6 @@ import type { CreateCredentialResult, GetCredentialResult } from "electron-webau
 
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
 
-/** What the main process answers a guest passkey ceremony with. */
 export type PasskeyCeremonyResult =
   | Extract<CreateCredentialResult, { success: true }>
   | Extract<GetCredentialResult, { success: true }>
@@ -45,11 +44,7 @@ const ceremonyError = (name: string) =>
         DOM_EXCEPTION_NAMES.has(name) ? name : "NotAllowedError",
       );
 
-/**
- * Copies request options into plain IPC-cloneable data. Chromium ignores
- * members it does not know, so functions and other uncloneable values drop out
- * here instead of failing the whole ceremony.
- */
+// Chromium drops unknown members; discard uncloneable values instead of failing the ceremony.
 const toCloneable = (value: unknown): unknown => {
   if (value instanceof ArrayBuffer) return value.slice(0);
   if (ArrayBuffer.isView(value)) {
@@ -66,9 +61,7 @@ const toCloneable = (value: unknown): unknown => {
   return value;
 };
 
-// The objects below borrow the native prototypes so `instanceof` checks pass.
-// Their own properties shadow the native getters, which only work on objects
-// Chromium created itself.
+// Shadow native getters: they reject objects Chromium did not create, even with the correct prototype.
 const withValues = <T extends object>(target: T, values: Record<string, unknown>) => {
   for (const [key, value] of Object.entries(values)) {
     Object.defineProperty(target, key, { value, enumerable: true, configurable: true });
@@ -204,15 +197,8 @@ const credentialFromGetResult = (data: Extract<GetCredentialResult, { success: t
 const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
-/**
- * Routes this page's WebAuthn ceremonies to the system passkey sheet through
- * the main process, which supplies the frame's real origin. Runs in the page's
- * own world (the preview preload has contextIsolation off), before any page
- * script. Conditional (autofill and automatic upgrade) requests stay native:
- * the system sheet is modal and must not open on its own.
- */
+/** Keep conditional requests native so autofill and upgrades cannot open a modal sheet unprompted. */
 export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
-  // Insecure contexts have no WebAuthn to bridge.
   if (typeof CredentialsContainer === "undefined" || typeof PublicKeyCredential === "undefined") {
     return;
   }
@@ -230,7 +216,6 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
           ? credentialFromCreateResult(result.data)
           : credentialFromGetResult(result.data);
       },
-      // No handler yet (or any more) for this guest: answer like a refusal.
       (error: unknown) => {
         throw error instanceof DOMException || error instanceof TypeError
           ? error

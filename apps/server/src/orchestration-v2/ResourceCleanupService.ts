@@ -5,15 +5,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { resolveAttachmentPathById } from "../attachmentStore.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
+import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
 export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupError>()(
   "ResourceCleanupError",
   {
-    operation: Schema.Literals(["terminal", "preview", "attachment"]),
+    operation: Schema.Literals(["terminal", "preview", "device", "attachment", "scheduled-tasks"]),
     threadId: Schema.optional(Schema.String),
     attachmentId: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -21,16 +24,20 @@ export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupErro
 ) {}
 
 export class ResourceCleanupService extends Context.Reference<{
+  readonly cleanupScheduledTasks: (threadId: ThreadId) => Effect.Effect<void, ResourceCleanupError>;
   readonly cleanupTerminals: (threadId: string) => Effect.Effect<void, ResourceCleanupError>;
-  /** Closes every preview session of the thread; server browser tabs end with them. */
   readonly cleanupPreviews: (threadId: string) => Effect.Effect<void, ResourceCleanupError>;
+  /** Releases the thread's device claims, as `device_close` does; the devices stay booted. */
+  readonly cleanupDevices: (threadId: ThreadId) => Effect.Effect<void, ResourceCleanupError>;
   readonly cleanupAttachments: (
     attachmentIds: ReadonlyArray<string>,
   ) => Effect.Effect<void, ResourceCleanupError>;
 }>("t3/orchestration-v2/ResourceCleanupService", {
   defaultValue: () => ({
+    cleanupScheduledTasks: () => Effect.void,
     cleanupTerminals: () => Effect.void,
     cleanupPreviews: () => Effect.void,
+    cleanupDevices: () => Effect.void,
     cleanupAttachments: () => Effect.void,
   }),
 }) {}
@@ -40,46 +47,91 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const terminals = yield* TerminalManager.TerminalManager;
     const previews = yield* PreviewManager.PreviewManager;
+    const devices = yield* DeviceService.DeviceService;
     const fileSystem = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
+    const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
     return {
-      cleanupTerminals: (threadId: string) =>
-        terminals
+      cleanupScheduledTasks: Effect.fn("ResourceCleanupService.cleanupScheduledTasks")(function (
+        threadId: ThreadId,
+      ) {
+        return scheduledTasks
+          .deleteForThread(threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ResourceCleanupError({ operation: "scheduled-tasks", threadId, cause }),
+            ),
+          );
+      }),
+      cleanupTerminals: Effect.fn("ResourceCleanupService.cleanupTerminals")(function (
+        threadId: string,
+      ) {
+        return terminals
           .close({ threadId, deleteHistory: true })
           .pipe(
             Effect.mapError(
               (cause) => new ResourceCleanupError({ operation: "terminal", threadId, cause }),
             ),
-          ),
-      cleanupPreviews: (threadId: string) =>
-        previews
+          );
+      }),
+      cleanupPreviews: Effect.fn("ResourceCleanupService.cleanupPreviews")(function (
+        threadId: string,
+      ) {
+        return previews
           .close({ threadId: ThreadId.make(threadId) })
           .pipe(
             Effect.mapError(
               (cause) => new ResourceCleanupError({ operation: "preview", threadId, cause }),
             ),
-          ),
-      cleanupAttachments: (attachmentIds: ReadonlyArray<string>) =>
-        Effect.forEach(
+          );
+      }),
+      cleanupDevices: Effect.fn("ResourceCleanupService.cleanupDevices")(function* (
+        threadId: ThreadId,
+      ) {
+        // One close per session, so a reconnecting host does not keep the other hosts' claims.
+        const sessions = yield* devices.sessionsForThread(threadId);
+        const [, failures] = yield* Effect.partition(
+          sessions,
+          (session) =>
+            devices.close({ threadId, hostId: session.hostId, deviceId: session.deviceId }),
+          { concurrency: 1 },
+        );
+        const [failure] = failures;
+        if (failure !== undefined)
+          return yield* new ResourceCleanupError({ operation: "device", threadId, cause: failure });
+      }),
+      cleanupAttachments: Effect.fn("ResourceCleanupService.cleanupAttachments")(function (
+        attachmentIds: ReadonlyArray<string>,
+      ) {
+        return Effect.forEach(
           attachmentIds,
           (attachmentId) => {
-            const path = resolveAttachmentPathById({
-              attachmentsDir: config.attachmentsDir,
-              attachmentId,
-            });
+            const extension = parseAttachmentFileExtension(attachmentId);
+            const path =
+              resolveAttachmentPathById({
+                attachmentsDir: config.attachmentsDir,
+                attachmentId,
+              }) ??
+              (extension
+                ? resolveAttachmentRelativePath({
+                    attachmentsDir: config.attachmentsDir,
+                    relativePath: `${attachmentId}.${extension}`,
+                  })
+                : null);
             return path === null
               ? Effect.void
-              : fileSystem
-                  .remove(path, { force: true })
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ResourceCleanupError({ operation: "attachment", attachmentId, cause }),
-                    ),
-                  );
+              : fileSystem.remove(path, { force: true }).pipe(
+                  Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true })),
+                  Effect.mapError(
+                    (cause) =>
+                      new ResourceCleanupError({ operation: "attachment", attachmentId, cause }),
+                  ),
+                );
           },
           { discard: true, concurrency: 4 },
-        ),
+        );
+      }),
     };
   }),
 );

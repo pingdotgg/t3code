@@ -27,23 +27,20 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
   return !Equal.equals(previous, next);
 }
 
-/** The instance's settings paired with the host's server settings, as snapshots read them. */
-export const makeProviderSnapshotSettingsSource = <Settings>(
-  provider: Settings,
-): Effect.Effect<
+export const makeProviderSnapshotSettingsSource = Effect.fn(
+  "snapshotSettings.makeProviderSnapshotSettingsSource",
+)(function* <Settings>(provider: Settings): Effect.fn.Return<
   {
     readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
     readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;
   },
   never,
   ProviderHost.ProviderHost
-> =>
-  Effect.gen(function* () {
-    const { settings } = yield* ProviderHost.ProviderHost;
-    const mapSettings = (current: ServerSettings) =>
-      makeProviderSnapshotSettings(provider, current);
-    return {
-      getSettings: settings.get.pipe(Effect.map(mapSettings)),
-      streamSettings: settings.changes.pipe(Stream.map(mapSettings)),
-    };
-  });
+> {
+  const { settings } = yield* ProviderHost.ProviderHost;
+  const mapSettings = (current: ServerSettings) => makeProviderSnapshotSettings(provider, current);
+  return {
+    getSettings: settings.get.pipe(Effect.map(mapSettings)),
+    streamSettings: settings.changes.pipe(Stream.map(mapSettings)),
+  };
+});

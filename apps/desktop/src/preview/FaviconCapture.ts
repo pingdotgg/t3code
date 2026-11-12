@@ -642,8 +642,6 @@ async function rasterizeFavicon(
   ]);
 
   const result = new Promise<RasterizationResult>((resolve, reject) => {
-    // Electron cannot cancel isolated-world execution. This timeout ends only
-    // the logical attempt; renderer work may finish after a newer attempt starts.
     const timeout = AbortSignal.timeout(FAVICON_RASTER_TIMEOUT_MS);
     let settled = false;
     const finish = (complete: () => void) => {
@@ -671,8 +669,7 @@ async function rasterizeFavicon(
     );
     if (signal.aborted) onAbort();
   });
-  // The logical timeout does not cancel Electron's renderer work. Keep the
-  // gate closed until that physical execution actually settles.
+  // Logical timeouts leave renderer work running; keep the gate closed until it settles.
   const launchAllowed = execution.then(
     () => undefined,
     () => undefined,

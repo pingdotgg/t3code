@@ -8,11 +8,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * The workflow row stays live after its turn and settles when the workflow
- * does; Muse's own report turn becomes a second, completed run instead of
- * being interrupted, and nothing is left pending.
- */
 export function assertMuseWorkflowOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -39,7 +34,6 @@ export function assertMuseWorkflowOutput(
   assert.isDefined(workflow, "the workflow shows as a row");
   assert.equal(workflow.status, "completed");
   assert.equal(workflow.runId, projection.runs[0]?.id);
-  // The settled row shows the workflow's own result, not its generic label.
   const finalSummary = transcript.entries
     .map((entry) =>
       entry.type === "emit_inbound"
@@ -55,7 +49,6 @@ export function assertMuseWorkflowOutput(
   );
   assert.isAbove(report.length, 0, "Muse's report reaches the second run");
 
-  // Each workflow agent is a native subagent nested under the workflow row.
   assert.lengthOf(projection.subagents, 2);
   for (const agent of projection.subagents) {
     assert.equal(agent.origin, "provider_native");

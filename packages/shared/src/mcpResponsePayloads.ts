@@ -1,13 +1,8 @@
-// MCP responses carry opaque JSON-RPC that callers relay verbatim.
-// @effect-diagnostics preferSchemaOverJson:off
-/**
- * Reads the JSON-RPC payloads of a response from an MCP streamable-HTTP
- * endpoint. Used on the ACP bridge fast path, so it imports only effect core.
- *
- * @module mcpResponsePayloads
- */
+// @effect-diagnostics globalJsonInEffect:off
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+
+const SSE_EVENT_SEPARATOR = /(?:\r\n|\r(?!\n)|\n){2}/u;
 
 async function* sseDataLines(response: Response): AsyncGenerator<string> {
   if (response.body === null) return;
@@ -15,17 +10,17 @@ async function* sseDataLines(response: Response): AsyncGenerator<string> {
   let buffered = "";
   for await (const chunk of response.body) {
     buffered += decoder.decode(chunk as Uint8Array, { stream: true });
-    let separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
-    while (separatorIndex !== -1) {
-      const rawEvent = buffered.slice(0, separatorIndex);
-      buffered = buffered.slice(separatorIndex).replace(/^(?:\r?\n){2}/u, "");
+    let separator = SSE_EVENT_SEPARATOR.exec(buffered);
+    while (separator !== null) {
+      const rawEvent = buffered.slice(0, separator.index);
+      buffered = buffered.slice(separator.index + separator[0].length);
       const data = rawEvent
-        .split(/\r?\n/u)
+        .split(/\r\n|\r|\n/u)
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice("data:".length).trimStart())
         .join("\n");
       if (data.length > 0) yield data;
-      separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
+      separator = SSE_EVENT_SEPARATOR.exec(buffered);
     }
   }
 }
@@ -33,11 +28,6 @@ async function* sseDataLines(response: Response): AsyncGenerator<string> {
 export const discardResponseBody = (response: Response): Effect.Effect<void> =>
   Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
 
-/**
- * Every JSON-RPC payload carried by a response, in arrival order: nothing for
- * notification acknowledgements, each SSE `data:` event as it streams in, or
- * the single JSON body.
- */
 export function responsePayloads<E>(
   response: Response,
   onError: (cause: unknown) => E,

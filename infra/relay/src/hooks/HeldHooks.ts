@@ -13,7 +13,6 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as HookInbox from "./HookInbox.ts";
 
-/** The endpoint key of an environment's own managed endpoint, for authenticated callers. */
 export const endpointKeyForTunnelName = (namespace: string, tunnelName: string): string | null => {
   const prefix = managedEndpointTunnelNameForKey(namespace, "");
   const key = tunnelName.startsWith(prefix) ? tunnelName.slice(prefix.length) : "";
@@ -33,26 +32,15 @@ interface HookEndpoint {
 export class HeldHooks extends Context.Service<
   HeldHooks,
   {
-    /**
-     * The ready managed endpoint a webhook URL's endpoint key names, with whether
-     * its link opted in to holding webhooks while offline. The key is the tunnel
-     * name's hash of user and environment, so it names exactly one allocation and
-     * at most one active link; nobody else can link their way onto it.
-     */
+    /** Hash user and environment so endpoint keys cannot be claimed by another account. */
     readonly resolveEndpoint: (
       endpointKey: string,
     ) => Effect.Effect<HookEndpoint | null, PersistenceError>;
-    /**
-     * Saves an environment's opt-in. Opting out also drops what is already held,
-     * rather than delivering it later to an environment that said it does not
-     * want it. Only the links the caller's environment key proved are touched.
-     */
     readonly setHoldWhileOffline: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
       readonly holdWebhooksWhileOffline: boolean;
     }) => Effect.Effect<void, PersistenceError | HookInbox.HookInboxError>;
-    /** Delivers what the environment's endpoints hold now; true when anything was waiting. */
     readonly wake: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -92,10 +80,7 @@ const make = Effect.gen(function* () {
     };
   });
 
-  /**
-   * Endpoint keys of the managed links the calling environment key proved.
-   * The environment id alone would also match other accounts' links of it.
-   */
+  /** Only links proven by this environment key count; other accounts can claim the same environment id. */
   const ownEndpointKeys = Effect.fn("relay.hooks.own_endpoint_keys")(function* (input: {
     readonly environmentId: string;
     readonly environmentPublicKey: string;

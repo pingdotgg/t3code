@@ -126,11 +126,7 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
-    /**
-     * Active relay-managed links for an environment, narrowed to one user or to
-     * links proven by one environment key. The environment id alone is public
-     * and any account can link it, so callers acting on it must narrow.
-     */
+    /** Narrow by user or proven key: a public environment id alone does not authorize access to its links. */
     readonly findActiveManagedForEnvironment: (input: {
       readonly environmentId: string;
       readonly userId?: string;
@@ -144,7 +140,6 @@ export class EnvironmentLinks extends Context.Service<
       >,
       EnvironmentLinkEnvironmentLookupPersistenceError
     >;
-    /** Sets the webhook-hold opt-in on the active links proven by one environment key. */
     readonly setHoldWebhooksWhileOffline: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -183,10 +178,7 @@ const make = Effect.gen(function* () {
       const now = DateTime.formatIso(yield* DateTime.now);
       const { request, proof } = input;
       const environmentId = proof.environmentId;
-      // The webhook-hold opt-in belongs to the environment: a new or re-made
-      // link carries it over from the environment's other active links. Only
-      // links proven by the same key count; an environment id is public, so
-      // anyone can link one and switch the opt-in on for their own link.
+      // Inherit opt-in only from links proven by the same key; anyone can claim the public environment id.
       const inheritedHoldWebhooks = sql<boolean>`EXISTS (
         SELECT 1 FROM ${relayEnvironmentLinks} AS other
         WHERE other.environment_id = ${environmentId}
@@ -400,7 +392,6 @@ const make = Effect.gen(function* () {
               : eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
           ),
         )
-        // At most one row per user who linked this environment.
         .pipe(
           Effect.map((rows) =>
             rows.map((row) => ({

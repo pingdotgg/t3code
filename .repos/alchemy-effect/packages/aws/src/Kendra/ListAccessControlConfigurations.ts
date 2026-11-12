@@ -1,0 +1,49 @@
+import type * as kendra from "@distilled.cloud/aws/kendra";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Index } from "./SearchIndex.ts";
+
+/**
+ * `ListAccessControlConfigurations` request with `IndexId` injected from the bound index.
+ */
+export interface ListAccessControlConfigurationsRequest extends Omit<
+  kendra.ListAccessControlConfigurationsRequest,
+  "IndexId"
+> {}
+
+/**
+ * Runtime binding for the `ListAccessControlConfigurations` operation (IAM action
+ * `kendra:ListAccessControlConfigurations`), scoped to one {@link Index}.
+ *
+ * Lists the index's access-control configurations.
+ * Provide the implementation with
+ * `Effect.provide(AWS.Kendra.ListAccessControlConfigurationsHttp)`.
+ *
+ * ### Access Control Configurations
+ * **Example:** List Runtime ACLs
+ * ```typescript
+ * const listAcls =
+ *   yield* AWS.Kendra.ListAccessControlConfigurations(index);
+ *
+ * const { AccessControlConfigurations } = yield* listAcls();
+ * ```
+ *
+ * @binding
+ */
+export interface ListAccessControlConfigurations extends Binding.Service<
+  ListAccessControlConfigurations,
+  "AWS.Kendra.ListAccessControlConfigurations",
+  (
+    index: Index,
+  ) => Effect.Effect<
+    (
+      request?: ListAccessControlConfigurationsRequest,
+    ) => Effect.Effect<
+      kendra.ListAccessControlConfigurationsResponse,
+      kendra.ListAccessControlConfigurationsError
+    >
+  >
+> {}
+export const ListAccessControlConfigurations = Binding.Service<ListAccessControlConfigurations>(
+  "AWS.Kendra.ListAccessControlConfigurations",
+);

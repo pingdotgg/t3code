@@ -11,17 +11,13 @@ import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { withoutRedirects } from "../environments/EnvironmentConnector.ts";
 
-/** Set by the relay on every forward; the environment uses it as the delivery id. */
 const RELAY_DELIVERY_ID_HEADER = "x-t3-relay-delivery-id";
-/** When the relay received the request; the environment trusts it only with the delivery id. */
 const RELAY_RECEIVED_AT_HEADER = "x-t3-relay-received-at";
-/** The environment answers with a small JSON status; anything past this is cut off. */
 const MAX_RESPONSE_BYTES = 64 * 1024;
-export const RELAY_HOOK_UPSTREAM_TIMEOUT_MS = 8_000;
+const RELAY_HOOK_UPSTREAM_TIMEOUT_MS = 8_000;
 // Cloudflare answers 530 when the tunnel for a hostname has no connected origin.
 export const TUNNEL_OFFLINE_STATUS = 530;
 
-/** A webhook request as the relay sends it on to the environment. */
 export interface UpstreamHook {
   readonly id: string;
   readonly receivedAt: string;
@@ -38,17 +34,14 @@ export interface UpstreamHook {
 export interface UpstreamResponse {
   readonly status: number;
   readonly contentType: string | undefined;
-  /** What the environment did with the request (`x-t3-hook-outcome`). */
   readonly outcome: string | undefined;
   readonly body: Uint8Array;
 }
 
-/** Outcome names are short identifiers; anything else is not recorded. */
 const OUTCOME_PATTERN = /^[a-z_]{1,32}$/;
 
 class ResponseTooLarge extends Schema.TaggedError<ResponseTooLarge>()("ResponseTooLarge", {}) {}
 
-/** Reads a response body, failing once it passes the cap rather than buffering it all. */
 const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
   Effect.suspend(() => {
     const chunks: Array<Uint8Array> = [];
@@ -69,7 +62,6 @@ const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
         }
         return body;
       }),
-      // A response without a body, such as a redirect, has no stream at all.
       Effect.catchIf(
         (error) => error._tag === "HttpClientError" && error.reason._tag === "EmptyBodyError",
         () => Effect.succeed(new Uint8Array(0)),
@@ -81,45 +73,45 @@ const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
  * Sends a webhook request through the environment's tunnel. Fails when the
  * environment cannot be reached, and succeeds with None on timeout.
  */
-export const sendUpstream = (baseUrl: string, hook: UpstreamHook) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-    // The environment's span joins this trace. Set by hand: the client span
-    // that would propagate it is off, because it records the token in url.full.
-    const parent = yield* Effect.currentSpan.pipe(Effect.option);
-    // `hook.headers` carries the signed delivery proof, set once when the
-    // relay received the request, so a held request sends the same proof.
-    const headers: Record<string, string> = {
-      ...hook.headers,
-      ...(Option.isSome(parent) ? HttpTraceContext.toHeaders(parent.value) : {}),
-      [RELAY_DELIVERY_ID_HEADER]: hook.id,
-      [RELAY_RECEIVED_AT_HEADER]: hook.receivedAt,
-    };
-    let request = HttpClientRequest.make(hook.method as "GET" | "POST" | "PUT" | "PATCH")(
-      `${base}api/hooks/${hook.rawHookId}/${hook.rawToken}${hook.query ? `?${hook.query}` : ""}`,
-      { headers },
-    );
-    if (HttpMethod.hasBody(request.method)) {
-      request = HttpClientRequest.bodyUint8Array(request, hook.body, headers["content-type"]);
-    }
-    return yield* httpClient.execute(request).pipe(
-      Effect.flatMap((response) =>
-        readCapped(response).pipe(
-          Effect.map((body): UpstreamResponse => {
-            const outcome = response.headers["x-t3-hook-outcome"];
-            return {
-              status: response.status,
-              contentType: response.headers["content-type"],
-              outcome: outcome !== undefined && OUTCOME_PATTERN.test(outcome) ? outcome : undefined,
-              body,
-            };
-          }),
-        ),
+export const sendUpstream = Effect.fn("upstream.sendUpstream")(function* (
+  baseUrl: string,
+  hook: UpstreamHook,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  // The environment's span joins this trace. Set by hand: the client span
+  // that would propagate it is off, because it records the token in url.full.
+  const parent = yield* Effect.currentSpan.pipe(Effect.option);
+  const headers: Record<string, string> = {
+    ...hook.headers,
+    ...(Option.isSome(parent) ? HttpTraceContext.toHeaders(parent.value) : {}),
+    [RELAY_DELIVERY_ID_HEADER]: hook.id,
+    [RELAY_RECEIVED_AT_HEADER]: hook.receivedAt,
+  };
+  let request = HttpClientRequest.make(hook.method as "GET" | "POST" | "PUT" | "PATCH")(
+    `${base}api/hooks/${hook.rawHookId}/${hook.rawToken}${hook.query ? `?${hook.query}` : ""}`,
+    { headers },
+  );
+  if (HttpMethod.hasBody(request.method)) {
+    request = HttpClientRequest.bodyUint8Array(request, hook.body, headers["content-type"]);
+  }
+  return yield* httpClient.execute(request).pipe(
+    Effect.flatMap((response) =>
+      readCapped(response).pipe(
+        Effect.map((body): UpstreamResponse => {
+          const outcome = response.headers["x-t3-hook-outcome"];
+          return {
+            status: response.status,
+            contentType: response.headers["content-type"],
+            outcome: outcome !== undefined && OUTCOME_PATTERN.test(outcome) ? outcome : undefined,
+            body,
+          };
+        }),
       ),
-      withoutRedirects,
-      // The client span would record url.full, which carries the token.
-      Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-      Effect.timeoutOption(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS)),
-    );
-  });
+    ),
+    withoutRedirects,
+    // The client span would record url.full, which carries the token.
+    Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+    Effect.timeoutOption(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS)),
+  );
+});

@@ -7,7 +7,6 @@ import { PreviewControlsToolkit } from "./tools.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const access = Effect.gen(function* () {
-  // The preview capability already reflects the calling project's access setting.
   const scope = yield* requireThreadMcpCapability("preview");
   return { scope, manager: yield* Preview.PreviewManager };
 });
@@ -33,9 +32,7 @@ export const layer = McpToolAccess.toLayer(PreviewControlsToolkit, {
         sessions.some((session) => session.tabId === input.tabId && session.runtime === "server")
       ) {
         const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-        yield* broker
-          .invoke({ scope, operation: "close", input: {}, tabId: input.tabId })
-          .pipe(Effect.mapError(unavailable));
+        yield* broker.invoke({ scope, operation: "close", input: {}, tabId: input.tabId });
         return {};
       }
       yield* manager

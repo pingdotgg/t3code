@@ -8,7 +8,7 @@ import {
   type DeviceHostCheck,
 } from "./deviceHostConnectionChecks";
 
-const host = { id: "mac", label: "Mac mini", target: "user@mac" };
+const host = { kind: "ssh" as const, id: "mac", label: "Mac mini", target: "user@mac" };
 const ids = ["a", "b", "c", "d"].map((id) => EnvironmentId.make(id));
 const targets = ids.map((environmentId, index) => ({
   environmentId,

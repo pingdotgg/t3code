@@ -8,17 +8,6 @@ interface UsageProgressEnvironment {
   readonly summary: UsageSummary | null;
 }
 
-/**
- * Where one environment's answer stands for the usage on screen.
- *
- * - `inactive`: disconnected or failed, so waiting on it changes nothing.
- * - `loading`: no summary yet.
- * - `stale`: its summary on screen predates the current request.
- * - `partway`: answered this round while slow sources finish refreshing.
- * - `ready`: answered.
- *
- * While a manual `refreshing` runs, every summary counts as stale.
- */
 export function usageEnvironmentProgress(
   environment: UsageProgressEnvironment,
   refreshing = false,
@@ -27,7 +16,6 @@ export function usageEnvironmentProgress(
   if (!environment.isConnected || environment.error !== null) return { phase: "inactive" } as const;
   if (summary === null) return { phase: "loading" } as const;
   if (refreshing) return { phase: "stale" } as const;
-  // A refreshing source without a pending follow-up has nothing left to wait on.
   if (!environment.isPending) return { phase: "ready" } as const;
   const providers = [
     ...new Set(
@@ -48,13 +36,6 @@ export function updatingProvidersLabel(
     : `Updating ${providers.length} providers…`;
 }
 
-/**
- * Loading state for the selected environments' merged usage.
- *
- * The page dims only while old numbers are all that is on screen. Once any
- * environment answers, the label carries what is still coming, so one slow
- * device never holds the page dimmed.
- */
 export function usageProgress(
   environments: readonly UsageProgressEnvironment[],
   {
@@ -89,15 +70,6 @@ export function usageProgress(
   };
 }
 
-/**
- * Which figures in the merged usage on screen are still coming in, so clients
- * can mute just those.
- *
- * - `partial`: totals will change because some environment is still answering.
- * - `providers`: providers whose own figures will change. An environment that
- *   has not answered yet, or whose whole summary is stale, could change any
- *   provider, so it sets `everyProvider`.
- */
 export function usageLoadingState(
   environments: readonly UsageProgressEnvironment[],
   refreshing = false,

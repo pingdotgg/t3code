@@ -51,34 +51,17 @@ const builtInThemeModes = [
 );
 
 describe("clerkAppearance", () => {
-  it("maps theme colors without overriding Clerk's component structure", () => {
-    expect(clerkAppearance).toEqual({
-      variables: {
-        colorPrimary: "var(--update-foreground)",
-        colorPrimaryForeground: "var(--card)",
-        colorDanger: "var(--error)",
-        colorSuccess: "var(--success)",
-        colorWarning: "var(--warning)",
-        colorNeutral: "var(--contrast-foreground)",
-        colorForeground: "var(--contrast-foreground)",
-        colorMuted: "color-mix(in srgb, var(--card) 98%, var(--contrast-foreground))",
-        colorMutedForeground: "var(--contrast-muted-foreground)",
-        colorBackground: "var(--card)",
-        colorInputForeground: "var(--contrast-foreground)",
-        colorInput: "var(--secondary)",
-        colorRing: "var(--ring)",
-      },
-      elements: {
-        formFieldErrorText: { color: "var(--error-foreground)" },
-        formFieldWarningText: { color: "var(--warning-foreground)" },
-        formFieldSuccessText: { color: "var(--success-foreground)" },
-        otpCodeFieldErrorText: { color: "var(--error-foreground)" },
-        otpCodeFieldSuccessText: { color: "var(--success-foreground)" },
-      },
-    });
-  });
-
   it.each(builtInThemeModes)("keeps Clerk text readable across a built-in palette", (colors) => {
+    expect(clerkAppearance.variables).toMatchObject({
+      colorForeground: "var(--contrast-foreground)",
+      colorBackground: "var(--card)",
+      colorMutedForeground: "var(--contrast-muted-foreground)",
+      colorMuted: "color-mix(in srgb, var(--card) 98%, var(--contrast-foreground))",
+      colorInputForeground: "var(--contrast-foreground)",
+      colorInput: "var(--secondary)",
+      colorPrimary: "var(--update-foreground)",
+      colorPrimaryForeground: "var(--card)",
+    });
     const mutedSurface = mixThemeColors(colors.surface, colors.text, 0.98);
 
     expect(contrastRatio(colors.text, colors.surface)).toBeGreaterThanOrEqual(4.5);

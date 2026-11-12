@@ -4,11 +4,9 @@ const CLASS_COMPOSERS = new Set(["cn", "clsx", "classNames", "cva", "twMerge"]);
 const STATE_VARIANT =
   /(?:^|[^\w])(?:focus(?:-visible|-within)?|selected|checked|pressed)(?=$|[^\w])/u;
 const RING_WIDTH = /^ring(?:-(?:[1-9]\d*|\[[^\]]+\]|\(length:[^)]+\)))?$/u;
-// Pixel widths only; arbitrary values like `outline-[#243c5a]` are colors.
 const OUTLINE_WIDTH = /^outline-(?:(\d+)|\[(?:length:)?(\d+(?:\.\d+)?)px\])$/u;
 const INWARD_OFFSET = /^-outline-offset-(\d+)$/u;
 
-/** Splits `dark:[&_a]:ring-2!` into its variants and utility, ignoring colons inside brackets. */
 function parseClass(token: string) {
   const variants: string[] = [];
   let depth = 0;
@@ -27,7 +25,6 @@ function parseClass(token: string) {
 
 type ParsedClass = ReturnType<typeof parseClass>;
 
-/** A companion applies when its variants are a subset of the indicator's variants. */
 const covers = (companion: ParsedClass, indicator: ParsedClass) =>
   companion.variants.every((variant) => indicator.variants.includes(variant));
 
@@ -36,7 +33,6 @@ const isClassComposer = (node: ESTree.Node) =>
   node.callee.type === "Identifier" &&
   CLASS_COMPOSERS.has(node.callee.name);
 
-/** Strings a composition always includes; branches, class maps, and other calls are not guaranteed. */
 function collectStrings(node: unknown, out: string[]) {
   if (Array.isArray(node)) {
     for (const child of node) collectStrings(child, out);
@@ -53,7 +49,6 @@ function collectStrings(node: unknown, out: string[]) {
   }
 }
 
-/** Classes guaranteed alongside a node by each enclosing `cn(...)`, so sibling companions count. */
 function scopeClasses(node: ESTree.Node, own: ParsedClass[]) {
   const strings: string[] = [];
   for (let current = node.parent; current; current = current.parent) {
@@ -70,7 +65,6 @@ function offenders(text: string, node: ESTree.Node) {
   for (const token of own) {
     const { utility, variants } = token;
     const label = [...variants, utility].join(":");
-    // Positive offsets push the outline out of the element; the app default is inward.
     if (/^outline-offset-|^\[outline-offset:/u.test(utility)) {
       found.push(label);
       continue;
