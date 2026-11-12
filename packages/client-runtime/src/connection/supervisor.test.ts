@@ -2034,7 +2034,7 @@ describe("EnvironmentSupervisor routes", () => {
                 Effect.map((reachable) => (reachable ? "answered" : "silent")),
               )
             : Effect.succeed("unchecked"),
-        prepare: (_attempt, target) =>
+        prepare: (_attempt, target): Effect.Effect<PreparedConnection, ConnectionAttemptError> =>
           target._tag === "BearerConnectionTarget"
             ? Ref.get(harness.releaseCount).pipe(
                 Effect.flatMap((releases) => Deferred.succeed(releasesAtLanAttempt, releases)),
