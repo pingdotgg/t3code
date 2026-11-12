@@ -26,13 +26,11 @@ Install Git and configure authentication on the machine running your T3 Code ser
 environment, do this on the remote machine. After signing in, open **Settings → Source control**
 and choose **Rescan**.
 
-If your server environment supplies Git credentials through a trusted, non-interactive
-`GIT_ASKPASS` helper, set `T3CODE_GIT_PRESERVE_ASKPASS=1` in that environment before starting
-T3 Code. This preserves the helper for background fetches and workspace preparation fetches.
-Terminal prompting, Git Credential Manager dialogs, and SSH askpass remain disabled. Leave
-the option unset to keep the default behavior, which disables Git askpass too. Only enable
-it for a helper that returns credentials without user interaction; T3 Code cannot prevent
-the helper itself from opening a dialog.
+Background fetches and workspace preparation never prompt for credentials, so T3 Code clears
+`GIT_ASKPASS` for them. If your server supplies credentials through a non-interactive `GIT_ASKPASS`
+helper, set `T3CODE_GIT_PRESERVE_ASKPASS=1` in the server's environment (for the background
+service, in [`service.env`](./background-service.md#configure-the-service-environment)) to keep
+it. Only use this for a helper that never opens a dialog.
 
 ### GitHub
 

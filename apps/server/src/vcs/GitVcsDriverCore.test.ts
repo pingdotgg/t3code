@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
-import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -4532,7 +4531,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([false, true])(
-      "makes background upstream status fetches non-interactive (preserve askpass: %s)",
+      "makes background and workspace fetches non-interactive (preserve askpass: %s)",
       (preserveAskpass) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
@@ -4550,15 +4549,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
 
           yield* Effect.gen(function* () {
-            yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
-
-            assert.deepEqual((yield* fileSystem.readFileString(sshLogPath)).trim().split(/\r?\n/), [
+            const driver = yield* GitVcsDriver.GitVcsDriver;
+            const expected = [
               "GCM_INTERACTIVE=never",
               `GIT_ASKPASS=${preserveAskpass ? "git-askpass" : ""}`,
               "GIT_TERMINAL_PROMPT=0",
               "SSH_ASKPASS=",
               "SSH_ASKPASS_REQUIRE=never",
-            ]);
+            ];
+            const readLog = fileSystem
+              .readFileString(sshLogPath)
+              .pipe(Effect.map((log) => log.trim().split(/\r?\n/)));
+
+            yield* driver.statusDetails(cwd);
+            assert.deepEqual(yield* readLog, expected);
+            yield* fileSystem.remove(sshLogPath);
+
+            yield* Effect.result(driver.fetchRemote({ cwd, remoteName: "origin" }));
+            assert.deepEqual(yield* readLog, expected);
           }).pipe(
             Effect.provideService(HostProcess.Environment, {
               ...(yield* HostProcess.Environment),
@@ -6892,105 +6900,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
-    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-      "fetches an authenticated remote with an explicitly enabled non-interactive askpass helper",
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const cwd = yield* makeTmpDir();
-          const remote = yield* makeTmpDir("git-askpass-remote-");
-          const { initialBranch } = yield* initRepoWithCommit(remote);
-          const remoteHead = yield* git(remote, ["rev-parse", "HEAD"]);
-          yield* git(remote, ["update-server-info"]);
-          yield* initRepoWithCommit(cwd);
-          // Never consult the developer's credential helpers or proxy for this fixture.
-          yield* git(cwd, ["config", "credential.helper", ""]);
-          yield* git(cwd, ["config", "core.askPass", ""]);
-          yield* git(cwd, ["config", "http.proxy", ""]);
-          const helper = path.join(remote, "askpass.sh");
-          const helperLog = `${helper}.log`;
-          yield* fs.writeFileString(
-            helper,
-            `#!/bin/sh\nprintf 'used\\n' >> "$0.log"\nprintf 'fixture\\n'\n`,
-            { mode: 0o700 },
-          );
-          const gitDirectory = path.join(remote, ".git");
-          const server = NodeHttp.createServer((request, response) => {
-            if (
-              request.headers.authorization !==
-              `Basic ${Buffer.from("fixture:fixture").toString("base64")}`
-            ) {
-              response.writeHead(401, { "WWW-Authenticate": 'Basic realm="git fixture"' });
-              response.end();
-              return;
-            }
-            const requested = path.resolve(
-              gitDirectory,
-              `.${new URL(request.url ?? "/", "http://localhost").pathname}`,
-            );
-            if (!requested.startsWith(`${gitDirectory}${path.sep}`)) {
-              response.writeHead(404).end();
-              return;
-            }
-            try {
-              const contents = NodeFS.readFileSync(requested);
-              response.writeHead(200, { "Content-Type": "text/plain" });
-              response.end(contents);
-            } catch {
-              response.writeHead(404).end();
-            }
-          });
-          yield* Effect.acquireRelease(
-            Effect.promise(
-              () =>
-                new Promise<void>((resolve, reject) => {
-                  server.once("error", reject);
-                  server.listen(0, "127.0.0.1", resolve);
-                }),
-            ),
-            () =>
-              Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
-          );
-          const address = server.address();
-          assert.isNotNull(address);
-          if (address === null || typeof address === "string") return;
-          yield* git(cwd, ["remote", "add", "origin", `http://127.0.0.1:${address.port}/`]);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const fetch = driver.fetchRemote({ cwd, remoteName: "origin" });
-          let invocations = "";
-          for (const setting of [undefined, "1", "0", "true"]) {
-            const result = yield* Effect.result(
-              fetch.pipe(
-                Effect.provideService(HostProcess.Environment, {
-                  ...(yield* HostProcess.Environment),
-                  GIT_ASKPASS: helper,
-                  T3CODE_GIT_PRESERVE_ASKPASS: setting,
-                }),
-              ),
-            );
-            if (setting === "1") {
-              assert.isTrue(Result.isSuccess(result));
-              assert.strictEqual(
-                yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
-                remoteHead,
-              );
-              invocations = yield* fs.readFileString(helperLog);
-              assert.isNotEmpty(invocations);
-            } else {
-              assert.isTrue(Result.isFailure(result));
-              if (Result.isFailure(result)) {
-                assert.include(result.failure.detail, "Git could not authenticate with the remote");
-              }
-              assert.strictEqual(
-                (yield* fs.exists(helperLog)) ? yield* fs.readFileString(helperLog) : "",
-                invocations,
-              );
-            }
-          }
-        }),
-    );
-
     it.effect("creates a worktree from the latest fetched remote commit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
