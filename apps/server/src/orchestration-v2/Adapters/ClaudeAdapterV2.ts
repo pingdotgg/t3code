@@ -5781,9 +5781,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
+        // A process's native id -> the session Claude moved it to (/clear and other conversation resets).
+        // Live state stays keyed by the process id; the persisted ref follows Claude so reopens resume it.
+        const resetSessionByNativeThread = new Map<string, string>();
+
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
           if (event.type === "provider_thread.updated") {
-            const budget = pdfBudgets.get(event.providerThread.nativeThreadRef?.nativeId ?? "");
+            const nativeThreadRef = event.providerThread.nativeThreadRef;
+            const budget = pdfBudgets.get(nativeThreadRef?.nativeId ?? "");
+            const resetSessionId = resetSessionByNativeThread.get(nativeThreadRef?.nativeId ?? "");
+            if (nativeThreadRef !== null && resetSessionId !== undefined) {
+              event = {
+                ...event,
+                providerThread: {
+                  ...event.providerThread,
+                  nativeThreadRef: { ...nativeThreadRef, nativeId: resetSessionId },
+                  // The pinned head is a message of the session Claude left.
+                  nativeConversationHeadRef: null,
+                },
+              };
+            }
             if (budget !== undefined) {
               event = {
                 ...event,
@@ -11917,6 +11934,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.receivedInit = true;
                     context.capabilities = new Set(message.capabilities ?? []);
                     context.claudeCodeVersion = message.claude_code_version;
+                  }
+                  if (
+                    message.type === "system" &&
+                    message.subtype === "init" &&
+                    !("parent_tool_use_id" in message && message.parent_tool_use_id != null)
+                  ) {
+                    if (message.session_id === context.nativeThreadId) {
+                      resetSessionByNativeThread.delete(context.nativeThreadId);
+                    } else {
+                      resetSessionByNativeThread.set(context.nativeThreadId, message.session_id);
+                    }
                   }
                   if (
                     message.type === "system" &&

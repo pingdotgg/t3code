@@ -1369,6 +1369,118 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("resumes a native session the provider moved the thread to", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("provider-moved-native-session");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const runToCompletion = Effect.fn("runToCompletion")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`moved-session:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`moved-session:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("moved-session:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Moved native session",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* runToCompletion(1);
+          const providerThread = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).providerThreads.at(0);
+          if (
+            providerThread?.nativeThreadRef == null ||
+            providerThread.providerSessionId === null
+          ) {
+            return yield* Effect.die("Expected a native provider thread after the first turn.");
+          }
+          // What the Claude adapter reports after /clear moved the session.
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("moved-session:provider-thread"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: providerThread.updatedAt,
+                payload: {
+                  ...providerThread,
+                  nativeThreadRef: { ...providerThread.nativeThreadRef, nativeId: "cleared" },
+                },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("moved-session:detach"),
+            threadId,
+            providerSessionId: providerThread.providerSessionId,
+          });
+          yield* worker.drain();
+          yield* runToCompletion(2);
+
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns[1]?.nativeThreadId, "cleared");
+          assert.isTrue(turns[1]?.nativeThreadHasTurns);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "provider-moved-native-session",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["an older handoff", "a missed request"] as const)(
     "keeps the latest turn when a resume fallback also delivers %s",
     (older) =>

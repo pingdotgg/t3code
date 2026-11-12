@@ -1840,6 +1840,14 @@ export const layer: Layer.Layer<
           ) + 1,
         nativeThreadHasTurns:
           nativeInputRunIds.size > 0 ||
+          // The provider moved this thread to a session it already wrote (Claude's /clear).
+          (sameNativeThread &&
+            acceptedAttempts.some((source) => source.nativeThreadId !== undefined) &&
+            !projection.attempts.some(
+              (source) =>
+                source.providerThreadId === providerThread.id &&
+                source.nativeThreadId === runningProviderThread.nativeThreadRef?.nativeId,
+            )) ||
           (legacyInputRunIds.size > 0 &&
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
