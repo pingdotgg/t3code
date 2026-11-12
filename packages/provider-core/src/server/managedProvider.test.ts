@@ -272,6 +272,7 @@ describe("makeManagedServerProvider", () => {
 
           const initial = yield* provider.getSnapshot;
           assert.deepStrictEqual(initial, initialSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, true);
 
           const updatesFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
             Stream.runCollect,
@@ -287,6 +288,7 @@ describe("makeManagedServerProvider", () => {
 
           assert.deepStrictEqual(updates, [refreshedSnapshot]);
           assert.deepStrictEqual(latest, refreshedSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, false);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
