@@ -34,6 +34,7 @@ import { expect } from "vite-plus/test";
 import type {
   ChangeRequest,
   GitActionProgressEvent,
+  GitWorkflowProgress,
   GitPreparePullRequestThreadInput,
   ModelSelection,
 } from "@t3tools/contracts";
@@ -4470,18 +4471,51 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       });
 
+      const updates: GitWorkflowProgress[] = [];
+      const ready = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      yield* manager.subscribeWorkflowProgress({ cwd: repoDir }).pipe(
+        Stream.runForEach((snapshot) =>
+          Effect.gen(function* () {
+            if (snapshot === null) {
+              yield* Deferred.succeed(ready, undefined);
+              return;
+            }
+            updates.push(snapshot);
+            if (snapshot.state === "completed") yield* Deferred.succeed(settled, undefined);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(ready);
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit",
         splitCommits: true,
       });
 
+      yield* Deferred.await(settled);
+      const commitUpdates = updates.map((snapshot) =>
+        snapshot.steps.filter((step) => step.id.startsWith("commit:")),
+      );
+      expect(
+        commitUpdates.some(
+          (steps) => steps.map((step) => step.state).join(",") === "completed,running",
+        ),
+      ).toBe(true);
+      expect(commitUpdates.at(-1)?.map((step) => step.label)).toEqual([
+        "1. Add alpha behavior",
+        "2. Add beta behavior",
+      ]);
       const snapshots = yield* manager
         .subscribeWorkflowProgress({ cwd: repoDir })
         .pipe(Stream.take(1), Stream.runCollect);
       expect(snapshots[0]).toMatchObject({ kind: "logical_commits", state: "completed" });
       expect(snapshots[0]?.steps.map((step) => [step.id, step.state])).toEqual(
-        ["prepare", "plan", "create", "verify", "install"].map((id) => [id, "completed"]),
+        ["prepare", "plan", "create", "verify", "install", "commit:0", "commit:1"].map((id) => [
+          id,
+          "completed",
+        ]),
       );
       expect(result.commit).toMatchObject({
         status: "created",
@@ -4507,7 +4541,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           Effect.map((output) => output.stdout.trim()),
         ),
       ).toBe("");
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect.each(["inferred", "tracked", "parent-advanced", "parent-rebased"] as const)(
@@ -4829,6 +4863,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       if (mode.startsWith("concurrent") || mode === "invalid-plan" || mode === "commit-failure") {
         const error = yield* operation.pipe(Effect.flip);
+        if (mode === "commit-failure") {
+          const snapshot = (yield* manager
+            .subscribeWorkflowProgress({ cwd: repoDir })
+            .pipe(Stream.take(1), Stream.runCollect))[0];
+          expect(snapshot?.state).toBe("failed");
+          expect(
+            snapshot?.steps
+              .filter((step) => step.id.startsWith("commit:"))
+              .map((step) => step.state),
+          ).toEqual(["skipped", "failed"]);
+        }
         expect(error.message).toContain(
           mode === "invalid-plan" ? "omitted" : mode === "commit-failure" ? "commit" : "changed",
         );

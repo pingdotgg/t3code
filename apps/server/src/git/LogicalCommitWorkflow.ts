@@ -251,6 +251,15 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
       const remainingProblem = validationError(generated);
       if (remainingProblem) return yield* fail(remainingProblem);
     }
+    yield* progress(`Creating ${generated.commits.length} logical commits...`, (steps) => [
+      ...steps,
+      ...generated.commits.map((commit, index) => ({
+        id: `commit:${index}`,
+        group: "Commits",
+        label: `${index + 1}. ${commit.subject.slice(0, 160)}`,
+        state: "pending" as const,
+      })),
+    ]);
     yield* stage("create", `Creating ${generated.commits.length} logical commits...`);
     const backupRef = `${backupRoot}/original`;
     yield* execute(["update-ref", backupRef, head, ""]);
@@ -312,9 +321,12 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         tip = base;
       }
       for (const [index, commit] of generated.commits.entries()) {
-        yield* stage(
-          "create",
+        yield* progress(
           `Creating commit ${index + 1}/${generated.commits.length}: ${commit.subject.slice(0, 160)}`,
+          (steps) =>
+            steps.map((step) =>
+              step.id === `commit:${index}` ? { ...step, state: "running" } : step,
+            ),
         );
         if ((yield* output(["rev-parse", "HEAD"])) !== tip || (yield* readBranch()) !== branchRef)
           return yield* fail(
@@ -328,6 +340,13 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         const created = yield* git.commit(cwd, commit.subject, commit.body);
         tip = created.commitSha;
         yield* execute(["update-ref", `${backupRoot}/candidate`, tip]);
+        yield* progress(
+          `Created commit ${index + 1}/${generated.commits.length}: ${commit.subject.slice(0, 160)}`,
+          (steps) =>
+            steps.map((step) =>
+              step.id === `commit:${index}` ? { ...step, state: "completed" } : step,
+            ),
+        );
       }
       yield* stage("verify", "Verifying committed changes...");
       if ((yield* output(["rev-parse", `${tip}^{tree}`])) !== targetTree)
@@ -373,6 +392,13 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
           if ((yield* readBranch()) !== branchRef) return;
           yield* update(tip, head);
           yield* installIndex(originalIndex);
+          yield* progress("Commits rolled back", (steps) =>
+            steps.map((step) =>
+              step.id.startsWith("commit:") && step.state === "completed"
+                ? { ...step, state: "skipped" }
+                : step,
+            ),
+          );
         }).pipe(Effect.ignore),
       ),
     );
