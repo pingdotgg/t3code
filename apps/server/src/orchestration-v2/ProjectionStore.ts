@@ -105,6 +105,7 @@ import {
   DEFERRED_WORK_ITEM_TYPES,
   decodeThreadHistoryCursor,
   deferWorkHistoryRows,
+  findCursorEndIndex,
   selectDeferredWorkPage,
   encodeThreadHistoryCursor,
   olderHistoryPagePolicy,
@@ -6393,15 +6394,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               canonicalPosition: position,
             }));
             const { olderPolicy, cursorPosition } = yield* Effect.try({
-              try: () => {
-                const { st, si } = decodeThreadHistoryCursor(cursor);
-                return {
-                  olderPolicy: olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId }),
-                  cursorPosition: indexed.findLastIndex(
-                    (row) => row.sourceThreadId === st && row.sourceItemId === si,
-                  ),
-                };
-              },
+              try: () => ({
+                olderPolicy: olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId }),
+                // The cursor's own row, or the row its stale position falls back to.
+                cursorPosition: Math.min(
+                  findCursorEndIndex(indexed, decodeThreadHistoryCursor(cursor)),
+                  indexed.length - 1,
+                ),
+              }),
               catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
             });
             const selectPage = (rows: typeof indexed) =>
@@ -6430,7 +6430,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const scannedRuns = new Set<string>();
             const persistentOutputs = new Set<string>();
             while (workMode !== undefined) {
-              // A cursor row hidden in a work group moves the page, so the scan always covers it.
+              // Rows hidden in a work group move the page, so the scan always reaches the cursor.
               const span = [...page.items.slice(0, 1), ...page.items.slice(-1)].map(
                 (row) => row.canonicalPosition,
               );

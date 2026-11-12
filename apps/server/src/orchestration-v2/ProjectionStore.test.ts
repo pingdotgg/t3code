@@ -3838,12 +3838,37 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [1, 2, 3],
         );
       }
+      // A cursor whose row is gone falls back to its position. Inline output between the page
+      // and that position can belong to a run with no other row there.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items
+        SET status = CASE WHEN ordinal <= 700 THEN 'running' ELSE 'completed' END,
+          run_id = CASE WHEN ordinal <= 700 THEN 'run:bounded-sql-history:300' ELSE ${sharedRunId} END,
+          payload_json = json_set(payload_json,
+            '$.status', CASE WHEN ordinal <= 700 THEN 'running' ELSE 'completed' END,
+            '$.runId', CASE WHEN ordinal <= 700 THEN 'run:bounded-sql-history:300' ELSE ${sharedRunId} END)
+        WHERE thread_id = ${threadId} AND ordinal >= 100`;
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
+        payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task')
+        WHERE thread_id = ${threadId} AND ordinal = 720`;
+      const beforeMissingCursor = yield* historyPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: "turn-item:bounded-sql-history:gone",
+          position: 800,
+        }),
+        undefined,
+        false,
+        "deferred",
+      );
+      assert.strictEqual(beforeMissingCursor.items.at(-1)?.item.ordinal, 720);
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'completed',
         run_id = ${sharedRunId},
         payload_json = json_set(payload_json, '$.status', 'completed', '$.runId', ${sharedRunId})
-        WHERE thread_id = ${threadId} AND ordinal >= 300`;
+        WHERE thread_id = ${threadId} AND ordinal >= 100`;
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
-        payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal IN (2, 4)`;
+        payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal IN (2, 4, 720)`;
       for (const [ordinal, status] of [
         [0, "completed"],
         [1, "superseded"],
