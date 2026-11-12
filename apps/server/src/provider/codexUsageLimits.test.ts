@@ -312,4 +312,24 @@ describe("codexUsageLimitResetAt", () => {
       codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
     ).toBeNull();
   });
+
+  it("ignores a seat-based zero credit cap that does not block the plan", () => {
+    const zeroCreditCap = { remainingPercent: 0, resetsAt: 1_796_083_200 };
+    expect(
+      codexUsageLimitResetAt({
+        planType: "team",
+        primary: { usedPercent: 100, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+        secondary: { usedPercent: 14, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+        individualLimit: zeroCreditCap,
+      }),
+    ).toBe("2026-07-14T03:33:20.000Z");
+    expect(
+      codexUsageLimitResetAt({
+        planType: "team",
+        primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+        secondary: { usedPercent: 14, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+        individualLimit: zeroCreditCap,
+      }),
+    ).toBeNull();
+  });
 });
