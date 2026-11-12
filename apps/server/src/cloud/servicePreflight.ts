@@ -1,5 +1,7 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
+import { skippedV2Migrations } from "../persistence/Migrations.ts";
+import { reconciledV2PreviewHistory } from "../persistence/reconcileV2PreviewMigration.ts";
 import {
   isSupportedLauncherProtocol,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -41,14 +43,17 @@ export function runServicePreflight(input: {
     };
   }
 
-  const newer = newerRecordedMigrations(input.databasePath);
-  if (newer === null) {
+  const recorded = recordedMigrations(input.databasePath);
+  if (recorded === null) {
     return {
       status: "blocked",
       version,
       reason: `Could not read this database to confirm t3@${version} supports it.`,
     };
   }
+  const newer = recorded
+    .filter(({ id }) => id > BUILD_MIGRATION_HEAD)
+    .map(({ id, name }) => `${id}_${name}`);
   if (newer.length > 0) {
     return {
       status: "blocked",
@@ -57,16 +62,19 @@ export function runServicePreflight(input: {
     };
   }
 
-  return { status: "ready", version, launcherProtocol };
-}
+  // Startup reconciles V2 preview ids before it checks the history, so check what it will see.
+  const reconciled = reconciledV2PreviewHistory(recorded);
+  const incompatible =
+    reconciled === null ? ["an unexpected V2 preview history"] : skippedV2Migrations(reconciled);
+  if (incompatible.length > 0) {
+    return {
+      status: "blocked",
+      version,
+      reason: `This database has incompatible migration history: ${incompatible.join(", ")}. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
+    };
+  }
 
-/** Migrations a newer build recorded, or null when the database exists but cannot be read.
- * Startup already handles renamed ids this build knows. */
-function newerRecordedMigrations(databasePath: string): ReadonlyArray<string> | null {
-  const recorded = recordedMigrations(databasePath);
-  return recorded === null
-    ? null
-    : recorded.filter(({ id }) => id > BUILD_MIGRATION_HEAD).map(({ id, name }) => `${id}_${name}`);
+  return { status: "ready", version, launcherProtocol };
 }
 
 export function decodeServicePreflightResult(
