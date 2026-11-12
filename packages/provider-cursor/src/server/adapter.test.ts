@@ -193,6 +193,7 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
+        assert.equal(providerThread.nativeMetadata?.cursorStoreCwd, workspace);
         const now = yield* DateTime.now;
         yield* runtime.startTurn({
           threadId,
@@ -1218,6 +1219,20 @@ describe("CursorAdapterV2", () => {
             result: { status: "error", error: "lint failed" },
           },
         },
+        ...["slow-shell", "fast-shell"].map((callId) => ({
+          type: "tool-call-started" as const,
+          modelCallId: "native-model-call",
+          callId,
+          toolCall: { type: "shell" as const, args: { command: callId } },
+        })),
+        {
+          type: "shell-output-delta",
+          event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "slow-shell" },
+        },
+        {
+          type: "shell-output-delta",
+          event: { case: "exit", value: { code: 0 }, toolCallId: "slow-shell" },
+        },
       ];
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
@@ -1331,6 +1346,21 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepEqual(item.input, { city: "Berlin" });
       }
+      const shellItemIds = new Map(
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.id, event.turnItem.input] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "command_output.delta"
+            ? [{ command: shellItemIds.get(event.itemId), chunk: event.chunk }]
+            : [],
+        ),
+        [{ command: "slow-shell", chunk: "tick 1\n" }],
+      );
       assert.deepEqual(toolOutputImages(mcpItems.at(-1)?.output), [
         { mimeType: "image/png", data: "iVBORw0KGgo=" },
       ]);
@@ -2034,6 +2064,12 @@ describe("CursorAdapterV2", () => {
           path.join(skill, "SKILL.md"),
           "# Review\nReview the code.",
         );
+        const userOnlySkill = path.join(workspace, ".cursor", "skills", "grill-me");
+        yield* fileSystem.makeDirectory(userOnlySkill, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(userOnlySkill, "SKILL.md"),
+          "---\nname: grill-me\ndescription: Grill the plan.\ndisable-model-invocation: true\n---\nAsk one question at a time.",
+        );
         const steered: string[] = [];
         let cancelled = 0;
         let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
@@ -2168,6 +2204,21 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepEqual(steered, ["/review Look at the tests instead."]);
         assert.equal(cancelled, 0);
+        yield* runtime.steerTurn({
+          threadId,
+          runId: turn.runId,
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("cursor-steer-user-only-skill"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "$grill-me My plan.",
+            attachments: [],
+          },
+        });
+        // Cursor hides `disable-model-invocation` skills from the model, so the SDK prompt must carry them.
+        assert.include(steered.at(-1), "Ask one question at a time.");
 
         outcome = "revert_to_followup";
         const declined = yield* runtime
@@ -2186,7 +2237,7 @@ describe("CursorAdapterV2", () => {
           })
           .pipe(Effect.exit);
         if (!Exit.isFailure(declined)) return yield* Effect.die("Expected a declined steer");
-        assert.deepEqual(steered, ["/review Look at the tests instead.", "Stop and do this."]);
+        assert.equal(steered.at(-1), "Stop and do this.");
         assert.equal(cancelled, 0);
         const declinedError = Cause.squash(declined.cause);
         assert.instanceOf(declinedError, ProviderAdapter.ProviderAdapterSteerDeclinedError);
