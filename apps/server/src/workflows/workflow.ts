@@ -255,7 +255,7 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
     execute: Effect.gen(function* () {
       yield* run.store.waitClosed(run.runId, name);
       yield* run.store.stepEnded(run.runId, name, "completed", woke.expired ? "timed out" : null);
-      yield* run.store.runStatus(run.runId, "running", null);
+      yield* run.store.runResumed(run.runId);
     }),
   });
   if (woke.expired) return Option.none();
