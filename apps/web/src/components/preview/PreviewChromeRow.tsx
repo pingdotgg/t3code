@@ -11,8 +11,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
-  useEffect,
-  useRef,
+  type RefObject,
   useState,
 } from "react";
 
@@ -28,7 +27,8 @@ interface Props {
   canGoForward: boolean;
   refreshDisabled: boolean;
   inputDisabled?: boolean | undefined;
-  focusUrlNonce?: number | undefined;
+  /** Owned by the caller so its shortcut handler can focus the address bar directly. */
+  urlInputRef: RefObject<HTMLInputElement | null>;
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
@@ -57,7 +57,7 @@ export function PreviewChromeRow({
   canGoForward,
   refreshDisabled,
   inputDisabled,
-  focusUrlNonce,
+  urlInputRef: inputRef,
   onBack,
   onForward,
   onRefresh,
@@ -76,16 +76,8 @@ export function PreviewChromeRow({
   trailingActions,
   leadingActions,
 }: Props) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
-
-  useEffect(() => {
-    if (focusUrlNonce == null) return;
-    const node = inputRef.current;
-    if (!node) return;
-    node.focus();
-  }, [focusUrlNonce]);
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
@@ -175,6 +167,11 @@ export function PreviewChromeRow({
                     setInputFocused(false);
                   }}
                   onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                      // A trusted Enter would still submit the form implicitly.
+                      if (event.key === "Enter") event.preventDefault();
+                      return;
+                    }
                     if (event.key === "Enter") submit(event);
                     if (event.key === "Escape") {
                       event.preventDefault();
@@ -183,6 +180,8 @@ export function PreviewChromeRow({
                     }
                   }}
                   placeholder="Search or enter URL"
+                  aria-label="Search or enter URL"
+                  data-workspace-focus-default
                   spellCheck={false}
                   disabled={inputDisabled}
                   data-preview-url-input

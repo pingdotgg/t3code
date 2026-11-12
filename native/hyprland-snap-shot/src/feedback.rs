@@ -106,7 +106,6 @@ struct Feedback {
     done: bool,
 }
 
-/// Clip in logical output space, then map the visible portion to source pixels.
 fn clip(rect: Rect, output: Rect, image: (u32, u32)) -> Option<(Rect, Rect)> {
     if !rect.valid() || !output.valid() || !rect.intersects(output) {
         return None;

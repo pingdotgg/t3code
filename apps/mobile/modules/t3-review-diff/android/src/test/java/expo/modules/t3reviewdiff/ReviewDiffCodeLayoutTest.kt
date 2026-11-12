@@ -91,7 +91,7 @@ class ReviewDiffCodeLayoutTest {
       style,
       theme,
       280
-    ).lines(row.id)
+    ).lines(row)
     val second = cache.layout(
       listOf(row, comment.copy(commentText = "After")),
       emptyMap(),
@@ -99,9 +99,9 @@ class ReviewDiffCodeLayoutTest {
       style,
       theme,
       280,
-    ).lines(row.id)
+    ).lines(row)
     assertSame(first, second)
-    val narrow = cache.layout(listOf(row), emptyMap(), paint, style, theme, 180).lines(row.id)
+    val narrow = cache.layout(listOf(row), emptyMap(), paint, style, theme, 180).lines(row)
     assertNotSame(first, narrow)
     assertTrue(narrow.extraHeight > first.extraHeight)
     val edited = cache.layout(
@@ -111,7 +111,7 @@ class ReviewDiffCodeLayoutTest {
       style,
       theme,
       180
-    ).lines(row.id)
+    ).lines(row)
     assertTrue(edited.extraHeight < narrow.extraHeight)
     assertEquals(
       0,
@@ -122,7 +122,7 @@ class ReviewDiffCodeLayoutTest {
         style.copy(wordWrap = false),
         theme,
         180
-      ).extraHeight(row.id)
+      ).rowHeight(row, 0)
     )
   }
 
@@ -132,9 +132,9 @@ class ReviewDiffCodeLayoutTest {
     val row = row("漢字".repeat(30)).copy(wordDiffRanges = listOf(DiffWordDiffRange(3, 21)))
     val style = DiffStyle.defaults(1f).copy(wordWrap = true)
     val theme = DiffTheme.fallback("light")
-    val initial = cache.layout(listOf(row), emptyMap(), paint, style, theme, 180).lines(row.id)
+    val initial = cache.layout(listOf(row), emptyMap(), paint, style, theme, 180).lines(row)
     val tokens = mapOf(row.id to listOf(DiffToken(row.content, 0xff008800.toInt(), 2)))
-    val highlighted = cache.layout(listOf(row), tokens, paint, style, theme, 180).lines(row.id)
+    val highlighted = cache.layout(listOf(row), tokens, paint, style, theme, 180).lines(row)
     assertNotSame(initial, highlighted)
     val text = requireNotNull(highlighted.nativeLayout).text as Spanned
     val span = text.getSpans(0, text.length, BackgroundColorSpan::class.java).single()
@@ -191,6 +191,32 @@ class ReviewDiffCodeLayoutTest {
     assertFresh(rows, tokens, style.copy(wordWrap = true))
     assertFresh(rows, tokens)
     assertFresh(rows)
+  }
+
+  @Test
+  fun obsoletePreparationStopsBeforeWalkingTheRemainingRows() {
+    val cache = CodeLayoutCache()
+    val row = row("漢字".repeat(100))
+    val style = DiffStyle.defaults(1f).copy(wordWrap = true)
+    val theme = DiffTheme.fallback("light")
+    val displayed = cache.layout(listOf(row), emptyMap(), paint, style, theme, 280).lines(row)
+    val preparation = cache.copyForPreparation()
+    var checked = 0
+    val cancelled = preparation.layout(
+      List(10000) { row.copy(id = "row:$it") },
+      emptyMap(),
+      paint,
+      style,
+      theme,
+      280,
+      isCancelled = { ++checked == 2 },
+    )
+    assertEquals(2, checked)
+    assertEquals(false, cancelled.enabled)
+    assertSame(
+      displayed,
+      cache.layout(listOf(row), emptyMap(), paint, style, theme, 280).lines(row)
+    )
   }
 
   private fun row(content: String) = DiffRow(

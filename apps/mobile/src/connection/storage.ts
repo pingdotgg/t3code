@@ -13,8 +13,8 @@ import {
   ConnectionTransientError,
   CredentialStore,
   ProfileStore,
-  GitHubRoutingPermissions,
-  makeGitHubRoutingPermissions,
+  PullRequestRoutingPermissions,
+  makePullRequestRoutingPermissions,
 } from "@t3tools/client-runtime/connection";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -42,7 +42,7 @@ function targetPersistenceError(
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const catalog = yield* CatalogStore.make();
-    const githubRoutingPermissions = yield* makeGitHubRoutingPermissions({
+    const githubRoutingPermissions = yield* makePullRequestRoutingPermissions({
       read: catalog.read.pipe(Effect.map((document) => document.githubRoutingPermissions ?? [])),
       write: (githubRoutingPermissions) =>
         catalog.update((document) => ({ ...document, githubRoutingPermissions })),
@@ -59,24 +59,33 @@ export const layer = Layer.effectContext(
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
-      register: (registration, routes) =>
-        catalog
-          .update((document) => registerConnectionInCatalog(document, registration, routes))
-          .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
-      setRoutes: (environmentId, routes) =>
-        catalog
-          .update((document) => setRoutesInCatalog(document, environmentId, routes))
-          .pipe(Effect.mapError((error) => targetPersistenceError("set-connection-routes", error))),
-      remove: (environmentId) =>
+      register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
+        (registration, routes) =>
+          catalog
+            .update((document) => registerConnectionInCatalog(document, registration, routes))
+            .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
+      ),
+      setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
+        (environmentId, routes) =>
+          catalog
+            .update((document) => setRoutesInCatalog(document, environmentId, routes))
+            .pipe(
+              Effect.mapError((error) => targetPersistenceError("set-connection-routes", error)),
+            ),
+      ),
+      remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")((environmentId) =>
         catalog
           .update((document) => removeConnectionFromCatalog(document, environmentId))
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
-      setEnabled: (environmentId, enabled) =>
-        catalog
-          .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
-          .pipe(
-            Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
-          ),
+      ),
+      setEnabled: Effect.fn("Persistence.ConnectionRegistrationStore.setEnabled")(
+        (environmentId, enabled) =>
+          catalog
+            .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
+            .pipe(
+              Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
+            ),
+      ),
     });
     const profileStore = ProfileStore.make({
       get: (connectionId) =>
@@ -150,7 +159,7 @@ export const layer = Layer.effectContext(
         })),
     });
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
-      Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
+      Context.add(PullRequestRoutingPermissions, githubRoutingPermissions),
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EventId, ProviderDriverKind, type ProviderReplayEntry } from "@t3tools/contracts";
@@ -158,7 +159,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const phase2Steps = materialized.steps.slice(firstIdle + 1);
   const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
   const layerDatabase = SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const snapshotPath = path.join(tempDir, "restart-state.sqlite");
   const scenario = (name: string, steps: typeof materialized.steps) => ({
@@ -217,7 +218,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     ),
   );
   const snapshotDatabase = SqlitePersistence.layerFromPath(snapshotPath).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const settled = projectionFor(before, SCENARIO);
   assert.equal(settled.runs[0]?.status, "completed");
@@ -292,7 +293,9 @@ describe("restart-cancelled background work", () => {
           ]);
         }).pipe(
           provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+          Effect.provide(
+            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
         ),
       ),
   );

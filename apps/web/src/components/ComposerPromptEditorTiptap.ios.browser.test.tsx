@@ -4,7 +4,10 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "./ComposerPromptEditorTiptap";
 
 // ProseMirror selects its iOS Enter fallback when its module is first evaluated.
 // A dedicated browser-test iframe keeps this identity out of the desktop tests.

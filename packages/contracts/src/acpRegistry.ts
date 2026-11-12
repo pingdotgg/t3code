@@ -149,6 +149,8 @@ export const AcpRegistrySession = Schema.Struct({
   title: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_024))),
   updatedAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
   importedThreadId: Schema.NullOr(ThreadId),
+  /** The imported thread still lacks the session's history, so importing again copies it. */
+  nativeHistoryPending: Schema.optionalKey(Schema.Boolean),
 });
 export type AcpRegistrySession = typeof AcpRegistrySession.Type;
 
@@ -270,14 +272,17 @@ export type AcpRegistryProbeModel = typeof AcpRegistryProbeModel.Type;
 
 export const AcpRegistryProbeResult = Schema.Struct({
   instanceId: ProviderInstanceId,
-  // `ready` is only returned after a disposable ACP session/new probe completes.
-  // It does not imply that authentication was passively detected.
+  // `ready` requires a disposable ACP session/new probe, not passive auth detection.
   ready: Schema.Literal(true),
   icon: Schema.NullOr(AcpRegistryUrl),
   authMethods: Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),
   models: Schema.Array(AcpRegistryProbeModel).check(Schema.isMaxLength(256)),
   currentModelId: Schema.NullOr(AcpRegistryProbeText),
   configOptions: Schema.Array(ProviderOptionDescriptor).check(Schema.isMaxLength(16)),
+  // configOptions ids that describe only the current model (ACP thought_level / model_config).
+  modelOptionIds: Schema.optionalKey(
+    Schema.Array(AcpRegistryProbeText).check(Schema.isMaxLength(16)),
+  ),
   sessionManagement: Schema.Struct({
     canList: Schema.Boolean,
     canLoad: Schema.Boolean,
