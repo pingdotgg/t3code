@@ -8,6 +8,9 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import PeerLinks from "./Migrations/070_PeerLinks.ts";
+import PeerLinkFence from "./Migrations/071_PeerLinkFence.ts";
+import WaitingLinkRequestIndex from "./Migrations/072_WaitingLinkRequestIndex.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -161,6 +164,24 @@ describe("runMigrations", () => {
         yield* runMigrations(),
         migrationManifest.filter(([id]) => id >= 70),
       );
+      assert.deepStrictEqual(yield* history, migrationManifest);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  // 0.1.2-preview 3511/3516 shipped the peer link migrations as 68-70.
+  it.effect("upgrades a database the 0.1.2 preview recorded peer links at 68-70 in", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 67 });
+      yield* PeerLinks;
+      yield* PeerLinkFence;
+      yield* WaitingLinkRequestIndex;
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (68, 'PeerLinks'), (69, 'PeerLinkFence'), (70, 'WaitingLinkRequestIndex')
+      `;
+
+      yield* runMigrations();
       assert.deepStrictEqual(yield* history, migrationManifest);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
