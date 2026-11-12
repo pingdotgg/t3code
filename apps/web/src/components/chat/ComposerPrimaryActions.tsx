@@ -63,9 +63,6 @@ interface ComposerPrimaryActionsProps {
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  /** Set while dictation records: the stop slot finishes it instead of sending. */
-  onStopDictation?: (() => void) | undefined;
-  stopDictationShortcutLabel?: string | null;
   compactBeforeSendTokens?: number | null;
   keepFullHistory?: boolean;
   onToggleKeepFullHistory?: () => void;
@@ -107,11 +104,17 @@ export const COMPOSER_PILL_BUTTON_CLASS_NAME =
   "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-composer-pill-button text-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
 
 const COMPOSER_PILL_SLOT_CLASS_NAME =
-  "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-composer-pill-button outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
+  "relative isolate flex h-full shrink-0 items-center justify-center rounded-composer-pill-button outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:opacity-64 [&_svg]:pointer-events-none";
 
 /** A labeled primary action on the message-action pill; callers add height, padding and split edges. */
 function MessageActionPill({ className, type = "button", ...props }: ComponentProps<"button">) {
   return <button type={type} className={cn(messageActionPillClassName, className)} {...props} />;
+}
+
+function ComposerPillButton({ className, type = "button", ...props }: ComponentProps<"button">) {
+  return (
+    <button type={type} className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, className)} {...props} />
+  );
 }
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
@@ -143,8 +146,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onResume,
   onPreviousPendingQuestion,
   onInterrupt,
-  onStopDictation,
-  stopDictationShortcutLabel = null,
   compactBeforeSendTokens = null,
   keepFullHistory = false,
   onToggleKeepFullHistory,
@@ -186,57 +187,38 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
 
   // The stop square sits in the same pill as send, so the pill never changes shape.
-  // While dictating it ends the recording; a running turn's stop returns after.
-  const stopsDictation = onStopDictation !== undefined && !pendingAction;
-  const stopLabel = stopsDictation ? "Stop voice input" : generationStopLabel;
+  const renderStopSlot = (insidePendingAction: boolean) => (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className={cn(COMPOSER_PILL_SLOT_CLASS_NAME, "w-8", insidePendingAction && "sm:w-6.5")}
+            {...pointerFocusProps}
+            disabled={!canOperateThread || isStopDisabled}
+            onClick={() => {
+              if (!canOperateThread || isStopDisabled) return;
+              setStopPhase("pending");
+              onInterrupt();
+            }}
+            aria-label={generationStopLabel}
+          />
+        }
+      >
+        <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
+      </TooltipTrigger>
+      <TooltipPopup>
+        {stopPhase === "pending" ? "Stopping…" : stopPhase === "landed" ? "Stopped" : "Interrupt"}
+      </TooltipPopup>
+    </Tooltip>
+  );
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <ComposerSendPill key="interrupt" className={cn(insidePendingAction && "sm:h-7")}>
       {insidePendingAction ? null : renderSpeechAction?.(true)}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className={cn(
-                COMPOSER_PILL_SLOT_CLASS_NAME,
-                "w-8",
-                insidePendingAction && "sm:w-6.5",
-              )}
-              {...pointerFocusProps}
-              disabled={!stopsDictation && (!canOperateThread || isStopDisabled)}
-              onClick={() => {
-                if (stopsDictation) onStopDictation();
-                else {
-                  if (!canOperateThread || isStopDisabled) return;
-                  setStopPhase("pending");
-                  onInterrupt();
-                }
-              }}
-              aria-label={stopLabel}
-            />
-          }
-        >
-          <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
-        </TooltipTrigger>
-        <TooltipPopup>
-          {stopsDictation
-            ? `${stopLabel}${stopDictationShortcutLabel ? ` (${stopDictationShortcutLabel})` : ""}`
-            : stopPhase === "pending"
-              ? "Stopping…"
-              : stopPhase === "landed"
-                ? "Stopped"
-                : "Interrupt"}
-        </TooltipPopup>
-      </Tooltip>
+      {!voiceInputActive || canInterrupt || stopPhase !== null
+        ? renderStopSlot(insidePendingAction)
+        : null}
     </ComposerSendPill>
-  );
-
-  // Keep the clicked target at the right edge even if typing changes the primary action.
-  const withStopButton = (action: ReactNode) => (
-    <>
-      {action}
-      {stopPhase === null ? null : renderStopGenerationButton(false)}
-    </>
   );
 
   if (pendingAction) {
@@ -296,7 +278,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (
-    stopsDictation ||
+    voiceInputActive ||
     ((canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") &&
       !hasSendableContent &&
       !isEditingQueuedMessage)
@@ -347,9 +329,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         : submitLabel);
 
   const sendButton = (
-    <button
+    <ComposerPillButton
       type={showResume ? "button" : "submit"}
-      className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
+      className="w-8"
       {...pointerFocusProps}
       onClick={showResume ? onResume : onSubmitMessage}
       disabled={
@@ -373,63 +355,54 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : (
         <ArrowUpIcon className="size-3.5" aria-hidden="true" />
       )}
-    </button>
+    </ComposerPillButton>
   );
 
   const submit = (
     <ComposerSendPill>
+      {compactTokens !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ComposerPillButton
+                className="gap-1.5 px-2.5 text-label tabular-nums after:pointer-events-none after:absolute after:inset-y-2 after:right-0 after:w-px after:bg-current after:opacity-16"
+                {...pointerFocusProps}
+                aria-pressed={!keepFullHistory}
+                aria-label={`Compact ${compactTokens} tokens of history before sending`}
+                disabled={!canOperateThread}
+                onClick={onToggleKeepFullHistory}
+              />
+            }
+          >
+            <Minimize2Icon aria-hidden="true" className="size-3.5" />
+            <span className={cn(keepFullHistory && "line-through")}>{compactTokens}</span>
+          </TooltipTrigger>
+          <TooltipPopup>
+            <div>Compact {compactTokens} tokens</div>
+            <div>
+              {keepFullHistory
+                ? `Next send keeps all ${compactTokens} tokens.`
+                : `Next send compacts ${compactTokens} tokens first.`}
+            </div>
+            <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {renderSpeechAction?.(true)}
       <Tooltip>
         {/* A span trigger keeps the tooltip reachable while send is disabled. */}
         <TooltipTrigger render={<span className="flex h-full" />}>{sendButton}</TooltipTrigger>
         <TooltipPopup>{submitTooltip}</TooltipPopup>
       </Tooltip>
+      {/* Keep the clicked stop at the right edge of the same pill when typing changes the action. */}
+      {stopPhase === null ? null : renderStopSlot(false)}
     </ComposerSendPill>
   );
-  if (compactTokens === null) {
-    return withStopButton(
-      <>
-        {children}
-        {submit}
-      </>,
-    );
-  }
-  const compactTone = keepFullHistory ? "text-muted-foreground" : "text-warning-foreground";
-
-  return withStopButton(
-    <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="action"
-              variant="pill"
-              {...pointerFocusProps}
-              aria-pressed={!keepFullHistory}
-              aria-label={`Compact ${compactTokens} tokens of history before sending`}
-              disabled={!canOperateThread}
-              onClick={onToggleKeepFullHistory}
-            />
-          }
-        >
-          <Minimize2Icon aria-hidden="true" className={compactTone} />
-          <span className={cn("@max-[480px]/composer-surface:hidden", compactTone)}>
-            {keepFullHistory ? "Full" : "Compact"}
-          </span>
-          <span className={cn("tabular-nums", compactTone)}>{compactTokens}</span>
-        </TooltipTrigger>
-        <TooltipPopup>
-          <div>
-            {keepFullHistory
-              ? `Next send keeps all ${compactTokens} tokens.`
-              : `Next send compacts ${compactTokens} tokens first.`}
-          </div>
-          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
-        </TooltipPopup>
-      </Tooltip>
+  return (
+    <>
       {children}
       {submit}
-    </div>,
+    </>
   );
 });
 
