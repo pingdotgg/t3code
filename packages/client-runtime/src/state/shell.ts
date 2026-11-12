@@ -557,7 +557,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         // A rotated credential replaces the prepared connection of a session that stays up.
         if (current !== null && prepared !== null && sameConnection(current.prepared, prepared)) {
           const next = { ...current, prepared, claimed: current.claimed || claim };
-          return [current.claimed ? null : current, next] as const;
+          // A claimed load that still runs is handed out again. A second request could
+          // answer first, and this one would then replace its rows under a passed cursor.
+          const done = current.fiber.pollUnsafe() !== undefined;
+          return [current.claimed && done ? null : current, next] as const;
         }
         if (current !== null) yield* Fiber.interrupt(current.fiber);
         const identity = descriptorShellIdentity(prepared?.descriptor);

@@ -1167,7 +1167,7 @@ describe("environment shell cold start", () => {
   const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (
     origin: Persistence.ShellCacheOrigin | undefined,
     // Set for a connection that is prepared but has no session yet.
-    early?: { readonly serverResumes: boolean },
+    early?: { readonly serverResumes: boolean; readonly holdLoads?: boolean },
   ) {
     yield* TestClock.setTime(NOW);
     const subscriptions = yield* Queue.unbounded<{
@@ -1180,6 +1180,8 @@ describe("environment shell cold start", () => {
     }>();
     const httpLoads = yield* Ref.make(0);
     const loadOptions = yield* Queue.unbounded<ShellSnapshotLoader.ShellSnapshotOptions>();
+    const loadsReleased = yield* Deferred.make<void>();
+    if (early?.holdLoads !== true) yield* Deferred.succeed(loadsReleased, undefined);
     const client = {
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: unknown) =>
         Stream.unwrap(
@@ -1228,6 +1230,7 @@ describe("environment shell cold start", () => {
     const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
       load: (_prepared, options = {}) =>
         Queue.offer(loadOptions, options).pipe(
+          Effect.andThen(Deferred.await(loadsReleased)),
           Effect.andThen(Ref.updateAndGet(httpLoads, (count) => count + 1)),
           Effect.map((count) =>
             Option.some<ShellSnapshotLoader.ShellHttpAnswer>(
@@ -1253,10 +1256,18 @@ describe("environment shell cold start", () => {
       saved,
       httpLoads,
       loadOptions,
-      connect: (config: object) =>
+      releaseLoads: Deferred.succeed(loadsReleased, undefined),
+      // Resolves `configRead` when the subscription reads the config, just before it claims the load.
+      connect: (config: object, configRead?: Deferred.Deferred<void>) =>
         SubscriptionRef.set(
           activeSession,
-          Option.some({ ...session(client), initialConfig: Effect.succeed(config as never) }),
+          Option.some({
+            ...session(client),
+            initialConfig: (configRead === undefined
+              ? Effect.void
+              : Deferred.succeed(configRead, undefined)
+            ).pipe(Effect.as(config as never)),
+          }),
         ),
       reconnect: SubscriptionRef.set(activeSession, Option.some(session(client))),
       // The registry swaps a rotated bearer into the prepared connection of a live session.
@@ -1417,6 +1428,27 @@ describe("environment shell cold start", () => {
         yield* h.liveAt(subscribes.afterSequence + 1);
         expect(yield* Ref.get(h.httpLoads)).toBe(loads.length);
       }),
+  );
+
+  it.effect("a replaced session waits for the load its connection already started", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(undefined, { serverResumes: false, holdLoads: true });
+      expect(yield* Queue.take(h.loadOptions)).toEqual(FAMILY_FLAGS);
+      const claimed = yield* Deferred.make<void>();
+      yield* h.connect(FAMILY_CONFIG, claimed);
+      yield* Deferred.await(claimed);
+      // Lets the first subscription run on from its config read to its wait for the load.
+      yield* TestClock.adjust("1 millis");
+      // The first subscription waits for the load. A second request could answer first, and
+      // the older answer would then replace its rows under a cursor the socket has passed.
+      yield* h.connect(FAMILY_CONFIG);
+      yield* TestClock.adjust("1 millis");
+      yield* h.releaseLoads;
+      const subscribed = yield* Queue.take(h.subscriptions);
+      expect(subscribed.input).toMatchObject({ afterSequence: HTTP_SEQUENCE });
+      expect(yield* Queue.size(h.loadOptions)).toBe(0);
+      expect(yield* Ref.get(h.httpLoads)).toBe(1);
+    }),
   );
 
   it.effect("reloads over HTTP when the server answers a resume with snapshot-required", () =>
