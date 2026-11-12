@@ -308,6 +308,31 @@ export const make = Effect.gen(function* () {
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const checkoutDetailDemandRef = yield* Ref.make(new Map<string, number>());
+
+  const retainCheckoutDetails = (cwd: string) =>
+    Ref.update(checkoutDetailDemandRef, (current) =>
+      new Map(current).set(cwd, (current.get(cwd) ?? 0) + 1),
+    );
+  const releaseCheckoutDetails = (cwd: string) =>
+    Ref.update(checkoutDetailDemandRef, (current) => {
+      const next = new Map(current);
+      const count = next.get(cwd) ?? 0;
+      if (count <= 1) next.delete(cwd);
+      else next.set(cwd, count - 1);
+      return next;
+    });
+  // Published local status must keep checkout details while a stream asks for them.
+  const readPublishedLocalStatus = (cwd: string) =>
+    Ref.get(checkoutDetailDemandRef).pipe(
+      Effect.flatMap((demand) =>
+        workflow.localStatus({
+          cwd,
+          ...(demand.has(cwd) ? { includeCheckoutDetails: true } : {}),
+        }),
+      ),
+    );
+
   const headWatchersRef = yield* SynchronizedRef.make(new Map<string, ActiveHeadWatcher>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
@@ -378,7 +403,7 @@ export const make = Effect.gen(function* () {
         const branch = yield* workflow.currentBranch(cwd);
         if (branch === cached.local.value.refName) return cached.local.value;
         yield* workflow.invalidateLocalStatus(cwd);
-        return yield* updateCachedLocalStatus(cwd, yield* workflow.localStatus({ cwd }), {
+        return yield* updateCachedLocalStatus(cwd, yield* readPublishedLocalStatus(cwd), {
           publish: true,
         });
       }
@@ -439,7 +464,7 @@ export const make = Effect.gen(function* () {
           if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
-          const local = yield* workflow.localStatus({ cwd });
+          const local = yield* readPublishedLocalStatus(cwd);
           localRefreshResults.set(cwd, { startedAt, local });
           return yield* updateCachedLocalStatus(cwd, local, { publish: true });
         }),
@@ -790,7 +815,7 @@ export const make = Effect.gen(function* () {
             return previous ? new Map(cache).set(cwd, { ...previous, local: null }) : cache;
           });
           if (detailedSubscribers.has(cwd)) {
-            const local = yield* workflow.localStatus({ cwd });
+            const local = yield* readPublishedLocalStatus(cwd);
             yield* updateCachedLocalStatus(cwd, local, { publish: true });
             return {
               refName: local.refName,
@@ -917,35 +942,43 @@ export const make = Effect.gen(function* () {
               else detailedSubscribers.set(cwd, remaining);
             }),
         );
-        const subscription = yield* PubSub.subscribe(changesPubSub);
-        // Watch before reading so a checkout in between still publishes.
-        yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));
-        const initialLocal = yield* getOrLoadLocalStatus(cwd);
-        const cachedStatus = yield* getCachedStatus(cwd);
-        const initialRemote = cachedStatus?.remote?.value ?? null;
-        if (input.includeRemote !== false) {
-          yield* retainRemotePoller(
-            cwd,
-            input.cwd,
-            cachedStatus?.remote === null || cachedStatus?.remote === undefined,
-          );
-        }
-        const release =
-          input.includeRemote === false
-            ? Effect.void
-            : releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
+        if (input.includeCheckoutDetails) yield* retainCheckoutDetails(cwd);
+        const releaseCheckoutDetailDemand = input.includeCheckoutDetails
+          ? releaseCheckoutDetails(cwd)
+          : Effect.void;
+        return yield* Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(changesPubSub);
+          // Watch before reading so a checkout in between still publishes.
+          yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));
+          const initialLocal = input.includeCheckoutDetails
+            ? yield* workflow.localStatus({ cwd, includeCheckoutDetails: true })
+            : yield* getOrLoadLocalStatus(cwd);
+          const cachedStatus = yield* getCachedStatus(cwd);
+          const initialRemote = cachedStatus?.remote?.value ?? null;
+          if (input.includeRemote !== false) {
+            yield* retainRemotePoller(
+              cwd,
+              input.cwd,
+              cachedStatus?.remote === null || cachedStatus?.remote === undefined,
+            );
+          }
+          const release =
+            input.includeRemote === false
+              ? Effect.void
+              : releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
-        return Stream.concat(
-          Stream.make({
-            _tag: "snapshot" as const,
-            local: initialLocal,
-            remote: initialRemote,
-          }),
-          Stream.fromSubscription(subscription).pipe(
-            Stream.filter((event) => event.cwd === cwd),
-            Stream.map((event) => event.event),
-          ),
-        ).pipe(Stream.ensuring(release));
+          return Stream.concat(
+            Stream.make({
+              _tag: "snapshot" as const,
+              local: initialLocal,
+              remote: initialRemote,
+            }),
+            Stream.fromSubscription(subscription).pipe(
+              Stream.filter((event) => event.cwd === cwd),
+              Stream.map((event) => event.event),
+            ),
+          ).pipe(Stream.ensuring(Effect.all([release, releaseCheckoutDetailDemand])));
+        }).pipe(Effect.onError(() => releaseCheckoutDetailDemand));
       }),
     );
 
