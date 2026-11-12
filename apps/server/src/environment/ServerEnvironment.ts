@@ -235,6 +235,7 @@ export const make = Effect.gen(function* () {
       agentSkillResources: true,
       agentSkillBodiesOnDemand: true,
       agentLibraryMutations: true,
+      agentLibraryLastWriteWins: true,
       storageCleanup: true,
       storageCleanupRun: true,
       databaseStorage: true,

@@ -1,5 +1,3 @@
-import * as Cause from "effect/Cause";
-import * as Predicate from "effect/Predicate";
 import { useEffect, useRef } from "react";
 import {
   agentSkillHasResources,
@@ -93,17 +91,11 @@ export function useAgentLibrary() {
         `Connect the machine that holds ${[...missing].map((name) => `"${name}"`).join(", ")}, then save again.`,
       );
     if (!(await runAgentLibrarySync(plan, io))) return false;
-    if (capabilities?.agentLibraryMutations === true) {
+    if (capabilities?.agentLibraryLastWriteWins === true) {
       const { operations, rest } = agentLibraryOperationsFromPatch(library, patch);
       if (operations.length > 0) {
         const result = await mutate({ environmentId: target.environmentId, input: { operations } });
-        if (result._tag !== "Success") {
-          // Name and revision conflicts carry a message the editor shows; other failures stay generic.
-          const failure = Cause.squash(result.cause);
-          if (Predicate.isTagged(failure, "AgentLibraryConflictError") && failure instanceof Error)
-            throw failure;
-          return false;
-        }
+        if (result._tag !== "Success") return false;
       }
       return Object.keys(rest).length === 0 || persistSettings(rest);
     }

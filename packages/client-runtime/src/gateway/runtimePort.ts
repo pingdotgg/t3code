@@ -570,12 +570,12 @@ export function createGatewayRuntimePort(
             request(WS_METHODS.serverGetConfig, {}).pipe(Effect.map((config) => config.settings)),
           );
           const patch = mutate(settings);
-          if (capabilities?.agentLibraryMutations !== true)
+          // Servers that still check revisions take the whole-library write instead.
+          if (capabilities?.agentLibraryLastWriteWins !== true)
             return yield* registry.run(
               environmentId,
               request(WS_METHODS.serverUpdateSettings, { patch }),
             );
-          // Base revisions are the ones just read, so a concurrent edit fails instead of being lost.
           const { operations } = agentLibraryOperationsFromPatch(settings, patch);
           if (operations.length === 0) return settings;
           return yield* registry.run(

@@ -12,7 +12,7 @@ import { SelectButton } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { agentModelOptions, presetProviderLabel } from "./agentModelCatalog";
 import type { AgentSkill, McpGatewayProfile, ServerProvider } from "@t3tools/contracts";
-import { MCP_GATEWAY_RUNTIME_MODE_LABELS } from "@t3tools/contracts";
+import { agentNameKey, MCP_GATEWAY_RUNTIME_MODE_LABELS } from "@t3tools/contracts";
 import {
   agentColors,
   agentHasAdvancedSettings,
@@ -137,6 +137,12 @@ export function AgentEditor({
   );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Kept names stay editable, as the server keeps a stored clash until it is renamed.
+  const nameTaken =
+    name.trim() !== profile?.name &&
+    profiles.some(
+      (p) => p.profileId !== profile?.profileId && agentNameKey(p.name) === agentNameKey(name),
+    );
   const availableProviders = providers.filter(
     (provider) => environmentIds.length === 0 || environmentIds.includes(provider.environmentId),
   );
@@ -188,17 +194,7 @@ export function AgentEditor({
             className="agent-form"
             onSubmit={async (event) => {
               event.preventDefault();
-              const nameKey = name.trim().toLocaleLowerCase();
-              if (
-                profiles.some(
-                  (p) =>
-                    p.profileId !== profile?.profileId &&
-                    p.name.trim().toLocaleLowerCase() === nameKey,
-                )
-              ) {
-                setError("An agent with this name already exists.");
-                return;
-              }
+              if (nameTaken) return;
               setSaving(true);
               setError("");
               const normalizedTags = normalizeAgentTags(tags);
@@ -252,9 +248,15 @@ export function AgentEditor({
                   placeholder="Write, Review, Research…"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  aria-invalid={nameTaken || undefined}
                 />
               </label>
             </div>
+            {nameTaken && (
+              <p role="alert" className="text-sm text-destructive">
+                Another agent is already called “{name.trim()}”. Names ignore case.
+              </p>
+            )}
             <AgentTagsField tags={tags} onChange={setTags} />
             <div className="agent-form-grid">
               <label>
@@ -518,7 +520,7 @@ export function AgentEditor({
               </button>
               <button
                 className="agent-primary"
-                disabled={saving || !name.trim() || !provider || !selectedModel}
+                disabled={saving || !name.trim() || nameTaken || !provider || !selectedModel}
               >
                 {saving ? "Saving…" : profile ? "Save agent" : "Create agent"}
               </button>
