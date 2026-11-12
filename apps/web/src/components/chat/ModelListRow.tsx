@@ -23,8 +23,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   isFavorite: boolean;
-  /** In Favorites every row is starred, so the star shows only on hover. */
-  favoriteStarOnHover?: boolean;
   isSelected: boolean;
   /** Marks this instance apart from another of the same provider. */
   showInstanceBadge: boolean;
@@ -121,7 +119,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   className={cn(
                     "size-3.5 sm:size-3",
                     props.isFavorite && "fill-current text-warning",
-                    (!props.isFavorite || props.favoriteStarOnHover) &&
+                    !props.isFavorite &&
                       "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
                   )}
                 />
