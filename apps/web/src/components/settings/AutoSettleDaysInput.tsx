@@ -12,7 +12,7 @@ export function AutoSettleDaysInput({
   value: number;
   onCommit: (days: number, options: { onFailed: () => void }) => void;
 }) {
-  const saved = { source: value, text: String(value), submitted: value };
+  const saved = { source: value, text: String(value), submitted: { days: value } };
   const [draft, setDraft] = useState(saved);
   if (draft.source !== value) {
     setDraft(saved);
@@ -35,18 +35,23 @@ export function AutoSettleDaysInput({
             parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
           ) {
             // Compare with the last submission, not the prop: a pending save has not landed yet.
-            if (parsed === draft.submitted) {
+            if (parsed === draft.submitted.days) {
               setDraft({ ...draft, text: String(parsed) });
               return;
             }
-            const submitted = { source: value, text: String(parsed), submitted: parsed };
-            setDraft(submitted);
+            const submitted = { days: parsed };
+            setDraft({ source: value, text: String(parsed), submitted });
             onCommit(parsed, {
               // A late failure must not overwrite another edit or an external settings update.
-              onFailed: () => setDraft((current) => (current === submitted ? saved : current)),
+              onFailed: () =>
+                setDraft((current) =>
+                  current.submitted === submitted && current.text === String(parsed)
+                    ? saved
+                    : current,
+                ),
             });
           } else {
-            setDraft({ ...draft, text: String(draft.submitted) });
+            setDraft({ ...draft, text: String(draft.submitted.days) });
           }
         }}
         onKeyDown={(event) => {
@@ -57,7 +62,7 @@ export function AutoSettleDaysInput({
           } else if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
-            setDraft({ ...draft, text: String(draft.submitted) });
+            setDraft({ ...draft, text: String(draft.submitted.days) });
           }
         }}
         aria-label="Days of inactivity before auto-settle"

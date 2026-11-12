@@ -51,9 +51,10 @@ describe("AutoSettleDaysInput", () => {
 
   it("restores the saved value when a save fails, unless a newer edit replaced it", async () => {
     const failures: Array<() => void> = [];
-    await using screen = await render(
-      <AutoSettleDaysInput value={14} onCommit={(_, { onFailed }) => failures.push(onFailed)} />,
-    );
+    const onCommit = vi.fn((_: number, { onFailed }: { onFailed: () => void }) => {
+      failures.push(onFailed);
+    });
+    await using screen = await render(<AutoSettleDaysInput value={14} onCommit={onCommit} />);
     const input = screen.getByRole("spinbutton");
     await input.fill("30");
     await userEvent.keyboard("{Enter}");
@@ -61,8 +62,13 @@ describe("AutoSettleDaysInput", () => {
     await act(async () => failures[0]!());
     await expect.element(input).toHaveValue(45);
     await userEvent.keyboard("{Enter}");
+    await userEvent.click(input);
+    await userEvent.keyboard("{Tab}");
     await act(async () => failures[1]!());
     await expect.element(input).toHaveValue(14);
+    await input.fill("45");
+    await userEvent.keyboard("{Enter}");
+    expect(onCommit.mock.calls.map(([days]) => days)).toEqual([30, 45, 45]);
   });
 
   it("saves a return to the original value while an earlier save is pending", async () => {
