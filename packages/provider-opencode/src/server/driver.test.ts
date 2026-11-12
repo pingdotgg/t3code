@@ -252,6 +252,89 @@ it.live("discovers models through a home-relative OpenCode wrapper", () =>
   ),
 );
 
+it.live("reloads a ready catalog when the global OpenCode config changes", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-config-" });
+    const configDir = NodePath.join(home, ".config", "opencode");
+    yield* fs.makeDirectory(configDir, { recursive: true });
+    let providerIds = ["opencode"];
+    let servedProviderIds = providerIds;
+    const model = (providerID: string) => ({
+      id: "m",
+      modelID: "m",
+      providerID,
+      name: providerID,
+      package: "@opencode/ai/providers/openai-compatible",
+      settings: {},
+      compatibility: {},
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: [],
+      time: { released: 1789516800000 },
+      cost: [],
+      status: "active",
+      enabled: true,
+      limit: { context: 1000000, output: 65536 },
+    });
+    const server = HttpClient.make((request) => {
+      const path = new URL(request.url).pathname;
+      const body =
+        path === "/api/info"
+          ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
+          : {
+              location: { directory: "/work" },
+              data: path === "/api/model" ? servedProviderIds.map(model) : [],
+            };
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+    });
+    const runtime = {
+      ...openCode2Runtime,
+      startOpenCodeServerProcess: ({
+        verify,
+      }: Parameters<OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]>[0]) =>
+        Effect.gen(function* () {
+          const url = "http://127.0.0.1:4096";
+          servedProviderIds = providerIds;
+          const version = verify ? yield* verify(url) : "2.0.18";
+          return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+        }),
+    };
+    const instance = yield* OpenCodeDriver.create({
+      instanceId: ProviderInstanceId.make("opencode-config-watch"),
+      displayName: undefined,
+      environment: [
+        { name: "XDG_CONFIG_HOME", sensitive: false, value: NodePath.join(home, ".config") },
+      ],
+      enabled: true,
+      config: OpenCodeDriver.defaultConfig(),
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, server),
+      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+    );
+    const ready = yield* instance.snapshot.refresh;
+    assert.deepStrictEqual(
+      ready.models.map((entry) => entry.slug),
+      ["opencode/m"],
+    );
+
+    // The fake server reads config only at startup, like a real one, so a warm server would
+    // keep serving the first save's catalog.
+    for (const providerId of ["first", "second"]) {
+      const reloaded = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) =>
+          snapshot.models.some((entry) => entry.slug === `${providerId}/m`),
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      providerIds = ["opencode", providerId];
+      yield* fs.writeFileString(NodePath.join(configDir, "opencode.json"), "{}");
+      yield* Fiber.join(reloaded);
+    }
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 // Under MISE_OFFLINE the shim cannot install OpenCode; a normal run installs 2.x first.
 const lazyMiseShim = {
   ...openCode2Runtime,

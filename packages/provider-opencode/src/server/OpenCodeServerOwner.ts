@@ -10,11 +10,10 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 
 const OPENCODE_SERVER_IDLE_TTL = "30 seconds";
 
-interface OpenCodeServerOwnerState {
-  server: OpenCodeRuntime.OpenCodeServerProcess | null;
-  serverScope: Scope.Closeable | null;
+interface OpenCodeServerEntry {
+  readonly server: OpenCodeRuntime.OpenCodeServerProcess;
+  readonly scope: Scope.Closeable;
   borrowers: number;
-  idleCloseFiber: Fiber.Fiber<void, never> | null;
 }
 
 export class OpenCodeServerOwner extends Context.Service<
@@ -23,6 +22,8 @@ export class OpenCodeServerOwner extends Context.Service<
     readonly withServer: <A, E, R>(
       use: (server: OpenCodeRuntime.OpenCodeServerProcess) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
+    /** The next borrower gets a fresh server; current borrowers keep theirs until they release. */
+    readonly retire: Effect.Effect<void>;
   }
 >()("@t3tools/provider-opencode/server/OpenCodeServerOwner") {}
 
@@ -38,46 +39,41 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
     Scope.close(scope, Exit.void),
   );
   const mutex = yield* Semaphore.make(1);
-  const state: OpenCodeServerOwnerState = {
-    server: null,
-    serverScope: null,
-    borrowers: 0,
-    idleCloseFiber: null,
-  };
+  const entries = new Map<OpenCodeRuntime.OpenCodeServerProcess, OpenCodeServerEntry>();
+  let current: OpenCodeServerEntry | null = null;
+  let idleCloseFiber: Fiber.Fiber<void, never> | null = null;
 
   const cancelIdleClose = Effect.fn("OpenCodeServerOwner.cancelIdleClose")(function* () {
-    const fiber = state.idleCloseFiber;
-    state.idleCloseFiber = null;
+    const fiber = idleCloseFiber;
+    idleCloseFiber = null;
     if (fiber !== null) {
       yield* Fiber.interrupt(fiber).pipe(Effect.ignore);
     }
   });
 
-  const closeServer = Effect.fn("OpenCodeServerOwner.closeServer")(function* (
-    expected?: OpenCodeRuntime.OpenCodeServerProcess,
+  const closeEntry = Effect.fn("OpenCodeServerOwner.closeEntry")(function* (
+    entry: OpenCodeServerEntry,
   ) {
-    if (expected !== undefined && state.server !== expected) {
-      return;
+    entries.delete(entry.server);
+    if (current === entry) {
+      current = null;
     }
-    const scope = state.serverScope;
-    state.server = null;
-    state.serverScope = null;
-    if (scope !== null) {
-      yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
-    }
+    yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
   });
 
   const watchServerExit = Effect.fn("OpenCodeServerOwner.watchServerExit")(function* (
-    server: OpenCodeRuntime.OpenCodeServerProcess,
+    entry: OpenCodeServerEntry,
   ) {
-    yield* server.exitCode;
+    yield* entry.server.exitCode;
     yield* mutex.withPermit(
       Effect.gen(function* () {
-        if (state.server !== server) {
+        if (!entries.has(entry.server)) {
           return;
         }
-        yield* cancelIdleClose();
-        yield* closeServer(server);
+        if (current === entry) {
+          yield* cancelIdleClose();
+        }
+        yield* closeEntry(entry);
       }),
     );
   });
@@ -85,12 +81,12 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   const acquireServer = mutex.withPermit(
     Effect.gen(function* () {
       yield* cancelIdleClose();
-      if (state.server !== null) {
-        if (yield* state.server.isRunning) {
-          state.borrowers += 1;
-          return state.server;
+      if (current !== null) {
+        if (yield* current.server.isRunning) {
+          current.borrowers += 1;
+          return current.server;
         }
-        yield* closeServer(state.server);
+        yield* closeEntry(current);
       }
 
       return yield* Effect.uninterruptibleMask((restore) =>
@@ -116,12 +112,15 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
             return yield* Effect.failCause(started.cause);
           }
 
-          const server = started.value;
-          state.server = server;
-          state.serverScope = serverScope;
-          state.borrowers = 1;
-          yield* watchServerExit(server).pipe(Effect.forkIn(ownerScope));
-          return server;
+          const entry: OpenCodeServerEntry = {
+            server: started.value,
+            scope: serverScope,
+            borrowers: 1,
+          };
+          entries.set(entry.server, entry);
+          current = entry;
+          yield* watchServerExit(entry).pipe(Effect.forkIn(ownerScope));
+          return entry.server;
         }),
       );
     }),
@@ -130,23 +129,28 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   const releaseServer = (server: OpenCodeRuntime.OpenCodeServerProcess) =>
     mutex.withPermit(
       Effect.gen(function* () {
-        if (state.server !== server) {
+        const entry = entries.get(server);
+        if (entry === undefined) {
           return;
         }
-        state.borrowers = Math.max(0, state.borrowers - 1);
-        if (state.borrowers > 0) {
+        entry.borrowers = Math.max(0, entry.borrowers - 1);
+        if (entry.borrowers > 0) {
+          return;
+        }
+        if (entry !== current) {
+          yield* closeEntry(entry);
           return;
         }
         yield* cancelIdleClose();
-        state.idleCloseFiber = yield* Effect.sleep(OPENCODE_SERVER_IDLE_TTL).pipe(
+        idleCloseFiber = yield* Effect.sleep(OPENCODE_SERVER_IDLE_TTL).pipe(
           Effect.andThen(
             mutex.withPermit(
               Effect.gen(function* () {
-                if (state.server !== server || state.borrowers > 0) {
+                if (current !== entry || entry.borrowers > 0) {
                   return;
                 }
-                state.idleCloseFiber = null;
-                yield* closeServer(server);
+                idleCloseFiber = null;
+                yield* closeEntry(entry);
               }),
             ),
           ),
@@ -159,8 +163,9 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
     mutex.withPermit(
       Effect.gen(function* () {
         yield* cancelIdleClose();
-        state.borrowers = 0;
-        yield* closeServer();
+        for (const entry of entries.values()) {
+          yield* closeEntry(entry);
+        }
       }),
     ),
   );
@@ -175,6 +180,19 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
         ),
       );
     }),
+    retire: mutex.withPermit(
+      Effect.gen(function* () {
+        const entry = current;
+        if (entry === null) {
+          return;
+        }
+        yield* cancelIdleClose();
+        current = null;
+        if (entry.borrowers === 0) {
+          yield* closeEntry(entry);
+        }
+      }),
+    ),
   });
 });
 
