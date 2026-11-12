@@ -85,8 +85,10 @@ start of the composer to edit the most recently queued message. Change
 
 Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
-other action for a single message, or hold `Cmd` while sending from a hardware
-keyboard. The button only offers Steer when the running agent supports it.
+other action for a single message. From a hardware keyboard, `Cmd+Return`
+(`Ctrl+Return` on Android) uses the other action, or `Cmd+Shift+Return`
+(`Ctrl+Shift+Return`) when Return inserts a new line. The button only offers
+Steer when the running agent supports it.
 
 ## Queue messages offline on mobile
 
@@ -155,6 +157,16 @@ When the composer has text, the arrow keys move the caret as usual. Recall takes
 the text is an unedited recalled prompt, with the caret on the first visual line for `ArrowUp` or
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
+
+## Suggested next prompt
+
+Turn on **Suggest next prompt** in Settings > Labs. After a Claude or Codex turn completes, the
+empty composer shows a predicted next message. Press `Tab` to fill it in, then edit or send it, or
+press `Escape` to dismiss it. Each suggestion is one extra request that reuses the turn's prompt
+cache, so it uses a little of your plan's usage. Claude skips suggestions on the first turn of a
+thread and near usage limits. Codex needs version 0.165 or later; if T3 Code manages
+Codex, update it in Settings > Providers. Codex follows a change to the setting at once; open Claude
+threads follow it after they restart. Suggestions show on web and desktop.
 
 ## Edit an earlier prompt
 
@@ -272,10 +284,10 @@ session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.
 
 Provider commands must start the message to run. T3 Code commands such as
-`/model` and `/plan`, and skill mentions, work on any line.
+`/model` and skill mentions work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
-provider supports it, even with the context meter turned off.
+provider supports it.
 
 Send `/clear` on its own, or pick it from the slash menu, to start a fresh session
 in the same thread. Your next message goes to a new provider session that doesn't see the
@@ -283,25 +295,24 @@ earlier messages, and the thread marks where it began with **New session**.
 Earlier messages and diffs stay in the thread. Dismiss the notice above the
 composer to keep the current session instead.
 
-On web and desktop, turn on **Settings → Labs → Legacy → Context
-window indicator (legacy)** to see context usage. The meter is off by default
-and appears once the provider reports usage. Open it for usage details and
-**Compact context** when the provider supports compaction.
+On web and desktop, turn on **Context window** in **Settings → Appearance →
+Thread details** to see context usage in the thread details card. It appears
+once the provider reports usage.
 
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals
 
-With Codex and Claude, send `/goal` followed by what "done" means, for example
+With Codex, Claude, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
 line at the end of the thread (above the composer on mobile) shows the goal and
 its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
-- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
-  pauses it, and so does Codex ending its work without meeting the goal.
+- Codex and OpenCode also support `/goal pause` and `/goal resume`. Stopping
+  their goal pauses it. Codex also pauses when its work ends without meeting the goal.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 - Sending a new goal, or `/goal resume`, while the agent works stops the current
@@ -343,6 +354,10 @@ environment must be connected and up to date. The transcript includes the visibl
 saved text context at the time of the drop; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
 file attachment limits apply.
+
+Type `@` and part of a model or provider name, such as `@opus`, to name that model for the
+agent, for example when delegating. It does not change the thread's model. Join words with
+`:`, `/` or `-`, as in `@opus:opencode`.
 
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing

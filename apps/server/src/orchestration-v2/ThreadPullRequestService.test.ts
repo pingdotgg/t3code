@@ -181,6 +181,139 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     ),
   );
 
+  it.effect("looks up a finished turn's branch once for all its turn-end events", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = { ...threadShell("turn-end-thread"), branch: "t3/turn-end" };
+        const otherThread = {
+          ...threadShell("other-turn-end-thread"),
+          branch: "t3/other-turn-end",
+        };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        // A turn end commits its checkpoints and the run's end together. The queued
+        // non-refresh request ahead of them must still become a refresh when they join it.
+        const turnEnd = [
+          { type: "thread.metadata-updated", threadId: thread.id },
+          { type: "checkpoint.captured", threadId: thread.id },
+          { type: "checkpoint.captured", threadId: thread.id },
+          { type: "run.updated", threadId: thread.id, payload: { status: "completed" } },
+          { type: "checkpoint.captured", threadId: otherThread.id },
+          { type: "run.updated", threadId: otherThread.id, payload: { status: "completed" } },
+        ] as Array<OrchestrationV2DomainEvent>;
+        // Arrives during the thread's own lookup, which may already have read the old host state.
+        const duringLookup = [
+          { type: "checkpoint.captured", threadId: thread.id },
+          { type: "thread.metadata-updated", threadId: thread.id },
+        ] as Array<OrchestrationV2DomainEvent>;
+        const activation = yield* Deferred.make<void>();
+        const sweepStarted = yield* Deferred.make<void>();
+        const turnEndQueued = yield* Deferred.make<void>();
+        const lookupStarted = yield* Deferred.make<void>();
+        const followUpQueued = yield* Deferred.make<void>();
+        const lookups: Array<{ readonly branch: string; readonly refresh: boolean }> = [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            // The batch arrives while the worker is busy with the startup sweep.
+            streamDomainEvents: Stream.fromEffect(Deferred.await(sweepStarted)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.fromIterable(turnEnd)),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(turnEndQueued, undefined)).pipe(Stream.drain),
+              ),
+              Stream.concat(Stream.fromEffect(Deferred.await(lookupStarted)).pipe(Stream.drain)),
+              Stream.concat(Stream.fromIterable(duringLookup)),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(followUpQueued, undefined)).pipe(Stream.drain),
+              ),
+              Stream.concat(Stream.never),
+            ),
+            getPullRequestSnapshot: ({ threadId }) =>
+              Effect.succeed({
+                schemaVersion: 2,
+                snapshotSequence: 1,
+                threads: [thread, otherThread].filter(
+                  (candidate) => threadId === undefined || candidate.id === threadId,
+                ),
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (input, options) =>
+              Effect.gen(function* () {
+                lookups.push({ branch: input.branch, refresh: options?.refresh ?? false });
+                if (!(yield* Deferred.isDone(turnEndQueued))) {
+                  yield* Deferred.succeed(sweepStarted, undefined);
+                  yield* Deferred.await(turnEndQueued);
+                } else if (
+                  input.branch === thread.branch &&
+                  !(yield* Deferred.isDone(followUpQueued))
+                ) {
+                  yield* Deferred.succeed(lookupStarted, undefined);
+                  yield* Deferred.await(followUpQueued);
+                }
+                return null;
+              }),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(false),
+            shouldRunOpportunisticWork: Effect.succeed(false),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+          ),
+          FileSystem.layerNoop({}),
+          Path.layer,
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* Deferred.await(followUpQueued);
+          yield* service.drain;
+        }).pipe(Effect.provide(dependencies));
+
+        // The startup sweep, one refresh lookup per thread for its turn-end batch, then one
+        // follow-up refresh for the events that arrived during the thread's lookup.
+        expect(lookups).toEqual([
+          { branch: thread.branch, refresh: false },
+          { branch: otherThread.branch, refresh: false },
+          { branch: thread.branch, refresh: true },
+          { branch: otherThread.branch, refresh: true },
+          { branch: thread.branch, refresh: true },
+        ]);
+      }),
+    ),
+  );
+
   it.effect.each([
     {
       worktree: "a linked worktree",
@@ -424,6 +557,132 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   );
 
   it.effect.each([
+    { state: "open", checkedOut: false },
+    { state: "merged", checkedOut: false },
+    { state: "closed", checkedOut: false },
+    { state: "merged", checkedOut: true },
+  ] as const)(
+    "associates a $state branch PR (checkedOut=$checkedOut) only with threads that predate its completion or saved it",
+    ({ state, checkedOut }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reference = {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/project",
+            number: 42,
+            url: "https://github.com/acme/project/pull/42",
+          };
+          const terminalAt = "2026-09-19T00:00:00.000Z";
+          const detected = {
+            number: 42,
+            url: reference.url,
+            title: "Previous staging work",
+            baseRef: "main",
+            headRef: "staging",
+            state,
+            updatedAt: terminalAt,
+            closedAt: state === "closed" ? terminalAt : null,
+            mergedAt: state === "merged" ? terminalAt : null,
+            repositoryKey: "github.com/acme/project",
+          };
+          const threads = [
+            { ...threadShell("older"), createdAt: DateTime.makeUnsafe("2026-09-18T00:00:00Z") },
+            { ...threadShell("same-time"), createdAt: DateTime.makeUnsafe(terminalAt) },
+            threadShell("new"),
+            { ...threadShell("saved"), branchPullRequest: reference },
+            { ...threadShell("explicit"), linkedPullRequest: reference },
+          ].map((thread) => ({ ...thread, branch: "staging" }));
+          const project: OrchestrationProjectShell = {
+            id: reference.projectId,
+            title: "Project",
+            workspaceRoot: "/workspace/project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const sweepStarted = yield* Deferred.make<void>();
+          const commands: Array<OrchestrationV2ServerCommand> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.never,
+              getPullRequestSnapshot: () =>
+                Deferred.succeed(sweepStarted, undefined).pipe(
+                  Effect.as({ snapshotSequence: 1, threads }),
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return { sequence: 2, storedEvents: [] };
+                }),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              branchPullRequest: () => Effect.succeed(detected),
+              checkedOutPullRequest: () => Effect.succeed(checkedOut),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({
+              summary: () =>
+                Effect.succeed({
+                  ...detected,
+                  ...reference,
+                  provider: SourceControlProviderKind.make("github"),
+                  baseBranch: detected.baseRef,
+                  headBranch: detected.headRef,
+                }),
+            }),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () =>
+                Effect.succeed({
+                  canonicalKey: "github.com/acme/project",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "git@github.com:acme/project.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "acme",
+                  name: "project",
+                }),
+            }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({}),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            yield* Deferred.await(sweepStarted);
+            yield* service.drain;
+          }).pipe(Effect.provide(dependencies));
+
+          expect(
+            commands.map((command) => {
+              if (command.type !== "thread.pull-request.sync") throw new Error(command.type);
+              expect(command).not.toHaveProperty("linkedPullRequest");
+              return [command.threadId, command.branchPullRequest];
+            }),
+          ).toEqual(
+            (state === "open" || checkedOut
+              ? ["older", "same-time", "new", "explicit"]
+              : ["older", "same-time"]
+            ).map((id) => [id, reference]),
+          );
+        }),
+      ),
+  );
+
+  it.effect.each([
     { state: "closed", sameBranch: false },
     { state: "merged", sameBranch: false },
     { state: "closed", sameBranch: true },
@@ -457,6 +716,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const activation = yield* Deferred.make<void>();
           const sweepStarted = yield* Deferred.make<void>();
           const commands: Array<OrchestrationV2ServerCommand> = [];
+          let snapshotThread: unknown;
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.never,
@@ -484,6 +744,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                   ])
                     yield* sql.unsafe(`DROP TABLE ${table}`);
                   const snapshot = yield* store.getPullRequestSnapshot(options);
+                  snapshotThread = snapshot.threads[0];
                   yield* Deferred.succeed(sweepStarted, undefined);
                   return snapshot;
                 }).pipe(
@@ -548,6 +809,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* service.drain;
           }).pipe(Effect.provide(dependencies));
 
+          expect(snapshotThread).toHaveProperty("createdAt", NOW);
           if (sameBranch) {
             expect(commands).toEqual([]);
           } else {
