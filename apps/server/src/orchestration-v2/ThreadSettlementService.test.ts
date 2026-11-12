@@ -885,9 +885,15 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
-            thread.id,
-          ]);
+          const commands = yield* Ref.get(fixture.commands);
+          expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
+          // The settle must record why it happened so clients can say "PR #42 merged".
+          expect(commands[0]).toMatchObject({
+            reason: expect.objectContaining({
+              state: "merged",
+              url: "https://example.test/owner/repository/pull/42",
+            }),
+          });
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
