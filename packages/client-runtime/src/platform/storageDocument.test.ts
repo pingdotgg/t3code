@@ -424,22 +424,34 @@ describe("ConnectionCatalogDocument", () => {
     );
   });
 
-  it("a login paired over HTTPS is not copied to a plain HTTP LAN address", () => {
-    const lan = new BearerConnectionTarget({ ...BEARER_TARGET, connectionId: "bearer-lan" });
+  it("a login paired over HTTPS is not copied to a plain HTTP address", () => {
+    const plainHttp = [
+      ["bearer-lan", "192.168.1.10"],
+      ["bearer-vpn", "100.64.1.2"],
+    ] as const;
+    const targets = [
+      ...plainHttp.map(
+        ([connectionId]) => new BearerConnectionTarget({ ...BEARER_TARGET, connectionId }),
+      ),
+      BEARER_TARGET,
+    ];
     const fresh = new BearerConnectionCredential({ token: "fresh-token" });
     const document: ConnectionCatalogDocument = {
       ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      targets: [lan, BEARER_TARGET],
+      targets,
       profiles: [
-        new BearerConnectionProfile({
-          ...BEARER_PROFILE,
-          connectionId: lan.connectionId,
-          httpBaseUrl: "http://192.168.1.10:3773/",
-          wsBaseUrl: "ws://192.168.1.10:3773/",
-        }),
+        ...plainHttp.map(
+          ([connectionId, host]) =>
+            new BearerConnectionProfile({
+              ...BEARER_PROFILE,
+              connectionId,
+              httpBaseUrl: `http://${host}:3773/`,
+              wsBaseUrl: `ws://${host}:3773/`,
+            }),
+        ),
         BEARER_PROFILE,
       ],
-      credentials: [lan, BEARER_TARGET].map(({ connectionId }) => ({
+      credentials: targets.map(({ connectionId }) => ({
         connectionId,
         credential: BEARER_CREDENTIAL,
       })),
@@ -458,7 +470,8 @@ describe("ConnectionCatalogDocument", () => {
       new Map(registered.credentials.map((value) => [value.connectionId, value.credential])),
     ).toEqual(
       new Map([
-        [lan.connectionId, BEARER_CREDENTIAL],
+        ["bearer-lan", BEARER_CREDENTIAL],
+        ["bearer-vpn", BEARER_CREDENTIAL],
         [BEARER_TARGET.connectionId, fresh],
       ]),
     );

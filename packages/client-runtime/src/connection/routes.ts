@@ -349,14 +349,24 @@ function tokenAllowsPlainHttp(
   credentialId: string,
 ): boolean {
   const credentialRoute = routes.find((route) => connectionRouteId(route.target) === credentialId);
-  return credentialRoute !== undefined && isPlainHttpRoute(credentialRoute);
+  return (
+    credentialRoute !== undefined &&
+    routeHttpBaseUrl(credentialRoute)?.startsWith("http:") === true &&
+    (connectionRouteKind(credentialRoute) === "lan" ||
+      connectionRouteKind(credentialRoute) === "public")
+  );
 }
 
-/** Plain HTTP outside loopback and the tailnet, where a token can be read in transit. */
+/**
+ * Plain HTTP anywhere but loopback and a verified tailnet, where a token can be read in transit.
+ * A shared-address-space (100.64.0.0/10) host without the Tailscale mark proves no encryption.
+ */
 export function isPlainHttpRoute(route: ConnectionRoute): boolean {
   const kind = connectionRouteKind(route);
   return (
-    routeHttpBaseUrl(route)?.startsWith("http:") === true && (kind === "lan" || kind === "public")
+    routeHttpBaseUrl(route)?.startsWith("http:") === true &&
+    kind !== "loopback" &&
+    kind !== "tailnet"
   );
 }
 
