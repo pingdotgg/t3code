@@ -29,10 +29,11 @@ import {
   useProjects,
   useQuietThreadShell,
 } from "../state/entities";
+import { resolveProjectLastUsedSettings } from "@t3tools/client-runtime/state/project-last-used-settings";
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
-  resolveNewThreadModelSelectionOverride,
+  resolveNewThreadDefaults,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
@@ -48,8 +49,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
-import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 export const LAST_USED_PROJECT_STORAGE_KEY = "t3code:last-used-project:v1";
 export const lastUsedProjectKeySchema = Schema.NullOr(Schema.String);
@@ -128,27 +127,6 @@ export function createNewThreadHandler(router: AnyRouter) {
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
     const currentRouteTarget = getCurrentRouteTarget();
-    const carrySourceShell =
-      currentRouteTarget?.kind === "server" ? readThreadShell(currentRouteTarget.threadRef) : null;
-    const carrySourceDraft =
-      currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
-    const carrySourceComposer = currentRouteTarget
-      ? getComposerDraft(
-          currentRouteTarget.kind === "server"
-            ? currentRouteTarget.threadRef
-            : currentRouteTarget.draftId,
-        )
-      : null;
-    const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
-    const composerModelSelection = composerActiveProvider
-      ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
-      : null;
-    const carryModelSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
-    const carryInteractionMode =
-      carrySourceComposer?.interactionMode ??
-      carrySourceShell?.interactionMode ??
-      carrySourceDraft?.interactionMode ??
-      null;
     const project = projects.find(
       (candidate) =>
         candidate.id === projectRef.projectId &&
@@ -161,34 +139,18 @@ export function createNewThreadHandler(router: AnyRouter) {
       project?.id ?? null,
       project,
     );
-    const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
-    const fallbackResolution = resolveNewThreadModelSelection({
-      defaultSelection:
-        configuredDefaultModelSelection ??
-        (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
-          ? null
-          : resolveProjectDefaultProviderModelSelection(
-              environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
-              targetServerSettings,
-              projectRef.projectId,
-            )),
-      fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
-      providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
-      settings: targetServerSettings,
-      projectId: projectRef.projectId,
-      now: Date.now(),
-    });
-    const projectDefaultModelSelection = fallbackResolution.fallback
-      ? fallbackResolution.selection
-      : configuredDefaultModelSelection;
-    const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-    const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
-      resolveNewThreadModelSelectionOverride({
-        projectDefaultSelection: projectDefaultModelSelection ?? null,
-        carrySelection: carryModelSelection,
-        carrySourceDraftId:
-          currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
-        destinationDraftId,
+    // A new thread starts from the target project, not from whatever thread
+    // happens to be on screen.
+    const { modelSelection: defaultModelSelection, runtimeMode: defaultRuntimeMode } =
+      resolveNewThreadDefaults({
+        projectId: projectRef.projectId,
+        projectSettings,
+        lastUsed: resolveProjectLastUsedSettings(readThreadShells(), projectRef),
+        serverSettings: targetServerSettings,
+        managedPolicy: environmentServerConfigs.get(projectRef.environmentId)?.managedPolicy,
+        providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+        hasStickyProvider: useComposerDraftStore.getState().stickyActiveProvider !== null,
+        now: Date.now(),
       });
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
       // Environment queries wait for a connection, so reading the project file on an
@@ -298,19 +260,15 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (workspaceContext) {
           setDraftThreadContext(emptyStoredDraftThread.draftId, {
             ...workspaceContext,
-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
-            ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+            runtimeMode: defaultRuntimeMode,
           });
         }
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
         if (!storedDraftHasExplicitModelPick) {
           applyStickyState(emptyStoredDraftThread.draftId);
-          const modelSelectionOverride = resolveModelSelectionOverride(
-            emptyStoredDraftThread.draftId,
-          );
-          if (modelSelectionOverride) {
-            setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride, {
+          if (defaultModelSelection) {
+            setModelSelection(emptyStoredDraftThread.draftId, defaultModelSelection, {
               replaceOptions: true,
             });
           }
@@ -323,8 +281,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           {
             threadId: emptyStoredDraftThread.threadId,
             ...workspaceContext,
-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
-            ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+            runtimeMode: defaultRuntimeMode,
           },
         );
         const opened = {
@@ -420,12 +377,10 @@ export function createNewThreadHandler(router: AnyRouter) {
             newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
           }),
         runtimeMode: defaultRuntimeMode,
-        ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
       applyStickyState(draftId);
-      const modelSelectionOverride = resolveModelSelectionOverride(draftId);
-      if (modelSelectionOverride) {
-        setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
+      if (defaultModelSelection) {
+        setModelSelection(draftId, defaultModelSelection, { replaceOptions: true });
       }
       seedPrompt(draftId);
       await router.navigate({

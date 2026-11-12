@@ -75,6 +75,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { resolveProjectLastUsedSettings } from "@t3tools/client-runtime/state/project-last-used-settings";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -421,8 +422,19 @@ export function NewTaskFlowProvider(
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
-  const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
+  const lastUsed = selectedProject
+    ? resolveProjectLastUsedSettings(threads, {
+        environmentId: selectedProject.environmentId,
+        projectId: selectedProject.id,
+      })
+    : null;
   const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
+  // A mode configured on the project wins over its history, which yields to the policy ceiling.
+  const defaultRuntimeMode = resolveNewThreadRuntimeMode(
+    projectSettings.sources.defaultRuntimeMode === "project" ? undefined : lastUsed?.runtimeMode,
+    projectSettings.settings.defaultRuntimeMode,
+    managedPolicy,
+  );
   const runtimeMode = resolveNewThreadRuntimeMode(
     selectedProjectDraft.runtimeMode,
     defaultRuntimeMode,
@@ -436,9 +448,22 @@ export function NewTaskFlowProvider(
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const projectDefaultModelSelection = resolveDefaultableModelSelection(
+  // A model configured on the project wins over its history; the
+  // environment's default only applies after the project's history.
+  const configuredDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
+    selectedProject?.id ?? null,
+  );
+  const projectDefaultModelSelection =
+    projectSettings.sources.defaultModelSelection === "environment"
+      ? null
+      : configuredDefaultModelSelection;
+  const environmentDefaultModelSelection =
+    projectDefaultModelSelection === null ? configuredDefaultModelSelection : null;
+  const lastUsedModelSelection = resolveDefaultableModelSelection(
+    selectedEnvironmentServerConfig,
+    lastUsed?.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
   const stickyModelSelection = resolveDefaultableModelSelection(
@@ -448,7 +473,11 @@ export function NewTaskFlowProvider(
   );
   const modelOptions = buildModelOptions(
     selectedEnvironmentServerConfig,
-    draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+    draftModelSelection ??
+      projectDefaultModelSelection ??
+      lastUsedModelSelection ??
+      environmentDefaultModelSelection ??
+      stickyModelSelection,
     undefined,
     selectedProject?.id ?? null,
   );
@@ -456,13 +485,19 @@ export function NewTaskFlowProvider(
   const selectedDefaultModel = resolveNewTaskModelSelection({
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
+    lastUsedSelection: lastUsedModelSelection,
+    environmentDefaultSelection: environmentDefaultModelSelection,
     stickySelection: stickyModelSelection,
     modelOptions,
   });
   const selectedModel = resolveNewThreadModelSelection({
     defaultSelection: selectedDefaultModel,
     explicitSelection:
-      draftModelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
+      draftModelSelection ??
+      (projectDefaultModelSelection
+        ? null
+        : (lastUsedModelSelection ??
+          (environmentDefaultModelSelection ? null : stickyModelSelection))),
     fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
     providers: selectedEnvironmentServerConfig?.providers ?? [],
     ...(selectedEnvironmentServerConfig

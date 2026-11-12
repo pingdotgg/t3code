@@ -535,9 +535,11 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
 
-  it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
+  it("resolves new tasks from draft, project, last-used, environment, sticky, then provider defaults", () => {
     const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
     const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };
+    const lastUsed = { instanceId: ProviderInstanceId.make("codex"), model: "last-used" };
+    const environment = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "env" };
     const sticky = { instanceId: ProviderInstanceId.make("codex"), model: "sticky" };
     const providerDefault = {
       selection: { instanceId: ProviderInstanceId.make("codex"), model: "default" },
@@ -546,19 +548,26 @@ describe("mobile model options", () => {
     const resolve = (
       draftSelection: ModelSelection | null,
       projectDefaultSelection: ModelSelection | null,
+      lastUsedSelection: ModelSelection | null,
       stickySelection: ModelSelection | null,
+      environmentDefaultSelection: ModelSelection | null = null,
     ) =>
       resolveNewTaskModelSelection({
         draftSelection,
         projectDefaultSelection,
+        lastUsedSelection,
+        environmentDefaultSelection,
         stickySelection,
         modelOptions: [providerDefault],
       });
 
-    expect(resolve(draft, project, sticky)).toBe(draft);
-    expect(resolve(null, project, sticky)).toBe(project);
-    expect(resolve(null, null, sticky)).toBe(sticky);
-    expect(resolve(null, null, null)).toBe(providerDefault.selection);
+    expect(resolve(draft, project, lastUsed, sticky)).toBe(draft);
+    expect(resolve(null, project, lastUsed, sticky)).toBe(project);
+    expect(resolve(null, null, lastUsed, sticky)).toBe(lastUsed);
+    expect(resolve(null, null, lastUsed, sticky, environment)).toBe(lastUsed);
+    expect(resolve(null, null, null, sticky, environment)).toBe(environment);
+    expect(resolve(null, null, null, sticky)).toBe(sticky);
+    expect(resolve(null, null, null, null)).toBe(providerDefault.selection);
 
     const unavailable = { ...providerDefault, isUnavailable: true };
     expect(

@@ -17,7 +17,9 @@ import {
   parseThreadKey,
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
-import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import type { RuntimeMode, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
+import { resolveProjectLastUsedSettings } from "@t3tools/client-runtime/state/project-last-used-settings";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -144,6 +146,26 @@ export function useThreadShellsForProjectRefs(
   refs: ReadonlyArray<ScopedProjectRef>,
 ): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
+}
+
+const EMPTY_RUNTIME_MODE_ATOM = Atom.make<RuntimeMode | null>(null).pipe(
+  Atom.withLabel("web-project-last-used-runtime-mode:empty"),
+);
+// Quiet shells and a primitive result keep streaming ticks from re-rendering readers.
+const projectLastUsedRuntimeModeAtom = Atom.family((key: string) => {
+  const ref = parseScopedProjectKey(key);
+  return Atom.make((get): RuntimeMode | null =>
+    ref === null
+      ? null
+      : (resolveProjectLastUsedSettings(get(environmentThreadShells.quietThreadShellsAtom), ref)
+          ?.runtimeMode ?? null),
+  ).pipe(Atom.withLabel(`web-project-last-used-runtime-mode:${key}`));
+});
+
+export function useProjectLastUsedRuntimeMode(ref: ScopedProjectRef | null): RuntimeMode | null {
+  return useAtomValue(
+    ref === null ? EMPTY_RUNTIME_MODE_ATOM : projectLastUsedRuntimeModeAtom(scopedProjectKey(ref)),
+  );
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {

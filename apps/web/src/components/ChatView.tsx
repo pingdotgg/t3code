@@ -258,6 +258,7 @@ import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
   useProject,
+  useProjectLastUsedRuntimeMode,
   useQuietThreadProjection,
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
@@ -267,6 +268,8 @@ import {
   useQuietThreadShell,
   useThreadCheckpointSummaries,
 } from "../state/entities";
+import { resolveDefaultRuntimeMode } from "../lib/chatThreadActions";
+import { useManagedPolicy } from "../state/managedPolicy";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -954,8 +957,17 @@ export default function ChatView(props: ChatViewProps) {
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const threadErrorIsServerRuntimeError =
     localServerError === null && visibleThreadError === serverRuntime?.lastError;
-  const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
-    .settings.defaultRuntimeMode;
+  const managedPolicy = useManagedPolicy(environmentId);
+  const draftLastUsedRuntimeMode = useProjectLastUsedRuntimeMode(
+    !isServerThread && activeThread
+      ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
+      : null,
+  );
+  const defaultRuntimeMode = resolveDefaultRuntimeMode(
+    resolveProjectSettings(settings, activeThread?.projectId ?? null),
+    draftLastUsedRuntimeMode,
+    managedPolicy,
+  );
   const runtimeMode =
     composerRuntimeMode ??
     (isServerThread ? activeThread?.runtimeMode : undefined) ??

@@ -7,8 +7,8 @@ need a separate branch and working directory.
 
 On web and desktop, **New thread** opens the project picker when you have more than one
 open project in the default or project-grouped sidebar. Archived projects don't count. **Shift-click** to start in
-the current project, or use a project's own new-thread action. A new thread carries
-your model and mode selections, unless the destination project has its own model default.
+the current project, or use a project's own new-thread action. A new thread starts with the
+model and access mode you last used in that project, unless the project has its own defaults.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
