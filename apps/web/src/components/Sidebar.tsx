@@ -1040,6 +1040,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? scopedThreadKey(renamingThreadRef)
       : null;
   const [renamingTitle, setRenamingTitle] = useState("");
+  const renamingOriginalTitleRef = useRef("");
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
@@ -1533,9 +1534,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
     setRenamingThreadRef(threadRef);
     setRenamingTitle(title);
+    renamingOriginalTitleRef.current = title;
   };
   const cancelThreadRename = () => setRenamingThreadRef(null);
-  const commitThreadRename = (threadRef: ScopedThreadRef, title: string, originalTitle: string) => {
+  const commitThreadRename = (threadRef: ScopedThreadRef, title: string) => {
+    const originalTitle = renamingOriginalTitleRef.current;
     void (async () => {
       if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
       const trimmed = title.trim();
