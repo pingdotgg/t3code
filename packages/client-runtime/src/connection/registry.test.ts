@@ -2103,54 +2103,72 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
-  it.effect("pairing a new server at a saved address drops the old server's route there", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness(
-        [BEARER_TARGET, LAN_TARGET, RELAY_TARGET],
-        [BEARER_PROFILE, LAN_PROFILE],
-        [
-          [BEARER_TARGET.connectionId, BEARER_CREDENTIAL],
-          [LAN_TARGET.connectionId, BEARER_CREDENTIAL],
-        ],
-      );
-      const newServer = (id: string, httpBaseUrl: string) => {
-        const target = new BearerConnectionTarget({
-          environmentId: EnvironmentId.make(id),
-          label: "New server",
-          connectionId: `bearer:${id}`,
-        });
-        return lanRegistration(
-          target,
-          new BearerConnectionProfile({
-            connectionId: target.connectionId,
-            environmentId: target.environmentId,
-            label: target.label,
-            httpBaseUrl,
-            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
-          }),
+  it.effect(
+    "pairing a new server at a saved HTTPS address drops the old server's route there",
+    () =>
+      Effect.gen(function* () {
+        const savedRoute = (environmentId: EnvironmentId, connectionId: string, host: string) =>
+          [
+            new BearerConnectionTarget({ environmentId, label: "Saved", connectionId }),
+            new BearerConnectionProfile({
+              connectionId,
+              environmentId,
+              label: "Saved",
+              httpBaseUrl: `https://${host}/`,
+              wsBaseUrl: `wss://${host}/`,
+            }),
+          ] as const;
+        const [secondTarget, secondProfile] = savedRoute(
+          BEARER_TARGET.environmentId,
+          "bearer:second",
+          "second.example.test",
         );
-      };
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.register(newServer("environment-new", `${BEARER_PROFILE.httpBaseUrl}/`), {
-          paired: true,
-        });
-        yield* registry.register(newServer("environment-new-lan", LAN_PROFILE.httpBaseUrl), {
-          paired: true,
-        });
+        const [soleTarget, soleProfile] = savedRoute(
+          EnvironmentId.make("environment-sole"),
+          "bearer:sole",
+          "sole.example.test",
+        );
+        const harness = yield* makeHarness(
+          [BEARER_TARGET, secondTarget, soleTarget, LAN_TARGET, RELAY_TARGET],
+          [BEARER_PROFILE, secondProfile, soleProfile, LAN_PROFILE],
+          [BEARER_TARGET, secondTarget, soleTarget, LAN_TARGET].map(
+            (target) => [target.connectionId, BEARER_CREDENTIAL] as const,
+          ),
+        );
+        const newServer = (id: string, httpBaseUrl: string) => {
+          const target = new BearerConnectionTarget({
+            environmentId: EnvironmentId.make(id),
+            label: "New server",
+            connectionId: `bearer:${id}`,
+          });
+          return lanRegistration(
+            target,
+            new BearerConnectionProfile({
+              connectionId: target.connectionId,
+              environmentId: target.environmentId,
+              label: target.label,
+              httpBaseUrl,
+              wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+            }),
+          );
+        };
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          const pair = (id: string, httpBaseUrl: string) =>
+            registry.register(newServer(id, httpBaseUrl), { paired: true });
+          yield* pair("environment-new", `${BEARER_PROFILE.httpBaseUrl}/`);
+          // A private HTTP address can be another machine on another network.
+          yield* pair("environment-new-lan", LAN_PROFILE.httpBaseUrl);
+          // An environment's last route is never dropped with it.
+          yield* pair("environment-new-sole", soleProfile.httpBaseUrl);
 
-        const targets = yield* Ref.get(harness.storedTargets);
-        expect(hasRoutes(targets, BEARER_TARGET.environmentId)).toBe(false);
-        expect(routesOf(targets, RELAY_TARGET.environmentId)).toEqual([RELAY_TARGET]);
-        const entries = yield* SubscriptionRef.get(registry.entries);
-        expect([...entries.keys()].toSorted()).toEqual([
-          "environment-new",
-          "environment-new-lan",
-          RELAY_TARGET.environmentId,
-        ]);
-        expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
+          const targets = yield* Ref.get(harness.storedTargets);
+          expect(routesOf(targets, BEARER_TARGET.environmentId)).toEqual([secondTarget]);
+          expect(routesOf(targets, RELAY_TARGET.environmentId)).toEqual([LAN_TARGET, RELAY_TARGET]);
+          expect(routesOf(targets, soleTarget.environmentId)).toEqual([soleTarget]);
+          expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 
   it.effect("editing an address to another environment's address keeps that environment", () =>

@@ -54,6 +54,7 @@ import {
   routesAfterRemoving,
   routesWithCopiedLabel,
   routesWithHostLabel,
+  routeKeepsItsHost,
   upsertRoute,
   type ReportedEndpoint,
 } from "./routes.ts";
@@ -614,13 +615,14 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * An address reaches one server, so a pairing proves that other environments
-   * saved there are gone from it. SSH is left alone: removing its route would
-   * tear down the tunnel the new pairing uses.
+   * An HTTPS or loopback address reaches one server, so a pairing there proves other
+   * environments saved at it are gone from it. A private HTTP address can be another
+   * machine on another network, and an environment's last route is never dropped.
    */
   const dropAddressFromOtherEnvironments = Effect.fn(
     "EnvironmentRegistry.dropAddressFromOtherEnvironments",
   )(function* (environmentId: EnvironmentId, route: ConnectionRoute) {
+    if (!routeKeepsItsHost(route)) return;
     const others = [...(yield* SubscriptionRef.get(entries)).keys()].filter(
       (id) => id !== environmentId,
     );
@@ -632,11 +634,9 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             // Checked under the lock: the route may have been edited to another address.
             const entry = (yield* SubscriptionRef.get(entries)).get(other);
-            const stale =
-              entry === undefined
-                ? undefined
-                : findRouteToSameAddress(connectionRoutes(entry), route);
-            if (stale === undefined) return;
+            const routes = entry === undefined ? [] : connectionRoutes(entry);
+            const stale = findRouteToSameAddress(routes, route);
+            if (stale === undefined || routes.length === 1) return;
             yield* removeRouteLocked(other, connectionRouteId(stale.target));
           }),
         ).pipe(

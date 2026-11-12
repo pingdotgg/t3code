@@ -153,17 +153,16 @@ export function registerConnectionInCatalog(
             profiles.find((profile) => profile.connectionId === connectionIdOf(target)),
           ),
         });
-      const pairedInClear = inClear(registration.target);
       // The server accepts a login at any of its addresses, so a new pairing
       // replaces the one every paired address uses. Learned routes borrow it.
-      // A login stays off plain HTTP unless it was paired over plain HTTP.
+      // A copied login never goes to plain HTTP: pairing carries no network mark.
       const owners = new Set([
         connectionId,
         ...(isNewLogin
           ? routes.flatMap((target) =>
               target._tag === "BearerConnectionTarget" &&
               !target.connectionId.startsWith("learned:") &&
-              (pairedInClear || !inClear(target))
+              (target.connectionId === connectionId || !inClear(target))
                 ? [target.connectionId]
                 : [],
             )

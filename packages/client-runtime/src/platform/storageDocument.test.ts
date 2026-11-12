@@ -477,6 +477,51 @@ describe("ConnectionCatalogDocument", () => {
     );
   });
 
+  it("re-pairing a Tailscale address does not copy its login to plain HTTP LAN", () => {
+    const route = (connectionId: string, host: string, tailscale: boolean) =>
+      [
+        new BearerConnectionTarget({ ...BEARER_TARGET, connectionId }),
+        new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          connectionId,
+          httpBaseUrl: `http://${host}:3773/`,
+          wsBaseUrl: `ws://${host}:3773/`,
+          ...(tailscale ? { network: "tailscale" as const } : {}),
+        }),
+      ] as const;
+    const [lan, lanProfile] = route("bearer-lan", "192.168.1.10", false);
+    const [tailnet, tailnetProfile] = route("bearer-tailnet", "100.64.1.2", true);
+    const fresh = new BearerConnectionCredential({ token: "fresh-token" });
+    const document: ConnectionCatalogDocument = {
+      ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      targets: [lan, tailnet],
+      profiles: [lanProfile, tailnetProfile],
+      credentials: [lan, tailnet].map(({ connectionId }) => ({
+        connectionId,
+        credential: BEARER_CREDENTIAL,
+      })),
+    };
+    const registered = registerConnectionInCatalog(
+      document,
+      new BearerConnectionRegistration({
+        target: tailnet,
+        // Pairing builds its profile without the network mark.
+        profile: route("bearer-tailnet", "100.64.1.2", false)[1],
+        credential: fresh,
+      }),
+      document.targets,
+    );
+
+    expect(
+      new Map(registered.credentials.map((value) => [value.connectionId, value.credential])),
+    ).toEqual(
+      new Map([
+        [lan.connectionId, BEARER_CREDENTIAL],
+        [tailnet.connectionId, fresh],
+      ]),
+    );
+  });
+
   it("editing a saved address does not copy its login to the other addresses", () => {
     const tailnet = new BearerConnectionTarget({
       ...BEARER_TARGET,
