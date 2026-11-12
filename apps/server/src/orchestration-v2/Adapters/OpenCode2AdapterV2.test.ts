@@ -496,6 +496,21 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("never sends a saved variant the catalog model does not list", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(
+        turnInput(thread, { ...bigPickle, options: [{ id: "variant", value: "medium" }] }),
+      );
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("renames the session before the first turn after the thread was renamed", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
