@@ -157,6 +157,25 @@ function work(id: string, entry: Record<string, unknown>): Entry {
   } as Entry;
 }
 
+function fileReads(runId: RunId): Entry[] {
+  return Array.from({ length: 24 }, (_, index) => ({
+    ...work(`work-${index}`, {
+      runId,
+      label: `Read file ${index}`,
+      tone: "tool",
+      itemType: "file_read",
+    }),
+    attempt: {
+      id: RunAttemptId.make(`attempt-${index}`),
+      runId,
+      attemptOrdinal: index + 1,
+      rootNodeId: NodeId.make(`root-${index}`),
+      status: "completed" as const,
+      completedAt: DateTime.makeUnsafe(CREATED_AT),
+    },
+  }));
+}
+
 function v2Item(type: string, fields: Record<string, unknown>) {
   const id = (fields.id as string | undefined) ?? type;
   return {
@@ -308,22 +327,7 @@ describe("MessagesTimeline work rows", () => {
           ...Array.from({ length: 12 }, (_, index) =>
             message(`Earlier context ${index}`, {}, `context-${index}`),
           ),
-          ...Array.from({ length: 24 }, (_, index) => ({
-            ...work(`work-${index}`, {
-              runId,
-              label: `Read file ${index}`,
-              tone: "tool",
-              itemType: "file_read",
-            }),
-            attempt: {
-              id: RunAttemptId.make(`attempt-${index}`),
-              runId,
-              attemptOrdinal: index + 1,
-              rootNodeId: NodeId.make(`root-${index}`),
-              status: "completed" as const,
-              completedAt: DateTime.makeUnsafe(CREATED_AT),
-            },
-          })),
+          ...fileReads(runId),
           message("Done", { role: "assistant", runId }, "final"),
         ]}
       />,
@@ -362,7 +366,7 @@ describe("MessagesTimeline work rows", () => {
       ...Array.from({ length: 12 }, (_, index) =>
         message(`Earlier context ${index}`, {}, `context-${index}`),
       ),
-      message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+      ...fileReads(runId),
       message("Done", { role: "assistant", runId }, "final"),
     ];
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
