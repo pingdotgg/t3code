@@ -152,18 +152,21 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
-      // The inner shell prints once it has exec'd. Until then it still carries the wrapper's
-      // command line, and recording that would make the reaper skip the group as recycled.
+      const gate = path.join(stateDir, "gate");
+      const ready = path.join(stateDir, "ready");
+      NodeChildProcess.execFileSync("mkfifo", [gate, ready]);
+      // The wrapper's child is recorded before it execs and stopped after.
       const wrapper = yield* spawnGroup(
         SERVE_ARGS,
-        '/bin/sh -c "echo ready; sleep 600 & wait" "$0" "$@" & exit 0',
+        `(read _ < '${gate}'; exec /bin/sh -c 'echo > "${ready}"; sleep 600 & wait' "$0" "$@") & exit 0`,
       );
       yield* wrapper.exited;
-      yield* wrapper.printed;
       expect(groupExists(wrapper.pid)).toBe(true);
 
       yield* recordFromDeadServer(stateDir, wrapper);
       expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toHaveLength(1);
+      yield* fs.writeFileString(gate, "\n");
+      yield* fs.readFileString(ready);
 
       const restarted = yield* OpenCodeServerLedger.make({ stateDir });
       yield* restarted.reapOrphans;
