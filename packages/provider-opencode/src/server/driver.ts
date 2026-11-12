@@ -387,11 +387,21 @@ export const OpenCodeDriver: ProviderDriver<
         yield* OpenCode2Client.make.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
       ),
     );
+    const checkUsageLimits = readOpenCodeGoUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
+    );
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       resolve: resolveRuntime,
       v1: openCodeV1Adapter,
-      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+      v2: yield* OpenCode2AdapterV2.make(instanceId, { readUsageLimits: checkUsageLimits }).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });
@@ -457,16 +467,6 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     );
 
-    const checkUsageLimits = readOpenCodeGoUsageLimits({
-      enabled: effectiveConfig.enabled,
-      serverUrl: effectiveConfig.serverUrl,
-      environment: processEnv,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, pathService),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      Effect.provideService(Digest.Digest, digest),
-    );
     const checkProvider = Effect.all(
       {
         // A configured loopback server reports its running version. Probe the local

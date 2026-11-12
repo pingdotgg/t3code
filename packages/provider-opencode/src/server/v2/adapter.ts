@@ -43,6 +43,7 @@ import {
   type ProviderInstanceId,
   type RunId,
   type RuntimeRequestId,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -96,6 +97,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
 import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+import { openCodeGoLimitResetAt } from "../usageLimits.ts";
 
 const NativeGoal = Schema.NullOr(
   Schema.Struct({
@@ -260,6 +262,8 @@ interface ActiveTurn {
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
   heldEnd: TurnTerminal | undefined;
+  /** Set while a failed Go turn reads its reset time off the event lock; a new execution clears it. */
+  limitRead: object | undefined;
   awaitingStart: boolean;
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
   readonly scope: string;
@@ -594,6 +598,7 @@ const LOST_BACKGROUND =
 const INVENTORY_TIMEOUT = "5 seconds";
 const MCP_TOOL_RELOAD_SETTLE = "250 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
+const USAGE_READ_TIMEOUT = "10 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
   "InvalidRequestError",
@@ -718,7 +723,13 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
       };
 };
 
-export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (
+  instanceId: ProviderInstanceId,
+  options?: {
+    /** OpenCode Go's usage windows, which carry the reset times its limit errors omit. */
+    readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
+  },
+) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -1457,6 +1468,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       steers: new Set(),
       settledInbox: new Set(),
       heldEnd: undefined,
+      limitRead: undefined,
       awaitingStart: options.awaitingStart,
       scope: options.scope,
       usedSubagents: false,
@@ -2765,6 +2777,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* updateRetry(state, turn, event.data, event.data.at - event.created);
         case "session.execution.started":
           turn.heldEnd = undefined;
+          turn.limitRead = undefined;
           return;
         case "session.execution.succeeded":
           return yield* endExecution(state, turn, {
@@ -2777,19 +2790,60 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
           const claudeLimit = claudeUsageLimit(message);
+          // Newer OpenCode builds report a spent Go window as provider.go-limit;
+          // older ones sent provider.quota with a GoUsageLimitError body.
+          const goLimit =
+            (type === "provider.go-limit" && status !== 402) ||
+            (type === "provider.quota" &&
+              status === 429 &&
+              response?.body.includes("GoUsageLimitError") === true);
           const usageLimit =
+            goLimit ||
             (type === "provider.quota" && status !== 402) ||
             type === "provider.rate-limit" ||
             claudeLimit !== undefined;
-          return yield* endExecution(state, turn, {
+          const failed = (resetAt: string | null): TurnTerminal => ({
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              resetAt,
             }),
           });
+          const readUsageLimits = options?.readUsageLimits;
+          if (claudeLimit !== undefined || !goLimit || readUsageLimits === undefined) {
+            return yield* endExecution(state, turn, failed(claudeLimit?.resetAt ?? null));
+          }
+          // Go errors omit the reset time, so it comes from Go's usage windows. That read
+          // is a network call, so the turn ends after it, off the lock all threads share.
+          const read = {};
+          turn.limitRead = read;
+          const endAfterRead = (resetAt: string | null) =>
+            lock.withPermit(
+              Effect.suspend(() => {
+                if (state.active !== turn || turn.limitRead !== read) return Effect.void;
+                turn.limitRead = undefined;
+                // A Stop sent during the read wins, so the stopped thread does not resume at the reset.
+                const end = turn.interrupted ? { status: "interrupted" as const } : failed(resetAt);
+                return endExecution(state, turn, end).pipe(
+                  Effect.andThen(syncRosterAncestors(state)),
+                );
+              }),
+            );
+          yield* Effect.forkIn(
+            readUsageLimits.pipe(
+              Effect.timeout(USAGE_READ_TIMEOUT),
+              Effect.exit,
+              Effect.flatMap((exit) =>
+                endAfterRead(
+                  Exit.isSuccess(exit) ? openCodeGoLimitResetAt(message, exit.value) : null,
+                ),
+              ),
+            ),
+            sessionScope,
+          );
+          return;
         }
         default:
           return;
@@ -3137,6 +3191,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (turn !== undefined) {
           turn.awaitingStart = false;
           turn.heldEnd = undefined;
+          turn.limitRead = undefined;
           return;
         }
       }
@@ -3469,7 +3524,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const childId of strays.keys()) if (!(childId in active)) strays.delete(childId);
       for (const [sessionId, state] of running) {
         const turn = state.active;
-        if (turn === undefined) continue;
+        // Its end already arrived; the pending usage read finishes it.
+        if (turn === undefined || turn.limitRead !== undefined) continue;
         turn.missedEvents = true;
         const ended = yield* backfill(sessionId, state);
         if (state.active !== turn) continue;
@@ -4836,7 +4892,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
             return yield* cancelStrandedSteers(state);
           }
-          if (!reply.value.interrupted && state.active === turn && turn.unsent) {
+          if (
+            !reply.value.interrupted &&
+            state.active === turn &&
+            (turn.unsent || turn.limitRead !== undefined)
+          ) {
             return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
           }
           if (!reply.value.interrupted && state.active === turn) {

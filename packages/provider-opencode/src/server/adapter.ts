@@ -2688,6 +2688,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       (state): state is OpenCodeThreadState => state !== undefined,
                     );
               const error = event.properties.error;
+              // OpenCode 1 does not say whose limit a 429 is, so it gets no Go window reset time.
               const usageLimit = error?.name === "APIError" && error.data.statusCode === 429;
               const failure = makeProviderFailure({
                 message: openCodeErrorMessage(event),

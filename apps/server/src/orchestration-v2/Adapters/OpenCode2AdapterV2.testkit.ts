@@ -6,6 +6,7 @@ import {
   ProviderSessionId,
   ThreadId,
   type ProviderReplayTranscript,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -268,13 +269,17 @@ const makeReplayAdapter = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
   },
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
-    return yield* OpenCode2Adapter.make(ProviderInstanceId.make("opencode")).pipe(
-      Effect.provideService(OpenCode2Server.OpenCode2Server, server),
-    );
+    return yield* OpenCode2Adapter.make(
+      ProviderInstanceId.make("opencode"),
+      options?.readUsageLimits === undefined
+        ? undefined
+        : { readUsageLimits: options.readUsageLimits },
+    ).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, server));
   });
 
 const layerReplayHost = TestProviderHost.layer().pipe(
@@ -325,6 +330,7 @@ export const openCode2ReplayRuntime = (
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
+    readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
   },
 ) =>
   Effect.gen(function* () {
