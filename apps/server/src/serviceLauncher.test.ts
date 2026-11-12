@@ -1119,24 +1119,22 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect(
-    "holds its lock while it serves and stops the server over IPC without a tunnel-release marker",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-control-" });
-        const statePath = path.join(root, "runtime", "service-state.json");
-        const databasePath = path.join(root, "userdata", "state.sqlite");
-        const reportPath = path.join(root, "stopped-with-marker");
-        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-        yield* fs.writeFileString(databasePath, "database");
-        const encoded = JSON.stringify({
-          databasePath,
-          reportPath,
-          markerPath: path.join(root, "runtime", ".service-stopping"),
-        });
-        const childSource = `
+  it.effect("holds its lock while it serves and stops the server over IPC, no marker", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-control-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const reportPath = path.join(root, "stopped-with-marker");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "database");
+      const encoded = JSON.stringify({
+        databasePath,
+        reportPath,
+        markerPath: path.join(root, "runtime", ".service-stopping"),
+      });
+      const childSource = `
 const fs = require("node:fs");
 const paths = ${encoded};
 process.on("message", (message) => {
@@ -1146,48 +1144,48 @@ process.on("message", (message) => {
 });
 process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.databasePath });
 `;
-        for (const version of ["1.0.0", "1.1.0"]) {
-          yield* writeFakeRuntime(
-            fs,
-            path,
-            path.join(root, "runtime", "versions", version),
-            childSource,
-          );
-        }
-        yield* Effect.promise(() =>
-          writeServiceState(statePath, {
-            protocol: SERVICE_LAUNCHER_PROTOCOL,
-            activeVersion: "1.0.0",
-          }),
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
         );
-        const lockPath = serviceLauncherLockPath(root);
-        const serving = Promise.withResolvers<void>();
-        const launcher = new Launcher(
-          root,
-          yield* Effect.promise(() => readServiceState(statePath)),
-          {
-            lockPath,
-            stopChildOverIpc: true,
-            // The update request proves the child is up; refusing it leaves the server running.
-            backupSpaceProbe: {
-              readFreeBytes: () => {
-                serving.resolve();
-                return Promise.resolve(0);
-              },
-              canClone: () => Promise.resolve(false),
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      const lockPath = serviceLauncherLockPath(root);
+      const serving = Promise.withResolvers<void>();
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          lockPath,
+          stopChildOverIpc: true,
+          // The update request proves the child is up; refusing it leaves the server running.
+          backupSpaceProbe: {
+            readFreeBytes: () => {
+              serving.resolve();
+              return Promise.resolve(0);
             },
+            canClone: () => Promise.resolve(false),
           },
-        );
-        const running = launcher.run();
-        yield* Effect.promise(() => Promise.race([serving.promise, running]));
+        },
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => Promise.race([serving.promise, running]));
 
-        assert.isTrue(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
-        // What losing the task's console does.
-        yield* Effect.promise(() => launcher.stop("SIGTERM"));
-        yield* Effect.promise(() => running);
-        assert.equal(yield* fs.readFileString(reportPath), "false");
-        assert.isFalse(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
-      }),
+      assert.isTrue(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
+      // What losing the task's console does.
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+      assert.equal(yield* fs.readFileString(reportPath), "false");
+      assert.isFalse(yield* Effect.promise(() => serviceLauncherIsRunning(lockPath)));
+    }),
   );
 
   it.effect("leaves a pending update alone when stopped while it starts up", () =>
