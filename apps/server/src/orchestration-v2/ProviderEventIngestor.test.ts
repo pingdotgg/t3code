@@ -13,6 +13,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
@@ -36,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -2211,6 +2213,67 @@ layer("ProviderEventIngestorV2", (it) => {
         assert.deepEqual(yield* ingest(recovered, true), []);
         assert.deepEqual(yield* projectionStore.getThread(childThreadId), saved);
       }),
+  );
+
+  it.effect("a late running snapshot does not reopen a completed native subagent", () =>
+    Effect.gen(function* () {
+      const startedAt = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(startedAt);
+      yield* eventSink.write({ events: [rootEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      const running = {
+        id: NodeId.make("node:late-running-subagent"),
+        threadId: rootEvent.threadId,
+        runId: null,
+        parentNodeId: NodeId.make("node:root"),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: { driver: CODEX_DRIVER, nativeId: "task-late", strength: "strong" },
+        prompt: "Audit the repo",
+        title: "audit",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt,
+        completedAt: null,
+        updatedAt: startedAt,
+      } satisfies OrchestrationV2Subagent;
+      const ingest = (subagent: OrchestrationV2Subagent) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: { type: "subagent.updated", driver: CODEX_DRIVER, subagent },
+        });
+      yield* ingest(running);
+      yield* TestClock.adjust("1 second");
+      const completedAt = yield* DateTime.now;
+      yield* ingest({
+        ...running,
+        status: "completed",
+        result: "Audit done.",
+        completedAt,
+        updatedAt: completedAt,
+      });
+      yield* TestClock.adjust("17 seconds");
+      // An in-flight snapshot of the same generation (same startedAt) is not a resume.
+      yield* ingest({ ...running, updatedAt: yield* DateTime.now });
+
+      const [subagent] = (yield* projectionStore.getThreadProjection(rootEvent.threadId)).subagents;
+      assert.equal(subagent?.status, "completed");
+      assert.equal(subagent?.result, "Audit done.");
+    }),
   );
 
   it.effect("moves a native subagent's thread to its later model through a database lock", () =>
