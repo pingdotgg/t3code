@@ -6,7 +6,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
 import { DialogPanel, DialogFooter } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
+import { CommitRangePicker } from "./CommitRangePicker";
 import { useEnvironmentQuery } from "~/state/query";
 import { Textarea } from "./ui/textarea";
 import { gitEnvironment } from "~/state/git";
@@ -158,48 +158,6 @@ export function CommitWorkflowForm(props: {
           )}
           {scope === "branch" && (
             <div className="space-y-3">
-              {["start", "end"].map((boundary) => {
-                const isStart = boundary === "start";
-                const value = isStart ? startCommit : endCommit;
-                const selected = commits.find((commit) => commit.sha === value);
-                const defaultLabel = isStart
-                  ? "Earliest branch commit (default)"
-                  : "Latest commit (default)";
-                return (
-                  <div key={boundary} className="space-y-2 text-sm">
-                    <span>{isStart ? "First commit (included)" : "Last commit (included)"}</span>
-                    <Select
-                      value={value || "default"}
-                      onValueChange={(next) =>
-                        (isStart ? setStartCommit : setEndCommit)(
-                          next === "default" ? "" : String(next),
-                        )
-                      }
-                      disabled={range.isPending || commits.length === 0}
-                    >
-                      <SelectTrigger
-                        aria-label={isStart ? "First commit (included)" : "Last commit (included)"}
-                      >
-                        <SelectValue>
-                          {selected ? `${selected.shortSha} ${selected.subject}` : defaultLabel}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectPopup>
-                        <SelectItem value="default">{defaultLabel}</SelectItem>
-                        {commits.map((commit, index) => (
-                          <SelectItem
-                            key={commit.sha}
-                            value={commit.sha}
-                            disabled={isStart ? index > endIndex : index < startIndex}
-                          >
-                            {commit.shortSha} {commit.subject}
-                          </SelectItem>
-                        ))}
-                      </SelectPopup>
-                    </Select>
-                  </div>
-                );
-              })}
               {range.isPending ? (
                 <p className="text-xs text-muted-foreground">Loading commits…</p>
               ) : range.error ? (
@@ -208,7 +166,21 @@ export function CommitWorkflowForm(props: {
                 <p className="text-xs text-muted-foreground">
                   No branch commits are available to regroup.
                 </p>
-              ) : null}
+              ) : (
+                <CommitRangePicker
+                  commits={commits}
+                  startIndex={startIndex}
+                  endIndex={endIndex}
+                  onReset={() => {
+                    setStartCommit("");
+                    setEndCommit("");
+                  }}
+                  onRangeChange={(first, last) => {
+                    setStartCommit(commits[first]?.sha ?? "");
+                    setEndCommit(commits[last]?.sha ?? "");
+                  }}
+                />
+              )}
             </div>
           )}
           {scope === "branch" &&

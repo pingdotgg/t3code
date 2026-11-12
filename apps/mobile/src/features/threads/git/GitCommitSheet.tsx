@@ -7,7 +7,7 @@ import { uuidv4 } from "../../../lib/uuid";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
-import { Menu } from "../../../components/ui/Menu";
+import { CommitRangePicker } from "./CommitRangePicker";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useMemo, useRef, useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -268,49 +268,6 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                     autoCorrect={false}
                     className="min-h-12 rounded-xl bg-subtle px-4"
                   />
-                  {["start", "end"].map((boundary) => {
-                    const isStart = boundary === "start";
-                    const value = isStart ? startCommit : endCommit;
-                    const selected = commits.find((commit) => commit.sha === value);
-                    const label = isStart ? "First commit (included)" : "Last commit (included)";
-                    const defaultLabel = isStart
-                      ? "Earliest branch commit (default)"
-                      : "Latest commit (default)";
-                    return (
-                      <View key={boundary} className="gap-2">
-                        <Text className="text-sm text-foreground">{label}</Text>
-                        <Menu
-                          actions={[
-                            { id: "default", title: defaultLabel },
-                            ...commits
-                              .filter((_, index) =>
-                                isStart ? index <= endIndex : index >= startIndex,
-                              )
-                              .map((commit) => ({
-                                id: commit.sha,
-                                title: `${commit.shortSha} ${commit.subject}`,
-                              })),
-                          ]}
-                          onPressAction={({ nativeEvent }) =>
-                            (isStart ? setStartCommit : setEndCommit)(
-                              nativeEvent.event === "default" ? "" : nativeEvent.event,
-                            )
-                          }
-                        >
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={label}
-                            disabled={range.isPending || commits.length === 0}
-                            className="min-h-12 justify-center rounded-xl bg-subtle px-4"
-                          >
-                            <Text numberOfLines={1} className="text-foreground">
-                              {selected ? `${selected.shortSha} ${selected.subject}` : defaultLabel}
-                            </Text>
-                          </Pressable>
-                        </Menu>
-                      </View>
-                    );
-                  })}
                   {range.isPending ? (
                     <Text className="text-sm text-foreground-secondary">Loading commits…</Text>
                   ) : range.error ? (
@@ -319,7 +276,21 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                     <Text className="text-sm text-foreground-secondary">
                       No branch commits are available to regroup.
                     </Text>
-                  ) : null}
+                  ) : (
+                    <CommitRangePicker
+                      commits={commits}
+                      startIndex={startIndex}
+                      endIndex={endIndex}
+                      onReset={() => {
+                        setStartCommit("");
+                        setEndCommit("");
+                      }}
+                      onRangeChange={(first, last) => {
+                        setStartCommit(commits[first]?.sha ?? "");
+                        setEndCommit(commits[last]?.sha ?? "");
+                      }}
+                    />
+                  )}
                   <Text className="text-xs text-foreground-muted">
                     Earlier commits keep their IDs. Later commits keep their contents and messages
                     but receive new IDs.
