@@ -24,6 +24,7 @@ import {
 } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -34,6 +35,7 @@ type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const state = vi.hoisted(() => ({
   sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
   projects: [] as Project[],
+  projectListeners: new Set<() => void>(),
   update:
     vi.fn<
       (request: {
@@ -76,7 +78,14 @@ vi.mock(import("~/state/environments"), async (original) => ({
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
-  useProjects: (() => state.projects) as never,
+  useProjects: (() =>
+    useSyncExternalStore(
+      (listener) => {
+        state.projectListeners.add(listener);
+        return () => state.projectListeners.delete(listener);
+      },
+      () => state.projects,
+    )) as never,
   useThreadShells: () => [],
   useServerConfigs: (() =>
     new Map(
@@ -134,7 +143,7 @@ vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
+import { buildSettingsProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
@@ -209,6 +218,7 @@ function setup() {
         ? { ...project, ...patch }
         : project,
     );
+    for (const listener of state.projectListeners) listener();
     return AsyncResult.success(undefined);
   });
   state.delete.mockResolvedValue(AsyncResult.success(undefined));
@@ -217,7 +227,7 @@ function setup() {
 }
 
 function projectKey() {
-  return buildSidebarProjectSnapshots({
+  return buildSettingsProjectSnapshots({
     projects: state.projects,
     settings: DEFAULT_CLIENT_SETTINGS,
     primaryEnvironmentId: primaryId,
@@ -496,6 +506,8 @@ describe("project identity reset", () => {
     state.projects = [{ ...asScratch(state.projects[0]!), faviconPath: null, projectIcon: null }];
     await using screen = await mountPanel();
 
+    expect(nameInput(screen).value).toBe("Notes");
+    await rename(screen, "Work notes");
     await userEvent.click(resetButton(screen, "project name")!);
     await vi.waitFor(() =>
       expect(state.update).toHaveBeenCalledWith({
@@ -503,6 +515,7 @@ describe("project identity reset", () => {
         input: { projectId: state.projects[0]!.id, title: "No project" },
       }),
     );
+    await vi.waitFor(() => expect(nameInput(screen).value).toBe("No project"));
     await userEvent.click(resetButton(screen, "project icon")!);
     await vi.waitFor(() =>
       expect(state.update).toHaveBeenLastCalledWith({
@@ -512,13 +525,14 @@ describe("project identity reset", () => {
     );
   });
 
-  it("resets each member of a mixed group to its own default icon", async () => {
+  it("resets each scratch member without changing an ordinary project", async () => {
     setup();
     const [primary, remote] = state.projects;
-    state.projects = [asScratch(primary!), { ...remote!, faviconPath: "logo.png" }];
+    const ordinary = { ...remote!, id: ProjectId.make("ordinary"), faviconPath: "logo.png" };
+    state.projects = [asScratch(primary!), asScratch(remote!), ordinary];
     await using screen = await mountPanel();
 
-    expect(resetButton(screen, "project name")).toBeNull();
+    expect(resetButton(screen, "project name")).not.toBeNull();
     await userEvent.click(resetButton(screen, "project icon")!);
     await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
     expect(state.update.mock.calls.map(([request]) => request)).toEqual([
@@ -528,9 +542,10 @@ describe("project identity reset", () => {
       },
       {
         environmentId: remoteId,
-        input: { projectId: remote!.id, faviconPath: null, projectIcon: null },
+        input: { projectId: remote!.id, faviconPath: null, projectIcon: scratchIcon },
       },
     ]);
+    expect(state.projects.find((project) => project.id === ordinary.id)).toEqual(ordinary);
   });
 });
 

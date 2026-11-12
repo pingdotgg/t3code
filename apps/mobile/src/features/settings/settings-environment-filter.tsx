@@ -48,6 +48,7 @@ function settingsProjectGroups(
     groups = buildProjectGroups({
       projects,
       settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
+      groupScratchProjects: true,
     });
     byMode.set(groupingMode, groups);
   }
