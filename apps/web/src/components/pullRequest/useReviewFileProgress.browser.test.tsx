@@ -32,7 +32,7 @@ async function mountFilesViewed() {
   toastAdd.mockReset();
   setFilesViewed.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   let current: PullRequestFilesViewedView | undefined;
-  function Surface({data}: {data: PullRequestFilesViewedResult}) {
+  function Surface({ data }: { data: PullRequestFilesViewedResult }) {
     const view = useReviewFileProgress({
       scopeKey: "pr-files-viewed-audit",
       query: {
