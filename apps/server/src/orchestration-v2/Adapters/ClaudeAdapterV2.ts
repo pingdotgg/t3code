@@ -5499,6 +5499,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           new Map<string, PendingClaudeRuntimeRequest>(),
         );
         const mcpElicitationSessionGrants = yield* Ref.make(new Set<string>());
+        // Plan mode ignores the session rule a canUseTool answer returns for MCP tools.
+        const mcpToolSessionGrants = yield* Ref.make(new Set<string>());
         // Background local_bash tasks can trigger wake turns on the query stream with no active provider turn.
         const lastTurnRouteByNativeThread = yield* Ref.make(
           new Map<
@@ -11309,6 +11311,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const grantsByToolName =
+            toolName.startsWith("mcp__") && (callbackOptions.suggestions ?? []).length === 0;
+          if (grantsByToolName && (yield* Ref.get(mcpToolSessionGrants)).has(toolName)) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           const requestKind = providerRequestKindFromClaudeTool(toolName);
           // The user approves the command itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
@@ -11374,6 +11386,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
           if (!(yield* Deferred.isDone(decision))) yield* cancelWithdrawnRequest(artifacts);
+          if (grantsByToolName && resolvedDecision.decision === "acceptForSession") {
+            yield* Ref.update(mcpToolSessionGrants, (current) => new Set(current).add(toolName));
+          }
 
           return permissionResultFromDecision({
             toolName,
