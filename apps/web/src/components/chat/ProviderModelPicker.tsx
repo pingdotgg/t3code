@@ -162,11 +162,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       driverKind: activeEntry?.driverKind,
       model: props.model,
       options: selectedInstanceOptions,
-    }) ??
-    retainedModelWhileProviderLocked(activeEntry, props.model) ??
-    (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
-      ? undefined
-      : selectedInstanceOptions[0]);
+    }) ?? retainedModelWhileProviderLocked(activeEntry, props.model);
   const triggerTitle = selectedModel
     ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
