@@ -753,7 +753,7 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
     probe: {
       installed: false,
       version: null,
-      status: "warning",
+      status: "checking",
       auth: { status: "unknown" },
       message: "Codex provider status has not been checked in this session yet.",
     },
