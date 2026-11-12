@@ -43,18 +43,25 @@ function formatElapsed(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function RecordingStatus(props: { level: number; recordingLimitSeconds?: number | undefined }) {
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+function RecordingStatus(props: {
+  level: number;
+  recordingStartedAt?: number | null | undefined;
+  recordingLimitSeconds?: number | undefined;
+}) {
+  const { recordingStartedAt } = props;
+  const [elapsedSeconds, setElapsedSeconds] = useState(() =>
+    recordingStartedAt ? Math.max(0, Math.floor((Date.now() - recordingStartedAt) / 1_000)) : 0,
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the timer displaying the native recording duration
   useEffect(() => {
-    const startedAt = Date.now();
+    const startedAt = recordingStartedAt ?? Date.now();
     const timer = window.setInterval(
       () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000)),
       250,
     );
     return () => window.clearInterval(timer);
-  }, []);
+  }, [recordingStartedAt]);
 
   return (
     <>
@@ -125,6 +132,7 @@ export function ComposerSpeechRecordingPill(props: {
   finishShortcutLabel?: string | null;
   cancelShortcutLabel?: string | null;
   level: number;
+  recordingStartedAt?: number | null | undefined;
   recordingLimitSeconds?: number | undefined;
   /** Compact matches the `xs` buttons beside text-field editors. */
   size?: "default" | "compact";
@@ -181,6 +189,7 @@ export function ComposerSpeechRecordingPill(props: {
         {recording ? (
           <RecordingStatus
             level={props.level}
+            recordingStartedAt={props.recordingStartedAt}
             recordingLimitSeconds={props.recordingLimitSeconds}
           />
         ) : (

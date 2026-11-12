@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 
 import { act, render, stubGlobal } from "../../test/render";
+import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
 import { VoiceInputSetup } from "../components/chat/VoiceInputSetup";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
@@ -58,6 +59,7 @@ const mocks = vi.hoisted(() => ({
   transcripts: [] as Array<string | Error>,
   committed: vi.fn(),
   draft: "",
+  storedDraft: "",
 }));
 
 vi.mock("../state/session", () => ({
@@ -236,6 +238,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.transcripts = [];
   mocks.committed.mockClear();
   mocks.draft = "";
+  mocks.storedDraft = "";
 }
 
 function setDestination(environmentId: string | null) {
@@ -249,13 +252,24 @@ function Probe(props: {
   readonly projectName?: string;
   readonly cleanup?: boolean;
   readonly showWizard?: boolean;
+  readonly ownerKey?: string;
+  readonly persistent?: boolean;
 }) {
   const value = useEnvironmentSpeechInput({
     environmentId: THREAD_ENV as EnvironmentId,
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
-    ownerKey: "draft",
+    ownerKey: props.ownerKey ?? "draft",
+    persistentDraft: props.persistent
+      ? {
+          readStoredText: () => mocks.storedDraft,
+          commitStoredText: (text) => {
+            mocks.storedDraft = text;
+          },
+          open: () => {},
+        }
+      : undefined,
     readDraft: () => ({
       text: mocks.draft,
       selection: { start: mocks.draft.length, end: mocks.draft.length },
@@ -374,6 +388,42 @@ it("retries a failed transcription on the same chosen environment", async () => 
   if (mocks.voice.state.phase === "recording") await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it.each([
+  ["a stored thread draft keeps recording into it", true],
+  ["an editor-only draft is abandoned", false],
+])("when the editor switches owner mid-recording, %s", async (_name, persistent) => {
+  setup({ destination: "env-a" });
+  mocks.storedDraft = "Earlier text";
+  const view = (ownerKey: string) => (
+    <>
+      <Probe ownerKey={ownerKey} persistent={persistent} />
+      <GlobalVoiceInputIndicator />
+    </>
+  );
+  await using screen = await render(view("thread-a"));
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  // The indicator stays away while the recording's own editor is on screen.
+  expect(page.getByRole("button", { name: "Finish voice input" }).query()).toBeNull();
+
+  await screen.rerender(view("thread-b"));
+  // One microphone: thread-b cannot start its own recording while thread-a's runs.
+  expect(mocks.voice.available).toBe(!persistent);
+  if (!persistent) {
+    await expect
+      .element(page.getByRole("button", { name: "Finish voice input" }))
+      .not.toBeInTheDocument();
+    expect(mocks.transcribeCalls).toEqual([]);
+    expect(mocks.storedDraft).toBe("Earlier text");
+    return;
+  }
+  await page.getByRole("button", { name: "Finish voice input" }).click();
+
+  await vi.waitFor(() => expect(mocks.storedDraft).toBe("Earlier text dictated"));
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.committed).not.toHaveBeenCalled();
 });
 
 it("reopens setup after reconnecting during a download and ignores its stale completion", async () => {
