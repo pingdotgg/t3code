@@ -1,6 +1,10 @@
 import { ipcRenderer } from "electron";
 
-import { PASSKEY_BRIDGE_ARGUMENT, PASSKEY_PHONE_BRIDGE_ARGUMENT } from "./preview/GuestProtocol.ts";
+import {
+  PASSKEY_BRIDGE_ARGUMENT,
+  PASSKEY_PHONE_BRIDGE_ARGUMENT,
+  PRIMARY_PASTE_DISABLED_ARGUMENT,
+} from "./preview/GuestProtocol.ts";
 import { installPasskeyBridge } from "./preview/PasskeyBridge.ts";
 import "./preview/PickPreload.ts";
 
@@ -9,5 +13,16 @@ if (process.argv.includes(PASSKEY_BRIDGE_ARGUMENT)) {
   installPasskeyBridge(
     (channel, publicKey, requestId) => ipcRenderer.invoke(channel, publicKey, requestId),
     !process.argv.includes(PASSKEY_PHONE_BRIDGE_ARGUMENT),
+  );
+}
+
+if (process.argv.includes(PRIMARY_PASTE_DISABLED_ARGUMENT)) {
+  // Same guard as the app preload: Blink pastes PRIMARY on an uncancelled middle mouseup.
+  window.addEventListener(
+    "mouseup",
+    (event) => {
+      if (event.button === 1) event.preventDefault();
+    },
+    true,
   );
 }
