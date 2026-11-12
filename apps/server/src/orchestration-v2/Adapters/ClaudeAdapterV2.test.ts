@@ -1353,6 +1353,12 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  getContextUsage: Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "getContextUsage",
+                      cause: new Error("Unsupported control request subtype"),
+                    }),
+                  ),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
