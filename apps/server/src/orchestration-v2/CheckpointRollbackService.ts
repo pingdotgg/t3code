@@ -246,16 +246,39 @@ export const layer: Layer.Layer<
         ) {
           const project = yield* projects.get(context.thread.projectId);
           if (Option.isSome(project)) {
+            const recreate = gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot }).pipe(
+              Effect.andThen(
+                gitWorkflow.createWorktree({
+                  cwd: project.value.workspaceRoot,
+                  refName: branch,
+                  path: worktreePath,
+                }),
+              ),
+            );
             if (leftover) {
               if (!(yield* isolated)) return yield* sharedWorkspace();
-              yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+              // Set aside, not removed: a checkout that fails puts the folder and its files back.
+              const aside = yield* fileSystem.makeTempDirectory({
+                directory: path.dirname(worktreePath),
+                prefix: ".t3-replaced-",
+              });
+              const held = path.join(aside, "folder");
+              yield* fileSystem.rename(worktreePath, held);
+              yield* recreate.pipe(
+                Effect.onError(() =>
+                  fileSystem
+                    .remove(worktreePath, { recursive: true, force: true })
+                    .pipe(
+                      Effect.andThen(fileSystem.rename(held, worktreePath)),
+                      Effect.andThen(fileSystem.remove(aside, { recursive: true, force: true })),
+                      Effect.ignore,
+                    ),
+                ),
+              );
+              yield* fileSystem.remove(aside, { recursive: true, force: true });
+            } else {
+              yield* recreate;
             }
-            yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
-            yield* gitWorkflow.createWorktree({
-              cwd: project.value.workspaceRoot,
-              refName: branch,
-              path: worktreePath,
-            });
           }
         }
       }
