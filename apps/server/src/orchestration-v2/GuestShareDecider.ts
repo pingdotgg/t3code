@@ -168,12 +168,13 @@ export function decideGuestShareCommand(input: {
         ]),
       };
       // A request needs the owner, so a settled thread comes back as a new message brings it.
-      return thread.settledOverride === "settled"
+      return thread.settledOverride === "settled" || thread.settleWhenIdleAt != null
         ? Result.succeed({
             ...thread,
             guestShare,
             settledOverride: null,
             settledAt: null,
+            settleWhenIdleAt: null,
             unsettledAt: now,
             updatedAt: now,
           })

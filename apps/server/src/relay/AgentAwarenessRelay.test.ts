@@ -899,6 +899,8 @@ describe("AgentAwarenessRelay", () => {
         pendingBackgroundTasks: [],
       });
       yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
       assert.deepEqual(
         publications.map(({ state }) => state?.phase),
         ["running", "completed"],

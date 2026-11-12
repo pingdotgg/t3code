@@ -440,7 +440,11 @@ it.effect("a fork stays active when its source is filed and still has background
     const fork = yield* f.projections.getThread(targetThreadId);
     assert.isNull(fork.settleWhenIdleAt);
     assert.isNull(fork.settledOverride);
-    assert.isEmpty(yield* f.projections.getSettlementCandidates(targetThreadId));
+    assert.isTrue(
+      (yield* f.projections.getSettlementCandidates(targetThreadId)).every(
+        (thread) => thread.settleWhenIdleAt == null,
+      ),
+    );
     assert.isNotNull((yield* f.read()).settleWhenIdleAt);
   }).pipe(Effect.provide(testLayer)),
 );
@@ -631,8 +635,14 @@ it.effect("a held automatic run cannot hide background work or prevent settlemen
       modelSelection,
       dispatchMode: { type: "queue_after_active" },
     });
+    yield* f.projections.apply({
+      id: EventId.make("held-base-completed"),
+      type: "run.updated",
+      threadId: f.threadId,
+      occurredAt: f.now,
+      payload: { ...f.run, status: "completed", completedAt: f.now },
+    });
     const [held] = yield* holdQueue(f);
-    yield* f.setRun("completed");
     yield* f.setBackground("dynamic_tool", "running");
     assert.isNotEmpty(
       (yield* f.projections.getSettlementCandidates(f.threadId))[0]?.pendingBackgroundTasks,

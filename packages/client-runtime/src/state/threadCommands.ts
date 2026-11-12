@@ -431,7 +431,6 @@ export function createThreadEnvironmentAtoms<R, E>(
         ? thread
         : {
             ...thread,
-            pendingRuntimeRequest: null,
             settleWhenIdleAt: null,
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
             snoozedAt: now,

@@ -31,7 +31,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. settle on a working thread files it now and settles it quietly once work finishes. Settling your own working thread returns settlesWhenTurnEnds=true. A failure, interruption, question, or approval returns it to Active.",
+    "Pin, snooze (snoozedUntil), settle, archive, or mark unread. Omit threadId for this thread. Settle files work until idle; own turns return settlesWhenTurnEnds. Errors, Stop, or input return it to Active.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),

@@ -275,7 +275,14 @@ describe("getThreadListV2OrderedSection", () => {
       id: ThreadId.make("filed"),
       title: "Filed",
       settleWhenIdleAt: NOW,
-      runtime: runningRuntime(),
+      runtime: {
+        status: "running",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: NOW,
+      },
     });
     expect(
       getThreadListV2OrderedSection({ threads: [thread], section: "active", now: NOW }),
