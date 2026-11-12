@@ -44,7 +44,7 @@ Every eval follows the same shape, so a new one is easy to write and an old one 
 
 ## Cost
 
-Until review, run only the cases your change touches, and once with their controls on a same-model baseline. After a maintainer approves, do one full run per model on your change. A full baseline is only for changes to every case. Each eval's summary records what the run cost.
+Before review, run only the touched cases until they pass, then run them plus controls once on main using the same model. After maintainer approval, run the full suite once per model on your change before merge. Run a full baseline only when every case changes. Each eval's summary records what the run cost.
 
 ## Add an eval
 
