@@ -457,34 +457,26 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("matches square brackets in the query literally", () =>
+    it.effect("matches glob metacharacters in the query literally", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
         yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
+        yield* writeTextFile(cwd, "src/foo{bar}.ts");
+        yield* writeTextFile(cwd, "src/notes.md");
+
+        const search = (query: string) =>
+          searchWorkspaceEntries({ cwd, query, limit: 10 }).pipe(
+            Effect.map((result) => result.entries.map((entry) => entry.path)),
+          );
 
         for (const query of ["game/[i", "game/[id]"]) {
-          const result = yield* searchWorkspaceEntries({ cwd, query, limit: 10 });
-          expect(result.entries.map((entry) => entry.path)).toContain(
-            "src/app/game/[id]/index.tsx",
-          );
+          expect(yield* search(query)).toContain("src/app/game/[id]/index.tsx");
         }
-      }),
-    );
-
-    it.effect("matches curly braces in the query literally", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-braces-" });
-        yield* writeTextFile(cwd, "src/foo{bar}.ts");
-
-        for (const kind of [undefined, "file"] as const) {
-          const result = yield* searchWorkspaceEntries({
-            cwd,
-            query: "foo{bar}.ts",
-            limit: 10,
-            ...(kind ? { kind } : {}),
-          });
-          expect(result.entries.map((entry) => entry.path)).toContain("src/foo{bar}.ts");
-        }
+        expect(yield* search("foo{bar}.ts")).toContain("src/foo{bar}.ts");
+        expect((yield* search("*.{ts,tsx}")).toSorted()).toEqual([
+          "src/app/game/[id]/index.tsx",
+          "src/foo{bar}.ts",
+        ]);
       }),
     );
 

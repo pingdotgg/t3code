@@ -38,6 +38,7 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const BRACE_ALTERNATION = /\{[^{}]*,[^{}]*\}/;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -451,8 +452,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     "WorkspaceSearchIndex.search",
   )(function* (rawQuery, limit, kind, imageOnly) {
     // fff parses any word containing "[" or "{" as a glob and has no escape for them; fuzzy
-    // matching is subsequence-based, so dropping them still matches "[id]" folders and "a{b}" files.
-    const query = rawQuery.replaceAll(/[[{]/g, "");
+    // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
+    // Words with a "{a,b}" alternation stay intact so "*.{ts,tsx}" still filters by extension.
+    const query = rawQuery
+      .replaceAll("[", "")
+      .replaceAll(/\S+/g, (word) =>
+        BRACE_ALTERNATION.test(word) ? word : word.replaceAll("{", ""),
+      );
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
