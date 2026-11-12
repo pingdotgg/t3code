@@ -446,22 +446,34 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
-    it.effect("keeps a shadow's own databases and refuses only one the shared home also has", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
-        yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
-        yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "private wal");
+    it.effect.skipIf(!symlinksSupported)(
+      "keeps a shadow's own databases and refuses only one the shared home also has",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "private wal");
 
-        expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(shadowHome);
+          expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(shadowHome);
 
-        yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared db");
-        expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(sharedHome);
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared db");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite-wal"), "shared wal");
+          const environment = yield* materializeCodexShadowHome(layout, {});
+          expect(environment.CODEX_SQLITE_HOME).toBe(shadowHome);
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "goals_1.sqlite"))).toBe(
+            path.join(sharedHome, "goals_1.sqlite"),
+          );
+          expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite-wal"))).toBe(false);
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            "private db",
+          );
 
-        yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared db");
-        const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
-      }),
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared db");
+          const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+        }),
     );
   });
 });

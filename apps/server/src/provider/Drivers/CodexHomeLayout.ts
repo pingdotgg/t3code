@@ -295,10 +295,6 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
   ))
     .filter((entry) => SQLITE_DATABASE_ENTRY_NAME.test(entry))
     .map((entry) => entry.toLowerCase());
-  // A shadow that only ever had its own databases keeps them, until the shared home has some too.
-  if (sharedDatabases.length === 0) {
-    return { ...environment, CODEX_SQLITE_HOME: effectiveHomePath };
-  }
   // Only the same database diverging in both homes is ambiguous, as for other shadow entries.
   const conflict = sharedDatabases.find((entry) => regularDatabases.has(entry));
   if (conflict) {
@@ -308,7 +304,8 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       entryName: conflict,
     });
   }
-  return { ...environment, CODEX_SQLITE_HOME: layout.sharedHomePath };
+  // Neither home holds every database, so the shadow keeps its own and links the shared ones.
+  return { ...environment, CODEX_SQLITE_HOME: effectiveHomePath };
 });
 
 const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
@@ -470,6 +467,7 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
 
 const materializeShadowHome = Effect.fn("CodexHomeLayout.materialize")(function* (
   layout: CodexHomeLayout,
+  linkSharedDatabases: boolean,
 ) {
   if (layout.mode !== "authOverlay") return;
   const effectiveHomePath = layout.effectiveHomePath;
@@ -526,7 +524,8 @@ const materializeShadowHome = Effect.fn("CodexHomeLayout.materialize")(function*
     if (
       !PRIVATE_ENTRY_NAMES.has(entryName) &&
       !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
-      !SQLITE_ENTRY_NAME.test(entryName)
+      (!SQLITE_ENTRY_NAME.test(entryName) ||
+        (linkSharedDatabases && SQLITE_DATABASE_ENTRY_NAME.test(entryName)))
     ) {
       entries.add(entryName);
     }
@@ -576,7 +575,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
 ) {
   // Refuse a stranded SQLite layout before touching the shadow home.
   const launchEnvironment = yield* codexHomeEnvironment(layout, environment);
-  yield* materializeShadowHome(layout);
+  yield* materializeShadowHome(
+    layout,
+    !environment.CODEX_SQLITE_HOME?.trim() &&
+      launchEnvironment.CODEX_SQLITE_HOME === layout.effectiveHomePath,
+  );
   return launchEnvironment;
 });
 
