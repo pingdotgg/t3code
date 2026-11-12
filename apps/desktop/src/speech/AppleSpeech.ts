@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -15,7 +16,8 @@ const SAMPLE_RATE = 16_000;
 const MAX_PCM_BYTES = SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * 5 * 60;
 // The first prepare for a language can download Apple's model.
 const PREPARE_TIMEOUT = Duration.minutes(10);
-const TRANSCRIBE_TIMEOUT = Duration.minutes(2);
+// Matches the longest accepted recording, so analysis can never outlast its deadline.
+const TRANSCRIBE_TIMEOUT = Duration.minutes(5);
 
 const decodeOutput = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ value: Schema.String })),
@@ -169,24 +171,27 @@ export const layer = Layer.effect(
     // prepared once. Callers share an in-flight prepare (one asset download), and a
     // failure is dropped so the next start retries it.
     const prepared = new Map<string, Effect.Effect<DesktopAppleSpeechResult>>();
+    const claimPermit = yield* Semaphore.make(1);
+    const claimPrepare = Effect.fn("AppleSpeech.claimPrepare")(function* (locale: string) {
+      const existing = prepared.get(locale);
+      if (existing !== undefined) return existing;
+      const shared = yield* Effect.cached(
+        run(["prepare", locale], PREPARE_TIMEOUT).pipe(
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              if (!result.ok) prepared.delete(locale);
+            }),
+          ),
+        ),
+      );
+      prepared.set(locale, shared);
+      return shared;
+    }, claimPermit.withPermits(1));
 
     return AppleSpeech.of({
       isAvailable,
       prepare: Effect.fn("AppleSpeech.prepare")(function* (locale) {
-        let shared = prepared.get(locale);
-        if (shared === undefined) {
-          shared = yield* Effect.cached(
-            run(["prepare", locale], PREPARE_TIMEOUT).pipe(
-              Effect.tap((result) =>
-                Effect.sync(() => {
-                  if (!result.ok) prepared.delete(locale);
-                }),
-              ),
-            ),
-          );
-          prepared.set(locale, shared);
-        }
-        return yield* shared;
+        return yield* yield* claimPrepare(locale);
       }),
       transcribe: Effect.fn("AppleSpeech.transcribe")(function* (locale, pcm) {
         if (

@@ -1278,7 +1278,9 @@ export function VoiceSettingsPanel() {
     <SettingsPageContainer
       searchTargetFallbacks={{
         "speech-language":
-          model || destination.cloudProvider ? undefined : "voice-transcription-destination",
+          model || destination.cloudProvider || destination.device
+            ? undefined
+            : "voice-transcription-destination",
         "speech-models": prepared ? undefined : "voice-transcription-destination",
         "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
         "transcription-test": !prepared
@@ -1525,20 +1527,24 @@ export function VoiceSettingsPanel() {
             close={() => setPendingCloud(null)}
           />
         )}
-        {(model || destination.cloudProvider) && (
+        {(model || destination.cloudProvider || destination.device) && (
           <SettingsRow
             {...searchableSetting("speech-language")}
             title="Language"
             description={
-              destination.cloudProvider
-                ? "The provider detects your language automatically."
-                : model?.supportsLanguageDetection
-                  ? `${model.model} detects the language automatically.`
-                  : `${model?.model ?? "This model"} uses one fixed language.`
+              destination.device
+                ? "Automatic uses your Mac’s language. The first use of a language downloads it."
+                : destination.cloudProvider
+                  ? "The provider detects your language automatically."
+                  : model?.supportsLanguageDetection
+                    ? `${model.model} detects the language automatically.`
+                    : `${model?.model ?? "This model"} uses one fixed language.`
             }
             control={
               <SpeechLanguageSelect
-                model={destination.cloudProvider ? cloudSpeechLanguages : model}
+                model={
+                  destination.cloudProvider || destination.device ? cloudSpeechLanguages : model
+                }
               />
             }
           />
@@ -1562,14 +1568,16 @@ export function VoiceSettingsPanel() {
           {...searchableSetting("speech-silence-filtering")}
           title="Silence filtering"
           description={
-            destination.cloudProvider === "openai"
-              ? "OpenAI handles silence itself."
-              : "Skip silence and background noise before transcribing."
+            destination.device
+              ? "Apple Speech handles silence itself."
+              : destination.cloudProvider === "openai"
+                ? "OpenAI handles silence itself."
+                : "Skip silence and background noise before transcribing."
           }
           control={
             <Switch
               aria-label="Silence filtering"
-              disabled={destination.cloudProvider === "openai"}
+              disabled={destination.device || destination.cloudProvider === "openai"}
               checked={settings.speechSilenceFiltering}
               onCheckedChange={(checked) =>
                 void updateClientSettings({ speechSilenceFiltering: checked })
@@ -1580,10 +1588,15 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
           title="Remove filler words"
-          description="Drop “um” and “uh” from transcripts."
+          description={
+            destination.device
+              ? "Not available with Apple Speech."
+              : "Drop “um” and “uh” from transcripts."
+          }
           control={
             <Switch
               aria-label="Remove filler words"
+              disabled={destination.device}
               checked={settings.speechRemoveFillerWords}
               onCheckedChange={(checked) =>
                 void updateClientSettings({ speechRemoveFillerWords: checked })

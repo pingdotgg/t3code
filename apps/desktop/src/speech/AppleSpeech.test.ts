@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -12,13 +14,22 @@ import * as AppleSpeech from "./AppleSpeech.ts";
 const encoder = new TextEncoder();
 const text = (value: string) => (value ? Stream.make(encoder.encode(value)) : Stream.empty);
 
-function makeProcess(result: { stdout?: string; stderr?: string; exitCode: number }) {
+type HelperOutput = {
+  stdout?: string;
+  stderr?: string;
+  exitCode: number;
+  exit?: Deferred.Deferred<void>;
+};
+
+function makeProcess(result: HelperOutput) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     stdout: text(result.stdout ?? ""),
     stderr: text(result.stderr ?? ""),
     all: Stream.empty,
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+    exitCode: (result.exit ? Deferred.await(result.exit) : Effect.void).pipe(
+      Effect.as(ChildProcessSpawner.ExitCode(result.exitCode)),
+    ),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -28,7 +39,7 @@ function makeProcess(result: { stdout?: string; stderr?: string; exitCode: numbe
   });
 }
 
-function setup(result: { stdout?: string; stderr?: string; exitCode: number }) {
+function setup(result: HelperOutput) {
   const commands: Array<ReadonlyArray<string>> = [];
   const written: Uint8Array[] = [];
   const layer = AppleSpeech.layer.pipe(
@@ -93,6 +104,26 @@ describe("AppleSpeech", () => {
         assert.deepEqual(commands, expected.ok ? [command] : [command, command]);
       }).pipe(Effect.provide(layer));
     },
+  );
+
+  it.effect("shares one helper between prepares that start while the first is running", () =>
+    Effect.gen(function* () {
+      const exit = yield* Deferred.make<void>();
+      const { layer, commands } = setup({ stdout: '{"value":"en-US"}', exitCode: 0, exit });
+      return yield* Effect.gen(function* () {
+        const speech = yield* AppleSpeech.AppleSpeech;
+        const first = yield* speech
+          .prepare("en-US")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const second = yield* speech
+          .prepare("en-US")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(exit, undefined);
+        assert.deepEqual(yield* Fiber.join(first), { ok: true, value: "en-US" });
+        assert.deepEqual(yield* Fiber.join(second), { ok: true, value: "en-US" });
+        assert.lengthOf(commands, 1);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect.each([

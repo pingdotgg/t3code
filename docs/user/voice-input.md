@@ -27,8 +27,9 @@ substitutes another environment.
 In the desktop app on macOS 26 or later, you can instead choose **Apple Speech**
 under **On this Mac**. Audio stays on the Mac and macOS transcribes it. The first
 recording in a language can take longer while macOS downloads its speech model.
-Silence filtering, filler-word removal, and the dictionary apply only to
-environment and cloud transcription.
+**Language** set to automatic uses your Mac's language. Silence filtering and
+filler-word removal are not available; the dictionary applies only when transcript
+cleanup is on.
 
 For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
 you want to use. If it needs a key, enter one and choose **Save and enable**.
