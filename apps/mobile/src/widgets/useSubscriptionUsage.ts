@@ -11,21 +11,26 @@ import { serverEnvironment } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { createWidgetRefresher, WIDGET_REFRESH_INTERVAL } from "./subscriptionUsageSnapshot";
 
-// A quota refresh probes every provider on the host. Waiting for the shell sync keeps a
-// resume's probes from slowing the reconnect they would otherwise compete with.
-const syncedEnvironmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
-  const next = get(environmentCatalog.catalogValueAtom).isReady
-    ? get(connectedEnvironmentIdsAtom).filter(
-        (id) => get(environmentShell.statusAtom(id)) === "live",
-      )
-    : [];
-  const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentId>>());
-  return previous !== null &&
-    previous.length === next.length &&
-    next.every((id, index) => id === previous[index])
-    ? previous
-    : next;
-}).pipe(Atom.withLabel("mobile:usage-widget-synced-environment-ids"));
+// A shell that failed never goes live, and its environment still needs fresh quotas.
+const shellSettledAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    return shell.status === "live" || Option.isSome(shell.error);
+  }),
+);
+
+/**
+ * Connected environments whose thread list has loaded. A refresh re-probes every provider on
+ * the host, so on a cold start it waits until it cannot compete with the thread list.
+ */
+const refreshableEnvironmentsAtom = Atom.make((get) =>
+  [...get(environmentPresentations.presentationsAtom)]
+    .filter(
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" && get(shellSettledAtom(environmentId)),
+    )
+    .map(([environmentId]) => environmentId),
+);
 
 /**
  * App-lifetime worker that keeps provider quotas fresh for the usage widget:
@@ -42,17 +47,19 @@ export function installSubscriptionUsageRefresh(): () => void {
     ),
   );
   const update = () => {
-    if (!isAppActive()) return;
-    void refresh(appAtomRegistry.get(syncedEnvironmentIdsAtom), Date.now());
+    if (!isAppActive() || !appAtomRegistry.get(environmentCatalog.catalogValueAtom).isReady) return;
+    void refresh(appAtomRegistry.get(refreshableEnvironmentsAtom), Date.now());
   };
 
-  const unsubscribeSynced = appAtomRegistry.subscribe(syncedEnvironmentIdsAtom, update, {
+  const unsubscribeCatalog = appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, update);
+  const unsubscribeEnvironments = appAtomRegistry.subscribe(refreshableEnvironmentsAtom, update, {
     immediate: true,
   });
   const unsubscribeAppState = subscribeAppState(update);
   const timer = setInterval(update, WIDGET_REFRESH_INTERVAL);
   return () => {
-    unsubscribeSynced();
+    unsubscribeCatalog();
+    unsubscribeEnvironments();
     unsubscribeAppState();
     clearInterval(timer);
   };
