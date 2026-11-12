@@ -93,52 +93,63 @@ describe("terminal shell integration", () => {
   // Host startup files load first and may set a prompt command of their own, so the
   // user's files clear it, as a user's own prompt setup would.
   const bashFixture = fixture({
-    ".bash_profile": "unset PROMPT_COMMAND\nFROM=profile\nPS1='top\\nlast\\$ '\n",
-    ".bashrc": "unset PROMPT_COMMAND\nFROM=bashrc\nPS1='rc\\$ '\n",
+    ".bash_profile": "unset PROMPT_COMMAND\nFROM=profile\n",
+    ".bashrc": "unset PROMPT_COMMAND\nFROM=bashrc\n",
     ".bash_logout": "echo FROM=logout\n",
   });
   const runBash = (input: {
-    readonly paths: Parameters<typeof withShellIntegration>[0]["paths"];
+    readonly paths: Parameters<typeof withShellIntegration>[0]["paths"] | null;
     readonly home: string;
     readonly login: boolean;
-  }) =>
-    runInteractive({
+    readonly commands: string;
+  }) => {
+    const args = input.login ? ["-l"] : [];
+    const env = { PATH, HOME: input.home };
+    return runInteractive({
       shell: bash,
-      launch: withShellIntegration({
-        shell: bash,
-        shellName: "bash",
-        platform: PLATFORM,
-        args: input.login ? ["-l"] : [],
-        env: { PATH, HOME: input.home },
-        paths: input.paths,
-      }),
-      commands:
-        'echo "FROM=$FROM"\n' +
-        "shopt -q login_shell && echo LOGIN=on || echo LOGIN=off\n" +
-        "shopt -qo posix && echo POSIX=on || echo POSIX=off\n",
+      launch:
+        input.paths === null
+          ? { args, env }
+          : withShellIntegration({
+              shell: bash,
+              shellName: "bash",
+              platform: PLATFORM,
+              args,
+              env,
+              paths: input.paths,
+            }),
+      commands: input.commands,
     });
+  };
+  const startupLines = (stdout: string) =>
+    stdout.split("\n").filter((line) => /^(FROM|LOGIN|POSIX)=/.test(line));
 
   it.live.skipIf(!bashIntegrated)(
     "bash keeps its login mode and reads the files it would have read",
     () =>
       Effect.gen(function* () {
         const { home, paths } = yield* bashFixture;
-        const login = runBash({ paths, home, login: true }).stdout;
-        expect(login).toContain("FROM=profile\nLOGIN=on\nPOSIX=off\n");
-        expect(login).toContain("FROM=logout\n");
-        const nonLogin = runBash({ paths, home, login: false }).stdout;
-        expect(nonLogin).toContain("FROM=bashrc\nLOGIN=off\nPOSIX=off\n");
-        expect(nonLogin).not.toContain("FROM=logout");
+        const commands =
+          'echo "FROM=$FROM"\n' +
+          "shopt -q login_shell && echo LOGIN=on || echo LOGIN=off\n" +
+          "shopt -qo posix && echo POSIX=on || echo POSIX=off\n";
+        // The host's /etc/profile may change HOME, so bash started without the
+        // integration says which files this host's bash reads.
+        for (const login of [true, false]) {
+          const plain = startupLines(runBash({ paths: null, home, login, commands }).stdout);
+          expect(plain).toContain(login ? "LOGIN=on" : "LOGIN=off");
+          expect(startupLines(runBash({ paths, home, login, commands }).stdout)).toEqual(plain);
+        }
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live.skipIf(!bashIntegrated)("bash marks only the last line of the prompt", () =>
     Effect.gen(function* () {
       const { home, paths } = yield* bashFixture;
-      expect(runBash({ paths, home, login: true }).stderr).toContain(
-        `${PROMPT_START}top\r\n${PROMPT_LINE_START}last$ ${INPUT_START}`,
-      );
-      expect(runBash({ paths, home, login: false }).stderr).toContain(
+      expect(
+        runBash({ paths, home, login: true, commands: "PS1='top\\nlast\\$ '\n" }).stderr,
+      ).toContain(`${PROMPT_START}top\r\n${PROMPT_LINE_START}last$ ${INPUT_START}`);
+      expect(runBash({ paths, home, login: false, commands: "PS1='rc\\$ '\n" }).stderr).toContain(
         `${PROMPT_START}${PROMPT_LINE_START}rc$ ${INPUT_START}`,
       );
     }).pipe(Effect.provide(NodeServices.layer)),
