@@ -220,6 +220,26 @@ describe("acpRegistrySnapshotReadiness", () => {
         capabilities: { optionDescriptors: [{ id: "effort", currentValue: "high" }] },
       },
     ]);
+
+    // Session configOptions describe the current model only.
+    const twoModels = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: [
+          { id: "glm", name: "GLM", description: null },
+          { id: "opus", name: "Opus", description: null },
+        ],
+        currentModelId: "glm",
+        configOptions: liveOptions,
+      },
+      [],
+    ).models;
+    expect(twoModels.find((model) => model.slug === "glm")).toMatchObject({
+      capabilities: { optionDescriptors: [{ id: "effort" }] },
+    });
+    expect(
+      twoModels.find((model) => model.slug === "opus")?.capabilities?.optionDescriptors ?? [],
+    ).toEqual([]);
   });
 
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
