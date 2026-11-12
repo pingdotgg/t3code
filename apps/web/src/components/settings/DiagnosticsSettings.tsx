@@ -89,7 +89,7 @@ function StatTooltip({ label, children }: { label: string; children: ReactNode }
         render={
           <button
             type="button"
-            className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-dim-foreground hover:text-foreground"
+            className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-dim-foreground outline-none hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
             aria-label={`${label} details`}
           >
             <InfoIcon className="size-3" />

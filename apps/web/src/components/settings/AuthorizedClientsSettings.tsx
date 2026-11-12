@@ -101,7 +101,7 @@ function AccessScopeSummary({
           <button
             type="button"
             aria-label={`${label}: show ${scopeCountLabel}`}
-            className="cursor-help underline decoration-border underline-offset-2 outline-hidden hover:text-foreground focus-visible:text-foreground"
+            className="cursor-help underline decoration-border underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
