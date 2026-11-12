@@ -1,5 +1,11 @@
-import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
-import { ChevronDown, ChevronUp } from "lucide";
+import {
+  MousePointer2Icon,
+  PaintbrushIcon,
+  PlusIcon,
+  XIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   applyThemeColorPreview,
@@ -25,7 +31,6 @@ import {
 import { useViewportSize } from "../../hooks/useViewportSize";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -354,6 +359,11 @@ export function ThemeEditorPanel({
   const [position, setPosition] = useState<{ x: number; y: number; width: number } | null>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const colorEditSnapshotRef = useRef<{
+    colorsByAppearance: ThemeEditorColorsByAppearance;
+    simpleColorsDirtyByAppearance: Record<ThemeAppearance, boolean>;
+    shouldRegenerateGuidedColors: boolean;
+  } | null>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number; width: number } | null>(null);
   const resizeStartRef = useRef<{
     pointerX: number;
@@ -470,6 +480,25 @@ export function ThemeEditorPanel({
       }));
     }
     if (isAdvanced) setShouldRegenerateGuidedColors(true);
+  };
+
+  // A color edit also rewrites derived roles, so cancelling restores the whole snapshot rather than
+  // replaying the previous value through updateColor.
+  const startColorEdit = () => {
+    colorEditSnapshotRef.current = {
+      colorsByAppearance,
+      simpleColorsDirtyByAppearance,
+      shouldRegenerateGuidedColors,
+    };
+  };
+
+  const cancelColorEdit = () => {
+    const snapshot = colorEditSnapshotRef.current;
+    colorEditSnapshotRef.current = null;
+    if (!snapshot) return;
+    setColorsByAppearance(snapshot.colorsByAppearance);
+    setSimpleColorsDirtyByAppearance(snapshot.simpleColorsDirtyByAppearance);
+    setShouldRegenerateGuidedColors(snapshot.shouldRegenerateGuidedColors);
   };
 
   const selectThemeRole = (role: ThemeColorRole, reveal = false) => {
@@ -947,6 +976,8 @@ export function ThemeEditorPanel({
           key={family.id}
           label={family.label}
           onChange={updateColor}
+          onEditCancel={cancelColorEdit}
+          onEditStart={startColorEdit}
           onSelect={selectThemeRole}
           onToggleSelected={toggleThemeRole}
           role={family.role}
@@ -986,6 +1017,8 @@ export function ThemeEditorPanel({
           <ThemeColorField
             key={role}
             onChange={updateColor}
+            onEditCancel={cancelColorEdit}
+            onEditStart={startColorEdit}
             onSelect={selectThemeRole}
             onToggleSelected={toggleThemeRole}
             role={role}
@@ -1148,7 +1181,7 @@ export function ThemeEditorPanel({
           variant="ghost"
           onClick={() => setIsMinimized(!isMinimized)}
         >
-          <MorphIcon icon={isMinimized ? ChevronUp : ChevronDown} />
+          {isMinimized ? <ChevronUpIcon /> : <ChevronDownIcon />}
         </Button>
         <Button
           aria-label="Close the theme editor"

@@ -120,35 +120,32 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       }),
   );
 
-  it.effect("shares one thread writer across native and canonical streams", () =>
+  it.effect("keeps long thread ids that share a prefix in separate files", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "events.log");
+      const prefix =
+        "thread:delegated-task:command%3Amcp%3A00000000-0000-4000-8000-000000000000%3Adelegate-task%3A";
 
       try {
         const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
-        const native = store.logger("native");
-        const canonical = store.logger("canonical");
-        const threadId = ThreadId.make("thread-shared");
-
-        yield* native.write({ id: "native-event" }, threadId);
-        yield* canonical.write({ type: "item.completed", id: "canonical-event" }, threadId);
+        const logger = store.logger("native");
+        yield* logger.write({ id: "first" }, ThreadId.make(`${prefix}review-the-diff`));
+        yield* logger.write({ id: "second" }, ThreadId.make(`${prefix}write-the-tests`));
         yield* store.close();
 
-        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-shared"), "utf8")
-          .trim()
-          .split("\n")
-          .map(parseLogLine);
-
+        const files = NodeFS.readdirSync(tempDir);
+        assert.equal(files.length, 2);
         assert.deepEqual(
-          lines.map(({ stream, payload }) => ({ stream, payload })),
-          [
-            { stream: "NTIVE", payload: '{"id":"native-event"}' },
-            {
-              stream: "CANON",
-              payload: '{"type":"item.completed","id":"canonical-event"}',
-            },
-          ],
+          files
+            .map((name) =>
+              NodeFS.readFileSync(NodePath.join(tempDir, name), "utf8")
+                .trim()
+                .split("\n")
+                .map((line) => parseLogLine(line).payload),
+            )
+            .toSorted(),
+          [['{"id":"first"}'], ['{"id":"second"}']],
         );
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
@@ -413,6 +410,45 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
         assert.equal(
           matchingFiles.some((entry) => entry === `${fileStem}.3`),
           false,
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("retires a thread log once a retention interval passes without writes", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const finishedPath = ownedLogPath(basePath, "finished");
+      const activePath = ownedLogPath(basePath, "active");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+        });
+        const logger = store.logger("native");
+
+        yield* logger.write({ id: "finished-first" }, ThreadId.make("finished"));
+        yield* TestClock.adjust("5 minutes");
+        yield* logger.write({ id: "active-first" }, ThreadId.make("active"));
+        assert.equal(NodeFS.existsSync(finishedPath), true);
+        NodeFS.truncateSync(finishedPath, 512 * 1024 * 1024 + 1);
+
+        yield* TestClock.adjust("5 minutes");
+        yield* logger.write({ id: "active-second" }, ThreadId.make("active"));
+        assert.equal(NodeFS.existsSync(finishedPath), false);
+        assert.equal(NodeFS.existsSync(activePath), true);
+
+        yield* logger.write({ id: "finished-again" }, ThreadId.make("finished"));
+        yield* store.close();
+        assert.deepEqual(
+          NodeFS.readFileSync(finishedPath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => parseLogLine(line).payload),
+          ['{"id":"finished-again"}'],
         );
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
