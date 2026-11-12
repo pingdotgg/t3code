@@ -373,6 +373,14 @@ function isCodexActiveWriterError(error: unknown): boolean {
   );
 }
 
+function isCodexThreadNotFoundError(error: unknown): boolean {
+  return (
+    isCodexAppServerRequestError(error) &&
+    error.code === -32600 &&
+    error.errorMessage.startsWith("thread not found:")
+  );
+}
+
 function codexTimestamp(seconds: number | null | undefined): DateTime.Utc {
   return seconds === null || seconds === undefined
     ? DateTime.nowUnsafe()
@@ -2608,7 +2616,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   CodexAppServerInputStreamEndedError: () => Effect.succeed({ terminated: true }),
                   // Unloading kills terminals, so "thread not found" means nothing remains to stop.
                   CodexAppServerRequestError: (error) =>
-                    error.code === -32600 && error.errorMessage.startsWith("thread not found:")
+                    isCodexThreadNotFoundError(error)
                       ? Effect.succeed({ terminated: true })
                       : Effect.fail(error),
                 }),
@@ -7468,44 +7476,35 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             ),
         );
-        const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
         const mcpAppsError = (detail: string) => (cause: unknown) =>
           new ProviderAdapter.ProviderAdapterProtocolError({
             driver: CODEX_PROVIDER,
             detail,
             payload: cause,
           });
+        // Codex unloads idle threads; MCP requests against one fail until it is resumed.
         const withLoadedThread = <A, E, R>(
           providerThread: OrchestrationV2ProviderThread,
           threadId: string,
           request: Effect.Effect<A, E, R>,
         ) =>
           request.pipe(
-            Effect.catchIf(
-              (error) =>
-                isCodexAppServerRequestError(error) &&
-                error.code === -32600 &&
-                error.errorMessage.startsWith("thread not found:"),
-              () =>
-                readMcpSession(providerThread.appThreadId).pipe(
-                  Effect.flatMap((mcpSession) =>
-                    client.raw.request("thread/resume", {
-                      threadId,
-                      excludeTurns: true,
-                      ...codexThreadRuntimeParams({
-                        threadId: providerThread.appThreadId,
-                        mcpSession,
-                        ...(input.modelSelection === undefined
-                          ? {}
-                          : { modelSelection: input.modelSelection }),
-                        ...(input.runtimePolicy === undefined
-                          ? {}
-                          : { runtimePolicy: input.runtimePolicy }),
-                      }),
+            Effect.catchIf(isCodexThreadNotFoundError, () =>
+              readMcpSession(providerThread.appThreadId).pipe(
+                Effect.flatMap((mcpSession) =>
+                  resumeNativeThread(threadId, {
+                    excludeTurns: true,
+                    ...codexThreadRuntimeParams({
+                      threadId: providerThread.appThreadId,
+                      mcpSession,
+                      modelSelection: input.modelSelection,
+                      runtimePolicy: input.runtimePolicy,
                     }),
-                  ),
-                  Effect.andThen(request),
+                  }),
                 ),
+                Effect.andThen(request),
+              ),
             ),
           );
         const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
@@ -7579,6 +7578,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.mapError(mcpAppsError("Codex MCP resource read failed.")),
           ),
         };
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,

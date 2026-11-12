@@ -7383,6 +7383,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     ],
   });
+
   it.effect("resumes an unloaded native thread and retries an MCP resource read", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -7500,6 +7501,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     ),
   );
+
   it.effect("captures an MCP app's resource and holds the turn open until it lands", () =>
     Effect.scoped(
       Effect.gen(function* () {
