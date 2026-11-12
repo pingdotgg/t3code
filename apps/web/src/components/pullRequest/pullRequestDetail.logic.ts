@@ -732,7 +732,12 @@ function markdownExcerpt(body: string): string | null {
     .replace(/\s+/gu, " ")
     .trim();
   if (text === "") return null;
-  return text.length > LINK_EXCERPT_LENGTH ? `${text.slice(0, LINK_EXCERPT_LENGTH - 1)}…` : text;
+  if (text.length <= LINK_EXCERPT_LENGTH) return text;
+  let end = LINK_EXCERPT_LENGTH - 1;
+  // Never end on a lone high surrogate.
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${text.slice(0, end)}…`;
 }
 
 /** The comment or commit a pull request link names, for its hover card; null for the PR itself. */
