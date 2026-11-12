@@ -96,7 +96,7 @@ describe("CursorAdapterV2", () => {
                       modelCallId: "model-call",
                       callId: "plan-call",
                       toolCall,
-                    }).pipe(Effect.orDie);
+                    });
                     yield* input.onDelta!({
                       type: "tool-call-completed",
                       modelCallId: "model-call",
@@ -107,7 +107,7 @@ describe("CursorAdapterV2", () => {
                           ? { status: "error", error: "Plan could not be saved" }
                           : { status: "success", value: {} },
                       },
-                    }).pipe(Effect.orDie);
+                    });
                     return {
                       agentId: "native-cursor-plan",
                       runId: "native-cursor-run",
@@ -120,7 +120,7 @@ describe("CursorAdapterV2", () => {
                       }),
                       cancel: Effect.void,
                     };
-                  }),
+                  }).pipe(Effect.orDie),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
