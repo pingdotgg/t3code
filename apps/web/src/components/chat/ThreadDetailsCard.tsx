@@ -21,12 +21,14 @@ export function ThreadDetailsCard({
   anchor,
   handle,
   onContextMenu,
+  onFocusRequest,
   children,
 }: {
   threadRef: ScopedThreadRef;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
+  onFocusRequest?: () => boolean;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const detailsArea = workspaceAreaProps("details", 3, "Thread details");
@@ -142,6 +144,7 @@ export function ThreadDetailsCard({
         role="dialog"
         data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
         initialFocus={() => {
+          if (onFocusRequest?.()) return false;
           requestWorkspaceFocus({ area: "details" });
           return false;
         }}

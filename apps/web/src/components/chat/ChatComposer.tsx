@@ -358,6 +358,7 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  onWorkspaceRequest?: (() => void) | undefined;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -3111,6 +3112,10 @@ export function ChatComposer(props: ChatComposerProps) {
         }
       },
       openControl: (command) => {
+        if (command === "composer.workspace" && props.onWorkspaceRequest) {
+          props.onWorkspaceRequest();
+          return;
+        }
         if (composerBlurFrameRef.current !== null) {
           window.cancelAnimationFrame(composerBlurFrameRef.current);
           composerBlurFrameRef.current = null;

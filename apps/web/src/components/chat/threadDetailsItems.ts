@@ -55,3 +55,15 @@ export const RESET_THREAD_DETAILS_ITEMS = {
   threadDetailsItems: {},
   threadDetailsUsageEnabled: false,
 } satisfies Partial<ClientSettings>;
+
+export function shouldShowComposerWorkspace({
+  isServerThread,
+  embedded,
+  visibility,
+}: {
+  isServerThread: boolean;
+  embedded: boolean;
+  visibility: ThreadDetailsVisibility;
+}) {
+  return !isServerThread || embedded || !visibility.branch || !visibility.environment;
+}
