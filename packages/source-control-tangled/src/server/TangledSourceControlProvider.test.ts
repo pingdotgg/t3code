@@ -341,6 +341,16 @@ describe("createChangeRequest", () => {
         bodyFile: "/tmp/body.md",
       });
       assert.ok(tg.calls[1]?.includes("--source-repo"));
+      // Without a target, the checkout's remote is the target, not the fork's source.
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        context: REMOTE,
+        source: { refName: "feature", repository: "bob.example/repo" },
+        baseRefName: "main",
+        headSelector: "feature",
+        title: "Add a thing",
+        bodyFile: "/tmp/body.md",
+      });
       // A DID source cannot be named to `tg`, which would otherwise use the target as the source.
       const error = yield* provider
         .createChangeRequest({
@@ -367,9 +377,9 @@ describe("createChangeRequest", () => {
         })
         .pipe(Effect.flip);
       assert.match(ownerOnly.detail, /bob\.example's fork/u);
-      assert.strictEqual(tg.calls.filter((call) => call.includes("create")).length, 1);
+      assert.strictEqual(tg.calls.filter((call) => call.includes("create")).length, 2);
       // Refused before the duplicate check, so a branch-pair collision cannot mask the reason.
-      assert.strictEqual(tg.calls.filter((call) => call.includes("list")).length, 1);
+      assert.strictEqual(tg.calls.filter((call) => call.includes("list")).length, 2);
     }).pipe(serve(tg));
   });
 

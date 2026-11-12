@@ -352,9 +352,10 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const headBranch = SourceControlProvider.sourceBranch(input);
+        // The target is named or is the checkout's remote; a fork's source never stands in for it.
         const address = yield* repositoryFrom({
           cwd: input.cwd,
-          repository: input.target?.repository ?? source?.repository,
+          repository: input.target?.repository,
           context: input.context,
         });
 
