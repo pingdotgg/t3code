@@ -360,7 +360,7 @@ it.live.skipIf(!windowsHost)("opens Windows folders through the default shell ha
     );
     assert.ok(spawned);
     assert.equal(spawned.options.detached, false);
-    const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
+    const source = Buffer.from(String(spawned.args.at(-1) ?? ""), "base64").toString("utf16le");
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = yield* spawner.string(
       ChildProcess.make(spawned.command, [
@@ -429,7 +429,7 @@ for (const [replacement, verb, handler, target, expected] of [
           ),
         );
         assert.ok(spawned);
-        const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
+        const source = Buffer.from(String(spawned.args.at(-1) ?? ""), "base64").toString("utf16le");
         const stubs = `function Get-ItemProperty { param($LiteralPath, $ErrorAction) @{ '(default)' = if ($LiteralPath -eq 'Registry::HKEY_CLASSES_ROOT\\${replacement}\\shell') { '${verb}' } elseif ($LiteralPath -eq 'Registry::HKEY_CLASSES_ROOT\\${replacement}\\shell\\${verb}\\command') { '${handler}' } else { 'none' }; DelegateExecute = if ('${handler}' -eq 'ExplorerDelegate') { '{11dbb47c-a525-400b-9e80-a54615a090c0}' } else { '' } } }; function Invoke-Item { param($LiteralPath) Write-Output "shell:$LiteralPath" }; function Start-Process { param($FilePath, $ArgumentList) Write-Output "$FilePath $ArgumentList" }; `;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const output = yield* spawner.string(
