@@ -345,6 +345,17 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("refuses to watch a pull request on a host T3 Code cannot read", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: makeProject(null) });
+      const error = yield* harness
+        .call("watch_pull_request", { url: "https://forge.acme.internal/acme/app/pull/7" })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestUnavailableError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
   it.effect("refuses a watch from a subagent thread, whose parent owns the pull request", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
