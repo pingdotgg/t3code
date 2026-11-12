@@ -186,12 +186,12 @@ const detail: PullRequestDetailView = {
 
 const environmentId = EnvironmentId.make("environment");
 const draftId = DraftId.make("conflicts-draft");
-const panel = (attach = false) => (
+const panel = (attach = false, shortcutsEnabled = false) => (
   <PullRequestDetailPanel
     environmentId={environmentId}
     reference={detail}
     context="page"
-    shortcutsEnabled={false}
+    shortcutsEnabled={shortcutsEnabled}
     getShortcutContext={() => ({
       terminalFocus: false,
       terminalOpen: false,
@@ -255,6 +255,15 @@ it("reads the first diff page once the pointer rests on the Code tab", async () 
     environmentId,
     input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
   });
+});
+
+it("copies the pull request's link from the copy link shortcut", async () => {
+  setup();
+  await using screen = await render(panel(false, true));
+  await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
+  using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  await userEvent.keyboard("{Control>}{Shift>}C{/Shift}{/Control}");
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith(detail.url));
 });
 
 it("opens a URL-selected pull request without repeatedly reopening its detail", async () => {
