@@ -933,6 +933,8 @@ describe("terminalLinkAtPositionWithRange", () => {
 
 describe("isTerminalCopyShortcut", () => {
   const event = (overrides: Partial<Parameters<typeof isTerminalCopyShortcut>[0]> = {}) => ({
+    altKey: false,
+    code: "KeyC",
     ctrlKey: false,
     key: "c",
     metaKey: false,
