@@ -73,6 +73,8 @@ import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import { answeredCardAnswers, type LessonCard } from "@t3tools/shared/quizCard";
 import {
   compactDynamicToolOutput,
+  courseOutlineFromToolItem,
+  courseOutlineMessageId,
   htmlRenderFromToolItem,
   lessonCardFromToolItem,
   mcpAppFromToolItem,
@@ -2350,6 +2352,36 @@ export function buildThreadFeed(
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
+    const courseOutline =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? courseOutlineFromToolItem(item)
+        : undefined;
+    if (courseOutline !== undefined) {
+      const updatedAt = DateTime.formatIso(item.updatedAt);
+      const messageId = courseOutlineMessageId(item.id);
+      const entry: RawThreadFeedEntry = {
+        type: "message",
+        id: messageId,
+        createdAt,
+        message: {
+          id: messageId,
+          role: "assistant",
+          text: courseOutline,
+          attachments: [],
+          runId: item.runId,
+          streaming: false,
+          visibility: row.visibility,
+          sourceThreadId: row.sourceThreadId,
+          createdAt,
+          updatedAt,
+          projectedItem: row,
+        },
+      };
+      projectedEntriesCache.set(row, { attemptId, entry });
+      entries.push(entry);
+      entryRows.push(index);
+      continue;
+    }
     const quizCard =
       item.type === "dynamic_tool" && item.status === "completed"
         ? lessonCardFromToolItem(item)

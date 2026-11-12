@@ -31,6 +31,8 @@ import {
   mcpAppFromToolItem,
   lessonCardFromToolItem,
   lessonCardReplyMessageId,
+  courseOutlineFromToolItem,
+  courseOutlineMessageId,
 } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
@@ -640,6 +642,24 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         proposedPlan,
         ...attemptMetadata,
       });
+      continue;
+    }
+
+    const courseOutline =
+      item.type === "dynamic_tool" && item.status === "completed"
+        ? courseOutlineFromToolItem(item)
+        : undefined;
+    if (courseOutline !== undefined) {
+      const message: ChatMessage = {
+        id: courseOutlineMessageId(item.id),
+        role: "assistant",
+        text: courseOutline,
+        runId: item.runId,
+        streaming: false,
+        createdAt,
+        updatedAt: DateTime.formatIso(item.updatedAt),
+      };
+      entries.push({ id: message.id, kind: "message", createdAt, message, ...attemptMetadata });
       continue;
     }
 
