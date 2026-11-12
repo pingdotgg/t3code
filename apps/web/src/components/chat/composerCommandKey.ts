@@ -44,6 +44,7 @@ export function composerCommandKeyHandler(input: {
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly promptHistoryEntries: ChatComposerProps["promptHistoryEntries"];
+  readonly activeThreadRuns: ChatComposerProps["activeThreadRuns"];
   readonly promptHistoryPositionRef: RefObject<{
     targetKey: string;
     position: ComposerPromptHistoryPosition;
@@ -97,6 +98,7 @@ export function composerCommandKeyHandler(input: {
     isLiteralPendingAnswer,
     pendingUserInputs,
     promptHistoryEntries,
+    activeThreadRuns,
     promptHistoryPositionRef,
     composerDraftTarget,
     promptRef,
@@ -168,6 +170,7 @@ export function composerCommandKeyHandler(input: {
       // Built on the keypress, not per render: the timeline changes on every streamed delta.
       entries: buildComposerPromptHistoryEntries(
         promptHistoryEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+        activeThreadRuns,
       ),
       position,
       currentPrompt: promptRef.current,

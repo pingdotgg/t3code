@@ -2,9 +2,11 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
+  isAttachmentOnlyBootstrapPrompt,
 } from "@t3tools/shared/composerContextReferences";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
+const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
 const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
 const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
@@ -12,7 +14,13 @@ const TRAILING_LEGACY_CONTEXT =
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
   readonly context?: { readonly effortPrefix?: string | undefined } | undefined;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
 };
+
+interface ComposerPromptHistoryRun {
+  readonly userMessageId: string;
+  readonly sourcePlanRef?: unknown;
+}
 
 interface ComposerPromptHistoryEntry {
   readonly id: string;
@@ -70,16 +78,36 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
   return result;
 }
 
-export function recallableComposerPrompt(messageText: string, effortPrefix?: string): string {
+function stripContextReferences(prompt: string): string {
+  // Recall strips chips because their backing records are absent.
+  for (const reference of collectComposerContextReferences(prompt).toReversed()) {
+    let { start, end } = reference;
+    if (prompt[end] === " ") end += 1;
+    else if (prompt[start - 1] === " ") start -= 1;
+    prompt = prompt.slice(0, start) + prompt.slice(end);
+  }
+  return prompt.trim();
+}
+
+/** A client-sent message records what the send added, so only that is removed. */
+function recallableSentPrompt(message: ComposerPromptHistoryMessage): string {
+  let prompt = message.text.trim();
+  const effortPrefix = message.context?.effortPrefix;
+  if (effortPrefix && prompt.startsWith(effortPrefix)) prompt = prompt.slice(effortPrefix.length);
+  if (isAttachmentOnlyBootstrapPrompt(prompt) && (message.attachments?.length ?? 0) > 0) return "";
+  return stripContextReferences(prompt);
+}
+
+/** For server-written messages, such as V1 imports, which record nothing about the send. */
+export function recallableComposerPrompt(messageText: string): string {
   let prompt = messageText.trim();
-  if (effortPrefix && prompt.startsWith(effortPrefix)) {
-    prompt = prompt.slice(effortPrefix.length);
+  if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
+    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
   }
 
   while (prompt.length > 0) {
-    // Only legacy clients appended review blocks, always after their context blocks.
     const withoutReviewComments = stripTrailingReviewComments(prompt);
-    if (withoutReviewComments !== prompt && TRAILING_LEGACY_CONTEXT.test(withoutReviewComments)) {
+    if (withoutReviewComments !== prompt) {
       prompt = withoutReviewComments;
       continue;
     }
@@ -100,15 +128,7 @@ export function recallableComposerPrompt(messageText: string, effortPrefix?: str
     break;
   }
 
-  // Recall strips chips because their backing records are absent.
-  for (const reference of collectComposerContextReferences(prompt).toReversed()) {
-    let { start, end } = reference;
-    if (prompt[end] === " ") end += 1;
-    else if (prompt[start - 1] === " ") start -= 1;
-    prompt = prompt.slice(0, start) + prompt.slice(end);
-  }
-
-  const trimmed = prompt.trim();
+  const trimmed = stripContextReferences(prompt);
   if (
     trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
     trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
@@ -120,13 +140,21 @@ export function recallableComposerPrompt(messageText: string, effortPrefix?: str
 
 export function buildComposerPromptHistoryEntries(
   messages: ReadonlyArray<ComposerPromptHistoryMessage>,
+  runs: ReadonlyArray<ComposerPromptHistoryRun> = [],
 ): ComposerPromptHistoryEntry[] {
+  const planImplementationMessageIds = new Set(
+    runs.flatMap((run) => (run.sourcePlanRef === undefined ? [] : [run.userMessageId])),
+  );
   const entries: ComposerPromptHistoryEntry[] = [];
   for (const message of messages) {
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    const prompt = recallableComposerPrompt(message.text, message.context?.effortPrefix);
+    if (planImplementationMessageIds.has(message.id)) continue;
+    const prompt =
+      message.creationSource === "server"
+        ? recallableComposerPrompt(message.text)
+        : recallableSentPrompt(message);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {

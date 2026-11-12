@@ -1,4 +1,5 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -51,7 +52,7 @@ describe("recallableComposerPrompt", () => {
   it("strips legacy send-time context blocks and the ultrathink prefix", () => {
     const sent =
       "Ultrathink:\nInvestigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";
-    expect(recallableComposerPrompt(sent, "Ultrathink:\n")).toBe("Investigate this");
+    expect(recallableComposerPrompt(sent)).toBe("Investigate this");
   });
 
   it.each([
@@ -70,19 +71,19 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(sent)).toBe(expected);
   });
 
-  it("strips review comments only where a legacy client appended them after its context", () => {
+  it("strips only review comments appended at the end", () => {
     const block = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
-    const terminal = "<terminal_context>\n- Terminal 1 line 4:\n  4 | ls\n</terminal_context>";
-    expect(recallableComposerPrompt(`Please update this.\n\n${terminal}\n\n${block}`)).toBe(
-      "Please update this.",
-    );
+    expect(recallableComposerPrompt("Please update this.\n\n" + block)).toBe("Please update this.");
     const midPrompt = "Before\n\n" + block + "\n\nAfter";
-    expect(recallableComposerPrompt(midPrompt + "\n\n" + terminal)).toBe(midPrompt);
+    expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
+    expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
   });
 
   it.each([
     "Ultrathink:\nKeep this prefix in my example",
     'Example markup: <review_comment filePath="a.ts">literal</review_comment>',
+    "PLEASE IMPLEMENT THIS PLAN:\nExplain this literal example",
+    ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   ])("keeps user-authored text that resembles send-time context: %j", (typed) => {
     expect(buildComposerPromptHistoryEntries([{ id: "m1", role: "user", text: typed }])).toEqual([
       { id: "m1", prompt: typed },
@@ -98,6 +99,42 @@ describe("recallableComposerPrompt", () => {
 });
 
 describe("buildComposerPromptHistoryEntries", () => {
+  it("drops only what a send recorded, and text shapes only from server-written messages", () => {
+    const attachments = [{ id: "a1" }];
+    const review = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
+    expect(
+      buildComposerPromptHistoryEntries(
+        [
+          {
+            id: "m1",
+            role: "user",
+            text: "Ultrathink:\ntyped",
+            context: { effortPrefix: "Ultrathink:\n" },
+          },
+          { id: "m2", role: "user", text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, attachments },
+          {
+            id: "m3",
+            role: "user",
+            text: `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+            attachments,
+          },
+          { id: "m4", role: "user", text: "PLEASE IMPLEMENT THIS PLAN:\n# Plan" },
+          {
+            id: "m5",
+            role: "user",
+            text: `Please update this.\n\n${review}`,
+            createdBy: "user",
+            creationSource: "server",
+          },
+        ],
+        [{ userMessageId: "m4", sourcePlanRef: { threadId: "t1", planId: "p1" } }],
+      ),
+    ).toEqual([
+      { id: "m1", prompt: "typed" },
+      { id: "m5", prompt: "Please update this." },
+    ]);
+  });
+
   it("collapses consecutive duplicates onto the newest message id", () => {
     const collapsed = buildComposerPromptHistoryEntries([
       { id: "m1", role: "user", text: "same" },

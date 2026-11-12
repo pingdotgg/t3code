@@ -2310,6 +2310,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isLiteralPendingAnswer,
       pendingUserInputs,
       promptHistoryEntries,
+      activeThreadRuns,
       promptHistoryPositionRef,
       composerDraftTarget,
       promptRef,
