@@ -6295,12 +6295,6 @@ body {
   display: none;
 }
 
-/* The labels' colors the joined tab's motion fades between. */
-[data-layout-tab-strip] {
-  --pane-tab-idle-color: var(--muted-foreground);
-  --pane-tab-active-color: var(--strong-foreground);
-}
-
 @media (width >= 48rem) {
   :root:not(.black-chrome)
     [data-slot="sidebar"][data-variant="inset"]
@@ -6388,19 +6382,44 @@ body {
       /* Its padding passes presses on to the controls it runs under. */
       pointer-events: none;
       scroll-padding-inline: var(--pane-join-ear);
-      --pane-tab-idle-color: var(--pane-bar-muted);
-      --pane-tab-active-color: var(--pane-join-fg);
+      /* Every title gets the active one's room, so activating a tab moves no
+         other tab under the sliding shape. */
+      --pane-inactive-tab-title-max: 17rem;
+      /* Where tabs are scrolled out, the strip fades as scroll areas do
+         (ScrollArea's scrollFade); its end fades before the control that
+         overlaps the rim's tail. PaneTabs sets the overflow. */
+      --strip-fade-start: min(1.5rem, var(--strip-overflow-start, 0px));
+      --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
+      --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
+      mask-image: linear-gradient(
+        to right,
+        transparent,
+        #000 var(--strip-fade-start),
+        #000 calc(var(--strip-fade-end-at) - var(--strip-fade-end)),
+        transparent var(--strip-fade-end-at)
+      );
     }
     & [data-pane-notch=""] [data-strip-layer] > * {
       pointer-events: auto;
     }
 
+    /* The shape draws the active tab. Its label reads as active once the
+       shape has landed under it ([data-joined], PaneTabs.tsx), and the tab
+       it left reads as a plain one from then on. */
     &
       [data-pane-notch=""]
       [data-layout-tab-strip]
       :is(.surface-pane-tab:not([data-hidden-terminal-chip]), [data-active-tab="true"]) {
       background: none;
       box-shadow: none;
+    }
+    &
+      [data-pane-notch=""]
+      [data-layout-tab-strip]
+      :is(.surface-pane-tab, [data-active-tab="true"]):not([data-joined]) {
+      color: var(--pane-bar-muted);
+    }
+    & [data-pane-notch=""] [data-layout-tab-strip] [data-joined] {
       color: var(--pane-join-fg);
       --contrast-strong-foreground: var(--pane-join-fg);
       --strong-foreground: var(--pane-join-fg);
@@ -6409,13 +6428,7 @@ body {
     }
 
     /* An unfocused pane's tab sits on the bar, in the bar's colors. */
-    & [data-pane-notch-unfocused] [data-layout-tab-strip] {
-      --pane-tab-active-color: var(--pane-bar-fg);
-    }
-    &
-      [data-pane-notch-unfocused]
-      [data-layout-tab-strip]
-      :is(.surface-pane-tab:not([data-hidden-terminal-chip]), [data-active-tab="true"]) {
+    & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
       color: var(--pane-bar-fg);
       --contrast-strong-foreground: var(--pane-bar-fg);
       --strong-foreground: var(--pane-bar-fg);
@@ -6470,6 +6483,12 @@ body {
       }
 
       /* A cap: corner, side and ear. The end cap is the start one mirrored. */
+      /* Their own layers: a slide begun on a press keeps moving while the
+         switch's render holds the main thread. */
+      & :is([data-jc], [data-jm]) {
+        will-change: translate, scale;
+      }
+
       & [data-jc] {
         width: calc(var(--e) + var(--r) + 1px);
         height: 100%;
@@ -6589,13 +6608,6 @@ body {
         opacity: 1;
       }
     }
-
-    &
-      [data-pane-notch=""]
-      [data-layout-tab-strip]
-      :is(.surface-pane-tab, [data-active-tab="true"]) {
-      transition: color var(--panel-animation-duration, 150ms) ease-out;
-    }
   }
 
   :root:not(.black-chrome)
@@ -6611,9 +6623,7 @@ body {
   }
 
   @media (prefers-reduced-motion: reduce) {
-    :root:not(.black-chrome)
-      [data-pane-notch=""]
-      :is([data-pane-join] *, .surface-pane-tab, [data-active-tab]) {
+    :root:not(.black-chrome) [data-pane-notch=""] [data-pane-join] * {
       transition: none;
     }
   }
