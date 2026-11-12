@@ -2,8 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { MuseSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
@@ -54,7 +60,49 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
     return writeFakeCli({ directory, name: "muse", source });
   });
 
+// A `muse --version` that answers only after `delay`, like Muse started inside a Windows job object.
+const slowVersionSpawner = (delay: string) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => {
+      const answered = Effect.sleep(delay);
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(900_000_010),
+          exitCode: Effect.as(answered, ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.unwrap(
+            Effect.as(answered, Stream.succeed(new TextEncoder().encode("muse 1.4.12-R6909.1\n"))),
+          ),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    }),
+  );
+
 it.layer(NodeServices.layer)("Muse status", (it) => {
+  it.effect("waits for a `muse --version` that answers after 5 s", () =>
+    Effect.gen(function* () {
+      const fiber = yield* checkMuseProviderStatus(
+        settings({ enabled: true, binaryPath: "muse" }),
+        undefined,
+        undefined,
+        async () => makeHost(metaCatalog),
+      ).pipe(Effect.provide(slowVersionSpawner("5 seconds")), Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      expect(snapshot.message).toBeUndefined();
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.version).toBe("1.4.12-R6909.1");
+    }),
+  );
+
   it.effect("does not expose CLI stderr or start an SDK host after a failed version check", () =>
     Effect.scoped(
       Effect.gen(function* () {
