@@ -373,7 +373,8 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
 
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, liveAnswerPreview } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
+    use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
@@ -382,7 +383,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
     <LiveActivityRow
       label={
         waiting === undefined
-          ? (liveAnswerPreview ?? "Thinking")
+          ? (providerStartingLabel ?? liveAnswerPreview ?? "Thinking")
           : `Waiting on ${waiting === 1 ? "a subagent" : `${waiting} subagents`}`
       }
       iconName={waiting === undefined ? "brain" : "bot"}
