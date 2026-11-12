@@ -10,7 +10,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
-import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
+import {
+  discoverMuseModels,
+  museModelCapabilities,
+  resolveMuseStartupTimeoutMs,
+} from "./modelCatalog.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -130,7 +134,8 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 
   const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
-    Effect.timeoutOption(resolveProviderProbeTimeoutMs("muse", 12_000, museEnvironment)),
+    // Startup shares the override, so the catalog keeps its 4 seconds on top of it.
+    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 4_000),
     Effect.result,
   );
   if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {

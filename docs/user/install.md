@@ -264,10 +264,10 @@ updates, then restart the server. For systemd, add
 override, reload systemd, and restart the service. Provider instances can also
 set their own overrides in Settings → Providers.
 
-Each variable replaces that provider's existing readiness-probe deadlines.
-Providers with several phases can take longer than one deadline in total.
-Unset or invalid values keep each phase's current default. Values must be
-positive whole milliseconds no greater than 2147483647.
+Each variable extends that provider's readiness-probe deadlines; a phase whose
+default is already longer keeps its default. Providers with several phases can
+take longer than one deadline in total. Values must be whole milliseconds no
+greater than 2147483647; unset or invalid values keep the defaults.
 
 | Provider            | Environment variable                   |
 | ------------------- | -------------------------------------- |

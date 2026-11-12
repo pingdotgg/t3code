@@ -564,9 +564,12 @@ export const makeOpenCode2ModelLoader = <E>(
 /** None when the reads fail or never agree, so a partial catalog never passes for a settled one. */
 export const readSettledOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
 ) =>
   settleOpenCode2Catalog(list).pipe(
-    Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("opencode", OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS, environment),
+    ),
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 

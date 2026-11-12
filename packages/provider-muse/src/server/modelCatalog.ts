@@ -12,6 +12,9 @@ import {
   type MuseSdkHost,
 } from "./sdk.ts";
 
+export const resolveMuseStartupTimeoutMs = (environment?: NodeJS.ProcessEnv) =>
+  resolveProviderProbeTimeoutMs("muse", 8_000, environment);
+
 type MuseReasoningEffort = NonNullable<SendUserTurnOptions<never>["reasoningEffort"]>;
 
 const REASONING_EFFORT_LABELS = {
@@ -112,7 +115,7 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
         ...(environment ? { environment } : {}),
         ...(cwd ? { cwd } : {}),
         readOnly: true,
-        startupTimeoutMs: resolveProviderProbeTimeoutMs("muse", 8_000, environment),
+        startupTimeoutMs: resolveMuseStartupTimeoutMs(environment),
       },
       createHost,
     ),

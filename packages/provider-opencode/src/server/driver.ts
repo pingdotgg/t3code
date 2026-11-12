@@ -710,6 +710,7 @@ export const OpenCodeDriver: ProviderDriver<
                         openCode2Server.withConnection(({ client }) =>
                           loadOpenCode2DirectoryCatalog(client, cwd),
                         ),
+                        processEnv,
                       ).pipe(
                         Effect.map(
                           Option.map((catalog) =>
@@ -748,7 +749,10 @@ export const OpenCodeDriver: ProviderDriver<
                   v1: Effect.all([
                     snapshot.getSnapshot,
                     loadWorkspaceForCwd(cwd).pipe(
-                      Effect.timeout(resolveProviderProbeTimeoutMs("opencode", 20_000, processEnv)),
+                      // Leaves room for connection setup before the command fallback below.
+                      Effect.timeout(
+                        2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
+                      ),
                     ),
                   ]).pipe(
                     Effect.map(

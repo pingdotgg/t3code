@@ -178,7 +178,7 @@ describe("resolveProviderProbeTimeoutMs", () => {
   ])("uses only %s's readiness override", (provider) => {
     const key = `T3CODE_${provider.toUpperCase()}_PROBE_TIMEOUT_MS`;
     expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "60000" })).toBe(60000);
-    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "1000" })).toBe(1000);
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "1000" })).toBe(25000);
     expect(
       resolveProviderProbeTimeoutMs(provider, 25000, { T3CODE_OTHER_PROBE_TIMEOUT_MS: "60000" }),
     ).toBe(25000);
