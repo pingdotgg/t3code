@@ -292,9 +292,14 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     CURSOR_SDK_CATALOG_TIMEOUT_MS,
     environment,
   );
-  const catalogResult = yield* sdkCatalog
-    .read(sdkApiKey)
-    .pipe(Effect.timeoutOption(timeoutMs), Effect.result);
+  const readCatalog = Effect.suspend(() => sdkCatalog.read(sdkApiKey)).pipe(
+    Effect.timeoutOption(timeoutMs),
+  );
+  // api.cursor.com latency is intermittent; one slow read should not flip the provider to error.
+  const catalogResult = yield* readCatalog.pipe(
+    Effect.filterOrElse(Option.isSome, () => readCatalog),
+    Effect.result,
+  );
 
   if (Result.isFailure(catalogResult)) {
     yield* Effect.logWarning("Cursor SDK catalog probe failed", {

@@ -117,7 +117,6 @@ const CODEX_CLIENT_NAME = "T3 Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
-
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
@@ -768,7 +767,12 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
   });
 });
 
-function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnapshot): {
+const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
+function accountProbeStatus(
+  { account, rateLimits }: CodexAppServerProviderSnapshot,
+  codexHome: string | undefined,
+): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -796,7 +800,9 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
     return {
       status: "error",
       auth: { status: "unauthenticated" },
-      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message: codexHome
+        ? `Codex CLI is not authenticated. Run \`codex login\` with CODEX_HOME set to ${quotePath(codexHome)} and try again.`
+        : "Codex CLI is not authenticated. Run `codex login` and try again.",
     };
   }
 
@@ -918,7 +924,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const snapshot = probeResult.success.value;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
-    : accountProbeStatus(snapshot);
+    : accountProbeStatus(
+        snapshot,
+        codexSettings.homePath
+          ? expandHomePath(codexSettings.homePath, yield* HostProcess.HomeDirectory)
+          : undefined,
+      );
   // Sign-in guidance still applies when Codex itself says it needs an OpenAI login.
   const usageLimits =
     !snapshot.nativeUsage && !accountStatus.message
