@@ -13,20 +13,24 @@ export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
   readonly originalText: string;
+  readonly removedExistingAttachment?: boolean;
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(input.editTarget);
   const recovery = resolveQueuedEditExit({
     editChanged:
-      draft !== null &&
-      (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0),
-    threadDraftEmpty: !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
+      input.removedExistingAttachment === true ||
+      (draft !== null &&
+        (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
+    // A cleared edit has nothing to put back, so it can only be discarded.
+    threadDraftEmpty:
+      composerDraftHasUserContent(draft) &&
+      !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
     store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
-  } else {
-    store.clearComposerContent(input.editTarget);
   }
+  store.clearComposerContent(input.editTarget);
   return recovery;
 }
 
@@ -67,11 +71,13 @@ export function queuedEditContext(input: {
   readonly newRecords: OrchestrationMessageContext["records"];
 }): OrchestrationMessageContext {
   const { editing } = input;
-  // Kept records for removed attachments would point at nothing.
+  // The draft owns thread and environment mentions. Retain only attachments that survived the edit.
   const keptRecords = (editing.context?.records ?? []).filter(
     (record) =>
-      !("attachmentId" in record) ||
-      editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
+      record.kind !== "thread" &&
+      record.kind !== "environment" &&
+      (!("attachmentId" in record) ||
+        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId)),
   );
   return (
     composerRecallContext(

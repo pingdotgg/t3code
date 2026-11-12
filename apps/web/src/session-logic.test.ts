@@ -226,7 +226,7 @@ describe("V2 session presentation", () => {
 
     const targets = deriveRevertTurnCountByUserMessageId({
       timelineEntries,
-      threadStartCheckpointReady: true,
+      threadStartCheckpointAvailable: true,
       checkpoints: [
         {
           runId,
@@ -266,7 +266,7 @@ describe("V2 session presentation", () => {
           },
         };
       });
-    const checkpoint = (ordinal: number, status: "ready" | "stale" = "ready") => ({
+    const checkpoint = (ordinal: number, status: "ready" | "missing" | "stale" = "ready") => ({
       runId: runId(ordinal),
       checkpointTurnCount: ordinal,
       checkpointRef: `checkpoint-${ordinal}` as never,
@@ -278,13 +278,13 @@ describe("V2 session presentation", () => {
     const targets = (
       ordinals: ReadonlyArray<number>,
       checkpoints: ReadonlyArray<ReturnType<typeof checkpoint>>,
-      options: { threadStartCheckpointReady?: boolean; unsettledRunId?: RunId } = {},
+      options: { threadStartCheckpointAvailable?: boolean; unsettledRunId?: RunId } = {},
     ) =>
       Object.fromEntries(
         deriveRevertTurnCountByUserMessageId({
           timelineEntries: ordinals.flatMap(turn),
           checkpoints,
-          threadStartCheckpointReady: options.threadStartCheckpointReady ?? true,
+          threadStartCheckpointAvailable: options.threadStartCheckpointAvailable ?? true,
           unsettledRunId: options.unsettledRunId ?? null,
         }),
       );
@@ -297,6 +297,11 @@ describe("V2 session presentation", () => {
         "user-5": 4,
       });
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
+      // Without file snapshots, missing checkpoints still pin the conversation.
+      expect(targets([1, 2], [checkpoint(1, "missing"), checkpoint(2, "missing")])).toEqual({
+        "user-1": 0,
+        "user-2": 1,
+      });
     });
 
     it("preserves a notification-only wake run while ignoring inherited and unrelated work", () => {
@@ -360,7 +365,7 @@ describe("V2 session presentation", () => {
               checkpoint(7),
               checkpoint(8),
             ],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
           }),
         ),
       ).toEqual({ "user-1": 0, "user-3": 2 });
@@ -371,7 +376,7 @@ describe("V2 session presentation", () => {
       expect(targets([1, 2], [checkpoint(1, "stale"), checkpoint(2)])).toEqual({ "user-1": 0 });
       // Earlier history is paged out, so the first loaded run's predecessor is unknown.
       expect(
-        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointReady: false }),
+        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointAvailable: false }),
       ).toEqual({ "user-5": 4 });
       expect(targets([1, 2], [checkpoint(1), checkpoint(2)], { unsettledRunId: runId(2) })).toEqual(
         { "user-1": 0 },
@@ -384,7 +389,7 @@ describe("V2 session presentation", () => {
           deriveRevertTurnCountByUserMessageId({
             timelineEntries: [1, 2, 3].flatMap(turn),
             checkpoints: [checkpoint(1), checkpoint(2), checkpoint(3)],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
             availableRevertTurnCounts: new Set([0, 1]),
           }),
         ),
@@ -404,7 +409,7 @@ describe("V2 session presentation", () => {
           deriveRevertTurnCountByUserMessageId({
             timelineEntries: [...inheritedEntries, ...turn(2)],
             checkpoints: [{ ...checkpoint(7), runId: fixture.historyRunId }, checkpoint(2)],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
           }),
         ),
       ).toEqual({ "user-2": 0 });
@@ -557,6 +562,20 @@ describe("V2 session presentation", () => {
     if (threadCreatedEntry?.kind === "work") {
       expect(threadCreatedEntry.entry.projectedItem?.item.type).toBe("thread_created");
     }
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [
+          {
+            ...visibleTurnItems.at(-1)!,
+            item: {
+              ...workspacePreparationItem,
+              deferredWork: { cursor: "work-page", itemCount: 100, lastOrdinal: 107 },
+            },
+          },
+        ],
+        optimisticMessages: [],
+      }).map((entry) => entry.id),
+    ).toEqual([workspacePreparationItem.id]);
   });
 
   it.each(["pending", "running", "completed"] as const)(
@@ -1104,6 +1123,82 @@ describe("native provider presentation in the v2 timeline", () => {
     ).toBe("message");
   });
 
+  it("shows a late async answer that started a later run where that run begins", () => {
+    const requestId = RuntimeRequestId.make("late-question");
+    const inRun = (item: OrchestrationV2TurnItem, runId: string, ordinal: number) =>
+      visible({ ...item, runId: RunId.make(runId), ordinal });
+    const userMessage = (
+      id: string,
+      text: string,
+    ): Extract<OrchestrationV2TurnItem, { type: "user_message" }> => ({
+      ...base,
+      id: TurnItemId.make(id),
+      type: "user_message",
+      messageId: MessageId.make(id),
+      inputIntent: "queued_turn",
+      text,
+      createdBy: "user",
+      creationSource: "web",
+      attachments: [],
+    });
+    const assistantMessage = (id: string, text: string): OrchestrationV2TurnItem => ({
+      ...base,
+      id: TurnItemId.make(id),
+      type: "assistant_message",
+      messageId: MessageId.make(id),
+      text,
+      streaming: false,
+    });
+    const question = inRun(
+      {
+        ...base,
+        id: TurnItemId.make("late-question"),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: { color: "Blue" }, attachmentsByQuestionId: {} },
+      },
+      "run-8",
+      8_000_070,
+    );
+    const answerMessageId = MessageId.make(`async-answer:${requestId}`);
+    const settledPrefix = [
+      question,
+      inRun(userMessage("queued", "Queued follow-up"), "run-9", 9_000_001),
+      inRun(assistantMessage("reply-9", "RUN 9 REPLY"), "run-9", 9_000_002),
+    ];
+    const lateRun = [
+      inRun(
+        {
+          ...userMessage(answerMessageId, "Which color?\nBlue"),
+          inputIntent: "steer",
+          creationSource: "server",
+        },
+        "run-10",
+        10_000_001,
+      ),
+      inRun(assistantMessage("reply-10", "RUN 10 ACKNOWLEDGED BLUE"), "run-10", 10_000_002),
+    ];
+    const input = { visibleTurnItems: [...settledPrefix, ...lateRun], optimisticMessages: [] };
+    const messageIds = (entries: ReadonlyArray<TimelineEntry>) =>
+      entries.flatMap((entry) => (entry.kind === "message" ? [entry.message.id] : []));
+    const expectedMessageIds = ["queued", "reply-9", answerMessageId, "reply-10"];
+
+    expect
+      .soft(messageIds(deriveTimelineEntriesFromVisibleTurnItems(input)), "full projection")
+      .toEqual(expectedMessageIds);
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      ...input,
+      visibleTurnItems: settledPrefix,
+    });
+    expect
+      .soft(
+        messageIds(deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous).entries),
+        "incremental projection",
+      )
+      .toEqual(expectedMessageIds);
+  });
+
   it("excludes checkpoint-only work from the timeline", () => {
     const message: OrchestrationV2TurnItem = {
       ...base,
@@ -1293,6 +1388,23 @@ describe("HTML renders in the timeline", () => {
     expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
   });
 
+  it("hosts an MCP app whose call failed, as a form-deferring write does", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "github",
+      tool: "create_pull_request",
+      resourceUri: "ui://github-mcp-server/pr-create",
+    };
+    const call = renderCall("failed", {
+      t3McpApp: mcpApp,
+      result: { content: [], isError: true },
+    });
+    const entries = turn(
+      call.type === "dynamic_tool" ? { ...call, toolName: "github.create_pull_request" } : call,
+    );
+    expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({ mcpApp });
+  });
+
   it("keeps a render visible when its superseded attempt folds", () => {
     const attempt: OrchestrationV2RunAttempt = {
       id: RunAttemptId.make("attempt-superseded"),
@@ -1456,6 +1568,51 @@ describe("incremental v2 timeline entries", () => {
     expect(next.entries.at(-1)).toMatchObject({ id: "late-message" });
     for (const [index, entry] of previous.entries.entries())
       expect(next.entries[index]).toBe(entry);
+  });
+
+  it("re-derives only the work entry whose tool item changed", () => {
+    const fixture = makeStreamingTimelineFixture("Partial");
+    const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
+      row.item.id === "live-work"
+        ? { ...row, item: { ...row.item, status: "running" as const, completedAt: null } }
+        : row,
+    );
+    const input = { visibleTurnItems, optimisticMessages: [] };
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const nextInput = { ...input, visibleTurnItems: fixture.visibleTurnItems };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
+    for (const [index, entry] of previous.entries.entries()) {
+      if (entry.id === "live-work") expect(next.entries[index]).not.toBe(entry);
+      else expect(next.entries[index]).toBe(entry);
+    }
+
+    const anchoredInput = {
+      ...nextInput,
+      anchoredMessages: [
+        {
+          id: MessageId.make("feedback"),
+          runId: null,
+          role: "assistant" as const,
+          text: "Feedback received",
+          streaming: false,
+          createdAt: fixture.time(6),
+          updatedAt: fixture.time(6),
+        },
+      ],
+    };
+    const anchored = deriveTimelineEntriesFromVisibleTurnItemsWithState(anchoredInput);
+    const movedInput = {
+      ...anchoredInput,
+      visibleTurnItems: anchoredInput.visibleTurnItems.map((row) =>
+        row.item.id === "live-work"
+          ? { ...row, item: { ...row.item, startedAt: DateTime.makeUnsafe(fixture.time(8)) } }
+          : row,
+      ),
+    };
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItemsWithState(movedInput, anchored).entries,
+    ).toEqual(deriveTimelineEntriesFromVisibleTurnItems(movedInput));
   });
 
   it.each(["completion", "provenance", "ordering", "attachment", "run"] as const)(

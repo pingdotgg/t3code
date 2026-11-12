@@ -13,6 +13,7 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -119,7 +120,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         Layer.mock(Orchestrator.OrchestratorV2)({ recoverDelegatedTasks: Effect.void }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ shutdown: Effect.void }),
         Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ start: () => Effect.void }),
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.never }),
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: () => Effect.never }),
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...event, sequence: 1 }),
         }),
@@ -141,21 +142,17 @@ it.effect("parks automatic pull until activation without delaying command readin
         }),
         Layer.mock(ProjectService.ProjectService)({ snapshot: Effect.succeed(snapshot) }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads: [],
-            }),
+          countThreads: () => Effect.succeed(0),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: true,
-          prepareTrial: Deferred.succeed(prepared, undefined).pipe(
-            Effect.andThen(Deferred.await(commitTrial)),
-            Effect.as(undefined),
-          ),
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          prepareTrial: () =>
+            Deferred.succeed(prepared, undefined).pipe(
+              Effect.andThen(Deferred.await(commitTrial)),
+              Effect.as(undefined),
+            ),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           statusDetails: (root) =>

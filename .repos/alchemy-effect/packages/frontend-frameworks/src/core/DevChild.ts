@@ -1,3 +1,5 @@
+import * as NodeChildProcess from "node:child_process";
+import { fileURLToPath } from "node:url";
 /**
  * Child-process isolation for framework DEV servers.
  *
@@ -32,8 +34,9 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
-import * as NodeChildProcess from "node:child_process";
-import { fileURLToPath } from "node:url";
+import * as SemVer from "effect/SemVer";
+import * as SemVerRange from "effect/SemVerRange";
+import { makeChildOutput } from "./ChildOutput.ts";
 import { FrameworkError, type FrameworkDevServer } from "./Framework.ts";
 
 /**
@@ -44,8 +47,7 @@ import { FrameworkError, type FrameworkDevServer } from "./Framework.ts";
 export const DEV_CHILD_ENV_KEY = "ALCHEMY_FRAMEWORK_DEV_CHILD";
 
 /** `true` when this process IS a spawned dev child (or one of its children). */
-export const isInsideDevChild = (): boolean =>
-  process.env[DEV_CHILD_ENV_KEY] === "1";
+export const isInsideDevChild = (): boolean => process.env[DEV_CHILD_ENV_KEY] === "1";
 
 /** The runner's `argv[2]` payload (JSON). */
 export interface DevChildPayload {
@@ -66,8 +68,7 @@ export interface DevChildPayload {
 }
 
 /** Marker line the child prints once the dev server is listening. */
-export const DEV_CHILD_URL_REGEX =
-  /<ALCHEMY_DEV_CHILD_URL>(.+)<\/ALCHEMY_DEV_CHILD_URL>/;
+export const DEV_CHILD_URL_REGEX = /<ALCHEMY_DEV_CHILD_URL>(.+)<\/ALCHEMY_DEV_CHILD_URL>/;
 
 export const devChildUrlMarker = (url: string) =>
   `<ALCHEMY_DEV_CHILD_URL>${url}</ALCHEMY_DEV_CHILD_URL>`;
@@ -112,12 +113,14 @@ export const isJsonSerializable = (value: unknown): boolean => {
  * runner entry works when running from `src/` under plain Node (Bun handles
  * `.ts` natively). Mirrors `core/BuildChild.ts`.
  */
-const transformTypesFlags = (): Array<string> => {
-  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  return (major === 22 && minor >= 7) || (major >= 23 && major < 26)
+const transformTypesFlags = (): Array<string> =>
+  SemVerRange.matches(
+    SemVerRange.parseUnsafe(">=22.7.0 <26.0.0-0"),
+    SemVer.parseUnsafe(process.versions.node),
+    { includePrerelease: true },
+  )
     ? ["--experimental-transform-types", "--no-warnings=ExperimentalWarning"]
     : [];
-};
 
 export interface DevChildOptions {
   /** Use Node from PATH for toolchains that cannot run under Bun. Requires native TypeScript support when running source modules. */
@@ -160,11 +163,7 @@ export const runDevChild = (
     const fail =
       (message: string) =>
       (cause?: unknown): FrameworkError =>
-        new FrameworkError({
-          framework: options.framework,
-          message,
-          cause,
-        });
+        new FrameworkError({ framework: options.framework, message, cause });
 
     const entry = fileURLToPath(
       new URL(
@@ -175,8 +174,7 @@ export const runDevChild = (
       ),
     );
     const isBun =
-      options.runtime !== "node" &&
-      typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+      options.runtime !== "node" && typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
     const executable = options.runtime === "node" ? "node" : process.execPath;
     const payload: DevChildPayload = {
       module: options.module,
@@ -193,9 +191,7 @@ export const runDevChild = (
       JSON.stringify(payload),
     ];
 
-    const spawnFailure = fail(
-      `Failed to spawn the ${options.framework} dev child (${executable})`,
-    );
+    const spawnFailure = fail(`Failed to spawn the ${options.framework} dev child (${executable})`);
     const spawnError = yield* Deferred.make<never, FrameworkError>();
     const handle = yield* Effect.acquireRelease(
       Effect.try({
@@ -232,6 +228,7 @@ export const runDevChild = (
         }),
     );
 
+    const output = yield* makeChildOutput;
     const url = yield* Effect.callback<string, FrameworkError>((resume) => {
       const { child } = handle;
       let lineBuffer = "";
@@ -242,14 +239,14 @@ export const runDevChild = (
           handle.output = handle.output.slice(-32768);
         }
       };
-      // Dev-server logs are re-emitted through the parent's own JS streams
-      // (not `stdio: "inherit"`) so in-process capture (a test runner's log
-      // buffer, the dev renderer) sees them.
+      // Dev-server output becomes log records (not `stdio: "inherit"`), so
+      // the process that renders logs shows it, JSON output carries it, and
+      // in-process capture (a test runner's log buffer) sees it.
       child.stdout?.on("data", (chunk: unknown) => {
         const text = String(chunk);
         capture(text);
         if (ready) {
-          process.stdout.write(text);
+          output.stdout.push(text);
           return;
         }
         lineBuffer += text;
@@ -261,14 +258,19 @@ export const runDevChild = (
             ready = true;
             resume(Effect.succeed(match[1]));
           } else {
-            process.stdout.write(`${line}\n`);
+            output.stdout.push(`${line}\n`);
           }
         }
       });
       child.stderr?.on("data", (chunk: unknown) => {
         const text = String(chunk);
         capture(text);
-        process.stderr.write(text);
+        output.stderr.push(text);
+      });
+      // stdio can still deliver data after `exit`; flush once it closes.
+      child.once("close", () => {
+        output.stdout.flush();
+        output.stderr.flush();
       });
       child.once("exit", (code) => {
         if (!ready) {

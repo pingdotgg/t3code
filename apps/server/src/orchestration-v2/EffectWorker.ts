@@ -138,6 +138,24 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.apply-model-selection":
+            return providerTurnControl
+              .applyModelSelection({
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                providerThreadId: effect.request.providerThreadId,
+                modelSelection: effect.request.modelSelection,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
@@ -177,6 +195,13 @@ export const layerExecutor: Layer.Layer<
                         cause,
                       }),
                 ),
+                Effect.map((outcome) => ({ unresponsive: false, outcome }) as const),
+                // Settling here would end the run while the agent may still be running; the
+                // user decides with Force stop instead.
+                Effect.catchIf(
+                  (cause) => request.subagent === undefined && cause.unresponsive === true,
+                  () => Effect.succeed({ unresponsive: true, outcome: undefined } as const),
+                ),
                 Effect.catchIf(
                   (cause) =>
                     request.subagent === undefined &&
@@ -184,27 +209,35 @@ export const layerExecutor: Layer.Layer<
                       request.type,
                       Cause.pretty(Cause.fail(cause)),
                     ),
-                  () => Effect.void,
+                  () => Effect.succeed({ unresponsive: false, outcome: undefined } as const),
                 ),
-                Effect.andThen((outcome) =>
-                  request.subagent !== undefined && outcome === undefined
-                    ? Effect.void
-                    : threads.dispatch({
-                        type: "thread.background-work.settle",
-                        commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                        ...(request.subagent === undefined || outcome === undefined
-                          ? {}
-                          : {
-                              subagent: {
-                                id: request.subagent.id,
-                                stoppedAt: DateTime.makeUnsafe(effect.createdAt),
-                                outcome,
-                              },
-                            }),
+                Effect.andThen(({ unresponsive, outcome }) =>
+                  unresponsive
+                    ? threads.dispatch({
+                        type: "thread.interrupt.unresponsive",
+                        commandId: CommandId.make(`${effect.id}:unresponsive`),
                         threadId: effect.threadId,
                         providerThreadId: request.providerThreadId,
                         providerTurnId: request.providerTurnId,
-                      }),
+                      })
+                    : request.subagent !== undefined && outcome === undefined
+                      ? Effect.void
+                      : threads.dispatch({
+                          type: "thread.background-work.settle",
+                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                          ...(request.subagent === undefined || outcome === undefined
+                            ? {}
+                            : {
+                                subagent: {
+                                  id: request.subagent.id,
+                                  stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                                  outcome,
+                                },
+                              }),
+                          threadId: effect.threadId,
+                          providerThreadId: request.providerThreadId,
+                          providerTurnId: request.providerTurnId,
+                        }),
                 ),
                 Effect.mapError(
                   (cause) =>
@@ -224,6 +257,9 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 providerTurnId: effect.request.providerTurnId,
                 messageId: effect.request.messageId,
+                ...(effect.request.modelSelection === undefined
+                  ? {}
+                  : { modelSelection: effect.request.modelSelection }),
               })
               .pipe(
                 Effect.tap(() =>
@@ -263,6 +299,10 @@ export const layerExecutor: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    // Notifications must be queued messages.
+                    const queued =
+                      message.delegatedCompletion !== undefined ||
+                      message.notification !== undefined;
                     // Reuse message ids and receipts so retries cannot duplicate messages or follow-ups.
                     yield* threads
                       .dispatch({
@@ -277,10 +317,7 @@ export const layerExecutor: Layer.Layer<
                           ? {}
                           : { modelSelection: run.modelSelection }),
                         dispatchMode: {
-                          type:
-                            message.delegatedCompletion === undefined
-                              ? "start_immediately"
-                              : "queue_after_active",
+                          type: queued ? "queue_after_active" : "start_immediately",
                         },
                         createdBy: message.createdBy,
                         creationSource: message.creationSource,
@@ -489,8 +526,19 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          // Archive and delete queue this one per-thread teardown, so it also releases the
+          // thread's device claims; the devices stay booted for other threads.
           case "terminal.cleanup":
-            return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
+            return Effect.partition(
+              [
+                resourceCleanup.cleanupTerminals(effect.threadId),
+                resourceCleanup.cleanupDevices(effect.threadId),
+              ],
+              (cleanup) => cleanup,
+            ).pipe(
+              Effect.flatMap(([, [failure]]) =>
+                failure === undefined ? Effect.void : Effect.fail(failure),
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -596,14 +644,17 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
+type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]>[0], "workerId">;
+
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
-  readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly runOnce: (input?: {
+    readonly maxRunningTitleGenerations?: number;
+  }) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
-  readonly nextClaimableAt: Effect.Effect<
-    Option.Option<DateTime.Utc>,
-    OrchestrationEffectWorkerError
-  >;
+  readonly nextClaimableAt: (input?: {
+    readonly maxRunningTitleGenerations?: number;
+  }) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
 
@@ -723,10 +774,8 @@ export const layerWithOptions = (
 
       // The worker probes for work repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (excludeRestartContinuations = false) {
-          const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, excludeRestartContinuations }),
-          );
+        function* (filter: ClaimFilter = {}) {
+          const claimExit = yield* Effect.exit(outbox.claimNext({ workerId, ...filter }));
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
               ? "error"
@@ -825,7 +874,7 @@ export const layerWithOptions = (
           }
           return true;
         },
-        (effect, _excludeRestartContinuations?: boolean) =>
+        (effect, _filter?: ClaimFilter) =>
           effect.pipe(
             Effect.mapError((cause) =>
               isOrchestrationEffectWorkerError(cause)
@@ -837,9 +886,13 @@ export const layerWithOptions = (
 
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
-        runOnce: runOnce(),
-        runRecoveryOnce: runOnce(true),
-        nextClaimableAt: outbox.nextClaimableAt.pipe(
+        runOnce,
+        runRecoveryOnce: runOnce({ excludeRestartContinuations: true }),
+        // Idle workers poll this; a span per poll would bury useful traces.
+        nextClaimableAt: Effect.fnUntraced(
+          function* (input) {
+            return yield* outbox.nextClaimableAt(input);
+          },
           Effect.mapError(
             (cause) =>
               new OrchestrationEffectWorkerError({
@@ -882,10 +935,12 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       const livenessPollIntervalMs = Number.isFinite(requestedLivenessPollIntervalMs)
         ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
         : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
+      // Title generation can run for minutes; leave at least one worker free for turn work.
+      const claimLimits = concurrency > 1 ? { maxRunningTitleGenerations: concurrency - 1 } : {};
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
       const runWorker = Effect.gen(function* () {
         while (true) {
-          const outcome = yield* worker.runOnce.pipe(
+          const outcome = yield* worker.runOnce(claimLimits).pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
@@ -903,14 +958,16 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             continue;
           }
 
-          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "Failed to read the next orchestration effect deadline",
-                cause,
-              ).pipe(Effect.as(Option.none<DateTime.Utc>())),
-            ),
-          );
+          const nextClaimableAt = yield* worker
+            .nextClaimableAt(claimLimits)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "Failed to read the next orchestration effect deadline",
+                  cause,
+                ).pipe(Effect.as(Option.none<DateTime.Utc>())),
+              ),
+            );
           const now = DateTime.toEpochMillis(yield* DateTime.now);
           const sleepMs = Option.match(nextClaimableAt, {
             onNone: () => livenessPollIntervalMs,

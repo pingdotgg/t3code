@@ -1,15 +1,27 @@
-import { SourceControlProviderKind, VcsProcessSpawnError } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  type VcsError,
+  VcsProcessExitError,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { providerAuth } from "@t3tools/source-control-core/server/discovery";
+import * as PlatformError from "effect/PlatformError";
+import {
+  providerAuth,
+  type SourceControlProviderDiscoverySpec,
+} from "@t3tools/source-control-core/server/discovery";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   fakeDiscovery,
   fakeSourceControlProvider,
 } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ServerConfig from "../config.ts";
@@ -27,7 +39,29 @@ const run = (
     SourceControlHost.SourceControlProcessInput,
     "operation" | "command" | "args" | "cwd"
   >,
-): Effect.Effect<SourceControlHost.SourceControlProcessOutput, VcsProcessSpawnError> => {
+): Effect.Effect<SourceControlHost.SourceControlProcessOutput, VcsError> => {
+  const context = { operation: input.operation, command: input.command, cwd: input.cwd };
+  if (input.command === "slow-cli") {
+    return Effect.fail(new VcsProcessTimeoutError({ ...context, timeoutMs: 5_000 }));
+  }
+  if (input.command === "broken-cli") {
+    return Effect.fail(
+      new VcsProcessExitError({ ...context, exitCode: 1, detail: "broken-cli: bad install" }),
+    );
+  }
+  if (input.command === "absent-cli") {
+    return Effect.fail(
+      new VcsProcessSpawnError({
+        ...context,
+        cause: PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          pathOrDescriptor: input.command,
+        }),
+      }),
+    );
+  }
   if (input.args[0] === "--version") {
     return input.command === "missing-cli"
       ? Effect.fail(
@@ -45,43 +79,52 @@ const run = (
   );
 };
 
-const cliDiscovery = (name: string) => ({
+const cliDiscovery = (
+  name: string,
+  executable = name === "beta" ? "missing-cli" : `${name}-cli`,
+) => ({
   type: "cli" as const,
   kind: kind(name),
   label: name,
   installHint: `Install ${name}.`,
-  executable: name === "beta" ? "missing-cli" : `${name}-cli`,
+  executable,
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: ({ stdout }: { readonly stdout: string }) =>
     providerAuth({ status: "authenticated", account: /as (\S+)/.exec(stdout)?.[1] }),
 });
 
-const layerDiscovery = Layer.effect(
-  SourceControlProviderRegistry.SourceControlProviderRegistry,
-  SourceControlProviderRegistry.makeWithProviders(
-    [
-      cliDiscovery("alpha"),
-      cliDiscovery("beta"),
-      fakeDiscovery("gamma", {
-        probeAuth: Effect.succeed(providerAuth({ status: "authenticated", account: "api-user" })),
-      }),
-    ].map((discovery) => ({
-      kind: discovery.kind,
-      provider: fakeSourceControlProvider(discovery.kind),
-      discovery,
-    })),
-  ),
-).pipe(
-  Layer.provideMerge(TestSourceControlHost.layer({ process: { run } })),
-  Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
-  Layer.provideMerge(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
-  Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run })),
-  Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
-  ),
-  Layer.provideMerge(NodeServices.layer),
-);
+const defaultDiscoveries = [
+  cliDiscovery("alpha"),
+  cliDiscovery("beta"),
+  fakeDiscovery("gamma", {
+    probeAuth: Effect.succeed(providerAuth({ status: "authenticated", account: "api-user" })),
+  }),
+];
+
+const layerDiscovery = (
+  runProcess = run,
+  discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
+) =>
+  Layer.effect(
+    SourceControlProviderRegistry.SourceControlProviderRegistry,
+    SourceControlProviderRegistry.makeWithProviders(
+      discoveries.map((discovery) => ({
+        kind: discovery.kind,
+        provider: fakeSourceControlProvider(discovery.kind),
+        discovery,
+      })),
+    ),
+  ).pipe(
+    Layer.provideMerge(TestSourceControlHost.layer({ process: { run: runProcess } })),
+    Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
+    Layer.provideMerge(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
+    Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run: runProcess })),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
 
 it.effect("reports every hosting integration in registry order with its sign-in", () =>
   Effect.gen(function* () {
@@ -127,5 +170,79 @@ it.effect("reports every hosting integration in registry order with its sign-in"
         ["jj", "available"],
       ],
     );
-  }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery)))),
+  }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
+);
+
+it.effect("explains a hosting CLI whose version probe failed instead of advising an install", () =>
+  Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover;
+    const item = (name: string) => {
+      const found = result.sourceControlProviders.find((entry) => entry.kind === kind(name));
+      assert.isDefined(found);
+      return found;
+    };
+    const authDetail = (name: string) => Option.getOrElse(item(name).auth.detail, () => "");
+
+    assert.notInclude(item("slow").installHint, "Install slow.");
+    assert.include(item("slow").installHint, "timed out after 5000ms");
+    assert.strictEqual(authDetail("slow"), item("slow").installHint);
+
+    assert.notInclude(item("broken").installHint, "Install broken.");
+    assert.include(item("broken").installHint, "exited with status 1");
+    assert.strictEqual(authDetail("broken"), item("broken").installHint);
+
+    assert.strictEqual(item("absent").installHint, "Install absent.");
+  }).pipe(
+    Effect.provide(
+      SourceControlDiscovery.layer.pipe(
+        Layer.provide(
+          layerDiscovery(run, [
+            cliDiscovery("slow", "slow-cli"),
+            cliDiscovery("broken", "broken-cli"),
+            cliDiscovery("absent", "absent-cli"),
+          ]),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect.each(["darwin", "linux"] as const)(
+  "names incompatible executables only on macOS (%s)",
+  (platform) => {
+    const runProcess: typeof run = (input) =>
+      Effect.fail(
+        new VcsProcessSpawnError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          cause:
+            input.command === "missing-cli"
+              ? new Error("not found")
+              : Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 }),
+        }),
+      );
+    return Effect.gen(function* () {
+      const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const result = yield* discovery.discover;
+      for (const item of [...result.versionControlSystems, ...result.sourceControlProviders]) {
+        if (item.kind === kind("gamma")) continue;
+        assert.strictEqual(item.status, "missing");
+        if (platform === "darwin" && item.executable !== "missing-cli") {
+          assert.include(
+            item.installHint,
+            `\`/usr/local/bin/${item.executable}\` is built for another CPU architecture, so this arm64 machine cannot run it. Remove or replace it.`,
+          );
+        } else {
+          assert.notInclude(item.installHint, "CPU architecture");
+        }
+      }
+    }).pipe(
+      Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery(runProcess)))),
+      Effect.provideService(SpawnExecutableResolution, (command) => `/usr/local/bin/${command}`),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provideService(HostProcess.Architecture, "arm64"),
+    );
+  },
 );

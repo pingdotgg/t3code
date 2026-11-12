@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ScopedThreadRef,
   ThreadId,
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
@@ -10,6 +11,10 @@ import type {
   ProviderRequestKind,
   RuntimeRequestId,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
+import { parseThreadKey, threadKey } from "./entities.ts";
+import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
 import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
@@ -94,18 +99,15 @@ export function seedUserInputDraftAnswers<Draft extends { readonly customAnswer?
   >,
   drafts: Record<string, Draft>,
 ): Record<string, Draft | { customAnswer: string }> {
-  let seeded: Record<string, Draft | { customAnswer: string }> = drafts;
-  for (const question of questions) {
-    if (
-      question.initialAnswer === undefined ||
-      question.allowCustomAnswer === false ||
-      seeded[question.id] !== undefined
-    )
-      continue;
-    if (seeded === drafts) seeded = { ...drafts };
-    seeded[question.id] = { customAnswer: question.initialAnswer };
-  }
-  return seeded;
+  // Entries, not assignment, so an id such as `__proto__` becomes an own draft.
+  const seeds = questions.flatMap((question) =>
+    question.initialAnswer === undefined ||
+    question.allowCustomAnswer === false ||
+    Object.hasOwn(drafts, question.id)
+      ? []
+      : [[question.id, { customAnswer: question.initialAnswer }] as const],
+  );
+  return seeds.length === 0 ? drafts : { ...drafts, ...Object.fromEntries(seeds) };
 }
 
 /** Keys a user-input draft by thread so a thread's resolved requests can be pruned together. */
@@ -166,6 +168,8 @@ export interface ThreadRequestsResolved {
   readonly threadId: ThreadId;
   /** Every request the thread still waits on; drafts for any other request are stale. */
   readonly pendingRequestIds: ReadonlyArray<RuntimeRequestId>;
+  /** Requests that closed without an answer (cancelled or expired), so typed drafts were never sent. */
+  readonly unansweredRequestIds: ReadonlyArray<RuntimeRequestId>;
 }
 
 const threadRequestsResolvedListeners = new Set<(event: ThreadRequestsResolved) => void>();
@@ -196,8 +200,8 @@ function notifyThreadRequestsResolved(event: ThreadRequestsResolved): void {
 }
 
 /**
- * Tracks one thread's announced pending requests. Feed it the pending ids of
- * each authoritative projection; it notifies on the first one and whenever an
+ * Tracks one thread's announced pending requests. Feed it the runtime requests
+ * of each authoritative projection; it notifies on the first one and whenever an
  * announced request is no longer pending. New requests alone stay quiet.
  */
 export function makeThreadRequestsResolvedAnnouncer(
@@ -205,20 +209,28 @@ export function makeThreadRequestsResolvedAnnouncer(
   threadId: ThreadId,
 ) {
   let announced: ReadonlySet<RuntimeRequestId> | null = null;
-  return (pendingRequestIds: ReadonlyArray<RuntimeRequestId>) => {
+  return (
+    runtimeRequests: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["runtimeRequests"][number], "id" | "status">
+    >,
+  ) => {
+    const pendingRequestIds = runtimeRequests.flatMap((request) =>
+      request.status === "pending" ? [request.id] : [],
+    );
     const pending = new Set(pendingRequestIds);
     const resolvedSome = announced === null || [...announced].some((id) => !pending.has(id));
     announced = pending;
-    if (resolvedSome) notifyThreadRequestsResolved({ environmentId, threadId, pendingRequestIds });
+    if (!resolvedSome) return;
+    const unansweredRequestIds = runtimeRequests.flatMap((request) =>
+      request.status === "cancelled" || request.status === "expired" ? [request.id] : [],
+    );
+    notifyThreadRequestsResolved({
+      environmentId,
+      threadId,
+      pendingRequestIds,
+      unansweredRequestIds,
+    });
   };
-}
-
-export function pendingRuntimeRequestIds(
-  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
-): RuntimeRequestId[] {
-  return projection.runtimeRequests.flatMap((request) =>
-    request.status === "pending" ? [request.id] : [],
-  );
 }
 
 export function derivePendingThreadRequests(
@@ -288,54 +300,106 @@ export function createQuestionHistoryProjector<
   let previousRows: Rows | undefined;
   let previousRequests: Requests | undefined;
   let previousResult: Rows | undefined;
+  let byId = new Map<RuntimeRequestId, Requests[number]>();
   const cache = new WeakMap<Row, { request: Requests[number]; row: Row }>();
+  const projectRow = (row: Row): Row => {
+    const item = row.item;
+    if (item.type !== "user_input_request" || item.questionAnswer) return row;
+    const request = byId.get(item.requestId);
+    if (request?.status !== "resolved" || request.answers === undefined) return row;
+    const cached = cache.get(row);
+    const next: Row =
+      cached?.request === request
+        ? cached.row
+        : {
+            ...row,
+            item: {
+              ...item,
+              questionAnswer: {
+                requestId: request.id,
+                answers: request.answers,
+                attachmentsByQuestionId: {},
+                questionTextById: Object.fromEntries(
+                  item.questions.map((question) => [question.id, question.question]),
+                ),
+              },
+            },
+          };
+    cache.set(row, { request, row: next });
+    return next;
+  };
+  const projectRows = (rows: Rows): Rows => {
+    let result: Row[] | undefined;
+    for (const [index, row] of rows.entries()) {
+      const next = projectRow(row);
+      if (next !== row) result ??= rows.slice(0, index);
+      result?.push(next);
+    }
+    return result ?? rows;
+  };
   return (projection: {
     readonly visibleTurnItems: Rows;
     readonly runtimeRequests: Requests;
   }): Rows => {
     const { visibleTurnItems: rows, runtimeRequests: requests } = projection;
-    if (rows === previousRows && requests === previousRequests && previousResult)
-      return previousResult;
-    const byId = new Map(requests.map((request) => [request.id, request]));
-    let result: Row[] | undefined;
-    for (const [index, row] of rows.entries()) {
-      const item = row.item;
-      const request =
-        item.type === "user_input_request" && !item.questionAnswer
-          ? byId.get(item.requestId)
-          : undefined;
-      let next = row;
-      if (
-        item.type === "user_input_request" &&
-        request?.status === "resolved" &&
-        request.answers !== undefined
-      ) {
-        const cached = cache.get(row);
-        next =
-          cached?.request === request
-            ? cached.row
-            : {
-                ...row,
-                item: {
-                  ...item,
-                  questionAnswer: {
-                    requestId: request.id,
-                    answers: request.answers,
-                    attachmentsByQuestionId: {},
-                    questionTextById: Object.fromEntries(
-                      item.questions.map((question) => [question.id, question.question]),
-                    ),
-                  },
-                },
-              };
-        cache.set(row, { request, row: next });
-      }
-      if (next !== row) result ??= rows.slice(0, index);
-      result?.push(next);
-    }
+    const sameRequests = requests === previousRequests;
+    if (rows === previousRows && sameRequests && previousResult) return previousResult;
+    if (!sameRequests) byId = new Map(requests.map((request) => [request.id, request]));
+    // Nothing was overlaid and requests are unchanged, so only an exactly replaced row can differ.
+    const replacedIndex =
+      sameRequests && previousRows !== undefined && previousResult === previousRows
+        ? getProjectionArrayReplacementIndex(previousRows, rows)
+        : undefined;
+    const unchanged =
+      replacedIndex !== undefined && projectRow(rows[replacedIndex]!) === rows[replacedIndex];
     previousRows = rows;
     previousRequests = requests;
-    previousResult = result ?? rows;
+    previousResult = unchanged ? rows : projectRows(rows);
     return previousResult;
   };
+}
+
+export interface ChildThreadApproval {
+  readonly thread: ScopedThreadRef;
+  readonly title: string;
+  readonly approval: ThreadPendingApproval;
+}
+
+export function createChildThreadApprovalsAtom(input: {
+  readonly childThreadInputsAtom: (
+    ref: ScopedThreadRef,
+  ) => Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+  readonly pendingRequestsAtom: (ref: ScopedThreadRef) => Atom.Atom<PendingThreadRequests | null>;
+}) {
+  const family = Atom.family((key: string) => {
+    let previous: ReadonlyArray<ChildThreadApproval> = [];
+    return Atom.make((get) => {
+      const next = get(input.childThreadInputsAtom(parseThreadKey(key))).flatMap((child) => {
+        if (!child.hasPendingApprovals) return [];
+        const thread = { environmentId: child.environmentId, threadId: child.id };
+        // Only children asking for approval need a detail subscription.
+        return (get(input.pendingRequestsAtom(thread))?.approvals ?? []).map((approval) => ({
+          thread,
+          title: child.title,
+          approval,
+        }));
+      });
+      if (
+        next.length === previous.length &&
+        next.every((entry, index) => {
+          const old = previous[index]!;
+          return (
+            old.approval === entry.approval &&
+            old.title === entry.title &&
+            threadKey(old.thread) === threadKey(entry.thread)
+          );
+        })
+      )
+        return previous;
+      previous = next;
+      return next;
+    });
+  });
+  const empty = Atom.make<ReadonlyArray<ChildThreadApproval>>([]);
+  return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
 }

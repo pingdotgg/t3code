@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  PullRequestActor,
   PullRequestDiffSide,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -7,28 +8,39 @@ import type {
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
-import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
-import { Circle, CircleCheck } from "lucide";
-import { useRef, useState } from "react";
+import {
+  HammerIcon,
+  MessageSquareIcon,
+  MessageSquarePlusIcon,
+  Trash2Icon,
+  CircleCheckIcon,
+  CircleIcon,
+} from "lucide-react";
+import { type ReactNode, useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { RelativeTime } from "~/components/RelativeTime";
 import { cn } from "~/lib/utils";
+import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestEditButton } from "./PullRequestEditButton";
-import { Textarea } from "../ui/textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
   mergePullRequestThreadComments,
+  visibleBody,
 } from "./pullRequestDetail.logic";
-import { PullRequestActorLabel } from "./pullRequestPresentation";
+import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -36,6 +48,7 @@ const CARD_CLASS =
 function submitKeys(input: {
   readonly value: string;
   readonly pending: boolean;
+  readonly allowEmpty?: boolean;
   readonly onSubmit: () => void;
   readonly onCancel?: (() => void) | undefined;
 }) {
@@ -44,7 +57,7 @@ function submitKeys(input: {
       event.preventDefault();
       input.onCancel();
     }
-    if (isCommentSubmitShortcut(event, input.value, input.pending)) {
+    if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {
       event.preventDefault();
       input.onSubmit();
     }
@@ -103,6 +116,66 @@ export function PendingReviewCommentCard({
   );
 }
 
+/** The conversations on one diff line. Resolved ones hide behind their authors' avatars. */
+export function InlineReviewThreads({
+  threads,
+  renderThread,
+}: {
+  threads: ReadonlyArray<PullRequestReviewThread>;
+  renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
+}) {
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
+  // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
+  const open = threads.filter((thread) => !thread.isResolved);
+  if (open.some((thread) => !shown.has(thread.id))) {
+    setShown(new Set([...shown, ...open.map((thread) => thread.id)]));
+  }
+  const resolved = threads.filter((thread) => thread.isResolved);
+  const expanded = resolved.every((thread) => shown.has(thread.id));
+  const authors = new Map<string, PullRequestActor | null>();
+  for (const comment of resolved.flatMap((thread) => thread.comments)) {
+    authors.set(comment.author?.login ?? "ghost", comment.author);
+  }
+  if (authors.size === 0) authors.set("ghost", null);
+  const label =
+    resolved.length === 1 ? "Resolved conversation" : `${resolved.length} resolved conversations`;
+  return (
+    <>
+      {resolved.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-resolved-threads
+                aria-label={label}
+                aria-expanded={expanded}
+                // Sits on the commented line, which is the row above this annotation.
+                className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                contentEditable={false}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() =>
+                  setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
+                }
+              />
+            }
+          >
+            {[...authors].slice(0, 3).map(([login, author]) => (
+              <PullRequestActorAvatar
+                key={login}
+                actor={author}
+                className="ring-1 ring-background"
+              />
+            ))}
+          </TooltipTrigger>
+          <TooltipPopup side="left">{label}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {threads.map((thread) => renderThread(thread, thread.isResolved && !shown.has(thread.id)))}
+    </>
+  );
+}
+
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -111,16 +184,19 @@ export function ReviewThreadCard({
   canReact,
   environmentId,
   reference,
+  completionScope,
   pending,
   fixPending,
   fixLabel = "Fix in a thread",
   onFix,
+  onAddToChat,
   onReply,
   onLoadMore,
   canEditComment,
   onEditComment,
   onToggleResolved,
   onReacted,
+  hidden,
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
@@ -129,23 +205,32 @@ export function ReviewThreadCard({
   canReact: boolean;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  completionScope: PullRequestCompletionScope | null;
   pending: boolean;
   fixPending?: boolean;
   fixLabel?: string;
   onFix?: () => void;
+  /**
+   * Absent where there is no composer beside the panel to add the conversation to. Handed the
+   * thread with every comment the reader has loaded, not only the first page.
+   */
+  onAddToChat?: (thread: PullRequestReviewThread) => void;
   onReply: (body: string) => Promise<boolean>;
   onLoadMore: (cursor: string) => Promise<PullRequestThreadCommentsResult | null>;
   canEditComment: (comment: PullRequestThreadComment) => boolean;
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
+  /** Set on a diff line. Hidden draws nothing but stays mounted, so an unsent reply survives. */
+  hidden?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(!thread.isResolved);
+  const [expanded, setExpanded] = useState(hidden !== undefined || !thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
   const [loadedPage, setLoadedPage] = useState<
     (PullRequestThreadCommentsResult & { readonly threadId: string }) | null
   >(null);
@@ -174,8 +259,8 @@ export function ReviewThreadCard({
     }
   };
 
-  const send = async () => {
-    const trimmed = reply.trim();
+  const send = async (text: string) => {
+    const trimmed = text.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
     const result = await settlePromise(() => onReply(trimmed));
@@ -212,17 +297,20 @@ export function ReviewThreadCard({
     }));
   };
 
+  if (hidden) return null;
+
   return (
     <div
-      className={CARD_CLASS}
+      className={cn(CARD_CLASS, !expanded && "py-1")}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <MorphIcon
-          className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
-          icon={thread.isResolved ? CircleCheck : Circle}
-        />
+        {thread.isResolved ? (
+          <CircleCheckIcon className="size-3.5 text-success-foreground" />
+        ) : (
+          <CircleIcon className="size-3.5" />
+        )}
         <button
           type="button"
           className="hover:text-foreground"
@@ -235,7 +323,7 @@ export function ReviewThreadCard({
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
           <Button
-            size="xs"
+            size="compact"
             variant="ghost"
             className="ml-auto"
             disabled={pending || fixPending}
@@ -245,11 +333,22 @@ export function ReviewThreadCard({
             {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
-        {canResolve ? (
+        {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
           <Button
-            size="xs"
+            size="compact"
             variant="ghost"
             className={onFix ? undefined : "ml-auto"}
+            onClick={() => onAddToChat({ ...thread, comments })}
+          >
+            <MessageSquarePlusIcon className="size-3" />
+            Add to chat
+          </Button>
+        ) : null}
+        {canResolve ? (
+          <Button
+            size="compact"
+            variant="ghost"
+            className={onFix || onAddToChat ? undefined : "ml-auto"}
             disabled={pending}
             onClick={onToggleResolved}
           >
@@ -284,6 +383,7 @@ export function ReviewThreadCard({
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}
+                    completionScope={completionScope}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -323,36 +423,56 @@ export function ReviewThreadCard({
 
           {canReply ? (
             replying ? (
-              <div className="mt-2">
-                <Textarea
-                  autoFocus
-                  size="sm"
-                  value={reply}
-                  placeholder="Reply"
-                  aria-label="Reply to this conversation"
-                  onChange={(event) => setReply(event.target.value)}
-                  onKeyDown={(event) =>
-                    submitKeys({
-                      value: reply,
-                      pending,
-                      onSubmit: () => void send(),
-                      onCancel: () => setReplying(false),
-                    })(event)
-                  }
-                />
-                <div className="mt-2 flex justify-end gap-2">
-                  <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="xs"
-                    disabled={pending || reply.trim().length === 0}
-                    onClick={() => void send()}
-                  >
-                    Reply
-                  </Button>
-                </div>
-              </div>
+              <SpeechTextField
+                environmentId={environmentId}
+                projectId={reference.projectId}
+                ownerKey={JSON.stringify(["pr-reply", environmentId, reference, thread.id])}
+                text={reply}
+                textareaRef={replyRef}
+                onTextChange={setReply}
+                disabled={pending}
+              >
+                {(speech) => (
+                  <div className="mt-2">
+                    <PullRequestMarkdownTextarea
+                      ref={replyRef}
+                      readOnly={speech.freezesEditor}
+                      autoFocus
+                      size="sm"
+                      completionScope={completionScope}
+                      value={reply}
+                      placeholder="Reply"
+                      aria-label="Reply to this conversation"
+                      onValueChange={setReply}
+                      onKeyDown={submitKeys({
+                        value: reply,
+                        pending,
+                        allowEmpty: speech.blocksSubmission,
+                        onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
+                        onCancel: () =>
+                          speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
+                      })}
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                      <TextFieldSpeechControls speech={speech} disabled={pending} />
+                      <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        size="xs"
+                        disabled={
+                          speech.preparing ||
+                          pending ||
+                          (!speech.blocksSubmission && reply.trim().length === 0)
+                        }
+                        onClick={() => speech.submitAfterDictation((text) => void send(text))}
+                      >
+                        Reply
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </SpeechTextField>
             ) : (
               <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 Reply

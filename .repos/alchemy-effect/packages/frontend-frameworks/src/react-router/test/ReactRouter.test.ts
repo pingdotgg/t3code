@@ -32,9 +32,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("readReactRouterOutput", () => {
@@ -61,10 +59,7 @@ describe("readReactRouterOutput", () => {
           path.join(serverDir, DEFAULT_SERVER_BUILD_FILE),
           "export const entry = {};",
         );
-        yield* fs.writeFileString(
-          path.join(clientDir, "robots.txt"),
-          "User-agent: *\n",
-        );
+        yield* fs.writeFileString(path.join(clientDir, "robots.txt"), "User-agent: *\n");
         return yield* readReactRouterOutput({ dir, serverDir, clientDir });
       }),
     );
@@ -88,14 +83,8 @@ describe("readReactRouterOutput", () => {
         });
         const serverDir = path.join(dir, "server");
         yield* fs.makeDirectory(serverDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(serverDir, "app.js"),
-          "export const entry = {};",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "index.js"),
-          "export const other = {};",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "app.js"), "export const entry = {};");
+        yield* fs.writeFileString(path.join(serverDir, "index.js"), "export const other = {};");
         return yield* readReactRouterOutput({
           dir,
           serverDir,
@@ -123,10 +112,7 @@ describe("readReactRouterOutput", () => {
           path.join(serverDir, "assets", "chunk-abc.js"),
           "export const a = 1;",
         );
-        yield* fs.writeFileString(
-          path.join(serverDir, "server.js"),
-          "export const entry = {};",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "server.js"), "export const entry = {};");
         return yield* readReactRouterOutput({
           dir,
           serverDir,
@@ -147,14 +133,8 @@ describe("readReactRouterOutput", () => {
         });
         const serverDir = path.join(dir, "server");
         yield* fs.makeDirectory(serverDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(serverDir, "rsc.js"),
-          "export const a = 1;",
-        );
-        yield* fs.writeFileString(
-          path.join(serverDir, "ssr.js"),
-          "export const b = 1;",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "rsc.js"), "export const a = 1;");
+        yield* fs.writeFileString(path.join(serverDir, "ssr.js"), "export const b = 1;");
         return yield* readReactRouterOutput({
           dir,
           serverDir,
@@ -190,12 +170,9 @@ describe("readReactRouterOutput", () => {
 
 describe("selectServerEntryName", () => {
   it("prefers the expected name over a lone sibling", () => {
-    expect(
-      selectServerEntryName(
-        ["server/index.js", "server/other.js"],
-        "server/index.js",
-      ),
-    ).toBe("server/index.js");
+    expect(selectServerEntryName(["server/index.js", "server/other.js"], "server/index.js")).toBe(
+      "server/index.js",
+    );
   });
 
   it("ignores nested chunks when counting top-level modules", () => {
@@ -219,12 +196,8 @@ describe("serverEntrySource", () => {
     const source = serverEntrySource();
     // React Router's server build is a manifest with no default export;
     // `createRequestHandler` is what makes it callable.
-    expect(source).toContain(
-      `import * as build from "${REACT_ROUTER_SERVER_BUILD_ID}"`,
-    );
-    expect(source).toContain(
-      'import { createRequestHandler } from "react-router"',
-    );
+    expect(source).toContain(`import * as build from "${REACT_ROUTER_SERVER_BUILD_ID}"`);
+    expect(source).toContain('import { createRequestHandler } from "react-router"');
     expect(source).toContain('createRequestHandler(build, "production")');
     expect(source).toContain("export default {");
   });
@@ -288,9 +261,7 @@ describe("generateLambdaEntry", () => {
       serverEntryFileName: SERVER_ENTRY_FILE_NAME,
     });
     expect(source).toContain(`import * as serverEntry from "./index.js"`);
-    expect(source).toContain(
-      `import { toLambdaHandler } from "./${LAMBDA_ADAPTER_FILE_NAME}"`,
-    );
+    expect(source).toContain(`import { toLambdaHandler } from "./${LAMBDA_ADAPTER_FILE_NAME}"`);
     expect(source).toContain("export const handler = toLambdaHandler(");
     // A project entry may default-export the bare fetch function.
     expect(source).toContain('typeof entry === "function"');
@@ -367,9 +338,7 @@ describe("finish", () => {
     expect(names).toContain(`server/${LAMBDA_ADAPTER_FILE_NAME}`);
     // `lambda.mjs`, not `index.mjs`: the server build already owns index.js.
     expect(names).toContain(`server/${SERVER_ENTRY_FILE_NAME}`);
-    const manifest = output.serverModules?.find(
-      (module) => module.name === "server/package.json",
-    );
+    const manifest = output.serverModules?.find((module) => module.name === "server/package.json");
     expect(String(manifest?.content)).toContain('"type":"module"');
   });
 
@@ -395,9 +364,7 @@ describe("finish", () => {
 
 describe("make", () => {
   it("defaults to this package's AWS deploy target", () => {
-    expect(DEFAULT_TARGET_SPECIFIER).toBe(
-      "@alchemy.run/frontend-frameworks/react-router/aws",
-    );
+    expect(DEFAULT_TARGET_SPECIFIER).toBe("@alchemy.run/frontend-frameworks/react-router/aws");
     expect(DEFAULT_BUILD_DIRECTORY).toBe("build");
   });
 
@@ -410,9 +377,7 @@ describe("make", () => {
           root: "/tmp/does-not-matter",
           target: finishOnly(makeAwsTarget()),
         });
-        return yield* Effect.result(
-          framework.build({ root: "/tmp/does-not-matter" }),
-        );
+        return yield* Effect.result(framework.build({ root: "/tmp/does-not-matter" }));
       }),
     );
     expect(result._tag).toBe("Failure");
@@ -431,10 +396,9 @@ describe("make", () => {
 
 describe("fromHarnessOptions", () => {
   it("forwards the harness's buildDirectory override", () => {
-    expect(
-      fromHarnessOptions({ reactRouter: { buildDirectory: "dist" } })
-        .buildDirectory,
-    ).toBe("dist");
+    expect(fromHarnessOptions({ reactRouter: { buildDirectory: "dist" } }).buildDirectory).toBe(
+      "dist",
+    );
     expect(fromHarnessOptions({}).buildDirectory).toBeUndefined();
   });
 });
