@@ -630,6 +630,9 @@ export interface ClaudeAgentSdkQuerySession {
   readonly backgroundTasks: (
     toolUseId: string,
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
+  readonly reconnectMcpServer: (
+    serverName: string,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly mcpServerStatus: Effect.Effect<
     ReadonlyArray<ClaudeMcpServerStatus>,
     ClaudeAgentSdkQueryRunnerError
@@ -1055,6 +1058,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.background_tasks";
         readonly toolUseId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.reconnect_mcp_server";
+        readonly serverName: string;
       };
     }
   | {
@@ -1639,6 +1650,20 @@ export const layerQueryRunner: Layer.Layer<
                     direction: "outgoing",
                     stage: "decoded",
                     payload: { type: "query.background_tasks", toolUseId },
+                  }),
+                ),
+              ),
+            // Logged before the call: most attempts are expected to fail and should still be visible.
+            reconnectMcpServer: (serverName) =>
+              logProtocolEvent({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: { type: "query.reconnect_mcp_server", serverName },
+              }).pipe(
+                Effect.andThen(
+                  Effect.tryPromise({
+                    try: () => queryRuntime.reconnectMcpServer(serverName),
+                    catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
                   }),
                 ),
               ),
@@ -5219,6 +5244,9 @@ export interface ClaudeAdapterV2Options {
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
+// Each new Claude process dials every unauthorized claude.ai connector, so retry one at most this often.
+const CLAUDE_AI_CONNECTOR_RECONNECT_COOLDOWN_MS = 60 * 1000;
+
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
@@ -5254,6 +5282,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
+  // Claude Code skips a claude.ai connector for up to 4 hours after one failed sign-in, even in a new
+  // process after the user reconnects it on claude.ai. Only an explicit reconnect dials it again.
+  const claudeAiReconnectAttemptedAt = new Map<string, number>();
+  const reconnectClaudeAiConnectorsNeedingAuth = Effect.fn(
+    "ClaudeAdapterV2.reconnectClaudeAiConnectorsNeedingAuth",
+  )(function* (
+    query: ClaudeAgentSdkQuerySession,
+    servers: ReadonlyArray<{
+      readonly name: string;
+      readonly status: string;
+      readonly source?: string;
+    }>,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const due = servers.filter(
+      (server) =>
+        server.source === "claudeai" &&
+        server.status === "needs-auth" &&
+        now - (claudeAiReconnectAttemptedAt.get(server.name) ?? -Infinity) >=
+          CLAUDE_AI_CONNECTOR_RECONNECT_COOLDOWN_MS,
+    );
+    for (const server of due) claudeAiReconnectAttemptedAt.set(server.name, now);
+    yield* Effect.forEach(
+      due,
+      (server) =>
+        query.reconnectMcpServer(server.name).pipe(
+          Effect.ignore,
+          // Closing the process cut this dial short, so it must not hold the cooldown.
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              if (claudeAiReconnectAttemptedAt.get(server.name) === now) {
+                claudeAiReconnectAttemptedAt.delete(server.name);
+              }
+            }),
+          ),
+        ),
+      {
+        concurrency: "unbounded",
+        discard: true,
+      },
+    );
+  });
   const readBypassSettings = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeBypassSettings),
@@ -12093,7 +12163,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             options: queryOptions,
           });
           // The SDK spawns the CLI per turn, so only the open waits for a provider update.
-          const querySession = yield* (
+          const openedQuery = yield* (
             adapterOptions.installationGate === undefined
               ? openQueryRuntime
               : adapterOptions.installationGate.execute(adapterOptions.instanceId, openQueryRuntime)
@@ -12109,6 +12179,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : Effect.void,
             ),
           );
+          let connectorReconnects: Fiber.Fiber<void> | undefined;
+          // Connector reconnects cannot finish once their process is gone.
+          const stopConnectorReconnects = Effect.suspend(() =>
+            connectorReconnects === undefined ? Effect.void : Fiber.interrupt(connectorReconnects),
+          );
+          const querySession: ClaudeAgentSdkQuerySession = {
+            ...openedQuery,
+            close: stopConnectorReconnects.pipe(Effect.andThen(openedQuery.close)),
+          };
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
@@ -12168,16 +12247,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {
-                  if (
-                    message.type === "system" &&
-                    message.subtype === "init" &&
-                    !context.receivedInit
-                  ) {
+                  const processInit =
+                    message.type === "system" && message.subtype === "init" && !context.receivedInit
+                      ? message
+                      : undefined;
+                  if (processInit !== undefined) {
                     context.openedPermissionMode =
-                      message.permissionMode ?? context.openedPermissionMode;
+                      processInit.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
-                    context.capabilities = new Set(message.capabilities ?? []);
-                    context.claudeCodeVersion = message.claude_code_version;
+                    context.capabilities = new Set(processInit.capabilities ?? []);
+                    context.claudeCodeVersion = processInit.claude_code_version;
                   }
                   if (
                     message.type === "system" &&
@@ -12211,6 +12290,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
+                  if (processInit !== undefined) {
+                    return reconnectClaudeAiConnectorsNeedingAuth(
+                      querySession,
+                      processInit.mcp_servers ?? [],
+                    ).pipe(
+                      Effect.forkIn(sessionScope),
+                      Effect.tap((fiber) =>
+                        Effect.sync(() => {
+                          connectorReconnects = fiber;
+                        }),
+                      ),
+                      Effect.andThen(handleSdkMessage({ query: querySession, message })),
+                    );
+                  }
                   return handleSdkMessage({ query: querySession, message });
                 }),
               ),
@@ -12218,6 +12311,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                yield* stopConnectorReconnects;
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&

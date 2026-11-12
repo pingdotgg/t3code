@@ -846,6 +846,8 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
           }).pipe(Effect.as(true)),
+        // Recorded transcripts never include these background reconnects.
+        reconnectMcpServer: () => Effect.void,
         // Recorded CLIs predate MCP Apps capabilities, so replays never reach these.
         mcpServerStatus: Effect.die("unexpected MCP server status in replay"),
         readMcpResource: () => Effect.die("unexpected MCP resource read in replay"),
