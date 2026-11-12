@@ -6206,6 +6206,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       keepRunIds,
     });
     // Replacing a run's input settles the wake it carried, which needs that wake's parent run.
+    // Untraced: the enclosing dispatchMessage span already covers both reloads.
     const keepWakeParentOf = Effect.fnUntraced(function* (runId: RunId | undefined) {
       const parentRunId = projection.messages.find(
         (message) => message.id === projection.runs.find((run) => run.id === runId)?.userMessageId,
