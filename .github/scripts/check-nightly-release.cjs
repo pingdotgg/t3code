@@ -131,7 +131,11 @@ async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch
   const base = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
   // Only a missing or malformed pointer is stale. Rewriting deletes the old file first, so a
   // GitHub outage must not look like one.
-  const pointer = await fetch(`${base}/releases/download/update-feed/nightly.json`);
+  // Node waits five minutes for a stalled response, which is this job's whole time limit.
+  const signal = () => AbortSignal.timeout(30_000);
+  const pointer = await fetch(`${base}/releases/download/update-feed/nightly.json`, {
+    signal: signal(),
+  });
   if (!pointer.ok && pointer.status !== 404) {
     throw new Error(`The update-feed pointer answered HTTP ${pointer.status}.`);
   }
@@ -148,9 +152,9 @@ async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch
   // can answer HTTP 200, so only an Atom document counts as read.
   let feedTags;
   try {
-    const feed = await fetch(`${base}/releases.atom`);
+    const feed = await fetch(`${base}/releases.atom`, { signal: signal() });
     const body = feed.ok ? await feed.text() : "";
-    if (body.includes("<feed")) {
+    if (/<feed[\s>]/.test(body)) {
       feedTags = Array.from(body.matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
         decodeURIComponent(match[1]),
       );

@@ -281,9 +281,11 @@ for (const [name, { feed, pointer }, expected] of [
     { pointerTag: undefined, feedNightly: undefined, unreadable: true },
   ],
   [
-    "an HTML page that links the nightly as an unreadable feed",
+    "an HTML page with release links as an unreadable feed",
     {
-      feed: new Response(`<html><a href="/example/app/releases/tag/${NEWEST}">x</a></html>`),
+      feed: new Response(
+        `<html><feedback-form></feedback-form><a href="/example/app/releases/tag/${OLDER}">x</a></html>`,
+      ),
       pointer: Response.json({ tag_name: NEWEST }),
     },
     { pointerTag: NEWEST, feedNightly: undefined, unreadable: true },

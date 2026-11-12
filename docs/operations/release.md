@@ -19,7 +19,7 @@ the version.
   - push tag matching `v*.*.*` for a stable release of an explicit commit
   - scheduled nightly check every 30 minutes
   - manual `workflow_dispatch` with `channel=nightly`
-  - manual `workflow_dispatch` with `channel=preview`, the maintainers' test train. It exercises the whole release flow (build, sign, notarize, smoke, publish) for a commit that end users must never receive, which is how an unmerged branch or a risky change gets a real release run before it lands. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and leaves its GitHub prerelease as a draft. It publishes nothing to npm. It stays a draft because a draft has no git tag, and published preview tags hide nightlies from the updater (see [Update feed](#update-feed)). Do not publish a preview draft by hand. Preview is not on the schedule, its desktop builds carry no update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so a stable or nightly install cannot be offered one. The only ways onto a new preview are by hand: the draft release, which maintainers can open, and the run's Actions artifacts. A draft's files are not public, so `T3CODE_CHANNEL=preview` and `t3 update --channel preview` see only previews published before this rule, and `npx t3@preview` fails while npm's `preview` dist-tag names a draft. Rebase a branch onto `main` before dispatching a preview from it. The run uses the branch's own `release.yml`, and an older copy publishes the preview with a tag. The release itself is named as a maintainer test build and its body is a warning rather than generated notes: a changelog of unmerged branch history is not a changelog, and nightly and stable notes are unaffected because each series resolves its previous tag within its own channel. The hosted web app, AUR, and Discord announcements are skipped. Keep it; it costs nothing when idle.
+  - manual `workflow_dispatch` with `channel=preview`, the maintainers' test train. It exercises the release flow up to a draft release (build, sign, notarize, smoke) for a commit that end users must never receive, which is how an unmerged branch or a risky change gets a real release run before it lands. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and leaves its GitHub prerelease as a draft. It publishes nothing to npm. It stays a draft because a draft has no git tag, and published preview tags hide nightlies from the updater (see [Update feed](#update-feed)). Do not publish a preview draft by hand. Preview is not on the schedule, its desktop builds carry no update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so a stable or nightly install cannot be offered one. The only ways onto a new preview are by hand: the draft release, which maintainers can open, and the run's Actions artifacts. A draft's files are not public, so `T3CODE_CHANNEL=preview` and `t3 update --channel preview` see only previews published before this rule, and a fresh `npx t3@preview` fails while npm's `preview` dist-tag names a draft. Rebase a branch onto `main` before dispatching a preview from it. The run uses the branch's own `release.yml`, and an older copy publishes the preview with a tag. The release itself is named as a maintainer test build and its body is a warning rather than generated notes: a changelog of unmerged branch history is not a changelog, and nightly and stable notes are unaffected because each series resolves its previous tag within its own channel. The hosted web app, AUR, and Discord announcements are skipped. Keep it; it costs nothing when idle.
 - A manual stable release builds the commit of the latest published nightly, not `main` HEAD.
   Nightly is the release candidate: verify the nightly, then promote it. Merges to `main` keep
   landing while you verify and never leak into the stable build.
@@ -469,8 +469,8 @@ available.
 
 A nightly install finds the newest nightly in up to three places.
 
-- `releases.atom` lists the 10 newest git tags in the repository, of any kind, and same-day
-  `preview` tags sort above `nightly` ones. Every install reads it first and takes its first
+- `releases.atom` lists the 10 newest git tags in the repository, of any kind, and a day's
+  `preview` tags can sort above its `nightly` ones. Every install reads it first and takes its first
   nightly entry. Nightlies before `0.1.10-nightly.20261112.4603`, and stable `0.1.9` and older
   switched to the nightly channel, read nothing else. Ten other tags in a row hide every nightly
   from them.
@@ -482,7 +482,7 @@ A nightly install finds the newest nightly in up to three places.
   offers nothing new.
 
 The release workflow's `Check the update feed` job runs on every scheduled tick, unless
-`PAUSE_NIGHTLY` is set, and after every nightly. It waits in the same queue as releases and
+`PAUSE_NIGHTLY` is set, and after every nightly. It waits in the same queue as nightlies and
 previews. It rewrites a missing or outdated pointer. Its last step fails when the first nightly
 in the feed is not the newest one. A feed it could not read is only a warning: that says nothing
 about the tags, and the next tick reads it again.

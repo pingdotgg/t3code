@@ -166,8 +166,8 @@ jobs:
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-preview}" == "preview" ]]; then
-            # Manual-only test train: exercises the whole release flow for a
-            # commit end users must never receive. Never scheduled.
+            # Manual-only test train: exercises the release flow up to a draft
+            # release for a commit end users must never receive. Never scheduled.
             # Same versioning as nightly under its own prerelease identifier.
             # A preview release stays a draft (see "Publish prerelease"), its
             # desktop builds carry no update feed, no updater manifest is
@@ -1037,7 +1037,7 @@ jobs:
       # prerelease first. Desktop clients update connected servers from the CLI archives as soon as
       # they see the release, so a prerelease also goes public only once every asset is attached.
       # Previews stay drafts, because a draft has no git tag. releases.atom lists the 10 newest tags,
-      # same-day `preview` tags sort above `nightly` ones, and older updaters find nightlies only there.
+      # a day's `preview` tags can sort above its `nightly` ones, and older updaters find nightlies only there.
       - name: Publish prerelease
         if: needs.preflight.outputs.is_prerelease == 'true' && needs.preflight.outputs.release_channel != 'preview'
         env:
@@ -1090,9 +1090,15 @@ jobs:
             gh release create update-feed --prerelease --latest=false --title "Update feed" \
               --notes "The desktop updater reads this release to find the newest nightly. Do not delete it. See docs/operations/release.md."
           gh release upload update-feed nightly.json --clobber
-          # A draft's files are not public, so a release someone drafted would hide the pointer.
-          # It must never become "latest", which is the release stable installs update to.
-          gh release edit update-feed --draft=false --prerelease --latest=false
+
+      # Every run, because the pointer can be current while the release's flags are wrong. A draft's
+      # files are not public, and a release marked "latest" is the one stable installs update to.
+      - name: Keep the update feed release public and never latest
+        if: steps.feed.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit update-feed --draft=false --prerelease --latest=false
 
       # An unreadable feed says nothing about its tags and the next tick reads it again, so only a
       # feed that was read and names another nightly first fails the run.
@@ -1106,7 +1112,7 @@ jobs:
             echo "::warning::releases.atom could not be read, so this run did not check it."
             exit 0
           fi
-          echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
+          echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it, and neither can later builds that do not read the pointer when the feed names an older nightly. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
           exit 1
 
   # The `t3` npm package is a launcher that downloads this version's CLI
