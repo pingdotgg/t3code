@@ -2431,6 +2431,98 @@ it.effect("queues a restart sent into a provider turn that failed before its run
   ),
 );
 
+// regression: #22423 a steer accepted into a turn that then fails is left on the failed run
+it.effect("re-sends a steer whose provider turn fails before it is delivered", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "steer-after-failed-unsettled",
+        false,
+        true,
+        Effect.void,
+        true,
+        undefined,
+        (turn) =>
+          Effect.fail(
+            new ProviderAdapter.ProviderAdapterSteerRunError({
+              driver,
+              providerThreadId: turn.providerThread.id,
+              providerTurnId: turn.providerTurnId,
+            }),
+          ),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        const messageId = MessageId.make("message:steer-into-failed");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("steer-into-failed"),
+          threadId,
+          messageId,
+          text: "follow up",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: first.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const turnFailed = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider-turn.updated" &&
+              event.payload.id === turn.id &&
+              event.payload.status === "failed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const failedAt = yield* DateTime.now;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "failed", completedAt: failedAt },
+        });
+        yield* Fiber.join(turnFailed);
+
+        yield* worker.drain().pipe(Effect.ignore);
+
+        const runEnded = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === first.runId &&
+              event.payload.status === "failed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          status: "failed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(runEnded);
+        yield* worker.drain().pipe(Effect.ignore);
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.isDefined(
+          projection.runs.find((run) => run.userMessageId === messageId && run.id !== first.runId),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("queues a plain send behind the stopped queue and releases its hold", () =>
   Effect.scoped(
     Effect.gen(function* () {
