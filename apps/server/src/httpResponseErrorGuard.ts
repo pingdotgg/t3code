@@ -29,11 +29,18 @@ const HTTP_KEEP_ALIVE_TIMEOUT_MS = 95_000;
 export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
   server.keepAliveTimeout = HTTP_KEEP_ALIVE_TIMEOUT_MS;
   // `close` drops only the connections idle at that moment. One that finishes
-  // its responses later would hold shutdown for the whole keep-alive time. A
-  // connection with another pipelined response to send is not idle yet.
-  server.on("request", (_request, response) => {
-    response.once("finish", () => {
-      if (!server.listening) server.closeIdleConnections();
+  // its responses later would hold shutdown for the whole keep-alive time.
+  // `closeIdleConnections` cannot do this: it destroys a socket whose next
+  // pipelined response is ended but still has output to send.
+  const responsesInFlight = new WeakMap<object, number>();
+  server.on("request", (request, response) => {
+    const socket = request.socket;
+    responsesInFlight.set(socket, (responsesInFlight.get(socket) ?? 0) + 1);
+    response.once("close", () => {
+      const left = (responsesInFlight.get(socket) ?? 1) - 1;
+      responsesInFlight.set(socket, left);
+      // Pipelined requests share the socket, so the last response ends it.
+      if (left === 0 && !server.listening) socket.end();
     });
   });
   return server;

@@ -160,15 +160,20 @@ describe("keepIdleConnections", () => {
   it("keeps a connection until every response on it has finished", async () => {
     const server = HttpResponseErrorGuard.keepIdleConnections(NodeHttp.createServer());
     const closed = Promise.withResolvers<void>();
-    let first: NodeHttp.ServerResponse | undefined;
+    // Larger than a socket buffer, so it still has output to send after `end`.
+    const thirdBody = "x".repeat(8_000_000);
+    const held: NodeHttp.ServerResponse[] = [];
     server.on("request", (request, response) => {
-      if (request.url === "/first") {
-        first = response;
+      if (request.url !== "/third") {
+        held.push(response);
         return;
       }
-      // Both pipelined requests are in flight when the server shuts down.
+      const [first, second] = held;
+      // All three pipelined requests are in flight when the server shuts down. The third
+      // response is ended before the first two, and the second ends after the first.
+      response.end(thirdBody);
       server.close(() => closed.resolve());
-      first?.once("finish", () => setImmediate(() => response.end("second-body")));
+      first?.once("finish", () => setImmediate(() => second?.end("second-body")));
       first?.end("first-body");
     });
     const port = await listen(server);
@@ -177,7 +182,7 @@ describe("keepIdleConnections", () => {
       let data = "";
       const client = NodeNet.connect(port, "127.0.0.1", () => {
         client.write(
-          ["/first", "/second"]
+          ["/first", "/second", "/third"]
             .map((path) => `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`)
             .join(""),
         );
@@ -190,8 +195,9 @@ describe("keepIdleConnections", () => {
       client.on("error", reject);
     });
 
-    expect(received).toContain("first-body");
-    expect(received).toContain("second-body");
+    expect(received.slice(0, 1_000)).toContain("first-body");
+    expect(received.slice(0, 1_000)).toContain("second-body");
+    expect(received.endsWith(thirdBody)).toBe(true);
     await closed.promise;
   });
 });
