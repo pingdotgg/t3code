@@ -434,6 +434,19 @@ describe("derivePendingBackgroundWork kinds", () => {
       ]);
     });
 
+    it("keeps a thread waiting on a watched PR that merged until the watch ends", () => {
+      const tasks = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [link(4, { state: "merged" })],
+      });
+      expect(tasks.map((task) => task.taskId)).toEqual([
+        "pull-request-watch:github.com/acme/app#4",
+      ]);
+      expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+    });
+
     it("lists no watch while a run is active", () => {
       expect(
         derivePendingBackgroundWork({
