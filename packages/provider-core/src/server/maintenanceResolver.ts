@@ -660,9 +660,18 @@ const followVitePlusSystemFirstShim = Effect.fn("followVitePlusSystemFirstShim")
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const shimDir = path.dirname(context.resolvedCommandPath);
-  const config = yield* fileSystem
-    .readFileString(path.join(path.dirname(shimDir), "config.json"))
-    .pipe(Effect.orElseSucceed(() => ""));
+  const dataDir = path.dirname(shimDir);
+  // The XDG layout keeps shims in `~/.local/share/vite-plus` and config in `$XDG_CONFIG_HOME/vite-plus`.
+  const home = /^(.*)\/\.local\/share\/vite-plus$/.exec(dataDir.replaceAll("\\", "/"))?.[1];
+  const configPaths = [
+    ...(home !== undefined
+      ? [path.join(context.env.XDG_CONFIG_HOME || path.join(home, ".config"), "vite-plus")]
+      : []),
+    dataDir,
+  ].map((dir) => path.join(dir, "config.json"));
+  const config = yield* Effect.firstSuccessOf(
+    configPaths.map((configPath) => fileSystem.readFileString(configPath)),
+  ).pipe(Effect.orElseSucceed(() => ""));
   if (Option.getOrUndefined(decodeVitePlusConfig(config))?.shimMode !== "system_first") {
     return context;
   }

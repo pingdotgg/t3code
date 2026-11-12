@@ -1012,15 +1012,19 @@ it.layer(
   );
 
   // `vp env off` makes each shim run the next matching executable on PATH instead.
-  it.effect(
-    "does not update through vp when a system_first Vite+ shim delegates to a later install",
-    () =>
+  it.effect.each([
+    { layout: "VP_HOME", vpHome: ".vite-plus", configDir: ".vite-plus" },
+    { layout: "XDG", vpHome: ".local/share/vite-plus", configDir: ".config/vite-plus" },
+  ] as const)(
+    "does not update through vp when a system_first Vite+ shim ($layout layout) delegates to a later install",
+    (fixture) =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("vite-plus-system-first");
-        const vpHome = NodePath.join(tempDir, ".vite-plus");
-        NodeFS.mkdirSync(vpHome, { recursive: true });
+        const vpHome = NodePath.join(tempDir, fixture.vpHome);
+        const configDir = NodePath.join(tempDir, fixture.configDir);
+        NodeFS.mkdirSync(configDir, { recursive: true });
         NodeFS.writeFileSync(
-          NodePath.join(vpHome, "config.json"),
+          NodePath.join(configDir, "config.json"),
           JSON.stringify({ shimMode: "system_first" }),
         );
         const shim = NodePath.join(vpHome, "bin", "package-tool");
@@ -1038,7 +1042,7 @@ it.layer(
             resolvedCommandPath: shim,
             realCommandPath: NodePath.join(vpHome, "current", "bin", "vp"),
             env: {
-              VP_HOME: vpHome,
+              ...(fixture.layout === "VP_HOME" ? { VP_HOME: vpHome } : {}),
               PATH: [NodePath.dirname(shim), NodePath.dirname(otherInstall)].join(":"),
             },
             platform: "linux",
