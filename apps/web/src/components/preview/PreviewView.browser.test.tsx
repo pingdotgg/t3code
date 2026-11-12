@@ -73,6 +73,9 @@ vi.mock(import("./previewBridge"), async (original) => ({
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
     },
+    findInPage: vi.fn(async () => undefined),
+    stopFindInPage: vi.fn(async () => undefined),
+    onFindResult: vi.fn(() => () => undefined),
   } as never,
 }));
 vi.mock(import("~/browserHistoryStore"), async (original) => ({
@@ -254,6 +257,30 @@ describe("PreviewView", () => {
     },
   );
 
+  it("keeps the address in the bar when Enter commits an IME composition", async () => {
+    setup();
+    await using _screen = await render(view());
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("https://example.com/pinyin");
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(enter, "keyCode", { value: 229 });
+    act(() => {
+      input.element().dispatchEvent(enter);
+    });
+
+    await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("https://example.com/pinyin");
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
+  });
+
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
     const picked = annotation("annotation-revoked");
@@ -387,5 +414,22 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("does not reopen find when the user returns to a tab they left with find open", async () => {
+    setup();
+    const tabView = (tabId: string) => (
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={tabId} visible />
+    );
+    await using screen = await render(tabView("tab-1"));
+    const findBar = page.getByRole("search", { name: "Find in page" });
+
+    act(() => dispatchPreviewAction("find"));
+    await expect.element(findBar).toBeInTheDocument();
+
+    await screen.rerender(tabView("tab-2"));
+    await expect.element(findBar).not.toBeInTheDocument();
+    await screen.rerender(tabView("tab-1"));
+    await expect.element(findBar).not.toBeInTheDocument();
   });
 });
