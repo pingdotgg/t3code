@@ -8,7 +8,7 @@ import {
   ResolvedKeybindingsConfig,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
-  type ServerConfigIssue,
+  ServerConfigIssue,
 } from "@t3tools/contracts";
 import * as Array from "effect/Array";
 import * as Cache from "effect/Cache";
@@ -180,63 +180,12 @@ export interface KeybindingsConfigState {
   readonly issues: readonly ServerConfigIssue[];
 }
 
-function isSameConfigIssue(left: ServerConfigIssue, right: ServerConfigIssue): boolean {
-  if (left.kind !== right.kind || left.message !== right.message) {
-    return false;
-  }
-  if (left.kind === "keybindings.invalid-entry" && right.kind === "keybindings.invalid-entry") {
-    return left.index === right.index;
-  }
-  return true;
-}
-
-function isSameResolvedShortcut(left: KeybindingShortcut, right: KeybindingShortcut): boolean {
-  return (
-    left.key === right.key &&
-    left.metaKey === right.metaKey &&
-    left.ctrlKey === right.ctrlKey &&
-    left.shiftKey === right.shiftKey &&
-    left.altKey === right.altKey &&
-    left.modKey === right.modKey
-  );
-}
-
-function isSameWhenAst(
-  left: KeybindingWhenNode | null | undefined,
-  right: KeybindingWhenNode | null | undefined,
-): boolean {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  return encodeWhenAst(left) === encodeWhenAst(right);
-}
-
-function isSameResolvedRule(left: ResolvedKeybindingRule, right: ResolvedKeybindingRule): boolean {
-  return (
-    left.command === right.command &&
-    isSameResolvedShortcut(left.shortcut, right.shortcut) &&
-    isSameWhenAst(left.whenAst, right.whenAst)
-  );
-}
-
-function isSameKeybindingsConfigState(
-  left: KeybindingsConfigState,
-  right: KeybindingsConfigState,
-): boolean {
-  if (left === right) return true;
-  if (left.keybindings.length !== right.keybindings.length) return false;
-  if (left.issues.length !== right.issues.length) return false;
-  for (let i = 0; i < left.keybindings.length; i++) {
-    if (!isSameResolvedRule(left.keybindings[i]!, right.keybindings[i]!)) {
-      return false;
-    }
-  }
-  for (let i = 0; i < left.issues.length; i++) {
-    if (!isSameConfigIssue(left.issues[i]!, right.issues[i]!)) {
-      return false;
-    }
-  }
-  return true;
-}
+const isSameKeybindingsConfigState = Schema.toEquivalence(
+  Schema.Struct({
+    keybindings: ResolvedKeybindingsConfig,
+    issues: Schema.Array(ServerConfigIssue),
+  }),
+);
 
 export interface KeybindingsChangeEvent {
   readonly keybindings: ResolvedKeybindingsConfig;
