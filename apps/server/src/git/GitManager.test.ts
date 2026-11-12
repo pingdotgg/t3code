@@ -4278,6 +4278,48 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect.each(["worktree", "legacy gh-merge-base"] as const)(
+    "does not open a PR against a base branch the remote does not have (%s)",
+    (recordedBy) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["branch", "stack-parent", "main"]);
+
+        let cwd = repoDir;
+        if (recordedBy === "worktree") {
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          cwd = NodePath.join(yield* makeTempDir("t3code-git-worktrees-"), "feature");
+          yield* driver.createWorktree({
+            cwd: repoDir,
+            path: cwd,
+            refName: "stack-parent",
+            newRefName: "feature/child",
+            baseRefName: "stack-parent",
+          });
+        } else {
+          yield* runGit(repoDir, ["checkout", "-b", "feature/child", "stack-parent"]);
+          yield* runGit(repoDir, ["config", "branch.feature/child.gh-merge-base", "stack-parent"]);
+        }
+        NodeFS.writeFileSync(NodePath.join(cwd, "feature.txt"), "feature\n");
+        yield* runGit(cwd, ["add", "feature.txt"]);
+        yield* runGit(cwd, ["commit", "-m", "Feature commit"]);
+        yield* runGit(cwd, ["push", "-u", "origin", "feature/child"]);
+
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: { defaultBranch: "main", prListSequence: [[], []] },
+        });
+        yield* Effect.exit(runStackedAction(manager, { cwd, action: "create_pr" }));
+
+        expect(created(providerCalls).map((call) => call.baseRefName)).not.toContain(
+          "stack-parent",
+        );
+      }),
+  );
+
   it.effect.each(["main", "release/1.2"])(
     "generates PR content from branch changes when the remote base advances (%s)",
     (baseBranch) =>
