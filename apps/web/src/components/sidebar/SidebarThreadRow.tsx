@@ -2,6 +2,7 @@ import { useAtomMount } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { SessionUsageBadge } from "./SessionUsageBadge";
+import { SessionContextMeter } from "./SessionContextMeter";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
@@ -1158,11 +1159,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const usageBadge = (
-    <SessionUsageBadge
-      environmentId={thread.environmentId}
-      threadId={thread.id}
-      working={thread.runtime?.status === "running"}
-    />
+    <>
+      <SessionContextMeter thread={thread} driverKind={providerEntry?.driverKind ?? null} />
+      <SessionUsageBadge
+        environmentId={thread.environmentId}
+        threadId={thread.id}
+        working={thread.runtime?.status === "running"}
+      />
+    </>
   );
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.

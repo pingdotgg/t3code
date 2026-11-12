@@ -535,6 +535,7 @@ describe("UsageService", () => {
           updated_at: "2026-08-01T10:00:00Z",
           payload_json: encodeUnknownJsonString({
             nativeThreadRef: { driver: "claudeAgent", nativeId: "session-1", strength: "strong" },
+            contextUsage: { usedTokens: 42000, maxTokens: 200000 },
           }),
         })}`;
         yield* sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
@@ -561,6 +562,13 @@ describe("UsageService", () => {
           [{ threadId: "thread-usage", input: 10, output: 25 }],
         );
         assert.isAbove(summary.threadUsage?.[0]?.costUsd ?? 0, 0);
+        assert.deepEqual(summary.threadContexts, [
+          {
+            threadId: "thread-usage",
+            usage: { usedTokens: 42000, maxTokens: 200000 },
+            updatedAt: "2026-08-01T10:00:00Z",
+          },
+        ]);
       }).pipe(
         Effect.provide(
           layerService({

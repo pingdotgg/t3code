@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -151,6 +152,15 @@ export const UsageSummaryInput = Schema.Struct({
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
 export const UsageSummary = Schema.Struct({
+  threadContexts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: TrimmedNonEmptyString,
+        usage: ThreadTokenUsageSnapshot,
+        updatedAt: Schema.String,
+      }),
+    ),
+  ),
   threadUsage: Schema.optional(Schema.Array(UsageThreadTotals)),
   contractVersion: Schema.Number,
   readAt: Schema.String,

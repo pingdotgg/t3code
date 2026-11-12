@@ -1,0 +1,106 @@
+import { useState } from "react";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import {
+  AuthDiagnosticsReadScope,
+  AuthOrchestrationOperateScope,
+  type ProviderDriverKind,
+} from "@t3tools/contracts";
+import { useEnvironmentQuery } from "../../state/query";
+import { sessionUsageAtom } from "../../state/sessionUsage";
+import { threadEnvironment } from "../../state/threads";
+import { useEnvironmentScope } from "../../state/session";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+} from "@t3tools/client-runtime/state/context-window";
+import { useQuietThreadProjection } from "../../state/entities";
+import { useRetainedValue } from "../Sidebar.logic";
+import { newMessageId } from "../../lib/utils";
+import { ContextWindowMeter } from "../chat/ContextWindowMeter";
+import type { SidebarThreadSummary } from "../../types";
+
+export function SessionContextMeter({
+  thread,
+  driverKind,
+}: {
+  thread: SidebarThreadSummary;
+  driverKind: ProviderDriverKind | null;
+}) {
+  const canRead = useEnvironmentScope(thread.environmentId, AuthDiagnosticsReadScope);
+  const canOperate = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const query = useEnvironmentQuery(canRead ? sessionUsageAtom(thread.environmentId) : null);
+  const context = query.data?.threadContexts?.find((entry) => entry.threadId === thread.id);
+  const [pending, setPending] = useState(false);
+  const send = useOrchestrationCommand(threadEnvironment.startTurn, "Failed to compact context");
+  const busy =
+    thread.runtime?.activeRunId != null || thread.hasPendingApprovals || thread.hasPendingUserInput;
+  const supported = driverKind === "claudeAgent" || driverKind === "codex";
+  const compact = async () => {
+    if (!canOperate || busy || pending || !supported) return;
+    setPending(true);
+    await send({
+      environmentId: thread.environmentId,
+      input: {
+        threadId: thread.id,
+        message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        dispatchMode: "start",
+      },
+    }).finally(() => setPending(false));
+  };
+  const projection = useQuietThreadProjection(
+    thread.runtime?.activeRunId != null
+      ? { environmentId: thread.environmentId, threadId: thread.id }
+      : null,
+  )?.projection;
+  const providerThread = projection?.providerThreads.find(
+    (entry) => entry.id === projection.thread.activeProviderThreadId,
+  );
+  const contextKey = `${thread.environmentId}:${thread.id}:${thread.activeProviderThreadId}`;
+  const nativeUsage = projection
+    ? latestProviderTurnTokenUsage(
+        projection.providerTurns.filter((entry) => entry.providerThreadId === providerThread?.id),
+        projection,
+        providerThread,
+      )
+    : null;
+  const retainedNativeUsage = useRetainedValue(contextKey, nativeUsage);
+  const retainedProvider = useRetainedValue(contextKey, providerThread ?? null);
+  const retainedLive = deriveLatestContextWindowSnapshot([], retainedNativeUsage, retainedProvider);
+  const reportedAt = context ? DateTime.make(context.updatedAt) : Option.none();
+  const reported =
+    context && Option.isSome(reportedAt)
+      ? deriveLatestContextWindowSnapshot([], null, {
+          contextUsage: context.usage,
+          updatedAt: reportedAt.value,
+        })
+      : null;
+  const usage =
+    retainedLive &&
+    (!reported || Date.parse(retainedLive.updatedAt) > Date.parse(reported.updatedAt))
+      ? retainedLive
+      : reported;
+  return (
+    <ContextWindowMeter
+      compact
+      usage={usage}
+      onCompact={() => {
+        void compact();
+      }}
+      compactDisabled={!canOperate || busy || pending || !supported}
+      compactDisabledReason={
+        !canOperate
+          ? "Read-only connection"
+          : !supported
+            ? "Model cannot compact"
+            : pending
+              ? "Compacting…"
+              : "Finish current turn first"
+      }
+    />
+  );
+}
