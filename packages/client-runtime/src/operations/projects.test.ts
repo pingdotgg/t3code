@@ -117,13 +117,6 @@ describe("add project shared logic", () => {
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
-    expect(
-      getDefaultCloneUrl({
-        provider: SourceControlProviderKind.make("gitlab"),
-        url: "https://gitlab.com/group/subgroup/project",
-        sshUrl: "git@gitlab.com:group/subgroup/project.git",
-      }),
-    ).toBe("https://gitlab.com/group/subgroup/project");
   });
 
   it("derives the clone folder name from any pasted clone URL", () => {
