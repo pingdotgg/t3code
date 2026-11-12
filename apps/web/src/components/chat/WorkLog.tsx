@@ -105,7 +105,7 @@ export function WorkLogTarget({ children, mono = false }: { children: ReactNode;
 }
 
 const interactionClassName =
-  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
+  "cursor-pointer hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function rowClassName(interactive: boolean) {
   return cn(
