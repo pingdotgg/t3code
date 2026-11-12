@@ -1,8 +1,18 @@
 diff --git a/react-native.js b/react-native.js
-index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..df4ead7ae4f03cd0fbcd99a3df7d95e15b1852b1 100644
+index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..fc4038b3832f1e1b69f1cbeb6c43c225965700be 100644
 --- a/react-native.js
 +++ b/react-native.js
-@@ -1795,7 +1795,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+@@ -1305,7 +1305,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
+     return;
+   }
+   if (contentSize > 0 && queuedInitialLayout) {
+-    const isContentLess = contentSize < scrollLength;
++    // T3 patch: a top inset (e.g. a translucent header) shrinks the room content has to fit in.
++    const isContentLess = contentSize + getContentInsetTop(ctx) < scrollLength;
+     set$(ctx, "isAtEnd", isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON);
+     set$(ctx, "isNearEnd", isContentLess || distanceFromEnd <= onEndReachedThreshold * scrollLength);
+     set$(
+@@ -1795,7 +1796,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
    }
    return false;
  }
@@ -39,10 +49,20 @@ index 4af685dfb961eb0c8a4bf1ae9132c9304cf4fa4d..df4ead7ae4f03cd0fbcd99a3df7d95e1
    const state = ctx.state;
    const { idsInView, positions, props } = state;
 diff --git a/react-native.mjs b/react-native.mjs
-index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55530a7d00 100644
+index 9ebfddc183a9b202d35c990a387c9b628feeb185..2d20f9330b33a32cfe299adba267e29d1005cd9f 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
-@@ -1774,7 +1774,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+@@ -1284,7 +1284,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
+     return;
+   }
+   if (contentSize > 0 && queuedInitialLayout) {
+-    const isContentLess = contentSize < scrollLength;
++    // T3 patch: a top inset (e.g. a translucent header) shrinks the room content has to fit in.
++    const isContentLess = contentSize + getContentInsetTop(ctx) < scrollLength;
+     set$(ctx, "isAtEnd", isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON);
+     set$(ctx, "isNearEnd", isContentLess || distanceFromEnd <= onEndReachedThreshold * scrollLength);
+     set$(
+@@ -1774,7 +1775,35 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
    }
    return false;
  }
