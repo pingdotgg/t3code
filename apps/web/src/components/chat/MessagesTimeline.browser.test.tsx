@@ -487,6 +487,25 @@ describe("MessagesTimeline messages", () => {
     expect(maxNestedCommits).toBeLessThan(20);
   });
 
+  it("folds a user message only when the fold hides at least as much as it shows", async () => {
+    setup();
+    const lines = (count: number) =>
+      Array.from({ length: count }, (_, index) => `Line ${index}`).join("\n");
+    await using screen = await renderTimeline([
+      message(lines(12), {}, "medium"),
+      message(lines(60), {}, "long"),
+    ]);
+    await vi.waitFor(() => expect(screen.buttons("Show full message")).toHaveLength(1));
+    const [medium, long] = [
+      ...screen.container.querySelectorAll<HTMLElement>("[data-user-message-body]"),
+    ];
+    expect(medium!.dataset.userMessageCollapsible).toBe("false");
+    expect(medium!.textContent).toContain("Line 11");
+    const foldedHeight = long!.offsetHeight;
+    await click(screen.button("Show full message"));
+    expect(long!.offsetHeight).toBeGreaterThanOrEqual(foldedHeight * 2);
+  });
+
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
     const props = baseProps();
@@ -1264,7 +1283,22 @@ describe("MessagesTimeline agent messages", () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
-      [message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
+      [
+        message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }),
+        // Sent from a linked environment this client does not reach.
+        message(
+          "Linked review finished",
+          {
+            createdBy: "agent",
+            linkedSender: {
+              environmentId: EnvironmentId.make("environment-linked"),
+              threadId: SENDER_THREAD_ID,
+              title: "Release lead",
+            },
+          },
+          "message-linked",
+        ),
+      ],
       { onOpenThread },
     );
     const row = screen.button(/^Agent/);
@@ -1276,10 +1310,14 @@ describe("MessagesTimeline agent messages", () => {
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
     await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID);
 
     await click(screen.button(/^Agent/));
     expect(screen.text()).not.toContain("drops the index");
+
+    // The linked sender shows the title it sent, and its thread cannot be opened from here.
+    await click(screen.button(/^Release lead/));
+    expect(screen.buttons("Open thread")).toHaveLength(0);
   });
 
   it("leaves messages sent by T3 Code as full bubbles", async () => {
