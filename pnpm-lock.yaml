@@ -1182,6 +1182,9 @@ importers:
       fast-xml-parser:
         specifier: 5.7.3
         version: 5.7.3
+      gemoji:
+        specifier: 8.1.0
+        version: 8.1.0
       gt-react:
         specifier: 11.4.18
         version: 11.4.18(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -9682,6 +9685,9 @@ packages:
 
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
+
+  gemoji@8.1.0:
+    resolution: {integrity: sha512-HA4Gx59dw2+tn+UAa7XEV4ufUKI4fH1KgcbenVA9YKSj1QJTT0xh5Mwv5HMFNN3l2OtUe3ZIfuRwSyZS5pLIWw==}
 
   generaltranslation@9.5.9:
     resolution: {integrity: sha512-/R/MvEEiB+Us/fj/YfuSTfhvzUfmvFpiHxGx2f+C6Wv0O875T0yJI3RLGDopqZVbnKPimog9eXofJL7W0SOxJg==}
@@ -19882,6 +19888,8 @@ snapshots:
     optional: true
 
   function-bind@1.1.2: {}
+
+  gemoji@8.1.0: {}
 
   generaltranslation@9.5.9:
     dependencies:

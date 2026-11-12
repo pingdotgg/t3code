@@ -74,6 +74,7 @@ export const definition = defineSourceControl({
   authorProfileUrl: (login, repositoryUrl) =>
     new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),
   referenceAutolinks: gitLabReferenceAutolinks,
+  emojiShortcodes: true,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),

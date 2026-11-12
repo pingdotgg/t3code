@@ -298,6 +298,8 @@ export interface SourceControlDefinition {
   ) => ReadonlyArray<ReferenceAutolink>;
   /** True when the host renders a single newline in change request text as a line break. */
   readonly hardLineBreaks?: boolean;
+  /** True when the host renders GitHub's emoji shortcodes, such as `:tada:`, as emoji. */
+  readonly emojiShortcodes?: boolean;
   /** Where the host lists a change request's checks. Absent means the change request's own page. */
   readonly changeRequestChecksUrl?: (changeRequestUrl: string) => string;
   /**

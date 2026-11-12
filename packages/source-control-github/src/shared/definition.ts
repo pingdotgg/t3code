@@ -138,6 +138,7 @@ export const definition = defineSourceControl({
   // One search reads every repository on the host.
   changeRequestListScope: "host",
   hardLineBreaks: true,
+  emojiShortcodes: true,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),

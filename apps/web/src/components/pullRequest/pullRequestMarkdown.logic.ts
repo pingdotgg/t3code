@@ -10,6 +10,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
 } from "@t3tools/shared/markdownPipeline";
+import { gemoji } from "gemoji";
 import type { Nodes } from "hast";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -78,6 +79,25 @@ function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: stri
   return (tree: MarkdownNode) => visit(tree);
 }
 
+let emojiByShortcode: ReadonlyMap<string, string> | undefined;
+
+function remarkEmojiShortcodes() {
+  emojiByShortcode ??= new Map(
+    gemoji.flatMap((entry) => entry.names.map((name) => [name, entry.emoji])),
+  );
+  const emoji = emojiByShortcode;
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "text" && node.value !== undefined) {
+      node.value = node.value.replace(
+        /:([\w+-]+):/gu,
+        (shortcode, name: string) => emoji.get(name) ?? shortcode,
+      );
+    }
+    node.children?.forEach(visit);
+  };
+  return (tree: MarkdownNode) => visit(tree);
+}
+
 const NO_PLUGINS: PluggableList = [];
 const markdownPlugins = new Map<string, PluggableList>();
 
@@ -97,6 +117,9 @@ export function pullRequestMarkdownPlugins(
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
     plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
+    if (sourceControlClients.find(changeRequest.provider)?.emojiShortcodes) {
+      plugins.push(remarkEmojiShortcodes);
+    }
     if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
     markdownPlugins.set(key, plugins);
   }

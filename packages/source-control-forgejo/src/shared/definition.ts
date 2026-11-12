@@ -106,6 +106,7 @@ export const definition = defineSourceControl({
   changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls?)|fj\s+pr)\s+(?:merge|m|close)\b/u,
   authorProfileUrl: () => null,
   hardLineBreaks: true,
+  emojiShortcodes: true,
   // Forgejo refuses a change request review without a summary, even with inline comments.
   reviewSummaryRequired: (verdict) => verdict === "request-changes",
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
