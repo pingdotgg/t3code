@@ -481,6 +481,14 @@ describe("scoped settings writes", () => {
         unavailableReason:
           "This setting is environment-wide and cannot be overridden by a project.",
       });
+      expect(
+        planScopedSettingsPatch(
+          scope,
+          environments,
+          { fontSizeInterface: 15 },
+          { deviceOnly: true },
+        ),
+      ).toMatchObject({ clientPatch: { fontSizeInterface: 15 }, unavailableReason: null });
     }
   });
 
