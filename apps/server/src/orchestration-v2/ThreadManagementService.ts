@@ -27,6 +27,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2LinkedSender,
   type OrchestrationV2Run,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
@@ -173,6 +174,7 @@ export interface ThreadManagementWaitInput {
   readonly threadId: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
+  readonly caller?: { readonly threadId: ThreadId; readonly runId: RunId };
   /**
    * Also wait until the thread's own delegated work settles: an ended run
    * still owes the thread's answer while a child, a background task or a
@@ -185,6 +187,7 @@ export interface ThreadManagementWaitResult {
   readonly threadId: ThreadId;
   readonly run: OrchestrationV2Run | null;
   readonly timedOut: boolean;
+  readonly interruptedByMessageId?: MessageId;
   /** With `untilDelegatedWorkSettled`, once settled: the run with the thread's final answer. */
   readonly resultRun?: OrchestrationV2Run;
 }
@@ -577,6 +580,17 @@ function latestSteerableRun(
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
+export function steeringInputMessage(stored: OrchestrationV2StoredEvent, runId?: RunId) {
+  const event = stored.event;
+  return event.type === "turn-item.updated" &&
+    event.payload.type === "user_message" &&
+    (runId === undefined || event.payload.runId === runId) &&
+    (event.payload.inputIntent === "steer" ||
+      event.payload.inputIntent === "promoted_queued_to_steer")
+    ? event.payload.messageId
+    : undefined;
+}
+
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
@@ -951,6 +965,12 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
+    const callerAfterSequence =
+      input.caller === undefined
+        ? undefined
+        : yield* orchestrator
+            .getThreadEventSequence(input.caller.threadId)
+            .pipe(Effect.mapError(loadError));
     const target = yield* getProjectThreadRecords(input, ["runs"]);
     const selectedRun =
       input.runId === undefined
@@ -1066,7 +1086,36 @@ const make = Effect.gen(function* () {
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
     );
-    const waited = Option.flatten(yield* wait);
+    const caller = input.caller;
+    const incoming =
+      caller === undefined
+        ? Effect.never
+        : orchestrator
+            .streamStoredEventsFrom({
+              threadId: caller.threadId,
+              afterSequence: callerAfterSequence!,
+              eventType: "turn-item.updated",
+            })
+            .pipe(
+              Stream.mapError(loadError),
+              Stream.map((stored) => steeringInputMessage(stored, caller.runId)),
+              Stream.filter((id): id is MessageId => id !== undefined),
+              Stream.runHead,
+              Effect.flatMap((id) => (Option.isSome(id) ? Effect.succeed(id.value) : Effect.never)),
+            );
+    const waitedOutcome = yield* Effect.raceFirst(
+      wait.pipe(Effect.map((result) => ({ type: "settled" as const, result }))),
+      incoming.pipe(Effect.map((messageId) => ({ type: "input" as const, messageId }))),
+    );
+    if (waitedOutcome.type === "input") {
+      const current = yield* evaluate((yield* getProjectThreadRecords(input, ["runs"])).runs);
+      return {
+        ...settledResult(current),
+        timedOut: false,
+        interruptedByMessageId: waitedOutcome.messageId,
+      };
+    }
+    const waited = Option.flatten(waitedOutcome.result);
     if (Option.isSome(waited)) return settledResult(waited.value);
     // The run may have reached a terminal status while the timeout was
     // winning the race; the final projection read decides what actually

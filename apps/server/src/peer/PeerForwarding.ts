@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type MessageId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpThreadInterruptInput,
@@ -15,6 +16,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
@@ -188,36 +191,93 @@ const make = Effect.gen(function* () {
       input,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
-    "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
+  const waitForThread = Effect.fn("PeerForwarding.waitForThread")(function* (
+    scope: Scope,
+    environmentId: EnvironmentId,
+    input: OrchestratorMcpThreadWaitInput,
+    interruptOnSteering = false,
+  ) {
+    // Background followers must keep waiting through local input until the remote work settles.
+    const callerThreadId = interruptOnSteering ? scope.thread?.threadId : undefined;
+    const afterSequence =
+      callerThreadId === undefined
+        ? 0
+        : yield* threads.getThreadEventSequence(callerThreadId).pipe(
+            Effect.mapError(
+              () =>
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: "Unable to watch incoming messages while waiting.",
+                }),
+            ),
+          );
     let remaining = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
     );
     let runId = input.runId;
-    while (true) {
-      const chunk = Math.min(remaining, FORWARDED_WAIT_CHUNK_MS);
-      const result = yield* forward<OrchestratorMcpThreadWaitResult>(
+    const request = (timeoutMs: number) =>
+      forward<OrchestratorMcpThreadWaitResult>(
         scope,
         "t3_thread_wait",
         OrchestratorMcpThreadWaitInput,
         OrchestratorMcpThreadWaitResult,
         environmentId,
-        {
-          threadId: input.threadId,
-          ...(runId === undefined ? {} : { runId }),
-          timeoutMs: chunk,
-          ...(input.untilDelegatedWorkSettled === undefined
-            ? {}
-            : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
-        },
+        { ...input, runId, timeoutMs },
       );
-      remaining -= chunk;
-      if (!result.timedOut || remaining <= 0) return result;
-      // Later pieces wait for the run the first one picked, not a newer one.
-      runId = result.runId ?? undefined;
+    // Pin the default run and retain its last observed state before a blocking request can stall.
+    let current: OrchestratorMcpThreadWaitResult | undefined;
+    if (callerThreadId !== undefined) {
+      const snapshot = yield* request(1).pipe(Effect.timeoutOption("5 seconds"));
+      if (Option.isNone(snapshot)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Unable to read the linked thread before waiting.",
+        });
+      }
+      current = snapshot.value;
+      remaining -= 1;
+      if (!current.timedOut || remaining <= 0) return current;
+      runId = current.runId ?? undefined;
     }
+    const wait = Effect.gen(function* () {
+      while (true) {
+        const chunk = Math.min(remaining, FORWARDED_WAIT_CHUNK_MS);
+        const result = yield* request(chunk);
+        current = result;
+        remaining -= chunk;
+        if (!result.timedOut || remaining <= 0) return result;
+        // Later pieces wait for the run the first one picked, not a newer one.
+        runId = result.runId ?? undefined;
+      }
+    });
+    if (callerThreadId === undefined) return yield* wait;
+    const incoming = threads
+      .streamStoredEventsFrom({
+        threadId: callerThreadId,
+        afterSequence,
+        eventType: "turn-item.updated",
+      })
+      .pipe(
+        Stream.map((stored) => ThreadManagement.steeringInputMessage(stored)),
+        Stream.filter((id): id is MessageId => id !== undefined),
+        Stream.runHead,
+        Effect.mapError(
+          () =>
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: "Unable to watch incoming messages while waiting.",
+            }),
+        ),
+        Effect.flatMap((id) => (Option.isSome(id) ? Effect.succeed(id.value) : Effect.never)),
+      );
+    const outcome = yield* Effect.raceFirst(
+      wait.pipe(Effect.map((result) => ({ type: "result" as const, result }))),
+      incoming.pipe(Effect.map((messageId) => ({ type: "input" as const, messageId }))),
+    );
+    if (outcome.type === "result") return outcome.result;
+    const { next: _next, ...observed } = current!;
+    return { ...observed, timedOut: false, interruptedByMessageId: outcome.messageId };
   });
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
@@ -235,6 +295,7 @@ const make = Effect.gen(function* () {
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          true,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
     return Effect.andThen(requireEnabled, forwarded);
