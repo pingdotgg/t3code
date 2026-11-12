@@ -94,7 +94,7 @@ export function VoiceInputErrorPill(props: {
         <Button
           type="button"
           size={compact ? "xs" : "sm-pill"}
-          variant="outline"
+          variant="secondary"
           aria-label={action.label}
           disabled={props.disabled}
           onPointerDown={(event) => event.preventDefault()}
