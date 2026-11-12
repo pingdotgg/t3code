@@ -25,6 +25,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
@@ -121,8 +122,9 @@ export class WorkspaceSearchIndex extends Context.Service<
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
-function toPosixPath(input: string): string {
-  return input.replaceAll("\\", "/");
+// Only the host separator becomes `/`: on POSIX `\` is a file name character.
+function toPosixPath(input: string, hostIsWindows: boolean): string {
+  return hostIsWindows ? input.replaceAll("\\", "/") : input;
 }
 
 function trimDirectorySeparator(input: string): string {
@@ -134,8 +136,8 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+function toProjectEntry(item: MixedItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath, hostIsWindows));
   if (!normalizedPath) {
     return null;
   }
@@ -146,23 +148,24 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
   };
 }
 
-function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toFileEntry(item: FileItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
-function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toDirectoryEntry(item: DirItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
 function mapFileSearchResult(
   result: SearchResult,
   limit: number,
+  hostIsWindows: boolean,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toFileEntry(item);
+    const entry = toFileEntry(item, hostIsWindows);
     return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
   });
   return {
@@ -174,9 +177,10 @@ function mapFileSearchResult(
 function mapDirectorySearchResult(
   result: DirSearchResult,
   limit: number,
+  hostIsWindows: boolean,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toDirectoryEntry(item);
+    const entry = toDirectoryEntry(item, hostIsWindows);
     return entry ? [entry] : [];
   });
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
@@ -189,10 +193,11 @@ function mapDirectorySearchResult(
 function mapMixedSearchResult(
   result: MixedSearchResult,
   limit: number,
+  hostIsWindows: boolean,
 ): { readonly entries: ProjectEntry[]; readonly truncated: boolean } {
   const entries: ProjectEntry[] = [];
   for (const item of result.items) {
-    const entry = toProjectEntry(item);
+    const entry = toProjectEntry(item, hostIsWindows);
     if (entry) {
       entries.push(entry);
     }
@@ -339,6 +344,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const hostIsWindows = yield* HostProcess.isWindows;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -435,7 +441,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
-      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, hostIsWindows);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
@@ -459,18 +465,18 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      return mapFileSearchResult(result, limit, imageOnly);
+      return mapFileSearchResult(result, limit, hostIsWindows, imageOnly);
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      return mapDirectorySearchResult(result, limit);
+      return mapDirectorySearchResult(result, limit, hostIsWindows);
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    return mapMixedSearchResult(result, limit);
+    return mapMixedSearchResult(result, limit, hostIsWindows);
   });
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
@@ -529,7 +535,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
-          path: toPosixPath(match.relativePath),
+          path: toPosixPath(match.relativePath, hostIsWindows),
           lineNumber: match.lineNumber,
           lineContent: match.lineContent,
           matchRanges,
