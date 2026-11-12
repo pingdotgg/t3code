@@ -87,7 +87,7 @@ export function TextFieldSpeechControls({
       <div
         className={
           compact
-            ? "flex h-8 w-17 shrink-0 items-center gap-1 sm:h-7 sm:w-15"
+            ? "flex h-8 w-17 shrink-0 items-center justify-end gap-1 sm:h-7 sm:w-15"
             : "flex min-w-0 items-center gap-1"
         }
       >
