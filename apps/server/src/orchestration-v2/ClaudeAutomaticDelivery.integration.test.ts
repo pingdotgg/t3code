@@ -593,6 +593,9 @@ it.effect("applies an effort change to the running Claude query without waiting 
         assert.deepEqual(flagSettings, [
           { effortLevel: "medium", fastMode: null, ultracode: null },
         ]);
+        // task_status reports the run's selection, so it must follow a live change.
+        const [run] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        assert.deepEqual(run?.modelSelection.options, [{ id: "effort", value: "medium" }]);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
