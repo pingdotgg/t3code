@@ -166,3 +166,23 @@ it.effect("fences boundary reservations and restores an explicitly retried messa
     assert.equal(yield* positions.allocate({ threadId, turnItemId, runId }), retried.ordinal);
   }).pipe(Effect.provide(layerTest)),
 );
+it.effect("places a run-start item ahead of the run's items, then appends once taken", () =>
+  Effect.gen(function* () {
+    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const threadId = ThreadId.make("thread:run-start");
+    const allocate = (id: string, placement?: "run_start") =>
+      positions.allocate({
+        threadId,
+        turnItemId: TurnItemId.make(id),
+        runId: RunId.make("run:2"),
+        runOrdinal: 2,
+        ...(placement === undefined ? {} : { placement }),
+      });
+    const message = yield* allocate("item:message");
+    const recovery = yield* allocate("item:recovery", "run_start");
+    assert.isBelow(recovery, message);
+    assert.isAbove(recovery, 1_999_999);
+    assert.equal(yield* allocate("item:retry-recovery", "run_start"), message + 1);
+    assert.equal(yield* allocate("item:reply"), message + 2);
+  }).pipe(Effect.provide(layerTest)),
+);

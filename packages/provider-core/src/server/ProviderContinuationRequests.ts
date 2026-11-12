@@ -33,6 +33,8 @@ export interface ProviderContinuationRequest {
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly clearIfCurrent?: () => Effect.Effect<void>;
+  /** Called when the run this request dispatched ends without starting, such as a cancelled queued run. */
+  readonly onRunEndedWithoutStarting?: () => Effect.Effect<void>;
 }
 
 export interface AgentMessageOffer {

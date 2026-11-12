@@ -1933,13 +1933,11 @@ code {
   list-style-type: disc;
 }
 
-/* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
-   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker has multiple characters so it isn't clipped by list-style-position:
-   outside painting the marker past the padding box. Reset it here too so a
-   nested ol without its own widened marker doesn't inherit the outer one. */
+/* Outside markers paint past the padding box, so the gutter must fit `0. `,
+   measured per font in appearanceFonts. ChatMarkdown widens it inline for
+   multi-digit markers; setting it here stops a nested ol inheriting that. */
 :is(.chat-markdown, .composer-tiptap) ol {
-  --list-gutter: 1.25rem;
+  --list-gutter: max(1.25rem, var(--list-marker-sans, 0px));
   padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
@@ -2010,6 +2008,10 @@ code {
 
 .chat-markdown ol ol ol {
   list-style-type: lower-roman;
+}
+
+.chat-markdown.user-message-markdown ol {
+  list-style-type: decimal;
 }
 
 .chat-markdown li + li {
@@ -2270,6 +2272,15 @@ code {
   max-width: none;
 }
 
+/* Keep overflow discoverable when the edge fade falls between columns. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);
@@ -2310,12 +2321,14 @@ code {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel and match highlights read these. */
-.diff-render-surface {
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
+   The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
-  --diffs-search-panel-accent: var(--primary);
-  --diffs-search-panel-font: var(--font-sans);
+  --diffs-search-panel-modified: var(--primary);
+  --diffs-header-font-fallback: var(--font-sans);
+  --diffs-search-panel-inset-top: 40px;
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file
@@ -2427,6 +2440,12 @@ code {
    widgets while the caret is on styled text. */
 .composer-tiptap {
   position: relative;
+}
+
+/* Tiptap's injected base CSS disables ligatures; match sent messages. */
+.composer-tiptap.ProseMirror {
+  font-variant-ligatures: normal;
+  font-feature-settings: normal;
 }
 
 .composer-tiptap p {
@@ -2568,8 +2587,12 @@ code {
   }
 }
 
-/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
+/* A workspace area with no control of its own takes F6 focus itself; keep that visible.
+   workspaceFocus.ts marks those, since :focus-visible also matches a clicked area after a key press. */
 [data-workspace-area]:focus-visible {
+  outline: none;
+}
+[data-workspace-keyboard-focus]:focus {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }

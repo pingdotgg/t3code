@@ -28,7 +28,7 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
@@ -128,7 +128,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const GROK_EFFORT_RANK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
+export function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
     label: string;
@@ -470,7 +470,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
       exitCode: versionOutput.code,

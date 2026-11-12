@@ -286,6 +286,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           import.meta.url,
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
         assertOutput: assertClaudeBackgroundTaskAfterRootOutput,
       },
     ],

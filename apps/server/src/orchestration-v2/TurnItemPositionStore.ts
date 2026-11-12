@@ -28,6 +28,8 @@ export interface TurnItemPositionStoreV2Shape {
     readonly turnItemId: TurnItemId;
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
+    // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
+    readonly placement?: "append" | "run_start";
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
   readonly reserveBoundary: (input: {
     readonly threadId: ThreadId;
@@ -62,6 +64,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           turnItemId,
           runId,
           runOrdinal: suppliedRunOrdinal,
+          placement = "append",
           moveToRun = false,
         }: Parameters<TurnItemPositionStoreV2Shape["allocate"]>[0] & {
           readonly moveToRun?: boolean | "always";
@@ -112,7 +115,11 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           SELECT
             ${threadId},
             ${turnItemId},
-            COALESCE(MAX(ordinal), ${lowerBound}) + 1
+            ${
+              placement === "run_start"
+                ? sql`CASE WHEN COALESCE(MIN(ordinal), ${upperBound}) > ${lowerBound} THEN ${lowerBound} ELSE MAX(ordinal) + 1 END`
+                : sql`COALESCE(MAX(ordinal), ${lowerBound}) + 1`
+            }
           FROM orchestration_v2_turn_item_positions
           WHERE thread_id = ${threadId}
             AND ordinal >= ${lowerBound}

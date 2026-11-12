@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -89,12 +90,13 @@ export const renderCliShim = (input: {
     ...header,
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
-    // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
+    // Its own session keeps a group signal (Ctrl-C, SSH hangup) from unmounting it under the
+    // running server; the traps unmount it after. Without setsid the extract fallback runs.
     "work=$(mktemp -d) || exit 1",
-    '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
+    'setsid "$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
     `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
-    "trap 'exit 130' INT TERM",
+    "trap 'exit 130' INT TERM HUP",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
     '  mount=$(head -n 1 "$work/mount")',
@@ -147,7 +149,8 @@ export const install = Effect.gen(function* () {
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      const staging = `${shimPath}.${process.pid}.tmp`;
+      // Unique per call: backend startup and the first-launch command install can race here.
+      const staging = `${shimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
