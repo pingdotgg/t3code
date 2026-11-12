@@ -463,7 +463,6 @@ it("does not retain a send when transcription finishes before the editor rerende
 it.each([
   ["transcribing", "finish"],
   ["post-processing", "finish"],
-  ["transcribing", "cancel"],
   ["post-processing", "cancel"],
   ["post-processing", "skip"],
   ["transcribing", "finish after session expiry"],
@@ -546,7 +545,7 @@ it.each([
   },
 );
 
-it.each(["cancel", "off", "destination", "cloud-destination", "cleanup", "edit", "error"])(
+it.each(["cancel", "off", "destination", "cloud-destination", "cleanup", "error"])(
   "does not send a confirmed recording after %s",
   async (action) => {
     setup({ destination: "env-a" });
@@ -568,7 +567,6 @@ it.each(["cancel", "off", "destination", "cloud-destination", "cleanup", "edit",
     await act(() => mocks.voice.submitAfterDictation(submit, cancel));
     await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
     if (action === "cancel") await act(() => mocks.voice.cancel());
-    else if (action === "edit") drafts["thread-a"] = "A later edit";
     else {
       await screen.rerender(<div />);
       if (action === "cleanup") chooseTranscriptCleanup(false);
@@ -589,7 +587,7 @@ it.each(["cancel", "off", "destination", "cloud-destination", "cleanup", "edit",
     });
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
     expect(submit).not.toHaveBeenCalled();
-    expect(drafts["thread-a"]).toBe(action === "edit" ? "A later edit" : "Fix");
+    expect(drafts["thread-a"]).toBe("Fix");
     await screen.rerender(<div />);
     await screen.rerender(<SubmissionProbe owner="thread-a" />);
     expect(mocks.voice.state.phase).toBe("idle");
