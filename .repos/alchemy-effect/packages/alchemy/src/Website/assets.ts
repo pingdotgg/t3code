@@ -20,10 +20,7 @@
  * How unmatched GET paths are answered. Same names as Cloudflare
  * Workers `assets.notFoundHandling`.
  */
-export type WebsiteNotFoundHandling =
-  | "none"
-  | "single-page-application"
-  | "404-page";
+export type WebsiteNotFoundHandling = "none" | "single-page-application" | "404-page";
 
 /**
  * Static-asset routing on the origin (`notFoundHandling`, `htmlHandling`).
@@ -110,7 +107,5 @@ export const contentTypeOf = (relative: string): string => {
  */
 export const cacheControlOf = (relative: string): string => {
   const lower = relative.toLowerCase();
-  return lower.endsWith(".html") || lower.endsWith(".htm")
-    ? htmlCacheControl
-    : assetCacheControl;
+  return lower.endsWith(".html") || lower.endsWith(".htm") ? htmlCacheControl : assetCacheControl;
 };

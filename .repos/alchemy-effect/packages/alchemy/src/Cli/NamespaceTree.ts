@@ -1,11 +1,5 @@
 import { toPath } from "../FQN.ts";
-import type {
-  BindingAction,
-  CRUD,
-  ActionApply,
-  ActionDelete,
-  Plan,
-} from "../Plan.ts";
+import type { BindingAction, CRUD, ActionApply, ActionDelete, Plan } from "../Plan.ts";
 import type { ProviderMode } from "../ProviderMode.ts";
 import {
   formatDeclaredPropertyYaml,
@@ -17,18 +11,11 @@ export type ActionTreeItem = ActionApply | ActionDelete;
 export type ActionVerb = ActionTreeItem["action"]; // "run" | "noop" | "delete"
 
 /** No-op actions are dependency markers, not work the user needs to review. */
-export const actionHasPlannedWork = (item: ActionTreeItem): boolean =>
-  item.action !== "noop";
+export const actionHasPlannedWork = (item: ActionTreeItem): boolean => item.action !== "noop";
 
 export interface PlanSummaryCounts {
   readonly counts: Record<
-    | "create"
-    | "update"
-    | "adopted"
-    | "delete"
-    | "orphaned"
-    | "replace"
-    | "noop",
+    "create" | "update" | "adopted" | "delete" | "orphaned" | "replace" | "noop",
     number
   >;
   readonly taskCounts: Record<"run" | "delete" | "noop", number>;
@@ -37,10 +24,9 @@ export interface PlanSummaryCounts {
 
 /** Count every resource and task, plus binding changes, for the Plan summary. */
 export const buildPlanSummary = (plan: Plan): PlanSummaryCounts => {
-  const allItems = [
-    ...Object.values(plan.resources),
-    ...Object.values(plan.deletions),
-  ].filter((item): item is CRUD => item !== undefined);
+  const allItems = [...Object.values(plan.resources), ...Object.values(plan.deletions)].filter(
+    (item): item is CRUD => item !== undefined,
+  );
   const counts = {
     create: 0,
     update: 0,
@@ -61,9 +47,7 @@ export const buildPlanSummary = (plan: Plan): PlanSummaryCounts => {
     taskCounts[item.action]++;
   }
   const bindingChanges = allItems.reduce(
-    (count, item) =>
-      count +
-      item.bindings.filter((binding) => binding.action !== "noop").length,
+    (count, item) => count + item.bindings.filter((binding) => binding.action !== "noop").length,
     0,
   );
   return { counts, taskCounts, bindingChanges };
@@ -144,11 +128,7 @@ function deriveNamespaceAction(node: TreeNode): DerivedAction {
     // Map task actions onto the resource action space for the rollup:
     // run → create, delete → delete, noop → noop.
     actions.add(
-      action.action === "run"
-        ? "create"
-        : action.action === "delete"
-          ? "delete"
-          : "noop",
+      action.action === "run" ? "create" : action.action === "delete" ? "delete" : "noop",
     );
   }
   for (const child of node.children.values()) {
@@ -192,10 +172,7 @@ export interface FlattenTreeOptions {
   includePropertyYaml?: boolean;
 }
 
-export function flattenTree(
-  node: TreeNode,
-  options: FlattenTreeOptions = {},
-): FlattenedItem[] {
+export function flattenTree(node: TreeNode, options: FlattenTreeOptions = {}): FlattenedItem[] {
   const result: FlattenedItem[] = [];
   flattenNamespace(node, 0, result, options);
   return result;
@@ -210,12 +187,8 @@ const flattenNamespace = (
   const sortedResources = [...node.resources].sort((a, b) =>
     a.resource.LogicalId.localeCompare(b.resource.LogicalId),
   );
-  const sortedChildren = Array.from(node.children.entries()).sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  const resourceIds = new Set(
-    sortedResources.map((resource) => resource.resource.LogicalId),
-  );
+  const sortedChildren = Array.from(node.children.entries()).sort(([a], [b]) => a.localeCompare(b));
+  const resourceIds = new Set(sortedResources.map((resource) => resource.resource.LogicalId));
 
   for (const [id, child] of sortedChildren) {
     if (resourceIds.has(id) || isEmpty(child)) {
@@ -269,9 +242,7 @@ const flattenNamespace = (
               )
             : undefined,
     });
-    for (const binding of [...resource.bindings].sort((a, b) =>
-      a.sid.localeCompare(b.sid),
-    )) {
+    for (const binding of [...resource.bindings].sort((a, b) => a.sid.localeCompare(b.sid))) {
       result.push({
         type: "binding",
         depth: depth + 1,
@@ -307,13 +278,8 @@ const isEmpty = (node: TreeNode) =>
   node.actions.length === 0 &&
   Array.from(node.children.values()).every(isEmpty);
 
-const deriveResourceChildrenAction = (
-  resource: CRUD,
-  node: TreeNode,
-): DerivedAction => {
-  const actions = new Set<BindingAction | CRUD["action"] | DerivedAction>([
-    resource.action,
-  ]);
+const deriveResourceChildrenAction = (resource: CRUD, node: TreeNode): DerivedAction => {
+  const actions = new Set<BindingAction | CRUD["action"] | DerivedAction>([resource.action]);
   for (const binding of resource.bindings) {
     actions.add(binding.action);
   }

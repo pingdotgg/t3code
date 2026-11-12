@@ -1,0 +1,222 @@
+---
+title: Testing a model
+description: Test your model's rules, views, policies and deadlines with stories that run it in memory.
+---
+
+Your model is tested with [stories](/domain/story): given some history, when a command is sent, then these events are recorded. This page sets up a story runner and covers what a story can check.
+
+## Create a story runner
+
+Give `Story.make` your model, its policies' Layer, and the external systems to fake, in `stub`. The story answers their calls itself. Any other external system the model calls runs for real, from a Layer you provide.
+
+```typescript
+// packages/domain/test/withdrawals.test.ts
+import { it } from "@effect/vitest";
+import { Story } from "@alchemy.run/domain/Story";
+import { Account } from "../src/Account/Account.aggregate.ts";
+import { AccountSummary } from "../src/Account/AccountSummary.view.ts";
+import { MoneyDeposited } from "../src/Account/DepositMoney.command.ts";
+import { InsufficientFunds } from "../src/Account/InsufficientFunds.rejection.ts";
+import { AccountOpened } from "../src/Account/OpenAccount.command.ts";
+import { Statement } from "../src/Account/Statement.view.ts";
+import { MoneyWithdrawn, WithdrawMoney } from "../src/Account/WithdrawMoney.command.ts";
+import { customer } from "../src/Actor.ts";
+import * as Layer from "effect/Layer";
+import { Bank, BankHandlers } from "../src/Bank.model.ts";
+import { MemoryLedgerStore } from "../src/Ledger/LedgerStore.ts";
+import { CurrentActor } from "../src/CurrentActor.context.ts";
+import { CustomerId } from "../src/Customer/Customer.id.ts";
+import { FraudCheck } from "../src/Fraud/FraudCheck.external.ts";
+import { Payments } from "../src/Settlement/Payments.external.ts";
+
+const story = Story.make(Bank, {
+  layer: BankHandlers.pipe(Layer.provide(MemoryLedgerStore)),
+  stub: [FraudCheck, Payments],
+});
+const account = Account.ref("a-1");
+const opened = new AccountOpened({ customerId: CustomerId.make("c-1"), owner: "sam" });
+const asSam = Story.provide(CurrentActor, customer("c-1"));
+
+it.effect("a withdrawal replies with the balance and updates the views", () =>
+  story(
+    Story.given(account, opened, new MoneyDeposited({ amount: 100, balanceAfter: 100 })),
+    asSam,
+    Story.when(account, new WithdrawMoney({ amount: 30 })),
+    Story.then(account, new MoneyWithdrawn({ amount: 30, balanceAfter: 70 })),
+    Story.replied({ balance: 70 }),
+    Story.view(AccountSummary, account, { balance: 70 }),
+    Story.emitted(Statement, account, [
+      { kind: "deposit", amount: 100, balance: 100 },
+      { kind: "withdrawal", amount: 30, balance: 70 },
+    ]),
+  ),
+);
+
+it.effect("an overdraft is rejected with the evidence", () =>
+  story(
+    Story.given(account, opened, new MoneyDeposited({ amount: 50, balanceAfter: 50 })),
+    asSam,
+    Story.when(account, new WithdrawMoney({ amount: 80 })),
+    Story.rejected(new InsufficientFunds({ balance: 50, requested: 80 })),
+  ),
+);
+```
+
+Run stories with Vitest and `@effect/vitest`: each story is an Effect, so `it.effect` runs it.
+
+## Check every outcome
+
+The test above uses most of the checks. `then` checks the next events recorded on an instance; with no events, it checks that nothing new was recorded. Every recorded event needs a `then`, on every instance, including the ones a policy writes. `replied` checks the last command's reply, and `rejected` checks that it was refused with exactly this rejection. `state` checks an instance's current state directly, or part of it.
+
+Views and streams are checked as a client would read them. `view` checks a view key's state, or part of it, and `emitted` checks every event a view key has emitted. `streamed` checks the next entries a projection appended to a stream key.
+
+Commands run as whoever `provide` says, as their middleware would. Here `asSam` provides `CurrentActor`, so the account's ownership check passes.
+
+The checks after a `when` are type-checked against its command. `rejected` takes only a rejection the command declares, and `replied` only its reply type. A `when` needs a `provide` step before it for every service its command's middleware provides, so without `asSam` the story does not compile.
+
+## Answer outside systems
+
+External system calls wait until you answer them, so you decide what the outside world says, and when.
+
+```typescript
+// packages/domain/test/fraud.test.ts
+import { it } from "@effect/vitest";
+import { Story } from "@alchemy.run/domain/Story";
+import { Account } from "../src/Account/Account.aggregate.ts";
+import { MoneyDeposited } from "../src/Account/DepositMoney.command.ts";
+import { AccountFrozen } from "../src/Account/FreezeAccount.command.ts";
+import { AccountOpened } from "../src/Account/OpenAccount.command.ts";
+import { MoneyWithdrawn, WithdrawMoney } from "../src/Account/WithdrawMoney.command.ts";
+import { customer, system } from "../src/Actor.ts";
+import * as Layer from "effect/Layer";
+import { Bank, BankHandlers } from "../src/Bank.model.ts";
+import { MemoryLedgerStore } from "../src/Ledger/LedgerStore.ts";
+import { CurrentActor } from "../src/CurrentActor.context.ts";
+import { CustomerId } from "../src/Customer/Customer.id.ts";
+import { FraudCheck } from "../src/Fraud/FraudCheck.external.ts";
+import { Payments } from "../src/Settlement/Payments.external.ts";
+
+const story = Story.make(Bank, {
+  layer: BankHandlers.pipe(Layer.provide(MemoryLedgerStore)),
+  stub: [FraudCheck, Payments],
+});
+const account = Account.ref("a-1");
+
+it.effect("a risky withdrawal freezes the account", () =>
+  story(
+    Story.given(
+      account,
+      new AccountOpened({ customerId: CustomerId.make("c-1"), owner: "sam" }),
+      new MoneyDeposited({ amount: 90_000, balanceAfter: 90_000 }),
+    ),
+    Story.provide(CurrentActor, customer("c-1")),
+    Story.when(account, new WithdrawMoney({ amount: 60_000 })),
+    Story.then(account, new MoneyWithdrawn({ amount: 60_000, balanceAfter: 30_000 })),
+    Story.call(FraudCheck.score, { accountId: account.id, amount: 60_000 }),
+    Story.succeed(FraudCheck.score, { risk: 0.95 }),
+    Story.then(account, new AccountFrozen({ reason: "fraud risk 0.95", by: system("FraudReview") })),
+  ),
+);
+```
+
+A story checks its answers like an adapter's: a value the operation's schema rejects fails the policy, and so do arguments the policy sends that the schema rejects. See [Calls are checked against the schemas](/domain/external-system#calls-are-checked-against-the-schemas).
+
+## Answer several calls
+
+`succeed` answers the only call waiting on an operation. When several are waiting, name each one as you expect it, and answer it by name:
+
+```typescript
+Story.call("a-1", FraudCheck.score, { accountId: a1.id }),
+Story.call("a-2", FraudCheck.score, { accountId: a2.id }),
+Story.succeed("a-2", FraudCheck.score, { risk: 0.1 }),
+Story.succeed("a-1", FraudCheck.score, { risk: 0.95 }),
+```
+
+Every call needs a `call` step before it's answered, so a story always checks what was sent. Each `call` step matches one call, the earliest made. A `succeed` without a name fails if more than one call is waiting, so a story never answers the wrong one.
+
+## Fail a call
+
+An operation can declare the error its vendor answers with when it refuses ([Declare its errors](/domain/external-system#declare-its-errors)). `Story.fail` answers a waiting call with that error, so a story can test the branch where the vendor says no. It finds the call the way `succeed` does, and only the operation's declared error type-checks:
+
+```typescript
+Story.call(Payments.refund, { settlementId: "st_1" }),
+Story.fail(Payments.refund, new RefundDeclined({ reason: "card-closed" })),
+```
+
+When the operation declares several errors, `fail` takes any one of them, so a story can test each branch.
+
+`Story.die` fails a call with a defect instead, as when the connection to the vendor breaks:
+
+```typescript
+Story.call(Payments.refund, { settlementId: "st_1" }),
+Story.die(Payments.refund, new Error("socket closed")),
+```
+
+## Assert real calls
+
+An external system you don't stub is called for real, through its adapter. Provide the adapter's Layer to the story; the story's type requires it.
+
+```typescript
+const story = Story.make(Bank, {
+  layer: BankHandlers.pipe(Layer.provide(MemoryLedgerStore)),
+  stub: [FraudCheck],
+});
+
+it.effect("refunds through the real payments adapter", () =>
+  story(
+    Story.when(account, new RecordSettlement({ settlementId: "st_1", amount: 500 })),
+    Story.then(account, new SettlementOnClosedAccount({ settlementId: "st_1", amount: 500 })),
+    Story.call(Payments.refund, { settlementId: "st_1", amount: 500 }),
+    Story.returned(Payments.refund, { refundId: "re_st_1" }),
+  ).pipe(Effect.provide(StripePayments)),
+);
+```
+
+The story records every real call. `call` checks what a call was sent, and `returned` checks what it returned. `failed` checks a declared error instead, and `died` a defect. Like a stubbed call, each real call needs its `call` step first, and a story fails if no step asserts how a real call ended. The story waits for real calls to finish before each step.
+
+## Run the same tests against every adapter
+
+An external system often has several adapters: the vendor's, an in-memory fake for tests, a no-op for a dev stage. An adapter is a Layer for the system's service, so one set of tests can run against each of them, and the fake can't drift from the vendor.
+
+```typescript
+// packages/server/test/Sms.test.ts
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { Sms, Undeliverable } from "@bank/domain/Messaging/Sms.external";
+import { FakeSms } from "../src/Messaging/FakeSms.ts";
+import { TwilioSms } from "../src/Messaging/TwilioSms.ts";
+
+for (const [adapter, layer] of [["Twilio", TwilioSms], ["fake", FakeSms]] as const) {
+  describe(`Sms: ${adapter}`, () => {
+    it.effect("counts the segments", () =>
+      Effect.gen(function* () {
+        const sms = yield* Sms;
+        const sent = yield* sms.send({ to: "+15550100", body: "x".repeat(200) });
+        expect(sent.segments).toBe(2);
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses a landline", () =>
+      Effect.gen(function* () {
+        const sms = yield* Sms;
+        const error = yield* sms.send({ to: "+15550199", body: "hi" }).pipe(Effect.flip);
+        expect(error).toEqual(new Undeliverable({ reason: "landline" }));
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+}
+```
+
+Every call through a `toLayer` adapter is also checked against the operation's schemas, so an adapter that returns a value or error the declaration rejects fails the test with an `ExternalSystemSchemaError`.
+
+## Move the clock
+
+A story's clock starts at `2026-01-01T00:00:00Z`, and `Story.clock` moves it to an ISO string, epoch milliseconds or a `DateTime`. The clock only moves forward. A `clock` step with only `provide` steps before it may set any time; after that, a time earlier than the current one fails the story. `Story.advance("1 day")` moves it forward by a duration instead of to a time. Commands are stamped with it, so time-based rules like a daily limit are easy to test, and scheduled commands fire when it passes their time. See [Deadlines](/domain/deadlines).
+
+## Trust a passing story
+
+A story fails if an event is committed and no `then` step checks it, if a command is rejected and no `rejected` step checks it, if a call is answered or asserted before a `call` step checks it, if a stubbed call is left waiting at the end, or if no step asserts how a real call ended. A passing story has accounted for every outcome.
+
+:::note
+Test what clients see through an Api in [Testing an Api](/domain/testing-apis).
+:::
