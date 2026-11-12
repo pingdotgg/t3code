@@ -15,24 +15,19 @@ import {
   type SourceControlCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 
-// A nonzero exit is only a sign-in problem when Azure says so. Network, service, and CLI
-// failures leave the status indeterminate so a signed-in user is not told to log in again.
-const AZURE_AUTH_FAILURE =
-  /\baz (?:devops )?login\b|authentication failed|unauthori[sz]ed|\b401\b|TF400813|personal access token/i;
-
 function parseAzureAuth(input: SourceControlAuthProbeInput) {
-  const output = combinedAuthOutput(input);
-
   if (input.exitCode !== 0) {
     return providerAuth({
-      status: AZURE_AUTH_FAILURE.test(output) ? "unauthenticated" : "unknown",
-      detail: firstSafeAuthLine(output) ?? "Run `az devops login` to authenticate Azure DevOps.",
+      status: "unauthenticated",
+      detail:
+        firstSafeAuthLine(combinedAuthOutput(input)) ??
+        "Run `az login` or `az devops login` to authenticate Azure DevOps.",
     });
   }
 
+  // `authArgs` prints the account name; the connectionData retry prints JSON.
   const decoded = decodeViewerJson(input.stdout);
   const viewer = Result.isSuccess(decoded) ? decoded.success : null;
-
   if (viewer?._tag === "Anonymous") {
     return providerAuth({
       status: "unauthenticated",
@@ -40,11 +35,12 @@ function parseAzureAuth(input: SourceControlAuthProbeInput) {
       detail: "Run `az devops login` to authenticate Azure DevOps.",
     });
   }
+  const account = viewer === null ? input.stdout.trim().split(/\r?\n/)[0]?.trim() : viewer.account;
 
-  if (viewer?._tag === "SignedIn" && viewer.account !== null) {
+  if (account) {
     return providerAuth({
       status: "authenticated",
-      account: viewer.account,
+      account,
       host: "dev.azure.com",
     });
   }
@@ -52,7 +48,7 @@ function parseAzureAuth(input: SourceControlAuthProbeInput) {
   return providerAuth({
     status: "unknown",
     host: "dev.azure.com",
-    detail: "Azure DevOps did not return an authenticated identity.",
+    detail: "Azure CLI account status could not be parsed.",
   });
 }
 
@@ -62,7 +58,10 @@ export const discovery = {
   label: "Azure DevOps",
   executable: "az",
   versionArgs: ["--version"],
-  authArgs: AzureDevOpsCli.connectionDataArgs,
+  authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  // `az account show` cannot see PAT sign-ins (`az devops login`). Discovery runs in the server's
+  // directory, whose organization may not be the project's, so this may only add a sign-in.
+  authRetryArgs: AzureDevOpsCli.connectionDataArgs,
   // `az --version` starts Python and takes ~6s on Windows, exceeding the default probe timeout.
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
