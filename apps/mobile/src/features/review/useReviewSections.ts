@@ -12,7 +12,7 @@ import { lastReviewGitSectionsAtom, reviewEnvironment } from "../../state/review
 import { lastReviewTurnDiffsAtom } from "../../state/reviewTurnDiffs";
 import { environmentSession } from "../../state/session";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadSourceControl } from "../../state/use-selected-thread-worktree";
 import {
   buildReviewSectionItems,
   getReadyReviewCheckpoints,
@@ -52,7 +52,11 @@ export function useReviewSections(input: {
   });
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  // Changes come from the repository worktree chosen for Git; turn diffs cover all of them.
+  const { sourceControlCwd: selectedThreadCwd, repoWorktree } = useSelectedThreadSourceControl();
+  // Review comments carry the section title, so it names the repository their paths belong to.
+  const gitSectionSuffix =
+    repoWorktree === null ? "" : ` in ${repoWorktree.repository} · ${repoWorktree.branch}`;
   const diffPreview = useEnvironmentQuery(
     canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
@@ -81,10 +85,17 @@ export function useReviewSections(input: {
   );
   // Turns show their last answered diff; the active turn's live query below overrides it.
   // Section ids and the selection do not depend on the live query, so they are resolved first.
+  const gitSections =
+    canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [];
   const cachedSections = buildReviewSectionItems({
     checkpoints: readyCheckpoints,
     gitSections:
-      canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
+      gitSectionSuffix === ""
+        ? gitSections
+        : gitSections.map((section) => ({
+            ...section,
+            title: `${section.title}${gitSectionSuffix}`,
+          })),
     turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
     loadingGitSections: fileAccess.isPending || diffPreview.isPending,
   });

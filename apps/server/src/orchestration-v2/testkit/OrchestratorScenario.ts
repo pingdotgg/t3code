@@ -160,6 +160,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pull-request-link.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request.sync":
+    case "thread.repo-worktree.detach":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":

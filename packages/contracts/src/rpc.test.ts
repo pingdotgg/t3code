@@ -35,6 +35,41 @@ describe("WebSocket RPC contracts", () => {
     ).toBe(true);
   });
 
+  it("lets clients detach a repository worktree but never attach one", () => {
+    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
+    const decode = Schema.decodeUnknownExit(dispatchCommand.payloadSchema);
+
+    expect(
+      Exit.isFailure(
+        decode({
+          type: "thread.repo-worktree.attach",
+          commandId: "forged-attach",
+          threadId: "thread-1",
+          repoWorktree: {
+            repository: "service",
+            repositoryPath: "/folder/service",
+            worktreePath: "/anywhere",
+            branch: "feature",
+            baseRef: null,
+            origin: "created",
+            attachedAt: "2026-11-04T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isSuccess(
+        decode({
+          type: "thread.repo-worktree.detach",
+          commandId: "detach-1",
+          threadId: "thread-1",
+          worktreePath: "/worktrees/service/feature",
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("lets the server pick a new worktree's folder", () => {
     const createWorktree = WsRpcGroup.requests.get(WS_METHODS.vcsCreateWorktree);
     if (createWorktree === undefined) throw new Error("vcs.createWorktree is not registered");

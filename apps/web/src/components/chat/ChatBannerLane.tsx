@@ -26,6 +26,10 @@ export function ChatBannerLane(props: {
   threadErrorBannerKey: string | null;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;
+  /** Offered while the shown error is the one a file restore stopped with. */
+  fileRestoreRetryMessage: string | null;
+  onRetryFileRestore: () => void;
+  onClearFileRestoreRetry: () => void;
 }) {
   const {
     providerStatus,
@@ -39,6 +43,9 @@ export function ChatBannerLane(props: {
     threadErrorBannerKey,
     setThreadError,
     setThreadErrorBannerDismissTick,
+    fileRestoreRetryMessage,
+    onRetryFileRestore,
+    onClearFileRestoreRetry,
   } = props;
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
@@ -52,8 +59,14 @@ export function ChatBannerLane(props: {
         error={threadError}
         errorClass={threadErrorClass}
         errorCode={threadErrorCode}
+        action={
+          fileRestoreRetryMessage !== null && fileRestoreRetryMessage === threadError
+            ? { label: "Try again", onClick: onRetryFileRestore }
+            : null
+        }
         onDismiss={() => {
           setThreadError(threadId, null);
+          onClearFileRestoreRetry();
           dismissThreadErrorBannerForSession(threadErrorBannerKey);
           setThreadErrorBannerDismissTick((tick) => tick + 1);
         }}

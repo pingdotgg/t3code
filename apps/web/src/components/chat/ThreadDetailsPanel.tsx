@@ -12,9 +12,11 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
+import { useThreadRepoWorktreeTarget } from "../../hooks/useThreadRepoWorktreeTarget";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
+import { RepoWorktreeTargetMenu } from "../RepoWorktreeTargetMenu";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -25,6 +27,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadRepoWorktreesSection } from "./ThreadRepoWorktreesSection";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
   ThreadDetailsContext,
@@ -110,6 +113,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     serverConfig !== undefined &&
     project !== null &&
     !isScratchProject(project, serverConfig.scratchWorkspaceRoot);
+  const repoTarget = useThreadRepoWorktreeTarget({
+    threadRef: props.draftId ? null : activeThreadRef,
+    workspaceCwd: props.gitCwd,
+  });
+  // A repository worktree's branch is not the thread's, so the thread branch selector hides.
+  const offersBranchSelector = offersGit && props.isGitRepo && repoTarget.repoWorktree === null;
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -169,13 +178,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
-          branch: offersGit && props.isGitRepo && visible.branch,
+          branch: offersBranchSelector && visible.branch,
           // Without a branch selector, linked pull requests still need somewhere to show.
-          pullRequests: !(offersGit && props.isGitRepo) && visible.branch,
+          pullRequests: !offersBranchSelector && visible.branch,
           git:
             offersGit &&
             props.activeProjectName !== undefined &&
-            (visible.gitActions || (visible.changes && props.isGitRepo)),
+            (visible.gitActions ||
+              (visible.changes && (props.isGitRepo || repoTarget.repoWorktree !== null))),
         };
         return (
           <>
@@ -238,6 +248,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   separated={density === "full"}
                 >
                   <div className="flex flex-col">
+                    {show.git ? (
+                      <RepoWorktreeTargetMenu
+                        repoWorktrees={repoTarget.repoWorktrees}
+                        selected={repoTarget.repoWorktree}
+                        workspaceLabel={
+                          props.envMode === "worktree" ? "Thread worktree" : "Project folder"
+                        }
+                        onSelect={repoTarget.select}
+                      />
+                    ) : null}
                     {show.branch ? (
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
@@ -253,7 +273,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         compact={density !== "full"}
                         showActions={visible.gitActions}
                         showChanges={visible.changes}
-                        gitCwd={props.gitCwd}
+                        gitCwd={repoTarget.repoWorktree?.worktreePath ?? props.gitCwd}
+                        syncThreadBranch={repoTarget.repoWorktree === null}
                         workspaceMutationId={props.workspaceMutationId}
                         activeThreadRef={activeThreadRef}
                         {...(props.draftId ? { draftId: props.draftId } : {})}
@@ -262,6 +283,17 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     ) : null}
                   </div>
                 </ThreadDetailsSection>
+              ) : null}
+
+              {!props.draftId ? (
+                <ThreadRepoWorktreesSection
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  onShowChanges={(worktreePath) => {
+                    repoTarget.select(worktreePath);
+                    props.onOpenChanges?.();
+                  }}
+                />
               ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (

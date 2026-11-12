@@ -1,19 +1,27 @@
 import {
+  type CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffInput,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
+  type OrchestrationV2CheckpointRepository,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  checkpointWorkspaceStatus,
+  resolveRepositorySnapshot,
+} from "../orchestration-v2/CheckpointService.ts";
+import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -64,6 +72,41 @@ export class CheckpointDiffQuery extends Context.Service<
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
+/**
+ * Each repository worktree's last ready snapshot in the turns being compared,
+ * so a worktree the thread detached partway still shows its changes.
+ */
+function latestRepositoryEntries(
+  projection: ProjectionCheckpointContext,
+  to: ProjectionCheckpointContext["checkpoints"][number],
+  fromOrdinal: number,
+) {
+  const latest = new Map<
+    string,
+    { readonly entry: OrchestrationV2CheckpointRepository; readonly ordinal: number }
+  >();
+  for (const checkpoint of projection.checkpoints) {
+    if (
+      checkpoint.scopeId !== to.scopeId ||
+      checkpoint.status === "stale" ||
+      checkpoint.ordinalWithinScope <= fromOrdinal ||
+      checkpoint.ordinalWithinScope > to.ordinalWithinScope
+    ) {
+      continue;
+    }
+    for (const entry of checkpoint.repositories ?? []) {
+      const current = latest.get(entry.worktreePath);
+      if (
+        entry.status === "ready" &&
+        (current === undefined || current.ordinal < checkpoint.ordinalWithinScope)
+      ) {
+        latest.set(entry.worktreePath, { entry, ordinal: checkpoint.ordinalWithinScope });
+      }
+    }
+  }
+  return [...latest.values()];
+}
+
 function buildTurnDiffResult(
   input: {
     readonly threadId: ThreadId;
@@ -85,6 +128,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const digest = yield* Digest.Digest;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -179,6 +223,13 @@ export const make = Effect.gen(function* () {
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
           : undefined;
+      const fromCheckpoint =
+        input.fromTurnCount === 0
+          ? undefined
+          : (parentCheckpoint ??
+            readyCheckpoints.find(
+              (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+            ));
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -187,13 +238,15 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
-      if (fromCheckpointRef === undefined) {
+          : fromCheckpoint?.ref;
+      const repositoryEntries = latestRepositoryEntries(
+        projection,
+        toCheckpoint,
+        input.fromTurnCount,
+      );
+      const hasRepositories =
+        toCheckpoint.repositories !== undefined || repositoryEntries.length > 0;
+      if (fromCheckpointRef === undefined && !hasRepositories) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
@@ -202,54 +255,123 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const comparison = {
-        cwd: toScope.cwd,
-        fromCheckpointRef,
-        toCheckpointRef: toCheckpoint.ref,
-        fallbackFromToHead: false,
-        ignoreWhitespace,
-      };
-      const authoredPaths = yield* checkpointStore
-        .listAuthoredPaths(comparison)
-        .pipe(Effect.orElseSucceed(() => null));
-      const files =
-        authoredPaths === null
-          ? []
-          : yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
-              Effect.map(parseTurnDiffFilesFromNumstat),
-              Effect.orElseSucceed(() => []),
-            );
-      const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
-      // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
-      const pathBatches =
-        retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
-      let diff = "";
-      let remainingBytes = CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
-      for (const filePaths of pathBatches) {
-        const patch = yield* checkpointStore
-          .diffCheckpoints({
-            ...comparison,
-            ...(filePaths === undefined ? {} : { filePaths }),
-            // One extra byte distinguishes an exact fit from a truncated patch.
-            maxOutputBytes: remainingBytes + 1,
-          })
-          .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
-        const patchBytes = Buffer.byteLength(patch);
-        diff += patch;
-        if (patchBytes > remainingBytes) {
-          // Reserve marker space only on overflow, which may trim an earlier batch.
-          // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
-          diff =
-            new TextDecoder().decode(
-              Buffer.from(diff).subarray(
-                0,
-                CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
-              ),
-              { stream: true },
-            ) + DIFF_TRUNCATED_MARKER;
-          break;
+      // Each part stops once it passes `budgetBytes`; the caller trims the total.
+      const diffPart = Effect.fnUntraced(function* (
+        comparison: {
+          readonly cwd: string;
+          readonly fromCheckpointRef: CheckpointRef;
+          readonly toCheckpointRef: CheckpointRef;
+          readonly fallbackFromToHead: boolean;
+          readonly ignoreWhitespace: boolean;
+          readonly pathPrefix?: string;
+        },
+        budgetBytes: number,
+      ) {
+        const authoredPaths = yield* checkpointStore
+          .listAuthoredPaths(comparison)
+          .pipe(Effect.orElseSucceed(() => null));
+        const files =
+          authoredPaths === null
+            ? []
+            : yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
+                Effect.map(parseTurnDiffFilesFromNumstat),
+                Effect.orElseSucceed(() => []),
+              );
+        const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
+        // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
+        const pathBatches =
+          retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
+        let part = "";
+        for (const filePaths of pathBatches) {
+          part += yield* checkpointStore
+            .diffCheckpoints({
+              ...comparison,
+              ...(filePaths === undefined ? {} : { filePaths }),
+              // One extra byte distinguishes an exact fit from a truncated patch.
+              maxOutputBytes: budgetBytes - Buffer.byteLength(part) + 1,
+            })
+            .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+          if (Buffer.byteLength(part) > budgetBytes) break;
         }
-        remainingBytes -= patchBytes;
+        return part;
+      });
+
+      const workspaceComparison =
+        fromCheckpointRef === undefined ||
+        (hasRepositories &&
+          (checkpointWorkspaceStatus(toCheckpoint) !== "ready" ||
+            (fromCheckpoint !== undefined &&
+              checkpointWorkspaceStatus(fromCheckpoint) !== "ready")))
+          ? null
+          : {
+              cwd: toScope.cwd,
+              fromCheckpointRef,
+              toCheckpointRef: toCheckpoint.ref,
+              fallbackFromToHead: false,
+              ignoreWhitespace,
+            };
+      let diff = "";
+      const remainingBytes = () => CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(diff);
+      if (workspaceComparison !== null) {
+        diff += hasRepositories
+          ? // Repositories still show when the workspace's thread-start ref is gone.
+            yield* diffPart(workspaceComparison, remainingBytes()).pipe(
+              Effect.orElseSucceed(() => ""),
+            )
+          : yield* diffPart(workspaceComparison, remainingBytes());
+      }
+      for (const { entry, ordinal } of repositoryEntries) {
+        if (remainingBytes() < 0) break;
+        const cwd = (yield* fileSystem
+          .exists(entry.worktreePath)
+          .pipe(Effect.orElseSucceed(() => false)))
+          ? entry.worktreePath
+          : entry.repositoryPath;
+        const from = yield* resolveRepositorySnapshot({
+          history: {
+            scopeId: toCheckpoint.scopeId,
+            checkpoints: projection.checkpoints,
+            runs: projection.runs,
+          },
+          worktreePath: entry.worktreePath,
+          cwd,
+          targetOrdinal: input.fromTurnCount,
+          beforeOrdinal: ordinal,
+        }).pipe(
+          Effect.provideService(Digest.Digest, digest),
+          Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore),
+        );
+        if (from._tag !== "found") continue;
+        diff += yield* diffPart(
+          {
+            cwd,
+            fromCheckpointRef: from.ref,
+            toCheckpointRef: entry.ref,
+            fallbackFromToHead: false,
+            ignoreWhitespace,
+            pathPrefix: entry.pathPrefix,
+          },
+          remainingBytes(),
+        ).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("repository worktree diff failed", {
+              threadId: input.threadId,
+              cause: String(cause),
+            }).pipe(Effect.as("")),
+          ),
+        );
+      }
+      if (remainingBytes() < 0) {
+        // Reserve marker space only on overflow, which may trim an earlier part.
+        // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
+        diff =
+          new TextDecoder().decode(
+            Buffer.from(diff).subarray(
+              0,
+              CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
+            ),
+            { stream: true },
+          ) + DIFF_TRUNCATED_MARKER;
       }
 
       const turnDiff = buildTurnDiffResult(input, diff);
