@@ -32,6 +32,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
           routeDraftId={null}
           onNavigateToDraft={vi.fn()}
           onDraftContextMenu={vi.fn()}
+          onDraftFileDrop={vi.fn()}
         />
       </ul>
     </Profiler>,
@@ -65,4 +66,50 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await expect.element(row).toHaveAccessibleName("Next draft preview, Unsent draft");
   await act(() => initial.clearDraftThread(nextDraftId));
   await expect.element(row).not.toBeInTheDocument();
+});
+
+it("claims file drops on a draft row for that draft", async () => {
+  const initial = useComposerDraftStore.getState();
+  using _store = {
+    [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
+  };
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {},
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+  const projectRef = scopeProjectRef(
+    EnvironmentId.make("draft-drop-environment"),
+    ProjectId.make("draft-drop-project"),
+  );
+  const draftId = DraftId.make("draft-drop");
+  initial.setProjectDraftThreadId(projectRef, draftId, {
+    threadId: ThreadId.make("draft-drop-thread"),
+  });
+  initial.setPrompt(draftId, "Draft with text");
+  const onDraftFileDrop = vi.fn();
+  await using screen = await render(
+    <ul>
+      <SidebarDraftBlock
+        projectByKey={new Map()}
+        projectDisplayNameByKey={new Map()}
+        scopedProjectKeys={null}
+        routeDraftId={null}
+        onNavigateToDraft={vi.fn()}
+        onDraftContextMenu={vi.fn()}
+        onDraftFileDrop={onDraftFileDrop}
+      />
+    </ul>,
+  );
+  const row = screen.getByTestId("sidebar-draft-row");
+  await expect.element(row).toBeInTheDocument();
+
+  const file = new File(["x"], "shot.png", { type: "image/png" });
+  const dataTransfer = new DataTransfer();
+  dataTransfer.items.add(file);
+  const drop = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer });
+  row.element().dispatchEvent(drop);
+
+  expect(drop.defaultPrevented).toBe(true);
+  expect(onDraftFileDrop).toHaveBeenCalledWith(draftId, [file]);
 });

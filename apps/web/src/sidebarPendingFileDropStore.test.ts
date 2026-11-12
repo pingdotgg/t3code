@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 
+import { DraftId } from "./composerDraftStore";
+
 import {
   useSidebarPendingFileDropStore,
   type SidebarPendingFileDrop,
@@ -18,7 +20,7 @@ function makeEntry(
   files: File[],
 ): Omit<SidebarPendingFileDrop, "id"> {
   return {
-    threadRef: scopeThreadRef(environmentId as EnvironmentId, ThreadId.make(threadId)),
+    target: scopeThreadRef(environmentId as EnvironmentId, ThreadId.make(threadId)),
     files,
   };
 }
@@ -28,7 +30,7 @@ function fileNames(files: File[]): string[] {
 }
 
 function refOf(environmentId: string, threadId: string) {
-  return makeEntry(environmentId, threadId, []).threadRef;
+  return makeEntry(environmentId, threadId, []).target as ReturnType<typeof scopeThreadRef>;
 }
 
 beforeEach(() => {
@@ -79,6 +81,24 @@ describe("sidebarPendingFileDropStore", () => {
     expect(
       useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("a:b", "c")),
     ).toBeNull();
+    expect(useSidebarPendingFileDropStore.getState().pending).toHaveLength(1);
+  });
+
+  it("delivers a drop that started a new draft only to that draft", () => {
+    const store = useSidebarPendingFileDropStore.getState();
+    const draftId = DraftId.make("draft-1");
+    store.queuePendingFileDrop({ target: draftId, files: makeFiles("shot.png") });
+    store.queuePendingFileDrop(makeEntry("env-1", "draft-1", makeFiles("other.png")));
+
+    expect(
+      fileNames(
+        useSidebarPendingFileDropStore.getState().consumePendingFileDrop(DraftId.make("draft-2")) ??
+          [],
+      ),
+    ).toEqual([]);
+    expect(
+      fileNames(useSidebarPendingFileDropStore.getState().consumePendingFileDrop(draftId) ?? []),
+    ).toEqual(["shot.png"]);
     expect(useSidebarPendingFileDropStore.getState().pending).toHaveLength(1);
   });
 });

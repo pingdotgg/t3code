@@ -2,14 +2,27 @@ import { create } from "zustand";
 
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
+import type { DraftId } from "./composerDraftStore";
+
 /** Compare both ids; scopedThreadKey can collide when ids contain colons. */
-export function isSameSidebarThreadRef(a: ScopedThreadRef, b: ScopedThreadRef): boolean {
+function isSameSidebarThreadRef(a: ScopedThreadRef, b: ScopedThreadRef): boolean {
   return a.environmentId === b.environmentId && a.threadId === b.threadId;
+}
+
+/** A server thread, or a new draft started by dropping files on the sidebar. */
+export type SidebarFileDropTarget = ScopedThreadRef | DraftId;
+
+export function isSameSidebarFileDropTarget(
+  a: SidebarFileDropTarget,
+  b: SidebarFileDropTarget,
+): boolean {
+  if (typeof a === "string" || typeof b === "string") return a === b;
+  return isSameSidebarThreadRef(a, b);
 }
 
 export interface SidebarPendingFileDrop {
   id: string;
-  threadRef: ScopedThreadRef;
+  target: SidebarFileDropTarget;
   files: File[];
 }
 
@@ -17,8 +30,8 @@ interface SidebarPendingFileDropStoreState {
   pending: SidebarPendingFileDrop[];
   queuePendingFileDrop: (entry: Omit<SidebarPendingFileDrop, "id">) => string;
   clearPendingFileDrop: (id: string) => void;
-  clearPendingFileDropsForThread: (threadRef: ScopedThreadRef) => void;
-  consumePendingFileDrop: (threadRef: ScopedThreadRef) => File[] | null;
+  clearPendingFileDropsForThread: (target: SidebarFileDropTarget) => void;
+  consumePendingFileDrop: (target: SidebarFileDropTarget) => File[] | null;
 }
 
 let nextPendingFileDropId = 0;
@@ -34,14 +47,14 @@ export const useSidebarPendingFileDropStore = create<SidebarPendingFileDropStore
     clearPendingFileDrop: (id) => {
       set((state) => ({ pending: state.pending.filter((drop) => drop.id !== id) }));
     },
-    clearPendingFileDropsForThread: (threadRef) => {
+    clearPendingFileDropsForThread: (target) => {
       set((state) => ({
-        pending: state.pending.filter((drop) => !isSameSidebarThreadRef(drop.threadRef, threadRef)),
+        pending: state.pending.filter((drop) => !isSameSidebarFileDropTarget(drop.target, target)),
       }));
     },
-    consumePendingFileDrop: (threadRef) => {
+    consumePendingFileDrop: (target) => {
       const matches = get().pending.filter((drop) =>
-        isSameSidebarThreadRef(drop.threadRef, threadRef),
+        isSameSidebarFileDropTarget(drop.target, target),
       );
       if (matches.length === 0) {
         return null;
