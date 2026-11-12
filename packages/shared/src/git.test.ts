@@ -7,6 +7,7 @@ import {
   formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
+  isBareGitConfig,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseOriginUrlFromGitConfig,
@@ -64,6 +65,58 @@ describe("normalizeGitRemoteUrl", () => {
   });
 });
 
+describe("isBareGitConfig", () => {
+  it("reads Git's numeric booleans without accepting invalid or overflowing values", () => {
+    for (const value of [
+      "true",
+      "yes",
+      "on",
+      "1",
+      "2",
+      "-1",
+      "+1",
+      "01",
+      "0x10",
+      "1k",
+      "1m",
+      "1g",
+      "2147483647",
+      "-2147483648",
+    ]) {
+      expect(isBareGitConfig(`[core]\nbare = ${value}\n`), value).toBe(true);
+    }
+    for (const value of [
+      "false",
+      "no",
+      "off",
+      "0",
+      "-0",
+      "00",
+      "0x0",
+      "0k",
+      "08",
+      "1.5",
+      "2no",
+      "2g",
+      "2147483648",
+      "-2147483649",
+    ]) {
+      expect(isBareGitConfig(`[core]\nbare = ${value}\n`), value).toBe(false);
+    }
+    expect(isBareGitConfig("[core]\nbare = 2\nbare = 0\n")).toBe(false);
+    expect(isBareGitConfig("[core]\nbare = false\nbare = -2\n")).toBe(true);
+  });
+
+  it("reads continued bare values after comments and at end of input", () => {
+    const config = ["[core] bare = false # ignored backslash \\", 'bare = "tr\\', 'ue"'].join("\n");
+
+    expect(isBareGitConfig(config)).toBe(true);
+    expect(isBareGitConfig("[core]\nbare = tr\\\nue\\")).toBe(true);
+    expect(isBareGitConfig('[core]\nbare = "true\\')).toBe(false);
+    expect(isBareGitConfig('[core]\nbare = "true\\\n')).toBe(false);
+  });
+});
+
 describe("parseOriginUrlFromGitConfig", () => {
   it("reads the origin url and ignores other remotes", () => {
     const config = [
@@ -111,6 +164,21 @@ describe("parseOriginUrlFromGitConfig", () => {
         '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
       ),
     ).toBe("https://github.com/acme/repo.git");
+  });
+
+  it("reads settings on the remote header line", () => {
+    const upstream = '\n[remote "upstream"]\n\turl = https://github.com/other/source.git\n';
+    expect(
+      parseOriginUrlFromGitConfig(`[remote "origin"] url = git@github.com:a/b.git${upstream}`),
+    ).toBe("git@github.com:a/b.git");
+    expect(parseOriginUrlFromGitConfig("[remote.Origin]url=git@github.com:a/b.git\n")).toBe(
+      "git@github.com:a/b.git",
+    );
+    expect(
+      parseOriginUrlFromGitConfig(
+        `[remote "origin"] fetch = +refs/heads/*:refs/remotes/origin/*\n\turl = git@github.com:a/b.git${upstream}`,
+      ),
+    ).toBe("git@github.com:a/b.git");
   });
 
   it("falls back to the first remote when there is no origin", () => {
@@ -252,6 +320,12 @@ describe("sanitizeFeatureBranchName", () => {
     ["fix///", "feature/fix"],
   ])("keeps the fallback for unprefixed input %s", (input, expected) => {
     expect(sanitizeFeatureBranchName(input)).toBe(expected);
+  });
+
+  it("keeps accented letters as their plain letters", () => {
+    expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
+      "fix/anadir-validacion-del-cafe",
+    );
   });
 });
 

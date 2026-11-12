@@ -34,10 +34,13 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  managedCapabilityDenial,
 } from "@t3tools/contracts";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
@@ -172,18 +175,34 @@ const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
 
 /** IPC carries reason tokens inside messages; treat unknown tokens as read failures without exposing raw
  * text. */
-class ProfileLimitReachedError extends Error {
-  constructor() {
-    super("Browser profile limit reached.");
-    this.name = "ProfileLimitReachedError";
+class ProfileLimitReachedError extends Schema.TaggedError<ProfileLimitReachedError>()(
+  "ProfileLimitReachedError",
+  {},
+) {
+  override get message(): string {
+    return "Browser profile limit reached.";
   }
 }
+
+const isProfileLimitReachedError = Schema.is(ProfileLimitReachedError);
 
 export const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
   const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
   return (
     BrowserImportFailureReason.literals.find((reason) => message.includes(`failed: ${reason}.`)) ??
     "readFailed"
+  );
+};
+
+/**
+ * The desktop's refusal when the machine's managed policy forbids cookie import. IPC wraps the
+ * message in its own prefixes, so the sentence is matched on the contract's wording.
+ */
+export const importPolicyRefusal = (cause: unknown): string | undefined => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    /The managed policy at .* importing browser cookies is not allowed\./u.exec(message)?.[0] ??
+    /(?:^|: )([^:]*'s policy does not allow importing browser cookies\.)/u.exec(message)?.[1]
   );
 };
 
@@ -243,8 +262,9 @@ async function importBrowserCookiesIntoTarget(
           await clearBrowserProfileData(bridge, [environmentId], input.target.profileId).catch(
             () => undefined,
           );
-          const reason =
-            cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
+          const reason = isProfileLimitReachedError(cause)
+            ? "profileLimitReached"
+            : "profileNotSaved";
           throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
         }
       } else {
@@ -261,7 +281,10 @@ async function importBrowserCookiesIntoTarget(
       targetName,
     };
   } catch (cause) {
-    return { kind: "blocked", reason: importFailureReason(cause) };
+    const policyRefusal = importPolicyRefusal(cause);
+    return policyRefusal !== undefined
+      ? { kind: "blocked", reason: "readFailed", message: policyRefusal }
+      : { kind: "blocked", reason: importFailureReason(cause) };
   }
 }
 
@@ -894,7 +917,7 @@ function DeviceIntegrationControls({
                   .finally(() => setPending(null));
               }}
             >
-              {pending === `update-${tool}` ? "Updating…" : `Update to v${version.requiredVersion}`}
+              {pending === `update-${tool}` ? "Updating…" : "Update"}
             </Button>
           ) : null}
           {state.supportsToolInspection ? (
@@ -1091,6 +1114,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  // Cookie import runs on this desktop, whose policy the primary environment reports.
+  const cookieImportDenial = managedCapabilityDenial(
+    usePrimaryManagedPolicy(),
+    "browserCookieImport",
+  );
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<{
     readonly source: BrowserImportSource;
@@ -1298,7 +1326,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             <MenuSeparator />
             <MenuGroup>
               <MenuGroupLabel>Import from</MenuGroupLabel>
-              {sources === null ? (
+              {cookieImportDenial !== undefined ? (
+                <MenuItem disabled>{cookieImportDenial}</MenuItem>
+              ) : sources === null ? (
                 <MenuItem disabled>Looking for browsers…</MenuItem>
               ) : importableSources.length === 0 ? (
                 <MenuItem disabled>No supported browsers found</MenuItem>

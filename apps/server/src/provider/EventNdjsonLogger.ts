@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Native and canonical views share write state to avoid races on the same thread file. */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -18,7 +19,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
+import {
+  ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import type * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 
 const MEBIBYTE = 1024 * 1024;
@@ -114,6 +118,7 @@ interface StoreState {
   readonly pending: Array<PendingRecord>;
   readonly pendingBytes: number;
   readonly sinks: ReadonlyMap<string, AsyncFileSink>;
+  readonly writtenSinceRetention: ReadonlySet<string>;
   readonly flushScheduled: boolean;
   readonly closed: boolean;
   readonly lastRetentionAt: number;
@@ -144,8 +149,13 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
 }
 
 function resolveThreadSegment(raw: string | null | undefined): string {
-  const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
-  return normalized ?? GLOBAL_THREAD_SEGMENT;
+  if (typeof raw !== "string") return GLOBAL_THREAD_SEGMENT;
+  const normalized = toSafeThreadAttachmentSegment(raw);
+  if (normalized === null) return GLOBAL_THREAD_SEGMENT;
+  // Delegated thread ids share a prefix longer than the segment, so ids that may be cut get a hash.
+  if (raw.length <= ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS) return normalized;
+  const hash = NodeCrypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `${normalized}-${hash}`;
 }
 
 function resolveStreamLabel(stream: EventNdjsonStream): string {
@@ -483,6 +493,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
   }
 
   const sinks = new Map(input.state.sinks);
+  const writtenSegments = new Set(input.state.writtenSinceRetention);
   const failures: Array<FileOperationFailure> = [];
   const attributionByStream = new Map<
     EventNdjsonStream,
@@ -508,6 +519,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
       sink = created.success;
       sinks.set(threadSegment, sink);
     }
+    writtenSegments.add(threadSegment);
 
     const written = yield* writeBatchedMessages(
       sink,
@@ -534,6 +546,13 @@ const drainPending = Effect.fnUntraced(function* (input: {
 
   const retentionDue =
     input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
+  if (retentionDue) {
+    // A sink idle for a whole retention interval reopens from disk on its next
+    // write, so retention may remove its files without leaving a stale size.
+    for (const threadSegment of sinks.keys()) {
+      if (!writtenSegments.has(threadSegment)) sinks.delete(threadSegment);
+    }
+  }
   const retention = retentionDue
     ? yield* Effect.promise(() =>
         enforceRetention({
@@ -563,6 +582,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
       pending: [],
       pendingBytes: 0,
       sinks,
+      writtenSinceRetention: retentionDue ? new Set() : writtenSegments,
       flushScheduled: input.timerFired ? false : input.state.flushScheduled,
       closed: input.close,
       lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
@@ -629,6 +649,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     pending: [],
     pendingBytes: 0,
     sinks: new Map(),
+    writtenSinceRetention: new Set(),
     flushScheduled: false,
     closed: false,
     lastRetentionAt: initializedAt,
@@ -713,12 +734,13 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
       const bytes = Buffer.byteLength(line);
+      const threadSegment = resolveThreadSegment(threadId);
       const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         if (state.closed) {
           return Effect.succeed([{ flush: false }, state] as const);
         }
         const pending = state.pending;
-        pending.push({ stream, threadSegment: resolveThreadSegment(threadId), line, bytes });
+        pending.push({ stream, threadSegment, line, bytes });
         const pendingBytes = state.pendingBytes + bytes;
         const flush =
           resolved.batchWindowMs === 0 ||

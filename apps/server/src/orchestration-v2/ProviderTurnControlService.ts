@@ -1,6 +1,7 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
+  type ModelSelection,
   type NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -38,6 +39,8 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
+    /** The provider never confirmed the stop; Force stop is the way out. */
+    unresponsive: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -65,7 +68,20 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
+    readonly modelSelection?: ModelSelection;
   }) => Effect.Effect<void, ProviderTurnControlError>;
+  /** Best effort: a turn that ended or moved sessions picks the selection up when it next starts. */
+  readonly applyModelSelection: (input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerThreadId: ProviderThreadId;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<
+    void,
+    | ProjectionStore.ProjectionStoreV2Error
+    | ProviderSessionManager.ProviderSessionManagerV2Error
+    | ProviderAdapter.ProviderAdapterV2Error
+  >;
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -183,6 +199,26 @@ export const layer: Layer.Layer<
     });
 
     return ProviderTurnControlServiceV2.of({
+      applyModelSelection: Effect.fn("ProviderTurnControlService.applyModelSelection")(
+        function* (input) {
+          const { providerThread, providerTurn } = yield* projections.getRunningTurnContext(
+            input.threadId,
+          );
+          if (
+            providerThread?.id !== input.providerThreadId ||
+            providerThread.providerSessionId !== input.providerSessionId ||
+            providerTurn === undefined
+          ) {
+            return;
+          }
+          const session = yield* sessions.get(input.providerSessionId);
+          if (Option.isNone(session) || session.value.applyModelSelection === undefined) return;
+          yield* session.value.applyModelSelection({
+            providerThread,
+            modelSelection: input.modelSelection,
+          });
+        },
+      ),
       interrupt: Effect.fn("ProviderTurnControlService.interrupt")(
         function* (input) {
           const loaded = yield* load({ ...input, operation: "interrupt" });
@@ -218,11 +254,26 @@ export const layer: Layer.Layer<
             });
           }
           // Settled turns still reach adapters, which alone know whether background work remains.
-          yield* session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-            requestRuntimeRestart: true,
-          });
+          yield* session.value
+            .interruptTurn({
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+              requestRuntimeRestart: true,
+            })
+            .pipe(
+              Effect.catchTags({
+                ProviderAdapterInterruptTimeoutError: (cause) =>
+                  Effect.fail(
+                    new ProviderTurnControlError({
+                      threadId: input.threadId,
+                      operation: "interrupt",
+                      providerTurnId: input.providerTurnId,
+                      unresponsive: true,
+                      cause,
+                    }),
+                  ),
+              }),
+            );
           // Use real time; ingestion fibers do not advance TestClock and would leave Stop blocked.
           yield* Effect.gen(function* () {
             const deadline = (yield* Clock.currentTimeMillis) + 2_000;
@@ -355,6 +406,9 @@ export const layer: Layer.Layer<
               runId: run.id,
               providerThread: loaded.providerThread,
               providerTurnId: loaded.providerTurn.id,
+              ...(input.modelSelection === undefined
+                ? {}
+                : { modelSelection: input.modelSelection }),
               message: {
                 messageId: message.id,
                 text: projectComposerContextForProvider({
