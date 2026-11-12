@@ -1,3 +1,5 @@
+import * as Stream from "effect/Stream";
+import type { GitWorkflowProgress } from "@t3tools/contracts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Context from "effect/Context";
@@ -6,6 +8,8 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 
 import {
+  type GitStackStatusResult,
+  type GitStackManageInput,
   GitManagerError,
   GitCommandError,
   type VcsSwitchRefInput,
@@ -74,6 +78,15 @@ export class GitWorkflowService extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    readonly subscribeWorkflowProgress: (input: {
+      readonly cwd: string;
+    }) => Stream.Stream<GitWorkflowProgress | null, GitManagerServiceError>;
+    readonly stackStatus: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<GitStackStatusResult, GitManagerServiceError>;
+    readonly manageStack: (
+      input: GitStackManageInput,
+    ) => Effect.Effect<GitStackStatusResult, GitManagerServiceError>;
     readonly listRewriteableCommits: (
       input: GitListRewriteableCommitsInput,
     ) => Effect.Effect<GitListRewriteableCommitsResult, GitManagerServiceError>;
@@ -203,7 +216,21 @@ export const make = Effect.gen(function* () {
   const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
     fileSystem.realPath(rootPath).pipe(
       Effect.orElseSucceed(() => rootPath),
-      Effect.flatMap((cwd) => withWorkspaceLease(cwd, effect)),
+      Effect.flatMap((cwd) =>
+        git
+          .execute({
+            operation: "GitWorkflowService.lease",
+            cwd,
+            args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+          })
+          .pipe(
+            Effect.map((result) => result.stdout.trim()),
+            Effect.orElseSucceed(() => cwd),
+            Effect.flatMap((key) =>
+              withWorkspaceLease(cwd, key === cwd ? effect : withWorkspaceLease(key, effect)),
+            ),
+          ),
+      ),
     );
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
@@ -404,6 +431,20 @@ export const make = Effect.gen(function* () {
             handle.repository.rootPath,
             gitManager.runStackedAction(input, options),
           ),
+        ),
+      );
+    }),
+    subscribeWorkflowProgress: (input) =>
+      Stream.unwrap(
+        ensureGit("GitWorkflowService.subscribeWorkflowProgress", input.cwd).pipe(
+          Effect.as(gitManager.subscribeWorkflowProgress(input)),
+        ),
+      ),
+    stackStatus: routeGitManager("GitWorkflowService.stackStatus", gitManager.stackStatus),
+    manageStack: Effect.fn("GitWorkflowService.manageStack")(function (input) {
+      return ensureGit("GitWorkflowService.manageStack", input.cwd).pipe(
+        Effect.flatMap((handle) =>
+          withCheckoutLease(handle.repository.rootPath, gitManager.manageStack(input)),
         ),
       );
     }),

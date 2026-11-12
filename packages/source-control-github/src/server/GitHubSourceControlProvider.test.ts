@@ -512,6 +512,34 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
 });
 
 describe("GitHubSourceControlProvider writes", () => {
+  it.effect(
+    "retargets the existing review on its own repository without changing its description",
+    () => {
+      const requests: Array<GitHubRest.GitHubRestInput> = [];
+      const { layer } = harness({
+        remotes: remotesOutput(["origin", "git@github.com:me/fork.git"]),
+        api: {
+          rest: (input) =>
+            Effect.sync(() => {
+              requests.push(input);
+              return restResponse({ number: 42 });
+            }),
+        },
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        yield* provider.retargetChangeRequest!({
+          cwd: "/repo",
+          reference: "https://github.com/acme/web/pull/42",
+          baseBranch: "main",
+        });
+        assert.strictEqual(requests[0]!.method, "PATCH");
+        assert.strictEqual(requests[0]!.path, "repos/acme/web/pulls/42");
+        assert.deepStrictEqual(requests[0]!.body, { base: "main" });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("creates a cross-repository pull request with an owner:branch head", () => {
     const requests: Array<GitHubRest.GitHubRestInput> = [];
     const { layer } = harness({

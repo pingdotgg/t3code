@@ -1,12 +1,18 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { GitStackStatusResult, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
+import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
+import { persistQuery } from "./queryPersistence.ts";
 import type { createVcsActionManager } from "./vcsAction.ts";
 
 export function createGitEnvironmentAtoms<R, E>(
@@ -33,7 +39,51 @@ export function createGitEnvironmentAtoms<R, E>(
     scheduler: vcsCommandScheduler,
     concurrency: vcsCommandConcurrency,
   });
+  const stackStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:git:stack-status",
+    tag: WS_METHODS.gitStackStatus,
+    persistence: persistQuery(GitStackStatusResult),
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+    refreshTrigger: ({ environmentId }) => vcsRefsCacheStateAtom({ environmentId }),
+  });
+  const manageStack = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:git:manage-stack",
+    tag: WS_METHODS.gitStackManage,
+    scheduler: vcsCommandScheduler,
+    concurrency: vcsCommandConcurrency,
+    onSettled: ({ environmentId, input }, registry) =>
+      invalidateCachedVcsRefs(registry, { environmentId, cwd: input.cwd }),
+  });
   return {
+    workflowProgress: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:git:workflow-progress",
+      tag: WS_METHODS.gitSubscribeWorkflowProgress,
+    }),
+    stackStatus,
+    manageStack: {
+      ...manageStack,
+      run: (
+        registry: Parameters<typeof manageStack.run>[0],
+        target: Parameters<typeof manageStack.run>[1],
+      ) =>
+        trackAction(
+          registry,
+          { environmentId: target.environmentId, cwd: target.input.cwd },
+          {
+            operation: "manage_stack",
+            label:
+              target.input.action === "adopt"
+                ? "Adopting branch stack..."
+                : target.input.action === "edit"
+                  ? "Editing branch stack..."
+                  : target.input.action === "abort"
+                    ? "Aborting stack update..."
+                    : "Updating branch stack...",
+          },
+          () => manageStack.run(registry, target),
+        ),
+    },
     cancelCommitWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:git:cancel-commit-workflow",
       tag: WS_METHODS.gitCancelCommitWorkflow,

@@ -1,3 +1,4 @@
+import { reportSteps, type ProgressReporter } from "./WorkflowProgress.ts";
 import { GitManagerError, type GitStartCommitWorkflowInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -28,11 +29,40 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         "modelSelection" | "policy"
       >,
     ) => ReturnType<ProviderTextGeneration["generateCommitPlan"]>,
+    onProgress?: ProgressReporter,
   ) {
     const git = yield* GitVcsDriver.GitVcsDriver;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const cwd = request.cwd;
+    const progress = reportSteps(
+      onProgress,
+      ["prepare", "plan", "create", "verify", "install"].map((id) => ({
+        id,
+        group: "Logical commits",
+        label:
+          {
+            prepare: "Read changes",
+            plan: "Plan commits",
+            create: "Create commits",
+            verify: "Verify result",
+            install: "Restore index",
+          }[id] ?? id,
+        state: "pending",
+      })),
+    );
+    const stage = (id: string, label: string) =>
+      progress(label, (steps) =>
+        steps.map((item) =>
+          item.id === id
+            ? { ...item, state: "running" }
+            : item.state === "running"
+              ? { ...item, state: "completed" }
+              : item,
+        ),
+      );
+    yield* stage("prepare", "Reading changes...");
+
     const fail = (detail: string) =>
       new GitManagerError({ operation: "splitCommits", cwd, detail });
     const execute = (
@@ -169,7 +199,12 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
       patch = worktree;
     }
     const units = parseLogicalChangeUnits(patch);
-    if (units.length === 0) return { commitSha: head, subjects: [] as string[], backupRef: null };
+    if (units.length === 0) {
+      yield* progress("No changes to commit", (steps) =>
+        steps.map((item) => ({ ...item, state: item.id === "prepare" ? "completed" : "skipped" })),
+      );
+      return { commitSha: head, subjects: [] as string[], backupRef: null };
+    }
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-logical-commits-" });
     const privateIndex = path.join(directory, "candidate-index");
     const candidateEnv = { GIT_INDEX_FILE: privateIndex, GIT_LITERAL_PATHSPECS: "1" };
@@ -204,9 +239,11 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         ? `The generated commit plan omitted ${missing.length} change unit(s): ${missing.map((unit) => `${unit.id} (${unit.filePath})`).join(", ")}.`
         : null;
     };
+    yield* stage("plan", "Planning logical commits...");
     let generated = yield* generatePlan(planInput);
     const problem = validationError(generated);
     if (problem) {
+      yield* stage("plan", "Correcting the commit plan...");
       generated = yield* generatePlan({
         ...planInput,
         correction: { error: problem, previousPlan: generated },
@@ -214,6 +251,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
       const remainingProblem = validationError(generated);
       if (remainingProblem) return yield* fail(remainingProblem);
     }
+    yield* stage("create", `Creating ${generated.commits.length} logical commits...`);
     const backupRef = `${backupRoot}/original`;
     yield* execute(["update-ref", backupRef, head, ""]);
     const finalIndex = path.join(directory, "final-index");
@@ -273,7 +311,11 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         yield* update(head, base);
         tip = base;
       }
-      for (const commit of generated.commits) {
+      for (const [index, commit] of generated.commits.entries()) {
+        yield* stage(
+          "create",
+          `Creating commit ${index + 1}/${generated.commits.length}: ${commit.subject.slice(0, 160)}`,
+        );
         if ((yield* output(["rev-parse", "HEAD"])) !== tip || (yield* readBranch()) !== branchRef)
           return yield* fail(
             "The branch changed while committing. Stop other Git operations and retry.",
@@ -287,6 +329,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         tip = created.commitSha;
         yield* execute(["update-ref", `${backupRoot}/candidate`, tip]);
       }
+      yield* stage("verify", "Verifying committed changes...");
       if ((yield* output(["rev-parse", `${tip}^{tree}`])) !== targetTree)
         return yield* fail("The committed tree does not match the selected changes.");
       for (const raw of followingCommits) {
@@ -314,7 +357,11 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
           ],
           { env: finalEnv, stdin: paths },
         );
+      yield* stage("install", "Restoring the index...");
       yield* installIndex(yield* fs.readFile(finalIndex));
+      yield* progress("Logical commits created", (steps) =>
+        steps.map((item) => ({ ...item, state: "completed" })),
+      );
       return {
         commitSha: tip,
         subjects: generated.commits.map((commit) => commit.subject),
@@ -331,7 +378,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     );
   },
   Effect.scoped,
-  (effect, request, backupRoot) =>
+  (effect, request, backupRoot, _generatePlan, _onProgress?: ProgressReporter) =>
     effect.pipe(
       Effect.mapError(
         (cause) =>

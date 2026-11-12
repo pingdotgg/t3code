@@ -41,6 +41,7 @@ export const VcsActionOperation = Schema.Literals([
   "publish_repository",
   "prepare_pull_request_thread",
   "split_commits",
+  "manage_stack",
   "rewrite_commit_messages",
   "regenerate_change_request",
 ]);

@@ -1,9 +1,33 @@
 import type {
   GitRunStackedActionInput,
   GitStackedAction,
+  GitStackStatusResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { type ChangeRequestTerminology, sourceControlClients } from "../sourceControlClients.ts";
+
+export function getStackBranchSwitchDisabledReason({
+  layer,
+  hasWorkingTreeChanges,
+  canSwitch,
+  busy,
+  paused,
+}: {
+  readonly layer: GitStackStatusResult["layers"][number];
+  readonly hasWorkingTreeChanges: boolean | null;
+  readonly canSwitch: boolean;
+  readonly busy: boolean;
+  readonly paused: boolean;
+}): string | null {
+  if (layer.current) return "Current branch";
+  if (!canSwitch) return "This connection cannot change the thread's branch.";
+  if (busy) return "Wait for the current Git action to finish.";
+  if (paused) return "Continue or abort the paused stack update before switching branches.";
+  if (layer.worktreePath) return `Branch is checked out in another worktree: ${layer.worktreePath}`;
+  if (hasWorkingTreeChanges === null) return "Checking the checkout for uncommitted changes…";
+  if (hasWorkingTreeChanges) return "Commit or stash your changes before switching branches.";
+  return null;
+}
 
 export type GitActionIconName = "branch" | "commit" | "push" | "pr";
 

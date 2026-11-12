@@ -30,6 +30,8 @@ export * from "./server.ts";
 export * from "./settings.ts";
 export * from "./managedPolicy.ts";
 export * from "./git.ts";
+export * from "./gitStack.ts";
+export * from "./gitWorkflowProgress.ts";
 export * from "./gitCommitWorkflow.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";

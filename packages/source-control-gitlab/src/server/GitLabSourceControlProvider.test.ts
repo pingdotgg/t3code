@@ -14,10 +14,16 @@ import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import { definition } from "../shared/definition.ts";
 
-function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>, git?: TestSourceControlHost.TestSourceControlHostOptions["git"]) {
+function makeProvider(
+  gitlab: Partial<GitLabCli.GitLabCli["Service"]>,
+  git?: TestSourceControlHost.TestSourceControlHostOptions["git"],
+) {
   return GitLabSourceControlProvider.make.pipe(
     Effect.provide(
-      Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer(git === undefined ? {} : { git })),
+      Layer.mergeAll(
+        Layer.mock(GitLabCli.GitLabCli)(gitlab),
+        TestSourceControlHost.layer(git === undefined ? {} : { git }),
+      ),
     ),
   );
 }
@@ -317,5 +323,34 @@ it.effect(
         treeish: "main",
       });
       assert.deepEqual(template, Option.some("Repository template"));
+    }),
+);
+
+it.effect(
+  "retargets an existing merge request without creating one or replacing its description",
+  () =>
+    Effect.gen(function* () {
+      const commands: ReadonlyArray<string>[] = [];
+      const provider = yield* makeProvider({
+        execute: (input) => {
+          commands.push(input.args);
+          return Effect.succeed(processOutput(""));
+        },
+      });
+      yield* provider.retargetChangeRequest!({
+        cwd: "/repo",
+        reference: "https://gitlab.example/group/repo/-/merge_requests/42",
+        baseBranch: "main",
+      });
+      assert.deepStrictEqual(commands, [
+        [
+          "mr",
+          "update",
+          "--target-branch",
+          "main",
+          "--",
+          "https://gitlab.example/group/repo/-/merge_requests/42",
+        ],
+      ]);
     }),
 );

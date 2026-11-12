@@ -3186,6 +3186,18 @@ export const layerWsRpc = (
         [WS_METHODS.gitStartCommitWorkflow]: (input) =>
           commitWorkflow.start(input).pipe(Effect.ensuring(refreshGitStatus(input.cwd))),
         [WS_METHODS.gitCancelCommitWorkflow]: (input) => commitWorkflow.cancel(input),
+        [WS_METHODS.gitSubscribeWorkflowProgress]: (input) =>
+          gitWorkflow.subscribeWorkflowProgress(input),
+        [WS_METHODS.gitStackStatus]: (input) => gitWorkflow.stackStatus(input),
+        [WS_METHODS.gitStackManage]: (input) =>
+          gitWorkflow.manageStack(input).pipe(
+            Effect.tap(() =>
+              input.action === "update" || input.action === "continue"
+                ? refreshPushedPullRequests({ cwd: input.cwd }, { push: { status: "pushed" } })
+                : Effect.void,
+            ),
+            Effect.ensuring(refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.gitListRewriteableCommits]: (input) =>
           gitWorkflow.listRewriteableCommits(input),
         [WS_METHODS.gitRegeneratePullRequestDescription]: (input) =>

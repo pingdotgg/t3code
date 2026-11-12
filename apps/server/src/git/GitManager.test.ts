@@ -1233,6 +1233,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("discovers adoption candidates without contacting the review host", () =>
+    Effect.gen(function* () {
+      const cwd = yield* createStackedBranches();
+      const { manager, providerCalls } = yield* makeManager();
+      const status = yield* manager.stackStatus({ cwd });
+      expect(status.managed).toBe(false);
+      expect(status.layers.length).toBeGreaterThan(0);
+      expect(providerCalls).toEqual([]);
+    }),
+  );
+
   it.effect("runs hooks.afterPush after pushing and concurrently with PR creation", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1290,6 +1301,113 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(result.pr.status).toBe("created");
       expect(NodeFS.readFileSync(hookFinishedMarker, "utf8")).toBe("complete\n");
     }),
+  );
+
+  it.effect.each(["publish", "update", "continue", "top"] as const)(
+    "runs the normal post-push lifecycle for each changed stack branch via %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const cwd = yield* createStackedBranches();
+        const branches = ["stack/first", "stack/second", "stack/feature"];
+        const scenario: FakeProviderScenario = {
+          prListByHeadSelector: Object.fromEntries(
+            branches.map((branch, index) => [
+              branch,
+              [
+                {
+                  number: index + 1,
+                  title: branch,
+                  url: `https://github.com/example/repo/pull/${index + 1}`,
+                  headRefName: branch,
+                  baseRefName: branches[index - 1] ?? "main",
+                  state: "open" as const,
+                  isCrossRepository: false,
+                },
+              ],
+            ]),
+          ),
+        };
+        const { service } = createFakeSourceControlProvider(scenario);
+        const recorded: string[] = [];
+        const { manager } = yield* makeManager({
+          sourceControlProvider: {
+            ...service,
+            recordBranchBase: ({ branch }) =>
+              Effect.sync(() => {
+                recorded.push(branch);
+              }),
+            getChangeRequest: (input) =>
+              service.getChangeRequest(input).pipe(
+                Effect.map((pr) => ({
+                  ...pr,
+                  baseRefName: input.reference.endsWith("/3")
+                    ? "stack/second"
+                    : input.reference.endsWith("/2")
+                      ? "stack/first"
+                      : "main",
+                })),
+              ),
+          },
+        });
+        const marker = NodePath.join(cwd, ".git", "after-push-branches");
+        NodeFS.appendFileSync(
+          NodePath.join(cwd, ".git", "info", "exclude"),
+          "\n.t3code/vcs.json\n",
+        );
+        NodeFS.mkdirSync(NodePath.join(cwd, ".t3code"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, ".t3code", "vcs.json"),
+          JSON.stringify({
+            hooks: {
+              afterPush: [
+                [
+                  process.execPath,
+                  "-e",
+                  "const cp=require('node:child_process');require('node:fs').appendFileSync(process.argv[1],cp.execFileSync('git',['branch','--show-current'],{encoding:'utf8'}));",
+                  marker,
+                ],
+              ],
+            },
+          }),
+        );
+        const current = mode === "top" ? "stack/feature" : "stack/second";
+        yield* runGit(cwd, ["checkout", current]);
+        yield* manager.manageStack({ cwd, action: "adopt", base: "main", branches });
+        NodeFS.writeFileSync(NodePath.join(cwd, "review-fix.txt"), "fix\n");
+        yield* runGit(cwd, ["add", "review-fix.txt"]);
+        yield* runGit(cwd, ["commit", "-m", "Review fix"]);
+        if (mode === "publish" || mode === "top")
+          yield* runStackedAction(manager, { cwd, action: "push" });
+        else if (mode === "update") yield* manager.manageStack({ cwd, action: "update" });
+        else {
+          const remote = (yield* runGit(cwd, ["remote", "get-url", "origin"])).stdout.trim();
+          yield* runGit(cwd, [
+            `--git-dir=${remote}`,
+            "config",
+            "receive.denyNonFastForwards",
+            "true",
+          ]);
+          yield* manager.manageStack({ cwd, action: "update" }).pipe(Effect.flip);
+          expect(NodeFS.existsSync(marker)).toBe(false);
+          expect(recorded).toEqual([]);
+          yield* runGit(cwd, [
+            `--git-dir=${remote}`,
+            "config",
+            "receive.denyNonFastForwards",
+            "false",
+          ]);
+          yield* manager.manageStack({ cwd, action: "continue" });
+        }
+        const expected = mode === "top" ? ["stack/feature"] : ["stack/second", "stack/feature"];
+        expect(
+          NodeFS.existsSync(marker) ? NodeFS.readFileSync(marker, "utf8").trim().split("\n") : [],
+        ).toEqual(expected);
+        expect(recorded).toEqual(expected);
+        expect((yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim()).toBe(current);
+        yield* manager.manageStack({ cwd, action: "update" });
+        expect(NodeFS.readFileSync(marker, "utf8").trim().split("\n")).toEqual(expected);
+        expect(recorded).toEqual(expected);
+      }),
   );
 
   it.effect("runs argv-style hooks.afterPush commands sequentially", () =>
@@ -4340,6 +4458,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         splitCommits: true,
       });
 
+      const snapshots = yield* manager
+        .subscribeWorkflowProgress({ cwd: repoDir })
+        .pipe(Stream.take(1), Stream.runCollect);
+      expect(snapshots[0]).toMatchObject({ kind: "logical_commits", state: "completed" });
+      expect(snapshots[0]?.steps.map((step) => [step.id, step.state])).toEqual(
+        ["prepare", "plan", "create", "verify", "install"].map((id) => [id, "completed"]),
+      );
       expect(result.commit).toMatchObject({
         status: "created",
         subject: "Add beta behavior",
@@ -5957,6 +6082,97 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
         ),
       ).toBe(true);
     }),
+  );
+
+  it.effect.each([
+    { layer: "stack/second", action: "commit_push" },
+    { layer: "stack/second", action: "commit_push_pr" },
+    { layer: "stack/second", action: "commit" },
+    { layer: "stack/feature", action: "commit_push" },
+  ] as const)(
+    "maintains an adopted stack when publishing $layer with $action",
+    ({ layer, action }) =>
+      Effect.gen(function* () {
+        const cwd = yield* createStackedBranches();
+        const branches = ["stack/first", "stack/second", "stack/feature"];
+        const prListByHeadSelector = Object.fromEntries(
+          branches.map((head, index) => [
+            head,
+            [
+              {
+                number: index + 1,
+                title: head,
+                url: `https://github.com/example/repo/pull/${index + 1}`,
+                headRefName: head,
+                baseRefName: branches[index - 1] ?? "main",
+                state: "open" as const,
+                isCrossRepository: false,
+              },
+            ],
+          ]),
+        );
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: { prListByHeadSelector },
+        });
+        yield* runGit(cwd, ["checkout", layer]);
+        yield* manager.manageStack({ cwd, action: "adopt", base: "main", branches });
+        const previousTop = (yield* runGit(cwd, ["rev-parse", "stack/feature"])).stdout.trim();
+        const previousMiddle = (yield* runGit(cwd, ["rev-parse", "stack/second"])).stdout.trim();
+        NodeFS.writeFileSync(NodePath.join(cwd, "updated-layer.txt"), "review fix\n");
+        const result = yield* runStackedAction(manager, {
+          cwd,
+          action,
+          commitMessage: "Address review",
+        });
+        expect((yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim()).toBe(layer);
+        expect(created(providerCalls)).toEqual([]);
+        const top = (yield* runGit(cwd, ["rev-parse", "stack/feature"])).stdout.trim();
+        if (action === "commit") {
+          expect(top).toBe(previousTop);
+          expect(result.push.status).toBe("skipped_not_requested");
+        } else {
+          expect(
+            (yield* runGit(cwd, ["show", "stack/feature:updated-layer.txt"])).stdout.trim(),
+          ).toBe("review fix");
+          expect(
+            (yield* runGit(cwd, ["rev-parse", "refs/remotes/origin/stack/feature"])).stdout.trim(),
+          ).toBe(top);
+          if (layer === "stack/feature")
+            expect((yield* runGit(cwd, ["rev-parse", "stack/second"])).stdout.trim()).toBe(
+              previousMiddle,
+            );
+        }
+        if (layer === "stack/second")
+          expect((yield* manager.listRewriteableCommits({ cwd })).commits).toHaveLength(2);
+      }),
+  );
+
+  it.effect(
+    "does not commit or create a review when publishing a middle layer with no open review",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* createStackedBranches();
+        yield* runGit(cwd, ["checkout", "stack/second"]);
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: { prListOtherwise: [] },
+        });
+        yield* manager.manageStack({
+          cwd,
+          action: "adopt",
+          base: "main",
+          branches: ["stack/first", "stack/second", "stack/feature"],
+        });
+        const before = (yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout;
+        NodeFS.writeFileSync(NodePath.join(cwd, "review-fix.txt"), "fix\n");
+        const error = yield* runStackedAction(manager, {
+          cwd,
+          action: "commit_push_pr",
+          commitMessage: "Review fix",
+        }).pipe(Effect.flip);
+        expect(error.message).toContain("no open change request");
+        expect((yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout).toBe(before);
+        expect(created(providerCalls)).toEqual([]);
+      }),
   );
 
   it.effect("creates a GitLab stacked MR from only the two commits above its parent", () =>

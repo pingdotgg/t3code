@@ -1,3 +1,5 @@
+import * as WorkflowProgress from "./WorkflowProgress.ts";
+import type { GitWorkflowProgress } from "@t3tools/contracts";
 import type { GitStartCommitWorkflowInput, GitStartCommitWorkflowResult } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
@@ -24,6 +26,8 @@ import {
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
+  type GitStackStatusResult,
+  type GitStackManageInput,
   GitListRewriteableCommitsInput,
   GitListRewriteableCommitsResult,
   GitPreparePullRequestThreadInput,
@@ -90,6 +94,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import * as BranchStackWorkflow from "./BranchStackWorkflow.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
@@ -180,6 +185,15 @@ export class GitManager extends Context.Service<
       never,
       Scope.Scope
     >;
+    readonly subscribeWorkflowProgress: (input: {
+      readonly cwd: string;
+    }) => Stream.Stream<GitWorkflowProgress | null>;
+    readonly stackStatus: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<GitStackStatusResult, GitManagerServiceError>;
+    readonly manageStack: (
+      input: GitStackManageInput,
+    ) => Effect.Effect<GitStackStatusResult, GitManagerServiceError>;
     readonly listRewriteableCommits: (
       input: GitListRewriteableCommitsInput,
     ) => Effect.Effect<GitListRewriteableCommitsResult, GitManagerServiceError>;
@@ -791,6 +805,8 @@ function toPullRequestHeadRemoteInfo(pr: {
 }
 
 export const make = Effect.gen(function* () {
+  const branchStacks = yield* BranchStackWorkflow.make;
+  const workflowProgress = yield* WorkflowProgress.make;
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
@@ -886,18 +902,12 @@ export const make = Effect.gen(function* () {
     const provider = yield* sourceControlProvider(cwd).pipe(Effect.orElseSucceed(() => null));
     yield* provider?.recordBranchBase?.({ cwd, branch, baseBranch }) ?? Effect.void;
   });
-  // Publishing a branch that tracks its base records that base first, even when the push then
-  // fails, so the host hears of it after every successful push rather than the first attempt.
   const pushCurrentBranch = Effect.fn("GitManager.pushCurrentBranch")(function* (
     cwd: string,
     branch: string | null,
     options?: { readonly forceWithLease?: boolean },
   ) {
-    const result = yield* gitCore.pushCurrentBranch(cwd, branch, options);
-    if (result.status === "pushed" && result.branch) {
-      yield* shareBranchBase(cwd, result.branch);
-    }
-    return result;
+    return yield* gitCore.pushCurrentBranch(cwd, branch, options);
   });
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.worktreesDirectory),
@@ -1079,6 +1089,14 @@ export const make = Effect.gen(function* () {
           ),
         );
     }).pipe(Effect.asVoid);
+  });
+
+  const completePush = Effect.fn("GitManager.completePush")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    yield* shareBranchBase(cwd, branch);
+    yield* runAfterPushHook(cwd);
   });
 
   const createProgressEmitter = (
@@ -2594,19 +2612,27 @@ export const make = Effect.gen(function* () {
           .filter(Boolean)
           .join("\n\n"),
       };
-      return yield* runLogicalCommitWorkflow(
-        request,
-        `refs/t3/commit-workflow/${yield* randomUUIDv4(request.cwd)}`,
-        (context) =>
-          textGeneration.generateCommitPlan({
-            ...context,
-            policy,
-            modelSelection: settings.modelSelection,
-          }),
-      ).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, gitCore),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
+      const backupRoot = `refs/t3/commit-workflow/${yield* randomUUIDv4(request.cwd)}`;
+      return yield* workflowProgress.run(
+        request.cwd,
+        "logical_commits",
+        "Preparing logical commits...",
+        (report) =>
+          runLogicalCommitWorkflow(
+            request,
+            backupRoot,
+            (context) =>
+              textGeneration.generateCommitPlan({
+                ...context,
+                policy,
+                modelSelection: settings.modelSelection,
+              }),
+            report,
+          ).pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, gitCore),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
       );
     },
     (effect, request) =>
@@ -2626,7 +2652,19 @@ export const make = Effect.gen(function* () {
   const runCommitWorkflow: GitManager["Service"]["runCommitWorkflow"] = Effect.fn(
     "GitManager.runCommitWorkflow",
   )(function* (input) {
-    const result = yield* performCommitWorkflow(input.request, {
+    yield* branchStacks.assertIdle(input.request.cwd, false);
+    let request = input.request;
+    if (
+      (request.scope.type === "branch" || request.scope.type === "branch_range") &&
+      !request.scope.baseRef
+    ) {
+      const stack = yield* branchStacks.inspect(request.cwd, false);
+      const parent = stack.managed
+        ? stack.layers.find((layer) => layer.current)?.parent
+        : undefined;
+      if (parent) request = { ...request, scope: { ...request.scope, baseRef: parent } };
+    }
+    const result = yield* performCommitWorkflow(request, {
       modelSelection: input.modelSelection,
       style: input.style,
     });
@@ -3657,6 +3695,9 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const stack = yield* branchStacks.inspect(cwd, false);
+    if (!requestedBaseRef && stack.managed)
+      requestedBaseRef = stack.layers.find((layer) => layer.current)?.parent;
     const headResult = yield* gitCore.execute({
       operation: "GitManager.resolveRewriteableCommitObjects.head",
       cwd,
@@ -3810,6 +3851,7 @@ export const make = Effect.gen(function* () {
   const rewriteCommitMessages: GitManager["Service"]["rewriteCommitMessages"] = Effect.fn(
     "rewriteCommitMessages",
   )(function* (input) {
+    yield* branchStacks.assertIdle(input.cwd, false);
     const resolved = yield* resolveRewriteableCommitObjects(input.cwd);
     if (resolved.headSha !== input.expectedHeadSha) {
       return yield* new GitManagerError({
@@ -4169,6 +4211,94 @@ export const make = Effect.gen(function* () {
       };
     });
 
+  const stackStatus = Effect.fn("GitManager.stackStatus")(function* (
+    input: {
+      readonly cwd: string;
+    },
+    refresh = false,
+  ) {
+    const status = yield* branchStacks.inspect(input.cwd);
+    if (!status.managed) return status;
+    const layers = yield* Effect.forEach(
+      status.layers,
+      Effect.fnUntraced(function* (layer) {
+        const pr = yield* branchPullRequest(
+          { cwd: input.cwd, branch: layer.branch },
+          { refresh },
+        ).pipe(Effect.orElseSucceed(() => null));
+        return {
+          ...layer,
+          pullRequest: pr ? { number: pr.number, url: pr.url, state: pr.state } : null,
+        };
+      }),
+      { concurrency: 4 },
+    );
+    return { ...status, layers };
+  });
+  const manageStack = Effect.fn("GitManager.manageStack")(function* (input: GitStackManageInput) {
+    const status = yield* stackStatus(input, input.action === "update");
+    const maintain = Effect.fn("GitManager.maintainStack")(function* (
+      report?: WorkflowProgress.ProgressReporter,
+    ) {
+      yield* branchStacks.manage(
+        input,
+        status.layers
+          .filter((layer) => layer.pullRequest?.state === "merged")
+          .map((layer) => layer.branch),
+        completePush,
+        report,
+      );
+      const updated = yield* branchStacks.inspect(input.cwd);
+      if (updated.managed) {
+        for (const layer of updated.layers) {
+          yield* gitCore.writeConfigValue({
+            cwd: input.cwd,
+            key: `branch.${layer.branch}.t3-merge-base`,
+            value: layer.parent,
+          });
+          if (
+            input.action !== "adopt" &&
+            input.action !== "edit" &&
+            input.action !== "abort" &&
+            input.action !== "untrack"
+          ) {
+            const pr = yield* branchPullRequest(
+              { cwd: input.cwd, branch: layer.branch },
+              { refresh: true },
+            );
+            if (pr?.state === "open") {
+              const provider = yield* sourceControlProvider(input.cwd);
+              const detail = yield* provider.getChangeRequest({
+                cwd: input.cwd,
+                reference: pr.url,
+              });
+              if (detail.baseRefName !== layer.parent) {
+                if (!provider.retargetChangeRequest)
+                  return yield* new GitManagerError({
+                    operation: "manageStack",
+                    cwd: input.cwd,
+                    detail:
+                      "The stack was pushed, but this host cannot retarget its reviews. Update their target branches manually.",
+                  });
+                yield* provider.retargetChangeRequest({
+                  cwd: input.cwd,
+                  reference: pr.url,
+                  baseBranch: layer.parent,
+                });
+              }
+            }
+          }
+        }
+      }
+      yield* invalidateStatus(input.cwd);
+      return yield* stackStatus(input);
+    });
+    if (input.action === "update" || input.action === "continue")
+      return yield* workflowProgress.run(input.cwd, "stack", "Preparing stack...", maintain);
+    yield* workflowProgress.clear(input.cwd);
+    return yield* maintain();
+  });
+
   const runStackedAction: GitManager["Service"]["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
       const progress = yield* createProgressEmitter(input, options);
@@ -4183,6 +4313,33 @@ export const make = Effect.gen(function* () {
         const initialStatus = yield* input.forceWithLease
           ? gitCore.statusDetailsLocal(input.cwd)
           : gitCore.statusDetails(input.cwd);
+        const localStack = yield* branchStacks.inspect(input.cwd, false);
+        if (localStack.operation)
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "A stack update is paused. Continue or abort it from the sidebar first.",
+          });
+        yield* workflowProgress.clear(input.cwd);
+        const layerIndex = localStack.layers.findIndex(
+          (layer) => layer.branch === initialStatus.branch,
+        );
+        const maintainStack =
+          localStack.managed &&
+          layerIndex >= 0 &&
+          layerIndex < localStack.layers.length - 1 &&
+          ["push", "create_pr", "commit_push", "commit_push_pr"].includes(input.action);
+        const stackReview = maintainStack
+          ? yield* branchPullRequest({ cwd: input.cwd, branch: initialStatus.branch! })
+          : null;
+        if (maintainStack && stackReview?.state !== "open") {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail:
+              "This middle stack layer has no open change request. Update the stack or reopen its existing review before publishing.",
+          });
+        }
         const featureBranch = input.featureBranch === true || input.action === "create_branch";
         const branchOnly =
           input.action === "create_branch" ||
@@ -4364,41 +4521,84 @@ export const make = Effect.gen(function* () {
               .emit({
                 kind: "phase_started",
                 phase: "push",
-                label: input.forceWithLease ? "Force pushing with lease..." : "Pushing...",
+                label: maintainStack
+                  ? "Restacking and pushing..."
+                  : input.forceWithLease
+                    ? "Force pushing with lease..."
+                    : "Pushing...",
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() =>
-                  pushCurrentBranch(
-                    input.cwd,
-                    currentBranch,
-                    input.forceWithLease ? { forceWithLease: true } : undefined,
-                  ),
+                Effect.flatMap(
+                  (): Effect.Effect<GitRunStackedActionResult["push"], GitManagerServiceError> =>
+                    maintainStack
+                      ? workflowProgress.run(
+                          input.cwd,
+                          "stack",
+                          "Preparing stack...",
+                          (onProgress) =>
+                            branchStacks
+                              .update(input.cwd, {
+                                afterPush: completePush,
+                                onProgress,
+                                report: (label) =>
+                                  progress.emit({
+                                    kind: "phase_started",
+                                    phase: "push",
+                                    label,
+                                  }),
+                              })
+                              .pipe(
+                                Effect.as({
+                                  status: "pushed" as const,
+                                  branch: currentBranch!,
+                                  upstreamBranch: `${localStack.remote}/${currentBranch}`,
+                                }),
+                              ),
+                        )
+                      : localStack.managed && currentBranch
+                        ? branchStacks.pushCurrent(input.cwd, currentBranch, input.forceWithLease)
+                        : pushCurrentBranch(
+                            input.cwd,
+                            currentBranch,
+                            input.forceWithLease ? { forceWithLease: true } : undefined,
+                          ),
                 ),
               )
           : { status: "skipped_not_requested" as const };
 
-        const afterPush = push.status === "pushed" ? runAfterPushHook(input.cwd) : Effect.void;
+        const afterPush =
+          push.status === "pushed" && !maintainStack && push.branch
+            ? completePush(input.cwd, push.branch)
+            : Effect.void;
         const runPr: Effect.Effect<GitRunStackedActionResult["pr"], GitManagerServiceError> =
           wantsPr
-            ? progress
-                .emit({
-                  kind: "phase_started",
-                  phase: "pr",
-                  label: `Preparing ${changeRequestTerms?.shortLabel ?? "PR"}...`,
+            ? maintainStack && stackReview
+              ? Effect.succeed({
+                  status: "opened_existing" as const,
+                  url: stackReview.url,
+                  number: stackReview.number,
+                  baseBranch: localStack.layers[layerIndex]!.parent,
+                  headBranch: currentBranch!,
                 })
-                .pipe(
-                  Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
-                  Effect.flatMap(() =>
-                    runPrStep(
-                      textGenerationSettings,
-                      input.cwd,
-                      currentBranch,
-                      input.threadId,
-                      progress.emit,
+              : progress
+                  .emit({
+                    kind: "phase_started",
+                    phase: "pr",
+                    label: `Preparing ${changeRequestTerms?.shortLabel ?? "PR"}...`,
+                  })
+                  .pipe(
+                    Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
+                    Effect.flatMap(() =>
+                      runPrStep(
+                        textGenerationSettings,
+                        input.cwd,
+                        currentBranch,
+                        input.threadId,
+                        progress.emit,
+                      ),
                     ),
-                  ),
-                )
+                  )
             : Effect.succeed({ status: "skipped_not_requested" as const });
 
         // Wait for both operations even if one fails: an MR creation already in
@@ -4467,6 +4667,9 @@ export const make = Effect.gen(function* () {
     invalidateStatus,
     resolvePullRequest,
     preparePullRequestThread,
+    subscribeWorkflowProgress: ({ cwd }) => workflowProgress.subscribe(cwd),
+    stackStatus,
+    manageStack,
     listRewriteableCommits,
     rewriteCommitMessages,
     generatePullRequestDescription,

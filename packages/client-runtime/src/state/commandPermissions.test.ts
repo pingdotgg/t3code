@@ -69,6 +69,7 @@ const setup = Effect.gen(function* () {
 
 describe("command permissions", () => {
   it.effect.each([
+    WS_METHODS.gitStackManage,
     WS_METHODS.gitRewriteCommitMessages,
     WS_METHODS.gitStartCommitWorkflow,
     WS_METHODS.gitCancelCommitWorkflow,

@@ -284,6 +284,32 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    retargetChangeRequest: Effect.fn("GitLabSourceControlProvider.retargetChangeRequest")(
+      function (input) {
+        return gitlab
+          .execute({
+            cwd: input.cwd,
+            args: ["mr", "update", "--target-branch", input.baseBranch, "--", input.reference],
+          })
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: SourceControlProviderKind.make("gitlab"),
+                  operation: "retargetChangeRequest",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.reference,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
+          );
+      },
+    ),
     createChangeRequest: Effect.fn("GitLabSourceControlProvider.createChangeRequest")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);

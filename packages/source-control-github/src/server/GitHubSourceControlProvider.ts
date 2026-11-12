@@ -975,6 +975,31 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    retargetChangeRequest: Effect.fn("GitHubSourceControlProvider.retargetChangeRequest")(
+      function* (input) {
+        const parsed = parsePullRequestReference(input.reference);
+        if (parsed.kind !== "url")
+          return yield* failure(
+            "Retargeting requires a full pull request URL.",
+            new Error("Missing pull request URL"),
+          );
+        const { locator, number } = parsed;
+        yield* rest({
+          host: locator.host,
+          operation: "retargetPullRequest",
+          method: "PATCH",
+          allowReserve: true,
+          path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls/${number}`,
+          body: { base: input.baseBranch },
+        });
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            providerError("retargetChangeRequest", input.cwd, { reference: input.reference }),
+          ),
+        ),
+    ),
     createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
       function* (input) {
         const locator = yield* resolveRepository(input);
