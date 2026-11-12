@@ -4,6 +4,7 @@
  * fx 0.0.13 on PATH (or T3_FX_BIN); HOME stays the user's real login:
  *   node scripts/record-fx-acp-replay-fixture.ts --scenario simple
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, type ProviderReplayEntry } from "@t3tools/contracts";
 import { FxSettings } from "@t3tools/provider-fx/settings";
@@ -12,6 +13,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -31,6 +34,7 @@ import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fi
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/OrchestratorScenario.ts";
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as Result from "effect/Result";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -321,7 +325,19 @@ function normalizeEntries(input: {
 
 const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 
+const RecorderEnv = Config.all({
+  T3_FX_BIN: Config.String("T3_FX_BIN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  HOME: Config.String("HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  USER: Config.String("USER").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  AI_GATEWAY_API_KEY: Config.String("AI_GATEWAY_API_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  TMPDIR: Config.String("TMPDIR").pipe(Config.option, Config.map(Option.getOrUndefined)),
+});
+
 const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: string) {
+  const recorderEnv = yield* RecorderEnv;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === FX_DRIVER_KIND);
   if (fixture === undefined || variant === undefined) {
@@ -358,7 +374,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   };
 
   const tee = makeWireTee();
-  const settings = { ...DEFAULT_FX_SETTINGS, binaryPath: process.env.T3_FX_BIN ?? "fx" };
+  const settings = { ...DEFAULT_FX_SETTINGS, binaryPath: recorderEnv.T3_FX_BIN ?? "fx" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       const environment = yield* HostProcess.Environment;
@@ -398,8 +414,11 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
       ),
     ),
@@ -451,7 +470,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
     isRecord(initialize.frame.result.agentInfo)
       ? initialize.frame.result.agentInfo
       : {};
-  const home = process.env.HOME ?? "";
+  const home = recorderEnv.HOME ?? "";
   const transcript = {
     provider: FX_DRIVER_KIND,
     protocol: ACP_PROTOCOL,
@@ -469,11 +488,11 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
         entries,
         workspace: realWorkspace,
         home,
-        user: process.env.USER ?? "",
+        user: recorderEnv.USER ?? "",
         skillNames: yield* readUserSkillNames(home),
-        ...(process.env.AI_GATEWAY_API_KEY === undefined
+        ...(recorderEnv.AI_GATEWAY_API_KEY === undefined
           ? {}
-          : { gatewayApiKey: process.env.AI_GATEWAY_API_KEY }),
+          : { gatewayApiKey: recorderEnv.AI_GATEWAY_API_KEY }),
         runtimeInstructions: buildRuntimeInstructions({
           harness: "fx",
           model: variant.modelSelection.model,
@@ -484,21 +503,18 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   };
 
   const outputPath = readArgValues("--out")[0] ?? (yield* path.fromFileUrl(variant.transcriptFile));
-  const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
-    Effect.flip,
-    Effect.option,
-  );
-  if (liveFailure._tag === "Some") {
+  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
+  if (Result.isFailure(liveFailure)) {
     const dumpPath = path.join(
-      process.env.TMPDIR ?? "/tmp",
+      recorderEnv.TMPDIR ?? "/tmp",
       `fx-replay-${fixtureName}-failed.json`,
     );
     yield* fs.writeFileString(dumpPath, encodeJson(transcript));
     yield* Console.log(
       `Live orchestration failed ${fixtureName} assertions; left ${outputPath} unchanged. Dump: ${dumpPath}`,
-      liveFailure.value,
+      liveFailure.failure,
     );
-    return yield* Effect.die(liveFailure.value);
+    return yield* Effect.die(liveFailure.failure);
   }
 
   const { entries: transcriptEntries, ...header } = transcript;
@@ -520,5 +536,5 @@ if (scenarios.length === 0) {
 await Effect.runPromise(
   Effect.forEach(scenarios, (name) => Effect.scoped(recordScenario(name)), {
     discard: true,
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
