@@ -38,7 +38,7 @@ export class WorkspaceRootStatFailedError extends Schema.TaggedError<WorkspaceRo
   {
     workspaceRoot: Schema.String,
     normalizedWorkspaceRoot: Schema.String,
-    phase: Schema.Literals(["validate-existing", "verify-created"]),
+    phase: Schema.Literals(["validate-existing", "verify-created", "resolve-real-path"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -170,7 +170,17 @@ const make = Effect.gen(function* () {
         normalizedWorkspaceRoot,
       });
     }
-    return normalizedWorkspaceRoot;
+    return yield* fileSystem.realPath(normalizedWorkspaceRoot).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceRootStatFailedError({
+            workspaceRoot,
+            normalizedWorkspaceRoot,
+            phase: "resolve-real-path",
+            cause,
+          }),
+      ),
+    );
   });
 
   const resolveRelativePathWithinRoot: WorkspacePaths["Service"]["resolveRelativePathWithinRoot"] =

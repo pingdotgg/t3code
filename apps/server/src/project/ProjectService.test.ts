@@ -9,6 +9,9 @@ import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -96,10 +99,15 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  workspaceLayer: Layer.Layer<
+    WorkspacePaths.WorkspacePaths,
+    never,
+    FileSystem.FileSystem | Path.Path
+  > = layerWorkspacePaths,
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
-    Layer.provideMerge(layerWorkspacePaths),
+    Layer.provideMerge(workspaceLayer),
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
@@ -109,6 +117,85 @@ const layerTestFor = (
   );
 
 const layerTest = layerTestFor(layerMetadata);
+
+it.effect.skipIf(!symlinksSupported)(
+  "reuses symlinked checkouts, including legacy roots, without merging distinct folders",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sql = yield* SqlClient.SqlClient;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "project-alias-" });
+      const physicalParent = path.join(cwd, "Development", "Code");
+      const aliasParent = path.join(cwd, "Code");
+      yield* fs.makeDirectory(physicalParent, { recursive: true });
+      yield* fs.symlink(physicalParent, aliasParent);
+      const root = path.join(physicalParent, "project");
+      const alias = path.join(aliasParent, "project");
+      const input = {
+        commandId: CommandId.make("command:alias:first"),
+        projectId: ProjectId.make("project:alias:first"),
+        title: "Alias",
+        workspaceRoot: alias,
+        createWorkspaceRootIfMissing: true,
+      };
+      const first = { project: yield* service.create(input) };
+      const canonicalRoot = yield* fs.realPath(root);
+      assert.equal(first.project.workspaceRoot, canonicalRoot);
+      // Older versions persisted the unresolved path. Keep that project's identity and settings.
+      yield* sql`UPDATE projection_projects SET workspace_root = ${alias}
+        WHERE project_id = ${input.projectId}`;
+      const second = yield* service.bootstrap({
+        ...input,
+        commandId: CommandId.make("command:alias:second"),
+        projectId: ProjectId.make("project:alias:second"),
+        workspaceRoot: root,
+      });
+      assert.isFalse(second.created);
+      assert.equal(second.project.id, first.project.id);
+      const conflict = yield* service
+        .create({
+          ...input,
+          commandId: CommandId.make("command:alias:duplicate"),
+          projectId: ProjectId.make("project:alias:duplicate"),
+          workspaceRoot: root,
+        })
+        .pipe(Effect.flip);
+      assert.equal(conflict._tag, "ProjectConflictError");
+      const separate = yield* service.create({
+        ...input,
+        commandId: CommandId.make("command:alias:separate"),
+        projectId: ProjectId.make("project:alias:separate"),
+        workspaceRoot: path.join(cwd, "other", "project"),
+        createWorkspaceRootIfMissing: true,
+      });
+      assert.notEqual(separate.id, first.project.id);
+      const moveConflict = yield* service
+        .update({
+          commandId: CommandId.make("command:alias:move"),
+          projectId: separate.id,
+          workspaceRoot: alias,
+        })
+        .pipe(Effect.flip);
+      assert.equal(moveConflict._tag, "ProjectConflictError");
+      assert.equal(
+        Option.getOrThrow(yield* service.getByWorkspaceRoot(alias)).id,
+        first.project.id,
+      );
+      assert.equal(
+        Option.getOrThrow(yield* service.getByWorkspaceRoot(root, { includeDeleted: true })).id,
+        first.project.id,
+      );
+      assert.lengthOf((yield* service.snapshot).projects, 2);
+    }).pipe(
+      Effect.provide(
+        layerTestFor(layerMetadata, WorkspacePaths.layer).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+);
 
 it.effect("resolves only the requested active project page in creation order", () =>
   Effect.gen(function* () {

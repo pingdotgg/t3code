@@ -36,7 +36,7 @@ it.layer(layerTest)("WorkspacePathsLive", (it) => {
         });
         const stat = yield* fileSystem.stat(resolved);
 
-        expect(resolved).toBe(missingPath);
+        expect(resolved).toBe(yield* fileSystem.realPath(missingPath));
         expect(stat.type).toBe("Directory");
       }),
     );

@@ -244,6 +244,39 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const findByWorkspaceRoot = Effect.fn("ProjectService.findByWorkspaceRoot")(function* (
+    workspaceRoot: string,
+    options?: { readonly includeDeleted?: boolean },
+  ) {
+    if (options?.includeDeleted !== true) {
+      const exact = yield* projects
+        .findActiveByWorkspaceRoot(workspaceRoot)
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "read-project", cause }),
+          ),
+        );
+      if (Option.isSome(exact)) return exact;
+    }
+    const rows = yield* projects
+      .list(options)
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProjectOperationError({ operation: "list-projects", cause }),
+        ),
+      );
+    const exact = rows.find((row) => row.workspaceRoot === workspaceRoot);
+    if (exact !== undefined) return Option.some(exact);
+    // Older registrations can still store a symlink spelling. Resolve without rewriting their history.
+    return yield* Effect.findFirst(rows, (row) =>
+      normalizeWorkspaceRoot({ workspaceRoot: row.workspaceRoot }).pipe(
+        Effect.map((root) => root === workspaceRoot),
+        // An unavailable checkout cannot establish a matching filesystem identity.
+        Effect.orElseSucceed(() => false),
+      ),
+    );
+  });
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -255,9 +288,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot === undefined
           ? undefined
           : Option.getOrUndefined(
-              yield* projects
-                .findActiveByWorkspaceRoot(workspaceRoot)
-                .pipe(Effect.mapError(dispatchError)),
+              yield* findByWorkspaceRoot(workspaceRoot).pipe(Effect.mapError(dispatchError)),
             );
       const now = yield* DateTime.now;
       const eventId = yield* idAllocator.allocate
@@ -360,19 +391,7 @@ export const make = Effect.gen(function* () {
     "ProjectService.getByWorkspaceRoot",
   )(function* (workspaceRoot, options) {
     const normalized = yield* normalizeWorkspaceRoot({ workspaceRoot });
-    const row = yield* (
-      options?.includeDeleted === true
-        ? projects
-            .list({ includeDeleted: true })
-            .pipe(
-              Effect.map((rows) =>
-                Option.fromUndefinedOr(rows.find((row) => row.workspaceRoot === normalized)),
-              ),
-            )
-        : projects.findActiveByWorkspaceRoot(normalized)
-    ).pipe(
-      Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
-    );
+    const row = yield* findByWorkspaceRoot(normalized, options);
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
