@@ -102,7 +102,7 @@ describe("UsageLimitsPooled account popover", () => {
       ["Plan", "Claude Pro Subscription"],
       ["Signed in", "Desk"],
       ["Left", "100%"],
-    ]) {
+    ] as const) {
       await expect
         .element(popover.getByRole("term").getByText(label, { exact: true }))
         .toBeVisible();
