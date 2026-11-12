@@ -4708,7 +4708,25 @@ describe("AcpAdapterV2", () => {
       kind: "other",
       granted: false,
     },
-  ] as const)("$label", ({ kind, granted }) =>
+    {
+      label: "grants an explicit execute approval",
+      kind: "execute",
+      requestKind: "execute",
+      granted: true,
+    },
+    {
+      label: "does not grant execution to an approved mode switch",
+      kind: "execute",
+      requestKind: "switch_mode",
+      granted: false,
+    },
+    {
+      label: "does not grant execution to an approved explicit other tool",
+      kind: "other",
+      requestKind: "other",
+      granted: false,
+    },
+  ] as const)("$label", ({ kind, granted, ...testCase }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -4795,7 +4813,10 @@ describe("AcpAdapterV2", () => {
       const permissionFiber = yield* requestPermission(
         {
           sessionId: "mock-session-1",
-          toolCall: { toolCallId: "tracked-tool-call" },
+          toolCall: {
+            toolCallId: "tracked-tool-call",
+            ...("requestKind" in testCase ? { kind: testCase.requestKind } : {}),
+          },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
         },
         { requestId: "id-only-permission-request", method: "session/request_permission" },
@@ -4837,8 +4858,12 @@ describe("AcpAdapterV2", () => {
         { requestId: "id-only-permission-terminal", method: "terminal/create" },
       ).pipe(Effect.exit);
       assert.deepEqual(
-        { prompt: approval.prompt, terminalCreated: Exit.isSuccess(terminalExit) },
-        { prompt: "git status", terminalCreated: granted },
+        {
+          prompt: approval.prompt,
+          requestKind: approval.requestKind,
+          terminalCreated: Exit.isSuccess(terminalExit),
+        },
+        { prompt: "git status", requestKind: "command", terminalCreated: granted },
       );
 
       yield* runtime.interruptTurn({ providerThread, providerTurnId });
