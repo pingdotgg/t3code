@@ -4,13 +4,24 @@ import { updateReviewExpandedFileIds, updateReviewViewedFileIds } from "./review
 import type { ReviewRenderableFile } from "./reviewModel";
 
 // File ids are scoped to one diff text, so a refresh renames every file. Expansion is
-// stored by path, which survives a refresh.
-function getExpandedReviewFilePaths(
+// stored by path, which survives a refresh; the occurrence index keeps apart entries
+// that share a path, such as the deletion and addition when a file becomes a symlink.
+function getReviewFileExpansionKeys(
   files: ReadonlyArray<ReviewRenderableFile>,
-  filePaths: ReadonlyArray<string> | undefined,
 ): ReadonlyArray<string> {
-  const paths = files.map((file) => file.path);
-  return filePaths === undefined ? paths : paths.filter((path) => filePaths.includes(path));
+  const seen = new Map<string, number>();
+  return files.map((file) => {
+    const occurrence = seen.get(file.path) ?? 0;
+    seen.set(file.path, occurrence + 1);
+    return `${occurrence}:${file.path}`;
+  });
+}
+
+function getExpandedReviewFileKeys(
+  keys: ReadonlyArray<string>,
+  storedKeys: ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> {
+  return storedKeys === undefined ? keys : keys.filter((key) => storedKeys.includes(key));
 }
 
 function getValidReviewFileIds(
@@ -53,10 +64,13 @@ export function useReviewFileVisibility(input: {
 }) {
   const { cachedExpandedFileIds, cachedViewedFileIds, files, sectionId, threadKey } = input;
 
+  const expansionKeys = useMemo(() => getReviewFileExpansionKeys(files), [files]);
   const expandedFileIds = useMemo(() => {
-    const expandedPaths = new Set(getExpandedReviewFilePaths(files, cachedExpandedFileIds));
-    return files.filter((file) => expandedPaths.has(file.path)).map((file) => file.id);
-  }, [cachedExpandedFileIds, files]);
+    const expandedKeys = new Set(getExpandedReviewFileKeys(expansionKeys, cachedExpandedFileIds));
+    return files
+      .filter((_, index) => expandedKeys.has(expansionKeys[index]!))
+      .map((file) => file.id);
+  }, [cachedExpandedFileIds, expansionKeys, files]);
   const viewedFileIds = useMemo(
     () => getValidExplicitReviewFileIds(files, cachedViewedFileIds),
     [cachedViewedFileIds, files],
@@ -77,15 +91,15 @@ export function useReviewFileVisibility(input: {
         return;
       }
 
-      const path = files.find((file) => file.id === fileId)?.path;
-      if (path === undefined) {
+      const key = expansionKeys[files.findIndex((file) => file.id === fileId)];
+      if (key === undefined) {
         return;
       }
       updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getExpandedReviewFilePaths(files, existing), path),
+        toggleReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
       );
     },
-    [files, sectionId, threadKey],
+    [expansionKeys, files, sectionId, threadKey],
   );
 
   const toggleViewedFile = useCallback(
@@ -99,14 +113,14 @@ export function useReviewFileVisibility(input: {
         toggleReviewFileId(getValidExplicitReviewFileIds(files, existing), fileId),
       );
 
-      const path = files.find((file) => file.id === fileId)?.path;
-      if (shouldCollapse && path !== undefined) {
+      const key = expansionKeys[files.findIndex((file) => file.id === fileId)];
+      if (shouldCollapse && key !== undefined) {
         updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-          removeReviewFileId(getExpandedReviewFilePaths(files, existing), path),
+          removeReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
         );
       }
     },
-    [files, sectionId, threadKey, viewedFileIds],
+    [expansionKeys, files, sectionId, threadKey, viewedFileIds],
   );
 
   return {

@@ -56,3 +56,14 @@ it("keeps files the reader left open expanded when the section's diff changes", 
   );
   expect(collapsedPaths).not.toContain("b.ts");
 });
+
+it("folds only the selected entry when a file becomes a symlink", () => {
+  stored.expanded = undefined;
+  const current = files(
+    "diff --git a/a.ts b/a.ts\ndeleted file mode 100644\n--- a/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n" +
+      "diff --git a/a.ts b/a.ts\nnew file mode 120000\n--- /dev/null\n+++ b/a.ts\n@@ -0,0 +1 @@\n+b.ts\n\\ No newline at end of file\n",
+  );
+  expect(current).toHaveLength(2);
+  visibility(current).toggleExpandedFile(current[0]!.id);
+  expect(visibility(current).collapsedFileIds).toEqual([current[0]!.id]);
+});
