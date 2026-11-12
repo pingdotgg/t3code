@@ -84,7 +84,7 @@ const headlessSessionConfig = Config.all({
 const showDeviceAuthorizationPrompt = (prompt: CliTokenManager.DeviceAuthorizationPrompt) =>
   Console.log(formatDeviceAuthorizationPrompt(prompt));
 
-function formatDeviceAuthorizationPrompt(
+export function formatDeviceAuthorizationPrompt(
   prompt: CliTokenManager.DeviceAuthorizationPrompt,
 ): string {
   const minutes = Math.max(1, Math.round(Duration.toMinutes(prompt.expiresIn)));
