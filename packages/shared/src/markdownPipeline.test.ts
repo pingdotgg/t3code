@@ -237,6 +237,20 @@ it("ends bare URLs at CJK punctuation with source positions", () => {
     "http://example.com",
   ]);
   expect(cell.flatMap((node) => (node.type === "inlineCode" ? [node.value] : []))).toEqual(["a|b"]);
+  // A task item's checkbox is not part of its paragraph's text.
+  const task = descendants(parse("- [x] http://example.com，刷新") as Root);
+  expect(task.flatMap((node) => (node.type === "text" ? [node.value] : []))).toEqual([
+    "http://example.com",
+    "，刷新",
+  ]);
+  // A list item's indentation stays out of a code span that crosses lines.
+  const code = descendants(parse("- `echo\n  hello` http://example.com，结束") as Root);
+  expect(code.flatMap((node) => (node.type === "link" ? [node.url] : []))).toEqual([
+    "http://example.com",
+  ]);
+  expect(code.flatMap((node) => (node.type === "inlineCode" ? [node.value] : []))).toEqual([
+    "echo\nhello",
+  ]);
   // A list item's continuation line parses the same on its own.
   expect(parse(`- 第一行\n  **${url}**（已重启）`)).toMatchObject({
     children: [

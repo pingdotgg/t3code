@@ -536,16 +536,18 @@ function reparseAtCjkPunctuation(
   source: string,
   offsets: number[],
 ): boolean {
-  const from = (block.type === "paragraph" ? block : block.children[0])?.position?.start;
-  const to = (block.type === "paragraph" ? block : block.children.at(-1))?.position?.end;
+  // A task item's paragraph starts at its checkbox; its first child starts after it.
+  const from = block.children[0]?.position?.start;
+  const to = block.children.at(-1)?.position?.end;
   if (from?.offset === undefined || to?.offset === undefined || hasReference(block)) return false;
   const base = from.offset;
   const text = source.slice(base, to.offset);
-  // A tab is the marker, a quote's `>` on a later line would read as a new quote, and only a
-  // table unescapes `\|` in code.
+  // A tab is the marker, a quote's `>` on a later line would read as a new quote, a list's
+  // indentation would join a code span, and only a table unescapes `\|` in code.
   if (
     text.includes("\t") ||
     /[\r\n][ ]*>/.test(text) ||
+    (/[\r\n] /.test(text) && text.includes("`")) ||
     (block.type === "tableCell" && text.includes("\\|"))
   ) {
     return false;
