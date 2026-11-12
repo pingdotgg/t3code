@@ -3032,9 +3032,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
         threadId,
         snapshotAt: preAutoProjection.thread.updatedAt,
+        reason: {
+          type: "pull_request",
+          state: "merged",
+          number: 42,
+          url: "https://example.test/owner/repository/pull/42",
+        },
       });
       const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(autoSettledProjection.thread.settledOverride, "settled");
+      assert.deepInclude(shellOf(yield* orchestrator.getShellSnapshot()).settledReason, {
+        state: "merged",
+        number: 42,
+      });
       assert.isNull(autoSettledProjection.thread.activeOrderKey);
       yield* orchestrator.dispatch({
         type: "thread.unsettle",
@@ -3061,6 +3071,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const settledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(settledProjection.thread.settledOverride, "settled");
       assert.isNotNull(settledProjection.thread.settledAt);
+      // A manual settle does not keep an earlier automatic reason.
+      assert.isNull(settledProjection.thread.settledReason);
 
       yield* orchestrator.dispatch({
         type: "thread.unsettle",

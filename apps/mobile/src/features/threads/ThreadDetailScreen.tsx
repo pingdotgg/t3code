@@ -681,6 +681,7 @@ function ThreadDetailBody(
       snoozedUntil,
     });
   const settled = configLoaded && props.selectedThread.settledOverride === "settled";
+  const settledReason = settled ? (props.selectedThread.settledReason ?? null) : null;
   const wokeAt = configLoaded ? threadWokeAt(props.selectedThread, { now: lifecycleNow }) : null;
   const woke = isThreadWokeUnseen({
     wokeAt,
@@ -860,7 +861,9 @@ function ThreadDetailBody(
         lifecycleSnoozed && snoozedUntil !== null
           ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
           : settled
-            ? "Settled"
+            ? settledReason
+              ? `Settled: PR #${settledReason.number} ${settledReason.state}`
+              : "Settled"
             : "Woke from snooze";
       const actionLabel = lifecycleSnoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
       return {

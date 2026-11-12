@@ -456,6 +456,20 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+/** Why the server settled a thread on its own: its pull request merged or closed. */
+export const OrchestrationV2ThreadSettledReason = Schema.Struct({
+  type: Schema.Literal("pull_request"),
+  state: Schema.Literals(["merged", "closed"]),
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+});
+export type OrchestrationV2ThreadSettledReason = typeof OrchestrationV2ThreadSettledReason.Type;
+
+// A reason this build cannot read only loses the label, never the thread.
+const LenientThreadSettledReason = Schema.NullOr(OrchestrationV2ThreadSettledReason).pipe(
+  Schema.catchDecoding(() => Effect.succeedSome(null)),
+);
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -496,6 +510,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  settledReason: Schema.optional(LenientThreadSettledReason),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2177,6 +2192,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
   settledAt: Schema.NullOr(Schema.DateTimeUtc),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  settledReason: Schema.optional(LenientThreadSettledReason),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
@@ -3034,6 +3050,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     snapshotAt: Schema.DateTimeUtc,
     settledAt: Schema.optional(Schema.DateTimeUtc),
+    reason: Schema.optional(OrchestrationV2ThreadSettledReason),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),

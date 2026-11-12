@@ -397,6 +397,8 @@ export function createThreadEnvironmentAtoms<R, E>(
             pendingRuntimeRequest: null,
             settledOverride: "settled",
             settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
+            settledReason:
+              thread.settledOverride === "settled" ? (thread.settledReason ?? null) : null,
             unsettledAt: null,
             activeOrderKey: null,
             pinnedAt: null,
