@@ -8,7 +8,7 @@ import {
 import { QuoteIcon } from "lucide-react";
 import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { resolveShortcutCommand } from "~/keybindings";
+import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import {
   captureAssistantTextSelection,
   type AssistantCitationSourceAnchor,
@@ -27,10 +27,12 @@ export function AssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,
+  getShortcutContext,
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  getShortcutContext?: (() => ShortcutMatchContext) | undefined;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
@@ -156,7 +158,8 @@ export function AssistantSelectionToolbar({
         !toolbar.disabled &&
         !event.isComposing &&
         !event.defaultPrevented &&
-        resolveShortcutCommand(event, keybindings) === "chat.citeSelection"
+        resolveShortcutCommand(event, keybindings, { context: getShortcutContext?.() ?? {} }) ===
+          "chat.citeSelection"
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -190,7 +193,7 @@ export function AssistantSelectionToolbar({
       actions.dispose();
       actionsRef.current = null;
     };
-  }, [backgroundThread, keybindings, threadRef, viewport]);
+  }, [backgroundThread, getShortcutContext, keybindings, threadRef, viewport]);
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
