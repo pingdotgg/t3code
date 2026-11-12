@@ -3666,6 +3666,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       expect.soft(activity.commentsTruncated).toBe(false);
       expect.soft(activity.author?.login).toBe("example");
+      expect.soft(activity.author?.isBot ?? false).toBe(false);
+      expect
+        .soft(
+          activity.comments.map((comment) => [
+            comment.author?.isBot ?? false,
+            comment.author?.avatarUrl,
+          ]),
+        )
+        .toEqual([
+          [false, human.avatarUrl],
+          [true, bot.avatarUrl],
+        ]);
       expect.soft(activity.reviewers?.map((actor) => actor.login)).toEqual(["example"]);
       expect
         .soft(activity.reactions)
@@ -4066,8 +4078,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         expect(later.query).not.toContain(field);
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
       expect(conversation.reviewers.map((reviewer) => reviewer.login)).toEqual(["prior"]);
-      expect(conversation.avatarsByLogin.get("later-bot")).toBe("https://avatars/later-bot");
-      expect(conversation.botLogins.has("later-bot")).toBe(true);
+      expect(conversation.avatarsByLogin.get("later-bot[bot]")).toBe("https://avatars/later-bot");
+      expect(conversation.botLogins.has("later-bot[bot]")).toBe(true);
       assert.isFalse(conversation.truncated);
     }),
   );

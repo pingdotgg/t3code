@@ -847,6 +847,25 @@ describe("GitHub App repository ownership", () => {
     }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
   });
 
+  it.effect("asks for owner/repo when a later page shows a second installation owner", () => {
+    const { layer, requests } = appHarness({ owners: ["other"], paginated: true });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const error = yield* provider
+        .getRepositoryCloneUrls({ cwd: "/repo", repository: "notes" })
+        .pipe(Effect.flip);
+      assert.include(error.message, "Specify owner/repo");
+      assert.deepStrictEqual(
+        requests.map((request) => request.path),
+        [
+          "user",
+          "installation/repositories?per_page=100&page=1",
+          "installation/repositories?per_page=100&page=2",
+        ],
+      );
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  });
+
   it.effect(
     "requires an explicit owner for an empty installation and creates under its verified personal ID",
     () => {

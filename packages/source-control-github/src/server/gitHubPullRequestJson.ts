@@ -1422,10 +1422,10 @@ function collectActors(raws: ReadonlyArray<ActorFields | null | undefined>) {
   const avatarsByLogin = new Map<string, string>();
   const botLogins = new Set<string>();
   for (const raw of raws) {
-    const login = trimmed(raw?.login);
-    const avatarUrl = trimmed(raw?.avatarUrl);
-    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
-    if (login !== null && toActor(raw)?.isBot) botLogins.add(login);
+    const actor = toActor(raw);
+    if (actor === null) continue;
+    if (actor.avatarUrl !== null) avatarsByLogin.set(actor.login, actor.avatarUrl);
+    if (actor.isBot) botLogins.add(actor.login);
   }
   return { avatarsByLogin, botLogins };
 }
