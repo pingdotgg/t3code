@@ -424,7 +424,7 @@ it("sends a patch an older server keeps dropping once per change of its library"
   expect(pass(true)).toContain("old");
 });
 
-it("turns a whole-library patch into per-item operations based on the revisions the editor opened", () => {
+it("turns a whole-library patch into per-item operations that apply over newer saves", () => {
   const agent = (id: string, revision: number, name = id): McpGatewayProfile => ({
     profileId: id,
     name,
@@ -445,7 +445,7 @@ it("turns a whole-library patch into per-item operations based on the revisions 
   };
   const lint: AgentSkill = { ...skill, skillId: "lint", name: "Lint", revision: 4 };
   const snapshot = {
-    // Another machine saved "e" and "lint" after their editors opened at revision 3.
+    // Another machine saved "e" and "lint" after their editors opened at revision 3; edits still apply.
     mcpGatewayProfiles: [agent("a", 2), agent("b", 5), agent("c", 1), agent("e", 4)],
     agentSkills: [toAgentSkillStub(skill, agentSkillDigest(skill)), lint],
   };
@@ -458,12 +458,12 @@ it("turns a whole-library patch into per-item operations based on the revisions 
     newWorktreesStartFromOrigin: true,
   });
   expect(operations).toEqual([
-    { type: "skill.upsert", skill: staleSkill, baseRevision: 3 },
-    { type: "profile.upsert", profile: agent("b", 5, "Bea"), baseRevision: 5 },
-    { type: "profile.upsert", profile: created, baseRevision: null },
-    { type: "profile.upsert", profile: staleAgent, baseRevision: 3 },
-    { type: "profile.delete", profileId: "c", baseRevision: 1 },
-    { type: "skill.delete", skillId: "review", baseRevision: 3 },
+    { type: "skill.upsert", skill: staleSkill },
+    { type: "profile.upsert", profile: agent("b", 5, "Bea") },
+    { type: "profile.upsert", profile: created },
+    { type: "profile.upsert", profile: staleAgent },
+    { type: "profile.delete", profileId: "c" },
+    { type: "skill.delete", skillId: "review" },
   ]);
   expect(rest).toEqual({ newWorktreesStartFromOrigin: true });
 });

@@ -2248,6 +2248,14 @@ export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
 /** Agent names are unique ignoring case, so "Doug" and "doug" never both route. */
 export const agentNameKey = (name: string) => name.trim().normalize("NFC").toLowerCase();
 
+/** The first `name (n)` whose key is free; claims it in `taken`. */
+export function claimAgentName(name: string, taken: Set<string>) {
+  let claimed = name;
+  for (let suffix = 2; taken.has(agentNameKey(claimed)); suffix++) claimed = `${name} (${suffix})`;
+  taken.add(agentNameKey(claimed));
+  return claimed;
+}
+
 /** Equal keys mean the same skill version; a stub and its full skill share one. */
 export const agentSkillTieKey = (skill: AgentSkill) =>
   JSON.stringify([
@@ -2324,14 +2332,9 @@ export function mergeAgentLibraries(
     if (taken.has(key)) losers.add(profile);
     else taken.add(key);
   }
-  const result = live.map((profile) => {
-    if (!losers.has(profile)) return profile;
-    let suffix = 2;
-    while (taken.has(agentNameKey(`${profile.name} (${suffix})`))) suffix++;
-    const name = `${profile.name} (${suffix})`;
-    taken.add(agentNameKey(name));
-    return { ...profile, name };
-  });
+  const result = live.map((profile) =>
+    losers.has(profile) ? { ...profile, name: claimAgentName(profile.name, taken) } : profile,
+  );
   return {
     agentSkills: [...skills.values()]
       .filter((skill) => skill.updatedAt > (skillDeleted[skill.skillId] ?? ""))
