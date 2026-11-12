@@ -15455,6 +15455,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       cache_read_input_tokens: 0,
     },
   });
+  // Claude's modelUsage is a running total for the whole CLI process.
+  const ledgerTotal = (inputTokens: number, outputTokens: number) => ({
+    "claude-sonnet-4-6": {
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      webSearchRequests: 0,
+      costUSD: 0,
+      contextWindow: 0,
+      maxOutputTokens: 32_000,
+    },
+  });
   it.effect.each([
     {
       label: "stopping the successor preserves earlier billed usage",
@@ -15499,6 +15512,43 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "successor-result",
           result: "Successor text.",
           origin: { kind: "task-notification" },
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: ["Successor text."],
+      inputTokens: 11,
+      outputTokens: 21,
+      notices: [],
+      openOnAttach: false,
+    },
+    {
+      label: "the earlier wake's ledger growth stays in the successor's other usage",
+      // Totals 100/200, 115/225, 120/230, 126/238: the earlier wake grew 15/25 and the
+      // successor 6/8, against root usage 10/20 and 1/1, so other work is 10/12.
+      ledger: {
+        turnOne: ledgerTotal(100, 200),
+        prompt: ledgerTotal(120, 230),
+        otherUsage: { inputTokens: 10, outputTokens: 12 },
+      },
+      before: replayWake("ledger-older", "", {
+        result: "Earlier A.",
+        origin: { kind: "task-notification" },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+        modelUsage: ledgerTotal(115, 225),
+      }),
+      after: [
+        wakeTurnInit,
+        makeResultFrame({
+          uuid: "ledger-successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+          modelUsage: ledgerTotal(126, 238),
         }),
       ],
       beforeCheck: [],
@@ -15561,6 +15611,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const wakeAttempt = RunAttemptId.make("attempt-claude-replay-3");
         const wakeRun = RunId.make(`run-${wakeAttempt}`);
+        const ledger = "ledger" in scenario ? scenario.ledger : undefined;
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -15572,7 +15623,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        yield* harness.offerAndWait(turnOneResult);
+        yield* harness.offerAndWait(
+          ledger === undefined
+            ? turnOneResult
+            : claudeSdkFrame({ ...turnOneResult, modelUsage: ledger.turnOne }),
+        );
         yield* harness.awaitTerminal(1);
         for (const frame of scenario.before) yield* harness.offerAndWait(frame);
         yield* Queue.take(harness.continuationReceipts);
@@ -15595,7 +15650,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* harness.offerAndWait(
           claudeSdkFrame({
-            ...makeResultFrame({ uuid: "prompt-result", result: "Checked the build." }),
+            ...makeResultFrame({
+              uuid: "prompt-result",
+              result: "Checked the build.",
+              ...(ledger === undefined ? {} : { modelUsage: ledger.prompt }),
+            }),
             user_message_uuid: harness.promptUuid(1),
           }),
         );
@@ -15707,6 +15766,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               cachedInputTokens: 0,
               cacheCreationTokens: 0,
               models: ["claude-sonnet-4-6"],
+              ...(ledger === undefined ? {} : { otherUsage: ledger.otherUsage }),
             },
             notices: scenario.notices,
           },
