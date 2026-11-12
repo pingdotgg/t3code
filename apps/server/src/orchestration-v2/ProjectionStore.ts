@@ -3463,7 +3463,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   readsConversationItemsOnly(filter)
                     ? sql`INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
                 WHERE thread_id = ${threadId} AND type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}`
-                    : sql`WHERE thread_id = ${threadId}`
+                    : sql`WHERE ${threadColumn(filter?.turnItemNodeIds)} = ${threadId}`
                 }
                   ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}

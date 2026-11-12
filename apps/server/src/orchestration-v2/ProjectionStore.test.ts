@@ -2212,6 +2212,62 @@ const parentRecordsNarrowToOneChild = Effect.gen(function* () {
     assert.include(plan[0] ?? "", `USING INDEX ${index}`);
     assert.notOk(plan.some((detail) => detail.startsWith("SCAN orchestration_v2_projection")));
   }
+  // The finishing task's card is sought by its node, not picked from every card of the parent.
+  for (const [ordinal, name] of ["child-early", "sibling", "child-late"].entries()) {
+    const nodeId = NodeId.make(`node:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:card:${name}`),
+      type: "turn-item.updated",
+      threadId: parent,
+      nodeId,
+      driver,
+      occurredAt: recordsAt(ordinal),
+      payload: {
+        id: TurnItemId.make(`item:card:${name}`),
+        type: "subagent",
+        threadId: parent,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: name,
+        startedAt: recordsAt(ordinal),
+        completedAt: recordsAt(9),
+        updatedAt: recordsAt(9),
+        subagentId: nodeId,
+        origin: "app_owned",
+        driver,
+        providerInstanceId,
+        childThreadId: name === "sibling" ? sibling : child,
+        prompt: name,
+        result: null,
+      },
+    } as never);
+  }
+  const cardReads = traceSqlStatements();
+  const cards = yield* store
+    .getThreadRecords(parent, ["turnItems"], {
+      turnItemTypes: ["subagent"],
+      turnItemNodeIds: [NodeId.make("node:child-late")],
+    })
+    .pipe(Effect.withTracer(cardReads.tracer));
+  assert.deepEqual(
+    cards.turnItems.map((item) => String(item.id)),
+    ["item:card:child-late"],
+  );
+  const cardPlan = yield* queryPlan(
+    cardReads.statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    ),
+  );
+  assert.include(
+    cardPlan[0] ?? "",
+    "USING INDEX orchestration_v2_projection_turn_items_node_ordinal_idx (node_id=?)",
+  );
   // Several children read through the id list.
   const both = yield* store.getThreadRecords(parent, fields, {
     subagentChildThreadIds: [child, sibling],
