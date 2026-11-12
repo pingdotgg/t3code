@@ -53,12 +53,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import {
-  AuthOrchestrationOperateScope,
-  ProjectId,
-  type ScopedThreadRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { ProjectId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import {
@@ -137,6 +132,8 @@ import {
   useConnectedEnvironmentIds,
   useEnvironmentMachines,
   usePrimaryEnvironmentId,
+  readEnvironmentCanChangeThreads,
+  useEnvironmentCanChangeThreads,
 } from "../state/environments";
 import {
   readThreadShell,
@@ -153,7 +150,6 @@ import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -859,9 +855,7 @@ function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }
 function canOperateThreads(
   threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
 ): boolean {
-  return threads.every((thread) =>
-    readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
-  );
+  return threads.every((thread) => readEnvironmentCanChangeThreads(thread.environmentId));
 }
 
 function checkThreadOperations(
@@ -1028,9 +1022,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const [renamingThreadRef, setRenamingThreadRef] = useState<ScopedThreadRef | null>(null);
-  const canOperateRenamingThread = useEnvironmentScope(
+  const canOperateRenamingThread = useEnvironmentCanChangeThreads(
     renamingThreadRef?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
   );
   // Losing operate access cancels the rename without committing the title, so
   // the editor does not return and take focus when access comes back.
@@ -1530,14 +1523,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const startThreadRename = (threadRef: ScopedThreadRef, title: string) => {
-    if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
+    if (!readEnvironmentCanChangeThreads(threadRef.environmentId)) return;
     setRenamingThreadRef(threadRef);
     setRenamingTitle(title);
   };
   const cancelThreadRename = () => setRenamingThreadRef(null);
   const commitThreadRename = (threadRef: ScopedThreadRef, title: string, originalTitle: string) => {
     void (async () => {
-      if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
+      if (!readEnvironmentCanChangeThreads(threadRef.environmentId)) return;
       const trimmed = title.trim();
       setRenamingThreadRef(null);
       if (trimmed.length === 0) {
@@ -2630,10 +2623,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
-                threadRef.environmentId,
-                AuthOrchestrationOperateScope,
-              ),
+              canOperate: readEnvironmentCanChangeThreads(threadRef.environmentId),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

@@ -8,11 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  AuthOrchestrationOperateScope,
-  type ScopedThreadRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
@@ -26,14 +22,13 @@ import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
   useProjects,
 } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { readEnvironmentCanChangeThreads, usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import {
@@ -137,7 +132,7 @@ export function useThreadActionMenu(input: {
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
-        canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+        canOperate: readEnvironmentCanChangeThreads(threadRef.environmentId),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         projectFilter: null,
@@ -158,7 +153,7 @@ export function useThreadActionMenu(input: {
       const action: ThreadActionMenuId = clicked.value;
       if (
         threadActionRequiresOperate(action) &&
-        !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
+        !readEnvironmentCanChangeThreads(threadRef.environmentId)
       ) {
         failureToast(
           "Thread action unavailable",

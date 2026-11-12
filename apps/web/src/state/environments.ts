@@ -5,8 +5,9 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -17,7 +18,7 @@ import {
 } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { relayEnvironmentDiscovery } from "./relay";
-import { usePreparedConnection } from "./session";
+import { environmentSession, sessionHasScope, usePreparedConnection } from "./session";
 
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
@@ -113,4 +114,31 @@ export function useEnvironmentMachines() {
 
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
+}
+
+// A dropped connection keeps its last session's grants, but commands to it fail until it is back.
+const canChangeThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(environmentPresentations.presentationAtom(environmentId))?.connection.phase ===
+        "connected" &&
+      sessionHasScope(
+        get(environmentSession.sessionStateAtom(environmentId)),
+        AuthOrchestrationOperateScope,
+      ),
+  ).pipe(Atom.withLabel(`web-environment-can-change-threads:${environmentId}`)),
+);
+
+const NO_THREAD_CHANGES_ATOM = Atom.make(false).pipe(
+  Atom.withLabel("web-environment-can-change-threads:empty"),
+);
+
+export function useEnvironmentCanChangeThreads(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(
+    environmentId === null ? NO_THREAD_CHANGES_ATOM : canChangeThreadsAtom(environmentId),
+  );
+}
+
+export function readEnvironmentCanChangeThreads(environmentId: EnvironmentId): boolean {
+  return appAtomRegistry.get(canChangeThreadsAtom(environmentId));
 }

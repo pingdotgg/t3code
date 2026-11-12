@@ -27,7 +27,6 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
-  AuthOrchestrationOperateScope,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
@@ -73,7 +72,10 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import {
+  readEnvironmentCanChangeThreads,
+  useEnvironmentCanChangeThreads,
+} from "../../state/environments";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -455,10 +457,7 @@ export function SortableThreadRow(
   },
 ) {
   const { sortableId, sortableDisabled, contextDrag, ...rowProps } = props;
-  const canOperateThread = useEnvironmentScope(
-    rowProps.thread.environmentId,
-    AuthOrchestrationOperateScope,
-  );
+  const canOperateThread = useEnvironmentCanChangeThreads(rowProps.thread.environmentId);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     disabled:
@@ -664,7 +663,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
-  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const canOperateThread = useEnvironmentCanChangeThreads(thread.environmentId);
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
@@ -862,7 +861,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     if (
       event.key === "F2" &&
       !isRenaming &&
-      readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
+      readEnvironmentCanChangeThreads(threadRef.environmentId)
     ) {
       event.preventDefault();
       onStartRename(threadRef, thread.title);
@@ -874,7 +873,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleDoubleClick = (event: ReactMouseEvent) => {
     if (
-      !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
+      !readEnvironmentCanChangeThreads(threadRef.environmentId) ||
       isRenaming ||
       event.metaKey ||
       event.ctrlKey ||
@@ -951,6 +950,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   if (snoozeGateOpened && snoozeGateOpensAt !== null) {
     setSnoozeGateClock({ thread, now: new Date(snoozeGateOpensAt).toISOString() });
   }
+  const showSettleButton = canOperateThread && props.settlementSupported;
   const showSnoozeButton =
     canOperateThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
   // Closing here, not just masking, keeps the menu from reopening when the button returns.
@@ -1344,7 +1344,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     )}
                   </span>
                   {variantAction === "unsnooze" ? (
-                    !props.snoozeSupported ? null : (
+                    !canOperateThread || !props.snoozeSupported ? null : (
                       <button
                         type="button"
                         aria-label="Wake thread now"
@@ -1358,7 +1358,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockOffIcon className="mb-px size-3" />
                       </button>
                     )
-                  ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
+                  ) : !showSettleButton ? null : variantAction === "unsettle" ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={
@@ -1535,7 +1535,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                     )}
                   </span>
-                  {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
+                  {showSettleButton || showSnoozeButton || hasUnsentDraft ? (
                     <span
                       className={cn(
                         // Mouse clicks leave Settle focused; focus-within would pin controls over
@@ -1570,7 +1570,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           environmentId={thread.environmentId}
                         />
                       ) : null}
-                      {props.settlementSupported ? (
+                      {showSettleButton ? (
                         <Tooltip>
                           <TooltipTrigger
                             render={

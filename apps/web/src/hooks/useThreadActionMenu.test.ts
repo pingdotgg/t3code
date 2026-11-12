@@ -1,9 +1,4 @@
-import {
-  AuthOrchestrationOperateScope,
-  EnvironmentId,
-  ThreadId,
-  type ContextMenuItem,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ContextMenuItem } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -42,10 +37,7 @@ vi.mock("react", () => ({
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: async () => recordEffect("project-settings") }),
 }));
-vi.mock("../state/session", () => ({
-  readEnvironmentScope: (environmentId: string, scope: string) =>
-    scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
-}));
+vi.mock("../state/session", () => ({ readEnvironmentScope: () => true }));
 vi.mock("../state/entities", () => ({
   readEnvironmentServerConfigLoaded: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
@@ -61,7 +53,10 @@ vi.mock("../state/entities", () => ({
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
-vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
+vi.mock("../state/environments", () => ({
+  readEnvironmentCanChangeThreads: (environmentId: string) => state.granted.has(environmentId),
+  usePrimaryEnvironmentId: () => "primary",
+}));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {
