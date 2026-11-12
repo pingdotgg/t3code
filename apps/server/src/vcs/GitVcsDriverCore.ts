@@ -1480,24 +1480,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       : null;
   });
 
+  const readCurrentBranch = (cwd: string) =>
+    executeGit(
+      "GitVcsDriver.resolveRepositoryPaths.currentBranch",
+      cwd,
+      ["symbolic-ref", "--quiet", "HEAD"],
+      {
+        timeoutMs: 5_000,
+        allowNonZeroExit: true,
+      },
+    ).pipe(
+      Effect.map((result) => (result.exitCode === 0 ? branchNameFromHeadRef(result.stdout) : null)),
+    );
+
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
     const gitCommonDir = yield* readGitCommonDir(cwd);
     if (gitCommonDir === null) return null;
-    const [worktreeRoot, currentBranchResult] = yield* Effect.all(
-      [
-        readWorktreeRoot(cwd),
-        executeGit(
-          "GitVcsDriver.resolveRepositoryPaths.currentBranch",
-          cwd,
-          ["symbolic-ref", "--quiet", "HEAD"],
-          {
-            timeoutMs: 5_000,
-            allowNonZeroExit: true,
-          },
-        ),
-      ],
+    const [worktreeRoot, currentBranch] = yield* Effect.all(
+      [readWorktreeRoot(cwd), readCurrentBranch(cwd)],
       { concurrency: 2 },
     );
     // Git reports physical roots, so resolve project aliases before comparing.
@@ -1508,8 +1510,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
             Effect.orElseSucceed(() => undefined),
           );
-    const currentBranch =
-      currentBranchResult.exitCode === 0 ? branchNameFromHeadRef(currentBranchResult.stdout) : null;
 
     return {
       gitCommonDir,
@@ -4297,13 +4297,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const listRefs: GitVcsDriver.GitVcsDriver["Service"]["listRefs"] = Effect.fn("listRefs")(
     function* (input) {
-      const repositoryPaths = yield* resolveRepositoryPaths(input.cwd, input.refresh === true).pipe(
-        Effect.catchTags({
-          GitCommandError: (error) =>
-            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-        }),
-      );
-      if (repositoryPaths === null) {
+      const readRefsState = Effect.fn("GitVcsDriver.listRefs.readRefsState")(function* (
+        refresh: boolean,
+      ) {
+        const repositoryPaths = yield* resolveRepositoryPaths(input.cwd, refresh).pipe(
+          Effect.catchTags({
+            GitCommandError: (error) =>
+              isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+          }),
+        );
+        if (repositoryPaths === null) return null;
+        const [snapshot, headBranch] = yield* Effect.all(
+          [
+            resolveListRefsSnapshot(repositoryPaths.gitCommonDir, refresh),
+            readCurrentBranch(input.cwd).pipe(Effect.orElseSucceed(() => undefined)),
+          ],
+          { concurrency: 2 },
+        );
+        return { repositoryPaths, snapshot, headBranch };
+      });
+      let state = yield* readRefsState(input.refresh === true);
+      // A checkout made outside the driver (an agent's own `git switch`) never invalidates the
+      // cached refs, and the picker trusts their worktreePath to skip the switch.
+      if (state !== null && state.headBranch !== undefined) {
+        const { repositoryPaths, snapshot, headBranch } = state;
+        const isStale =
+          headBranch !== repositoryPaths.currentBranch ||
+          (repositoryPaths.worktreeRoot !== null &&
+            snapshot.localBranches.some(
+              (ref) => ref.worktreePath === repositoryPaths.worktreeRoot && ref.name !== headBranch,
+            ));
+        if (isStale) {
+          yield* invalidateListRefsSnapshot(input.cwd, repositoryPaths.gitCommonDir);
+          state = yield* readRefsState(false);
+        }
+      }
+      if (state === null) {
         return {
           refs: [],
           isRepo: false,
@@ -4313,10 +4342,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
       }
 
-      const snapshot = yield* resolveListRefsSnapshot(
-        repositoryPaths.gitCommonDir,
-        input.refresh === true,
-      );
+      const { repositoryPaths, snapshot } = state;
       const hasCurrentWorktreeBranch =
         repositoryPaths.worktreeRoot !== null &&
         snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);

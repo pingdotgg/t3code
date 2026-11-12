@@ -129,6 +129,7 @@ export function BranchToolbarBranchSelector({
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
     reportFailure: false,
   });
+  const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -449,52 +450,84 @@ export function BranchToolbarBranchSelector({
     )
       return;
 
-    if (selectionTarget.reuseExistingWorktree) {
-      setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
-      setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
-      return;
-    }
-
-    const selectedBranchName = refName.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(refName.name)
-      : refName.name;
-
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
 
-    runBranchAction(async () => {
-      const previousBranch = resolvedActiveBranch;
-      setOptimisticBranch(selectedBranchName);
-      const checkoutResult = await switchRef({
+    if (!selectionTarget.reuseExistingWorktree) {
+      runBranchAction(() => checkoutRef(refName, selectionTarget));
+      return;
+    }
+
+    // The listed worktreePath can predate a checkout made outside T3 (an agent's `git switch`).
+    startBranchActionTransition(async () => {
+      const refsResult = await readRefs({
         environmentId,
-        input: {
-          cwd: selectionTarget.checkoutCwd,
-          refName: refName.name,
-        },
+        input: { cwd: branchCwd, query: refName.name, limit: 10 },
       });
-      if (checkoutResult._tag === "Success") {
-        const nextBranchName = refName.isRemote
-          ? (checkoutResult.value.refName ?? selectedBranchName)
-          : selectedBranchName;
-        setOptimisticBranch(
-          setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
-            ? nextBranchName
-            : previousBranch,
-        );
+      const currentRef =
+        refsResult._tag === "Success"
+          ? refsResult.value.refs.find((ref) => ref.name === refName.name && !ref.isRemote)
+          : undefined;
+      const confirmedTarget = resolveBranchSelectionTarget({
+        activeProjectCwd,
+        activeProjectCheckoutRoot,
+        activeWorktreePath: latest.worktreePath,
+        refName: { isDefault: refName.isDefault, worktreePath: currentRef?.worktreePath ?? null },
+      });
+      if (confirmedTarget.reuseExistingWorktree) {
+        setThreadBranch(refName.name, confirmedTarget.nextWorktreePath);
         return;
       }
-      setOptimisticBranch(previousBranch);
-      if (!isAtomCommandInterrupted(checkoutResult)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to switch ref.",
-            description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
-          }),
-        );
-      }
+      const current = readLatestThreadState();
+      if (
+        isWorktreeChangeBlocked({
+          runtime: current.runtime,
+          currentWorktreePath: current.worktreePath,
+          nextWorktreePath: confirmedTarget.nextWorktreePath,
+        })
+      )
+        return;
+      runBranchAction(() => checkoutRef(refName, confirmedTarget));
     });
+  };
+
+  const checkoutRef = async (
+    refName: VcsRef,
+    selectionTarget: ReturnType<typeof resolveBranchSelectionTarget>,
+  ) => {
+    const selectedBranchName = refName.isRemote
+      ? deriveLocalBranchNameFromRemoteRef(refName.name)
+      : refName.name;
+    const previousBranch = resolvedActiveBranch;
+    setOptimisticBranch(selectedBranchName);
+    const checkoutResult = await switchRef({
+      environmentId,
+      input: {
+        cwd: selectionTarget.checkoutCwd,
+        refName: refName.name,
+      },
+    });
+    if (checkoutResult._tag === "Success") {
+      const nextBranchName = refName.isRemote
+        ? (checkoutResult.value.refName ?? selectedBranchName)
+        : selectedBranchName;
+      setOptimisticBranch(
+        setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
+          ? nextBranchName
+          : previousBranch,
+      );
+      return;
+    }
+    setOptimisticBranch(previousBranch);
+    if (!isAtomCommandInterrupted(checkoutResult)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to switch ref.",
+          description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
+        }),
+      );
+    }
   };
 
   const createRef = (rawName: string) => {
