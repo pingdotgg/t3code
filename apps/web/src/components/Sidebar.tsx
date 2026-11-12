@@ -92,6 +92,7 @@ import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
+  threadCycleDirectionFromCommand,
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
@@ -1432,6 +1433,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   // Read changing maps/sets through refs so streamed events preserve row callbacks.
   const threadByKeyRef = useRef(threadByKey);
+  const threadSearchResultKeysRef = useRef(threadSearchResultKeys);
+  const threadSearchResultsRef = useRef(threadSearchResults);
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
@@ -1514,6 +1517,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     if (threadSearchResults.length === 0) return;
+    if (
+      (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+      (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
+    )
+      return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       moveSearchHighlight(1);
@@ -1797,7 +1805,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed list data to refs read by stable drag and sweep callbacks
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed list data to refs read by stable drag, sweep, and thread-cycle callbacks
   useLayoutEffect(() => {
     projectGroupsRef.current = projectGroups;
     orderedThreadKeysRef.current = orderedThreadKeys;
@@ -1805,6 +1813,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledThreadKeysRef.current = settledThreadKeys;
     snoozedThreadKeysRef.current = snoozedThreadKeys;
     sectionByThreadKeyRef.current = sectionByThreadKey;
+    threadSearchResultKeysRef.current = threadSearchResultKeys;
+    threadSearchResultsRef.current = threadSearchResults;
   });
   const startActionSweep = useStableCallback(
     (threadRef: ScopedThreadRef, action: SidebarSweepAction, event: PointerEvent) => {
@@ -2921,6 +2931,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         return;
       }
+      const cycleDirection = threadCycleDirectionFromCommand(command);
+      if (cycleDirection !== null) {
+        // Cycle the visible search results, not the ordered list, and read them
+        // through refs so typing a query does not re-register this listener.
+        const searchResultKeys = isSearchingThreads ? threadSearchResultKeysRef.current : null;
+        const targetKey = resolveAdjacentThreadId({
+          threadIds: searchResultKeys ?? orderedThreadKeys,
+          currentThreadId:
+            searchResultKeys !== null &&
+            (routeRowThreadKey === null || !searchResultKeys.includes(routeRowThreadKey))
+              ? null
+              : routeRowThreadKey,
+          direction: cycleDirection,
+          wrap: true,
+        });
+        const targetThread =
+          targetKey === null
+            ? null
+            : searchResultKeys !== null
+              ? (threadSearchResultsRef.current[searchResultKeys.indexOf(targetKey)] ?? null)
+              : (threadByKey.get(targetKey) ?? null);
+        if (targetThread) {
+          event.preventDefault();
+          event.stopPropagation();
+          navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+        }
+        return;
+      }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
       navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
@@ -2928,6 +2966,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    isSearchingThreads,
     keybindings,
     navigateToThread,
     orderedThreadKeys,
