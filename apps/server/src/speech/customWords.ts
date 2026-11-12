@@ -1,5 +1,11 @@
 import type { SpeechCustomWords } from "@t3tools/contracts";
 
+// These scripts are written without spaces, so a neighbor in one of them still ends a word.
+const UNSPACED_SCRIPTS = "\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}";
+const LETTER = `[[\\p{L}\\p{M}\\p{N}]--[${UNSPACED_SCRIPTS}]]`;
+const WORD_CHARACTER = `[[\\p{L}\\p{M}\\p{N}\\p{Pc}]--[${UNSPACED_SCRIPTS}]]`;
+const TOKEN = new RegExp(`${LETTER}(?:[^\\s${UNSPACED_SCRIPTS}]*${LETTER})?`, "gv");
+
 /** Fuzzy-matches preferred terms and rewrites aliases to their preferred spelling. */
 export function makeSpeechTextCorrector(
   words: readonly string[],
@@ -106,7 +112,7 @@ export function makeSpeechTextCorrector(
   const apply = (text: string): string => {
     if (keys.length === 0) return text;
     // Leave surrounding punctuation in the source; only horizontal whitespace can join words.
-    const tokens = [...text.matchAll(/[\p{L}\p{M}\p{N}](?:\S*[\p{L}\p{M}\p{N}])?/gu)]
+    const tokens = [...text.matchAll(TOKEN)]
       .filter(([word]) => /^[\p{L}\p{M}\p{N}'’-]+$/u.test(word))
       .map((match) => ({
         value: match[0],
@@ -162,10 +168,9 @@ export function makeSpeechTextCorrector(
   const lookup = new Map(
     spellings.map(({ spelling, term }) => [spelling.toLocaleLowerCase(), term]),
   );
-  const word = "[\\p{L}\\p{M}\\p{N}\\p{Pc}]";
   const pattern = new RegExp(
-    `(?<!${word})(?:${spellings.map(({ spelling }) => escapePattern(spelling)).join("|")})(?!${word})`,
-    "giu",
+    `(?<!${WORD_CHARACTER})(?:${spellings.map(({ spelling }) => escapePattern(spelling)).join("|")})(?!${WORD_CHARACTER})`,
+    "giv",
   );
   return (text: string) => {
     let output = "";

@@ -449,14 +449,18 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
         { term: "GitHub", aliases: [] },
         { term: "McDonald’s", aliases: [] },
         { term: "King’s Cross", aliases: [] },
+        { term: "React", aliases: ["瑞安特"] },
+        { term: "Kubernetes", aliases: [] },
       ],
     };
     const spoken =
       'a test with a i and ay eye. Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
-      "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross.";
+      "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross. " +
+      "我用github和瑞安特，部署到kubernetis上。Robert用git hub。githubで管理する。";
     const expected =
       "a test with AI and AI. Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
-      "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross.";
+      "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross. " +
+      "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
