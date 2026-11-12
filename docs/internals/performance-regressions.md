@@ -79,7 +79,10 @@ bounded snapshot and one older page) and after it finishes (the deferred cold op
 over the socket alone, and the first page of its deferred work). It caps the socket bytes of three
 resumes that must not send a snapshot: a thread after one ordinary turn, an idle thread, and a
 shell cursor too old to replay. It caps the cold-connect shell for a sidebar of settled threads and
-idle subagents, and the subscription a client opens from that snapshot. It also caps the bytes and
+idle subagents, and the subscription a client opens from that snapshot with its project identities.
+It caps both answers of the HTTP shell route to a client that holds rows and names their cursor: the
+few bytes that keep them, and the snapshot that replaces rows too old to replay. It also caps the
+bytes and
 the node, subagent, plan, provider turn and checkpoint counts of the bounded snapshot for a thread
 of 40 finished runs behind one working run, so finished runs cannot ride along with a window. The
 working run has a ready context handoff, so its history cannot ride along either.
