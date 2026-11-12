@@ -4,6 +4,7 @@ import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
   splitPullRequestBody,
+  type PullRequestBodySegment,
 } from "./pullRequestMarkdown.ts";
 
 describe("pull request body segmentation", () => {
@@ -26,17 +27,26 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
-  it("places each prose run at its offset in the body", () => {
+  it("places each prose run at its offset in the body, including inside a media table", () => {
     const body =
-      '\n\n- [ ] Before\r\n\nhttps://example.com/shot.png\n\n\n<video controls>\n  <source src="https://example.com/a.mp4">\n</video>\n    - [ ] code\n- [x] After\n';
-    const prose = splitPullRequestBody(body).flatMap((segment) =>
-      segment.kind === "markdown" ? [segment] : [],
-    );
-    expect(prose.map((segment) => segment.text)).toEqual([
+      '\n\n- [ ] Before\r\n\nhttps://example.com/shot.png\n\n\n<video controls>\n  <source src="https://example.com/a.mp4">\n</video>\n    - [ ] code\n- [x] After\n\r\n<table>\r\n<tr><td>\r\n\r\n- [ ] In a cell\r\n\r\n</td><td>\r\n\r\nhttps://example.com/b.mp4\r\n\r\n</td></tr>\r\n</table>\r\n- [ ] Last\n';
+    type Prose = Extract<PullRequestBodySegment, { kind: "markdown" }>;
+    const prose = (segments: ReadonlyArray<PullRequestBodySegment>): Prose[] =>
+      segments.flatMap((segment) =>
+        segment.kind === "markdown"
+          ? [segment]
+          : segment.kind === "table"
+            ? segment.rows.flat().flatMap((cell) => prose(cell.segments))
+            : [],
+      );
+    const runs = prose(splitPullRequestBody(body));
+    expect(runs.map((segment) => segment.text)).toEqual([
       "- [ ] Before",
       "    - [ ] code\n- [x] After",
+      "- [ ] In a cell",
+      "- [ ] Last",
     ]);
-    for (const segment of prose) {
+    for (const segment of runs) {
       expect(body.slice(segment.sourceOffset, segment.sourceOffset + segment.text.length)).toBe(
         segment.text,
       );
@@ -77,6 +87,27 @@ describe("pull request body segmentation", () => {
     const body = "```\nhttps://example.com/demo.mp4\n```";
     expect(splitPullRequestBody(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  // GitHub keeps CRLF in a body written in its web editor.
+  it("recognizes fences in a body with CRLF line endings", () => {
+    const body = "```\r\nhttps://example.com/demo.mp4\r\n```";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it("closes a CRLF fence, so a video after it still lifts out", () => {
+    const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
+    expect(splitPullRequestBody(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
     ]);
   });
 
@@ -141,6 +172,98 @@ describe("media on custom hosts", () => {
       "See [recording](https://drop.example.com/a.mp4) for context.\n\n```md\nhttps://drop.example.com/a.png\n```";
     expect(splitPullRequestBody(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+});
+
+describe("media tables", () => {
+  const before = "https://github.com/user-attachments/assets/c69c7c1c-ef2f-47dd-97e8-fe42e40712eb";
+  const after = "https://github.com/user-attachments/assets/1867b6ec-4f88-4248-b2df-6b0f9808105b";
+  const video = "https://example.com/a.mp4";
+
+  it("keeps GitHub's before/after video table together, splitting each cell on its own", () => {
+    const segments = splitPullRequestBody(
+      `Intro\n\n<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr>\n<td>\n\n${before}\n\n</td>\n<td>\n\n${after}\n\n</td>\n</tr>\n</table>\n\nOutro`,
+    );
+    expect(segments.map((segment) => segment.kind)).toEqual(["markdown", "table", "markdown"]);
+    expect(segments[0]).toMatchObject({ text: "Intro" });
+    expect(segments[2]).toMatchObject({ text: "Outro" });
+    const table = segments[1]!;
+    if (table.kind !== "table") throw new Error("expected a table segment");
+    expect(
+      table.rows.map((row) =>
+        row.map((cell) =>
+          cell.segments.map((segment) =>
+            segment.kind === "attachment" ? `attachment:${segment.url}` : segment,
+          ),
+        ),
+      ),
+    ).toEqual([
+      [
+        [{ id: "markdown:0", kind: "markdown", text: "Before", sourceOffset: 23 }],
+        [{ id: "markdown:0", kind: "markdown", text: "After", sourceOffset: 38 }],
+      ],
+      [[`attachment:${before}`], [`attachment:${after}`]],
+    ]);
+  });
+
+  it("keeps a quoted `>` inside a cell's attributes out of its text", () => {
+    const [table] = splitPullRequestBody(
+      `<table>\n<tr><td title="Before > after">Caption</td><td>\n\n${video}\n\n</td></tr>\n</table>`,
+    );
+    expect(table).toMatchObject({
+      kind: "table",
+      rows: [[{ segments: [{ kind: "markdown", text: "Caption" }] }, {}]],
+    });
+  });
+
+  it("leaves a table without media links as markdown", () => {
+    const body = "<table>\n<tr><td>a</td><td>b</td></tr>\n</table>";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it.each([
+    ["a caption", "<table>\n<caption>Before upgrading</caption>\n<tr><td>", "</td></tr>\n</table>"],
+    ["text outside cells", "<table>\nBefore upgrading\n<tr><td>", "</td></tr>\n</table>"],
+    [
+      "text inside a row but outside cells",
+      "<table>\n<tr>Before upgrading<td>",
+      "</td></tr>\n</table>",
+    ],
+    [
+      "a table nested in another",
+      "<table>\n<tr><td>\n<table>\n<tr><td>",
+      "</td></tr>\n</table>\n</td></tr>\n</table>",
+    ],
+    ["an unclosed table", "<table>\n<tr><td>", ""],
+    ["a spanning cell", '<table>\n<tr><td colspan="2">', "</td></tr>\n</table>"],
+    [
+      "an indented cell",
+      "<table>\n  <tr>\n    <th>\n      Before\n    </th>\n  </tr>\n  <tr><td>",
+      "</td></tr>\n</table>",
+    ],
+    [
+      "a cell indented by a space and a tab",
+      "<table>\n<tr><td>\n \tBefore\n</td><td>",
+      "</td></tr>\n</table>",
+    ],
+  ])("splits a media table with %s line by line, as before", (_name, open, close) => {
+    const body = `${open}\n\n${video}\n\n${close}`;
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: open, sourceOffset: 0 },
+      { id: "attachment:1", kind: "attachment", url: video, media: "video" },
+      ...(close
+        ? [
+            {
+              id: "markdown:2",
+              kind: "markdown",
+              text: close,
+              sourceOffset: body.length - close.length,
+            },
+          ]
+        : []),
     ]);
   });
 });

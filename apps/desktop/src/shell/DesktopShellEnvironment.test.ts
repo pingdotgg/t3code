@@ -444,10 +444,13 @@ describe("DesktopShellEnvironment", () => {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
       const commands: string[] = [];
 
-      yield* runShellEnvironment({
+      const discovery = (service: DesktopShellEnvironment.DesktopShellEnvironment["Service"]) =>
+        Effect.all([service.awaitDiscovery, service.awaitUserShellDiscovery]);
+      const answered = yield* runShellEnvironment({
         env,
         platform: "linux",
         userShell: "/usr/local/bin/fish",
+        use: (service) => discovery(service).pipe(Effect.map(([, fromUserShell]) => fromUserShell)),
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
           commands.push(command.command);
@@ -459,6 +462,23 @@ describe("DesktopShellEnvironment", () => {
 
       assert.deepEqual(commands, ["/bin/failing", "/usr/local/bin/fish"]);
       assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+      // The account's own login shell answered.
+      assert.isTrue(answered);
+
+      // Only the platform fallback answered: its PATH can miss folders the user's shell adds.
+      const fallbackOnly = yield* runShellEnvironment({
+        env: { SHELL: "/usr/bin/fish", PATH: "/usr/bin" },
+        platform: "linux",
+        use: (service) =>
+          discovery(service).pipe(
+            Effect.map(([prepared, fromUserShell]) => prepared && !fromUserShell),
+          ),
+        handler: (command) =>
+          command._tag === "StandardCommand" && command.command === "/usr/bin/fish"
+            ? { output: "", exitCode: 7 }
+            : envOutput({ PATH: "/usr/bin" }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.isTrue(fallbackOnly);
     }),
   );
 
@@ -614,6 +634,52 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.isFalse(prepared);
+    }),
+  );
+
+  it.effect("recovers the login-shell PATH when the first probe outlasts the timeout", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+      const output = envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+      let shellProbes = 0;
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => "",
+        processSpawner: ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand" || command.command !== "/bin/zsh") {
+            return Effect.succeed(makeProcess(""));
+          }
+          shellProbes += 1;
+          if (shellProbes > 1) return Effect.succeed(makeProcess(output));
+          // A cold start: the first login shell answers, but only after 7s.
+          const slow = Effect.sleep("7 seconds");
+          const stdout = Stream.fromEffect(slow.pipe(Effect.as(textEncoder.encode(output))));
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(125),
+              stdout,
+              stderr: Stream.empty,
+              all: stdout,
+              exitCode: slow.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+        use: (service) =>
+          Effect.gen(function* () {
+            yield* service.installIntoProcess;
+            yield* TestClock.adjust("10 minutes");
+            return true;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])));
+
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
     }),
   );
 
