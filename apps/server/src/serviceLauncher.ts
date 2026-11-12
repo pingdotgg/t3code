@@ -826,7 +826,7 @@ export class Launcher {
     this.#stopRequested = true;
     this.#clearTimer();
     this.#enqueue(async () => {
-      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
+      // Let in-progress updates start replacements first.
       this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
