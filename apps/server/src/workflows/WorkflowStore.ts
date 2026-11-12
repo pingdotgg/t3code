@@ -36,6 +36,7 @@ export interface StepRow {
   readonly attempts: number | bigint;
   readonly detail: string | null;
   readonly thread_id: string | null;
+  readonly environment_id: string | null;
   readonly started_at: string;
   readonly ended_at: string | null;
 }
@@ -116,9 +117,16 @@ export class WorkflowStore extends Context.Service<
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
     /** Counts one more arrival at `name` in this run and returns the count. */
     readonly mark: (runId: string, name: string) => Effect.Effect<number>;
-    readonly stepThread: (runId: string, name: string, threadId: string) => Effect.Effect<void>;
+    readonly stepThread: (
+      runId: string,
+      name: string,
+      threadId: string,
+      environment: string | null,
+    ) => Effect.Effect<void>;
     /** The threads of agent steps still running in this run. */
-    readonly runningThreads: (runId: string) => Effect.Effect<ReadonlyArray<string>>;
+    readonly runningThreads: (
+      runId: string,
+    ) => Effect.Effect<ReadonlyArray<{ readonly threadId: string; readonly environment?: string }>>;
     readonly waitAt: (address: SignalAddress) => Effect.Effect<WaitRow | undefined>;
     readonly waitsPastDeadline: Effect.Effect<ReadonlyArray<WaitRow>>;
     readonly requests: Effect.Effect<ReadonlyArray<WaitRow>>;
@@ -298,21 +306,26 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.orDie);
       return Number(rows[0]?.count ?? 1);
     }),
-    stepThread: Effect.fn("WorkflowStore.stepThread")(function* (runId, name, threadId) {
-      yield* write(
-        runId,
-        sql`
-          UPDATE workflow_steps SET thread_id = ${threadId}
+    stepThread: Effect.fn("WorkflowStore.stepThread")(
+      function* (runId, name, threadId, environment) {
+        yield* write(
+          runId,
+          sql`
+          UPDATE workflow_steps SET thread_id = ${threadId}, environment_id = ${environment}
           WHERE run_id = ${runId} AND name = ${name}
         `,
-      );
-    }),
+        );
+      },
+    ),
     runningThreads: Effect.fn("WorkflowStore.runningThreads")(function* (runId) {
-      const rows = yield* sql<{ thread_id: string }>`
-        SELECT thread_id FROM workflow_steps
+      const rows = yield* sql<{ thread_id: string; environment_id: string | null }>`
+        SELECT thread_id, environment_id FROM workflow_steps
         WHERE run_id = ${runId} AND status = 'running' AND thread_id IS NOT NULL
       `.pipe(Effect.orDie);
-      return rows.map((row) => row.thread_id);
+      return rows.map((row) => ({
+        threadId: row.thread_id,
+        ...(row.environment_id === null ? {} : { environment: row.environment_id }),
+      }));
     }),
     waitAt: Effect.fn("WorkflowStore.waitAt")(function* (address) {
       const rows = yield* (
@@ -406,7 +419,7 @@ const make = Effect.gen(function* () {
     }, Effect.orDie),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
       return yield* sql<StepRow>`
-        SELECT name, kind, status, attempts, detail, thread_id, started_at, ended_at
+        SELECT name, kind, status, attempts, detail, thread_id, environment_id, started_at, ended_at
         FROM workflow_steps WHERE run_id = ${runId} ORDER BY started_at, rowid
       `.pipe(Effect.orDie);
     }),

@@ -358,6 +358,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           attempts: Number(step.attempts),
           detail: step.detail,
           threadId: step.thread_id,
+          environmentId: step.environment_id,
           startedAt: step.started_at,
           endedAt: step.ended_at,
         })),

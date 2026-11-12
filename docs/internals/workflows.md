@@ -29,6 +29,12 @@ workflow's own decision to end, and is not a failure.
 against the step's schema, not when a turn ends, and a person can open the thread and talk to it.
 See [typed results](../orchestration-v2/orchestrator-mcp-server.md#t3_submit_output).
 
+**A run stays where it started; its agents need not.** An agent step that names a linked
+environment runs its thread there through that environment's own thread tools, with the step's key
+as the request id, so a replay finds the thread it already started. The run is no agent and has no
+modes to pass on, so the link's access is the only ceiling on what it starts there. Making and
+linking machines is the workflow author's own code in a `step`; nothing here knows how.
+
 ## Traps
 
 **A workflow body is replayed.** After a restart or a wait, the body runs again from the top and
