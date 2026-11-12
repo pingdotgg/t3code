@@ -3775,73 +3775,74 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("ends a watch on a closed pull request whose activity cannot be read", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-closed-unreadable");
-      const projectId = ProjectId.make("pr-watch-closed-unreadable-project");
-      yield* seedProject({
-        projectId,
-        title: "Watch closed unreadable",
-        workspaceRoot: "/workspace/watch-closed-unreadable",
-        defaultModelSelection: null,
-        createdAt: "2026-10-01T00:00:00.000Z",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("pr-watch-closed-unreadable-create"),
-        threadId,
-        projectId,
-        title: "Watch closed unreadable",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-closed-unreadable-start"),
-        threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 8,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
-      });
-      const reactor = yield* PullRequestWatchReactor.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            NodeCrypto.layer,
-            Layer.mock(PullRequestService.PullRequestService)({
-              watchFingerprint: () => Effect.succeed(null),
-              detail: () =>
-                Effect.succeed({
-                  ...watchedPullRequestDetail({
-                    projectId,
-                    number: 8,
-                    at: "2026-10-02T12:00:00.000Z",
+  it.effect.each(["closed", "merged"] as const)(
+    "ends a watch on a %s pull request whose activity cannot be read, telling the thread once",
+    (state) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-${state}-unreadable`);
+        const projectId = ProjectId.make(`pr-watch-${state}-unreadable-project`);
+        yield* seedProject({
+          projectId,
+          title: "Watch closed unreadable",
+          workspaceRoot: `/workspace/watch-${state}-unreadable`,
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-${state}-unreadable-create`),
+          threadId,
+          projectId,
+          title: "Watch closed unreadable",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-${state}-unreadable-start`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 8,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+        });
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () => Effect.succeed(null),
+                detail: () =>
+                  Effect.succeed({
+                    ...watchedPullRequestDetail({
+                      projectId,
+                      number: 8,
+                      at: "2026-10-02T12:00:00.000Z",
+                    }),
+                    state,
                   }),
-                  state: "closed" as const,
-                }),
-              activity: () => Effect.die("host unreachable"),
-            }),
+                activity: () => Effect.die("host unreachable"),
+              }),
+            ),
           ),
-        ),
-      );
-      yield* reactor.sweep;
+        );
+        yield* reactor.sweep;
 
-      const thread = yield* orchestrator.getThreadShell(threadId);
-      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
-      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
-      assert.deepEqual(
-        messages.flatMap((message) => message.notification?.summary ?? []),
-        ["#8: closed, stopped watching"],
-      );
-    }),
+        const thread = yield* orchestrator.getThreadShell(threadId);
+        assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        const summaries = messages.flatMap((message) => message.notification?.summary ?? []);
+        assert.lengthOf(summaries, 1);
+        assert.include(summaries[0], `#8: ${state}`);
+      }),
   );
 
   it.effect("wakes once for a state it reported, across a restart and a new watch", () =>
