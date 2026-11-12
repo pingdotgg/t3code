@@ -20,7 +20,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReduceMotionEnabled } from "../../lib/appState";
+import { useReduceMotionEnabled, useScreenReaderEnabled } from "../../lib/appState";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useContentTopInset } from "../../components/ui/useBarInset";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -45,7 +45,7 @@ import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
   type NativeReviewDiffViewHandle,
-  resolveNativeReviewDiffView,
+  resolveReadableReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
 import { NATIVE_REVIEW_DIFF_CONTENT_WIDTH } from "./nativeReviewDiffAdapter";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
@@ -210,6 +210,8 @@ function ReviewSelectionActionBar(props: {
       )}
 
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Clear selection"
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
@@ -418,7 +420,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     draftContext,
   });
   // Expo may return null before registration or in older binaries; use the fallback.
-  const NativeReviewDiffView = resolveNativeReviewDiffView();
+  const NativeReviewDiffView = resolveReadableReviewDiffView(useScreenReaderEnabled());
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);

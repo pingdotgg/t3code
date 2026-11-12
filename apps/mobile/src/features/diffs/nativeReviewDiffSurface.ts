@@ -439,3 +439,10 @@ export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffVie
 
   return cachedNativeReviewDiffRawView ? NativeReviewDiffView : null;
 }
+
+// The native view draws its rows itself and exposes nothing to VoiceOver or TalkBack.
+export function resolveReadableReviewDiffView(
+  screenReaderEnabled: boolean,
+): ComponentType<NativeReviewDiffViewProps> | null {
+  return screenReaderEnabled ? null : resolveNativeReviewDiffView();
+}

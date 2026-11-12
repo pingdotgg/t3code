@@ -135,7 +135,10 @@ vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
 }));
 vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
 
-import { resolveNativeReviewDiffView } from "./nativeReviewDiffSurface";
+import {
+  resolveNativeReviewDiffView,
+  resolveReadableReviewDiffView,
+} from "./nativeReviewDiffSurface";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import {
   handlePullRequestDiffDebugEvent,
@@ -446,6 +449,12 @@ it("recognizes registration races for the installed native view name", async () 
       ),
     ),
   ).toBe(true);
+});
+
+it("hands the diff to the text fallback while a screen reader is running", () => {
+  using _screen = setup();
+  expect(resolveReadableReviewDiffView(false)).toBe(resolveNativeReviewDiffView());
+  expect(resolveReadableReviewDiffView(true)).toBeNull();
 });
 
 it("cancels stale collapse work and highlights expansion without resetting accepted tokens", async () => {
