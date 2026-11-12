@@ -195,6 +195,28 @@ describe("persistClientSettingsPatch", () => {
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings);
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
   });
+
+  // regression: #35010 a save in one tab reverted settings another tab saved after it loaded
+  it("keeps a setting another tab saved after this tab loaded", async () => {
+    vi.stubGlobal("window", new EventTarget());
+    try {
+      await ensureClientSettingsHydrated();
+      const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+      persistenceMocks.getClientSettings.mockResolvedValue(otherTabSettings);
+      window.dispatchEvent(
+        Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }),
+      );
+
+      await persistClientSettingsPatch({ wordWrap: false });
+
+      expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
+        ...otherTabSettings,
+        wordWrap: false,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("persistClientSettingsUpdate", () => {

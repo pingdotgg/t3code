@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 import { newMessageId } from "~/lib/utils";
 import type { ComposerHandleRef } from "../../composerHandleContext";
+import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { makeThreadErrorSetter } from "../ChatView.logic";
@@ -27,12 +28,12 @@ interface ComposerResumeInput {
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly resumableRunId: RunId | null;
   readonly hasHeldQueuedRuns: boolean;
+  readonly canResume: boolean;
   readonly isSendBusy: boolean;
   readonly isRevertingCheckpoint: boolean;
   readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
   readonly composerRef: ComposerHandleRef;
   readonly persistThreadSettingsForNextTurn: (input: {
@@ -59,12 +60,12 @@ export function useComposerResume(input: ComposerResumeInput) {
     activeThread,
     resumableRunId,
     hasHeldQueuedRuns,
+    canResume,
     isSendBusy,
     isRevertingCheckpoint,
     threadDetailLoading,
     activeEnvironmentUnavailable,
     runtimeMode,
-    interactionMode,
     localCheckoutBranchMismatch,
     composerRef,
     persistThreadSettingsForNextTurn,
@@ -87,7 +88,7 @@ export function useComposerResume(input: ComposerResumeInput) {
   const onResume = async () => {
     if (
       !activeThread ||
-      (resumableRunId === null && !hasHeldQueuedRuns) ||
+      !canResume ||
       isSendBusy ||
       isResuming ||
       isRevertingCheckpoint ||
@@ -117,7 +118,7 @@ export function useComposerResume(input: ComposerResumeInput) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode,
+        interactionMode: DEFAULT_INTERACTION_MODE,
       });
       if (settingsResult._tag === "Failure") return settingsResult;
       const turnResult = await startThreadTurn({
@@ -133,7 +134,7 @@ export function useComposerResume(input: ComposerResumeInput) {
             attachments: [],
           },
           runtimeMode,
-          interactionMode,
+          interactionMode: DEFAULT_INTERACTION_MODE,
           dispatchMode: "start",
         },
       });
