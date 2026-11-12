@@ -158,22 +158,9 @@ export function useComposerAttachmentIntake(input: {
     const replacedReattachMarkerIds = new Set<string>();
     const acceptedImages: File[] = [];
     const acceptedFiles: ComposerFileAttachment[] = [];
-    // The store drops a repeated image only after compressing it, which flashes a preparing
-    // tile; skipping it here also keeps it from taking an attachment slot.
-    const imageSourceKeys = new Set(
-      [...composerImagesRef.current, ...getPreparingComposerImages(attachmentTargetKey)].map(
-        (image) => composerImageSourceKey(image.file),
-      ),
-    );
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
-      const image = attachmentKind === "image" ? normalizeComposerImageFileMimeType(file) : null;
-      if (image) {
-        const sourceKey = composerImageSourceKey(image);
-        if (imageSourceKeys.has(sourceKey)) continue;
-        imageSourceKeys.add(sourceKey);
-      }
       const fileMimeType =
         attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
@@ -199,8 +186,8 @@ export function useComposerAttachmentIntake(input: {
         error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
         continue;
       }
-      if (image) {
-        acceptedImages.push(image);
+      if (attachmentKind === "image") {
+        acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
         if (fileStagingLimit === null) {
           error = "This server does not support file attachments.";
@@ -257,13 +244,21 @@ export function useComposerAttachmentIntake(input: {
     }
     if (acceptedImages.length === 0) return insertedAny;
 
+    // The store drops a repeated image only after compressing it, so a likely repeat prepares
+    // without a tile instead of flashing one. Only the store decides it is a duplicate.
+    const imageSourceKeys = new Set(
+      [...composerImagesRef.current, ...getPreparingComposerImages(attachmentTargetKey)].map(
+        (image) => composerImageSourceKey(image.file),
+      ),
+    );
     // The draft image reuses its placeholder's id and thumbnail so the strip tile stays exactly
     // as it is when the compressed file replaces it.
-    const preparingImages = acceptedImages.map((file) => ({
-      id: randomUUID(),
-      name: file.name || "image",
-      file,
-    }));
+    const preparingImages = acceptedImages.map((file) => {
+      const sourceKey = composerImageSourceKey(file);
+      const hidden = imageSourceKeys.has(sourceKey);
+      imageSourceKeys.add(sourceKey);
+      return { id: randomUUID(), name: file.name || "image", file, hidden };
+    });
     addPreparingComposerImages(attachmentTargetKey, preparingImages);
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);

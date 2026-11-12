@@ -3,7 +3,11 @@ import { ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
-import type { ComposerImageAttachment } from "../../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  DraftId,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import { getPreparingComposerImages } from "./preparingComposerImages";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 
@@ -31,16 +35,39 @@ function deferred<T>() {
 }
 
 // A clipboard image arrives as a new File named image.png on every paste.
-const pastedImage = () => new File([new Uint8Array(100)], "image.png", { type: "image/png" });
+const pastedImage = (fill = 0) =>
+  new File([new Uint8Array(100).fill(fill)], "image.png", { type: "image/png" });
+// Compression shrinks an image, so the draft's copy no longer matches the pasted bytes; images
+// with different pixels compress to different sizes.
+const compress = async (source: File) => {
+  const [firstByte = 0] = new Uint8Array(await source.arrayBuffer());
+  return {
+    ok: true as const,
+    file: new File([new Uint8Array(60 + firstByte)], "image.png", { type: "image/png" }),
+    recompressed: true as const,
+  };
+};
+const visiblePreparing = (targetKey: string) =>
+  getPreparingComposerImages(targetKey).filter((image) => !image.hidden);
 
-it("skips pasting an image the draft already has, while it compresses and after", async () => {
-  const targetKey = "intake-duplicate-paste";
-  const compressed = deferred<{ ok: true; file: File; recompressed: true }>();
-  compression.prepare.mockReset().mockReturnValueOnce(compressed.promise);
+it("prepares a repeated paste without a tile, and still keeps a different image", async () => {
+  const target = DraftId.make("intake-repeat-paste");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const firstCompression = deferred<void>();
+  compression.prepare
+    .mockReset()
+    .mockImplementationOnce(async (file: File) => {
+      await firstCompression.promise;
+      return compress(file);
+    })
+    .mockImplementation(compress);
   const composerImagesRef = { current: [] as ComposerImageAttachment[] };
   const addImages = (images: ComposerImageAttachment[]) => {
-    composerImagesRef.current = [...composerImagesRef.current, ...images];
-    return images.map((image) => image.id);
+    const ids = store.addImages(target, images);
+    composerImagesRef.current =
+      useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [];
+    return ids;
   };
   const input = {
     activeThreadId: ThreadId.make("thread"),
@@ -51,7 +78,7 @@ it("skips pasting an image the draft already has, while it compresses and after"
     isLiteralPendingAnswer: false,
     projectSelectionRequired: false,
     questionAttachmentTarget: null,
-    attachmentTargetKey: targetKey,
+    attachmentTargetKey: target,
     fileStagingLimit: null,
     promptRef: { current: "" },
     composerImagesRef,
@@ -60,7 +87,7 @@ it("skips pasting an image the draft already has, while it compresses and after"
     isRevertingCheckpointRef: { current: false },
     setThreadError: () => {},
     countReservedAttachments: () =>
-      composerImagesRef.current.length + getPreparingComposerImages(targetKey).length,
+      composerImagesRef.current.length + getPreparingComposerImages(target).length,
     addComposerImage: (image) => addImages([image]),
     addComposerImagesToDraft: addImages,
     addComposerFilesToDraft: () => [],
@@ -78,21 +105,21 @@ it("skips pasting an image the draft already has, while it compresses and after"
   );
 
   const first = intake.addComposerAttachments([pastedImage()]);
-  void intake.addComposerAttachments([pastedImage()]);
-  expect(getPreparingComposerImages(targetKey)).toHaveLength(1);
-
-  // Compression shrinks the image, so the draft's copy no longer matches the pasted bytes.
+  const whileCompressing = intake.addComposerAttachments([pastedImage()]);
+  expect(visiblePreparing(target)).toHaveLength(1);
   await act(async () => {
-    compressed.resolve({
-      ok: true,
-      file: new File([new Uint8Array(60)], "image.png", { type: "image/png" }),
-      recompressed: true,
-    });
-    await first;
+    firstCompression.resolve();
+    await Promise.all([first, whileCompressing]);
   });
+
+  const afterCompression = intake.addComposerAttachments([pastedImage()]);
+  expect(visiblePreparing(target)).toHaveLength(0);
+  await act(() => afterCompression);
   expect(composerImagesRef.current).toHaveLength(1);
 
-  void intake.addComposerAttachments([pastedImage()]);
-  expect(getPreparingComposerImages(targetKey)).toHaveLength(0);
-  expect(compression.prepare).toHaveBeenCalledTimes(1);
+  // Same name, type and size, different pixels: it compresses differently and is kept.
+  const different = intake.addComposerAttachments([pastedImage(7)]);
+  expect(visiblePreparing(target)).toHaveLength(0);
+  await act(() => different);
+  expect(composerImagesRef.current).toHaveLength(2);
 });

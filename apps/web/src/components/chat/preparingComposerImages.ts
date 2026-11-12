@@ -5,6 +5,8 @@ export interface PreparingComposerImage {
   readonly name: string;
   /** The uncompressed source, thumbnailed so the placeholder shows the image itself. */
   readonly file: File;
+  /** Looks like an image the draft already has: it holds its slot but shows no tile. */
+  readonly hidden: boolean;
 }
 
 const NO_PREPARING_IMAGES: ReadonlyArray<PreparingComposerImage> = [];
