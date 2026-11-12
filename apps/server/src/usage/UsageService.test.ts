@@ -1384,6 +1384,15 @@ describe("UsageService", () => {
           "windows-profile",
           "win32",
         ],
+        [undefined, undefined, "pi-home/.pi/agent/sessions", undefined, "pi-home"],
+        ["~/custom-pi", undefined, "pi-agent-home/custom-pi/sessions", undefined, "pi-agent-home"],
+        [
+          "~/ignored-pi",
+          "~/custom-sessions",
+          "pi-session-home/custom-sessions",
+          undefined,
+          "pi-session-home",
+        ],
       ] as const) {
         const dir = NodePath.join(home, relativeDir);
         yield* Effect.promise(async () => {
@@ -1423,7 +1432,7 @@ describe("UsageService", () => {
               prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
               home,
               settings:
-                launchArgs === undefined
+                launchArgs === undefined && instanceHome === undefined
                   ? settings
                   : {
                       ...settings,
@@ -1431,7 +1440,7 @@ describe("UsageService", () => {
                         ...settings.providerInstances,
                         [ProviderInstanceId.make("pi")]: {
                           driver: ProviderDriverKind.make("pi"),
-                          config: { launchArgs },
+                          config: launchArgs === undefined ? {} : { launchArgs },
                           environment:
                             instanceHome === undefined
                               ? []

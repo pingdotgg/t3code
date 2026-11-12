@@ -76,13 +76,12 @@ describe("Cursor usage limits", () => {
     }
   });
 
-  it("shows a unified allowance once, not as a total plus a pool", () => {
-    // A unified plan reports only the total and the auto bucket, at the same value.
+  it("retains unified totals for account aggregation", () => {
     const windows = cursorUsageResponseToLimits(
       { planUsage: { totalPercentUsed: 1.77, autoPercentUsed: 1.77 } },
       checkedAt,
     ).windows;
-    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed"]);
+    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed", "totalPercentUsed"]);
     expect(
       cursorUsageResponseToLimits(
         { planUsage: { totalPercentUsed: 100, apiPercentUsed: 100 } },
