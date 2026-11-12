@@ -48,7 +48,8 @@ export function ComposerCommandMenuLayer(props: {
       }
       const composerOverlap = rootFontSizePx + 1;
       const next = {
-        bottom: window.innerHeight - rect.top - composerOverlap,
+        // `bottom` is measured from the layout viewport, which iOS keeps full height under the keyboard.
+        bottom: document.documentElement.clientHeight - rect.top - composerOverlap,
         left: rect.left + drawerInset,
         maxHeight: Math.max(96, rect.top - 24 + composerOverlap),
         width,
@@ -61,6 +62,9 @@ export function ComposerCommandMenuLayer(props: {
     updatePosition();
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
+    // Safari moves the pinned shell with the visual viewport without firing window events.
+    window.visualViewport?.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("scroll", updatePosition);
 
     const observed: Element[] = [anchor];
     for (let element = anchor.parentElement; element; element = element.parentElement) {
@@ -72,6 +76,8 @@ export function ComposerCommandMenuLayer(props: {
       stopObserving();
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
+      window.visualViewport?.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("scroll", updatePosition);
     };
   }, [props.anchor]);
 
