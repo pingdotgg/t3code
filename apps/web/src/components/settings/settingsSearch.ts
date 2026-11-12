@@ -69,6 +69,7 @@ export interface SettingsSearchItem {
   readonly primaryEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
+  readonly spellcheckAvailableOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
@@ -86,6 +87,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasSpellcheckLanguages?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
@@ -741,6 +743,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Send shortcut",
     to: "/settings/chat",
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
+  },
+  {
+    id: "spellcheck-languages",
+    title: "Spellcheck languages",
+    to: "/settings/chat",
+    searchTerms: ["spelling dictionary dictionaries language red underline typo composer"],
+    desktopOnly: true,
+    spellcheckAvailableOnly: true,
   },
   {
     id: "follow-up-behavior",
@@ -1493,7 +1503,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.spellcheckAvailableOnly || availability.hasSpellcheckLanguages === true),
   );
 }
 
