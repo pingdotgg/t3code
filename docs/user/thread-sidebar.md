@@ -38,7 +38,8 @@ of its first message, and a short id, like
 folder, so the files the agent wrote stay until you delete them. Inactive and settled
 retention in [Storage cleanup](./project-settings.md#storage-cleanup) removes these folders
 when they are empty, or holding files if **Keep worktrees with local changes** is set to
-**Edited tracked files**; the thread's next message starts in an empty folder. Branch, worktree, and diff controls stay hidden because
+**Edited tracked files**. A folder holding a Git repository is always kept. The thread's
+next message starts in an empty folder. Branch, worktree, and diff controls stay hidden because
 these folders are not Git repositories. This is unavailable when the data
 directory itself sits inside a Git checkout.
 

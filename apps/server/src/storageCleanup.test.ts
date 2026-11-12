@@ -2142,6 +2142,42 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps a scratch folder holding a Git repository with tracked edits", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: 8,
+          worktreeKeepWhen: "tracked-changes",
+        });
+        const scratchRoot = `${fixture.config.baseDir}/scratch`;
+        const folder = `${scratchRoot}/2026-05-01-repo-chat`;
+        yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        yield* fixture.command(folder, ["init", "-b", "main"]);
+        yield* fixture.command(folder, ["config", "user.email", "cleanup@example.test"]);
+        yield* fixture.command(folder, ["config", "user.name", "Cleanup Test"]);
+        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "first\n");
+        yield* fixture.command(folder, ["add", "notes.md"]);
+        yield* fixture.command(folder, ["commit", "-m", "notes"]);
+        yield* fixture.command(folder, ["checkout", "--detach"]);
+        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "edited\n");
+        fixture.setProjectRoots([fixture.repo, scratchRoot]);
+        fixture.setStoredWorktreePaths([]);
+        fixture.setThreads([
+          shell({ projectId: ProjectId.make("project-2"), worktreePath: folder, branch: null }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({
+            path: folder,
+            outcome: "kept",
+            reason: "Contains a Git repository",
+          }),
+        ]);
+        expect(yield* fixture.fs.readFileString(`${folder}/notes.md`)).toBe("edited\n");
+      }),
+    ),
+  );
   it.live("skips a stored worktree path whose parent is a regular file", () =>
     runCleanupTest(
       Effect.gen(function* () {

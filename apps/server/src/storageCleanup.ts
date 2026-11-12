@@ -963,6 +963,8 @@ const make = Effect.gen(function* () {
       folder: string,
       rules: WorktreeCleanupRules,
     ) {
+      // Its history and tracked edits live only here; no keep rule may discard them.
+      if (yield* fs.exists(path.join(folder, ".git"))) return "contains a Git repository";
       if (rules.worktreeKeepWhen === "tracked-changes") return null;
       const count = (yield* fs.readDirectory(folder)).length;
       return count === 0
