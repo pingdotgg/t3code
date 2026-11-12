@@ -3326,7 +3326,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const jumpRunId =
     jumpReady &&
     !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
-      ? messageFoldRunId(props.feed, jumpToMessageId)
+      ? messageFoldRunId(props.feed, jumpToMessageId, presentedFeed)
       : null;
   if (jumpRunId && !expandedTurnIds.has(jumpRunId)) {
     setInteractionState((current) => ({
