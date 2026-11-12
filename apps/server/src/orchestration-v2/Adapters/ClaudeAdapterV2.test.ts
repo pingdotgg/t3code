@@ -17973,6 +17973,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "requested",
     "observed-before",
     "observed-after",
+    "observed-unrequested",
     "synthetic-after",
     "inherit",
     "unknown",
@@ -18030,7 +18031,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   input: {
                     description: "Haiku puzzle",
                     subagent_type: "general-purpose",
-                    ...(source === "unknown"
+                    ...(source === "unknown" || source === "observed-unrequested"
                       ? {}
                       : { model: source === "inherit" ? "inherit" : "haiku" }),
                     prompt: "Solve the puzzle.",
@@ -18055,7 +18056,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        if (source === "observed-after" || source === "synthetic-after") {
+        if (
+          source === "observed-after" ||
+          source === "observed-unrequested" ||
+          source === "synthetic-after"
+        ) {
           yield* Queue.offer(harness.sdkMessages, observed);
         }
         yield* Queue.offer(
@@ -18073,14 +18078,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? observedSlug
             : source === "inherit"
               ? parentModel
-              : source === "unknown"
+              : source === "unknown" || source === "observed-unrequested"
                 ? null
                 : "claude-haiku-5-5";
         assert.equal(subagents[0]?.subagent.model, initialModel);
-        assert.equal(
-          subagents.at(-1)?.subagent.model,
-          source.startsWith("observed") ? observedSlug : initialModel,
-        );
+        assert.equal(subagents[0]?.subagent.modelSelection?.model, initialModel ?? undefined);
+        const finalModel = source.startsWith("observed") ? observedSlug : initialModel;
+        assert.equal(subagents.at(-1)?.subagent.model, finalModel);
+        assert.equal(subagents.at(-1)?.subagent.modelSelection?.model, finalModel ?? undefined);
         const child = harness.events.find((event) => event.type === "app_thread.created");
         assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);
       }).pipe(
@@ -18100,12 +18105,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ["reported", true],
     ["delayed", false],
     ["delayed", true],
+    ["placeholder", false],
     ["missing", false],
     ["unavailable", false],
   ] as const)(
     "keeps a fork model unknown until its transcript is %s (idle: %s)",
     ([source, idle]) =>
       Effect.gen(function* () {
+        const reportedModel =
+          source === "placeholder" ? CLAUDE_TEST_MODEL_SELECTION.model : "claude-haiku-4-5";
+        const reportsModel = source === "reported" || source === "placeholder";
         const firstRead = yield* Deferred.make<void>();
         let reads = 0;
         const harness = yield* makeWakeHarnessWithOptions({
@@ -18118,8 +18127,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   method: "getSubagentModel",
                   cause: "unavailable",
                 });
-              return source === "reported" || (source === "delayed" && reads > 1)
-                ? "claude-haiku-4-5-20251001"
+              return reportsModel || (source === "delayed" && reads > 1)
+                ? source === "placeholder"
+                  ? reportedModel
+                  : "claude-haiku-4-5-20251001"
                 : null;
             }),
         });
@@ -18168,29 +18179,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
           ),
         );
-        if (source !== "reported") {
+        if (!reportsModel) {
           yield* Deferred.await(firstRead);
           yield* TestClock.adjust(500);
           yield* TestClock.adjust("30 seconds");
           assert.equal(reads, 2);
         }
-        if (source === "reported" || source === "delayed") {
+        if (reportsModel || source === "delayed") {
           yield* harness.until(() =>
             harness.events.some(
               (event) =>
-                event.type === "subagent.updated" && event.subagent.model === "claude-haiku-4-5",
+                event.type === "subagent.updated" && event.subagent.model === reportedModel,
             ),
           );
         }
         const child = harness.events.find((event) => event.type === "app_thread.created");
         assert.isTrue(child?.appThread.modelUnreported);
-        const task = harness.events
-          .filter((event) => event.type === "subagent.updated")
-          .at(-1)?.subagent;
-        assert.equal(
-          task?.model,
-          source === "reported" || source === "delayed" ? "claude-haiku-4-5" : null,
-        );
+        assert.equal(child?.appThread.modelSelection.model, CLAUDE_TEST_MODEL_SELECTION.model);
+        const tasks = harness.events.filter((event) => event.type === "subagent.updated");
+        assert.isNotEmpty(tasks);
+        for (const { subagent } of tasks) {
+          if (subagent.model === null) assert.isUndefined(subagent.modelSelection);
+          else assert.equal(subagent.modelSelection?.model, subagent.model);
+        }
+        const task = tasks.at(-1)?.subagent;
+        const finalModel = reportsModel || source === "delayed" ? reportedModel : null;
+        assert.equal(task?.model, finalModel);
+        assert.equal(task?.modelSelection?.model, finalModel ?? undefined);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
