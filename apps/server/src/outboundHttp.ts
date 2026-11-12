@@ -41,9 +41,14 @@ export function installHttp1FetchDispatcher(env: NodeJS.ProcessEnv = process.env
   );
 }
 
-/** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936). */
-export function keepOutboundFetchOnHttp1(): void {
-  if (builtinFetchUsesHttp2(process.versions.undici)) installHttp1FetchDispatcher();
+/**
+ * Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936),
+ * and routes fetch through an environment proxy on any Node version.
+ */
+export function keepOutboundFetchOnHttp1(env: NodeJS.ProcessEnv = process.env): void {
+  if (builtinFetchUsesHttp2(process.versions.undici) || shouldUseEnvProxy(env)) {
+    installHttp1FetchDispatcher(env);
+  }
 }
 
 // @types/node does not declare setTypeOfService yet.

@@ -16,6 +16,7 @@ import {
   builtinFetchUsesHttp2,
   ignoreMacosTypeOfServiceEinval,
   installHttp1FetchDispatcher,
+  keepOutboundFetchOnHttp1,
   shouldUseEnvProxy,
 } from "./outboundHttp.ts";
 
@@ -97,13 +98,13 @@ describe("installHttp1FetchDispatcher", () => {
       }),
   );
 
-  it("installs the env proxy agent when the environment names a proxy", () => {
+  it("keepOutboundFetchOnHttp1 installs the env proxy agent when the environment names a proxy", () => {
     Undici.setGlobalDispatcher(new Undici.Agent());
-    installHttp1FetchDispatcher({ HTTPS_PROXY: "http://127.0.0.1:9" });
+    keepOutboundFetchOnHttp1({ HTTPS_PROXY: "http://127.0.0.1:9" });
     expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
 
     Undici.setGlobalDispatcher(new Undici.Agent());
-    installHttp1FetchDispatcher({ NODE_USE_ENV_PROXY: "0", HTTPS_PROXY: "http://127.0.0.1:9" });
+    keepOutboundFetchOnHttp1({ NODE_USE_ENV_PROXY: "0", HTTPS_PROXY: "http://127.0.0.1:9" });
     expect(Undici.getGlobalDispatcher()).not.toBeInstanceOf(Undici.EnvHttpProxyAgent);
   });
 
