@@ -31,6 +31,7 @@ describe("projectThreadAwarenessV2", () => {
         | "pendingRuntimeRequest"
         | "lineage"
         | "settledOverride"
+        | "goal"
       >
     > = {},
   ) => ({
@@ -248,6 +249,15 @@ describe("projectThreadAwarenessV2", () => {
       phase: "waiting_for_input",
       headline: "Waiting for input",
     });
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: v2Thread({
+          status: "completed",
+          goal: { objective: "Publish release notes", status: "blocked" },
+        }),
+      }),
+    ).toMatchObject({ phase: "waiting_for_input" });
   });
 
   it("does not present authentication refreshes as user approvals", () => {

@@ -74,6 +74,7 @@ export interface ProjectThreadAwarenessV2Input {
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
+    | "goal"
     | "id"
     | "lineage"
     | "latestRunBackgroundWake"
@@ -142,7 +143,9 @@ function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
   childAwaitsApproval: boolean,
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
+  if (thread.pendingRuntimeRequest?.kind === "user_input" || thread.goal?.status === "blocked") {
+    return "waiting_for_input";
+  }
   if (
     thread.pendingRuntimeRequest !== null &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"

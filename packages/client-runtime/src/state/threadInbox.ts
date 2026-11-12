@@ -12,11 +12,14 @@ type WorkingThreadInput = Pick<
   | "interactionMode"
   | "latestRun"
   | "runtime"
->;
+> &
+  Partial<Pick<EnvironmentThreadShell, "goal">>;
 
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
+  // A blocked goal waits on the user even while background work parks the runtime.
+  if (thread.goal?.status === "blocked") return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   const run = thread.latestRun;
   const runSettled =
@@ -222,6 +225,7 @@ export function createInboxReturnTracker() {
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
           thread.pendingSubagentRequest != null ||
+          thread.goal?.status === "blocked" ||
           (thread.pendingGuestMessageCount ?? 0) > 0 ||
           (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
           thread.runtime?.lastError != null ||

@@ -151,6 +151,7 @@ export function isAutoSettlementCandidate(
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
   if (thread.pendingRuntimeRequest !== null) return false;
+  if (thread.goal?.status === "blocked") return false;
   // A guest is waiting on the owner; settling would hide the Request.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   if (thread.activityRunStatus != null) return false;
@@ -170,6 +171,7 @@ export function isSnoozed(
     | "status"
     | "pendingRuntimeRequest"
     | "pendingGuestMessageCount"
+    | "goal"
   >,
   nowMs: number,
 ): boolean {
@@ -177,6 +179,7 @@ export function isSnoozed(
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
   // Same as the client: a waiting guest message wakes the thread, and the snooze stays stored.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
+  if (thread.goal?.status === "blocked") return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
   if (
     thread.pendingRuntimeRequest !== null &&
