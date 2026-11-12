@@ -40,6 +40,7 @@ import {
   isRpcClientError,
   request,
   subscribeDynamicWithSession,
+  subscriptionRetryDelay,
   type EnvironmentRpcStreamFailure,
   type EnvironmentRpcStreamValue,
 } from "../rpc/client.ts";
@@ -65,6 +66,8 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+const THREAD_SUBSCRIPTION_RETRY_DELAY = "250 millis";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -995,6 +998,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       (yield* Ref.get(socketOnlyOpen)) && Option.isNone((yield* SubscriptionRef.get(state)).data)
     );
   });
+  const resubscribes = yield* Queue.unbounded<void>();
+  let httpMisses = 0;
+  let defectRetries = 0;
+  const waitAfterDefect = Effect.suspend(() => {
+    const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);
+    defectRetries += 1;
+    return Effect.sleep(retryDelay);
+  });
+  const backOffAfterDefect = setStreamError("Could not synchronize the thread.").pipe(
+    Effect.andThen(waitAfterDefect),
+  );
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* setConnecting;
@@ -1013,16 +1027,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   > => {
     let failedSession: RpcSession | undefined;
     let resumeFailed = false;
+    let retryDefects = true;
     return subscribeDynamicWithSession(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         failedSession = session;
         resumeFailed = false;
+        retryDefects = true;
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
-        // Park the subscription attempt without opening the socket so we do not
-        // retry forever against a known-missing id.
-        if (current.status === "deleted") {
+        // A delete event already cleared this thread. Park without opening the socket.
+        if (current.status === "deleted" && httpMisses === 0) {
           return yield* Effect.never;
         }
 
@@ -1059,6 +1073,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             yield* snapshotLoader.load(prepared, threadId);
           switch (httpResult._tag) {
             case "present": {
+              httpMisses = 0;
               if (canLoadHistory && httpResult.history !== undefined) {
                 yield* Ref.set(acceptsBoundedSocketSnapshots, true);
               }
@@ -1088,9 +1103,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
-              yield* setDeleted();
+              if (current.status !== "deleted") yield* setDeleted();
               // A 404 also means "not created yet". Only a delete event may outlive this mount.
               if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+              yield* Effect.sleep(
+                subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, httpMisses++),
+              );
+              yield* Queue.offer(resubscribes, undefined);
               return yield* Effect.never;
             }
             case "unavailable": {
@@ -1194,6 +1213,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   // Transport and authorization failures keep the RPC subscription's
                   // existing handling; only a failed catch-up gets a snapshot retry.
                   if (!failed) return Stream.failCause(cause);
+                  retryDefects =
+                    Cause.hasDies(cause) &&
+                    !cause.reasons.some(
+                      (reason) =>
+                        reason._tag === "Die" && isThreadSynchronizationTimeout(reason.defect),
+                    );
                   resumeFailed = resumed && !synchronized;
                   return Stream.die(Cause.squash(cause));
                 }),
@@ -1205,8 +1230,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),
-        retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        retryExpectedFailureAfter: THREAD_SUBSCRIPTION_RETRY_DELAY,
+        resubscribe: Stream.merge(foregroundResubscriptions, Stream.fromQueue(resubscribes)),
       },
     ).pipe(
       Stream.catchCause((cause) =>
@@ -1218,8 +1243,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               return subscribeThread();
             }
             if (resumeFailed) return subscribeThread(true);
-            // Running threads stay mounted. Keep the error until a new session or
-            // foreground wakeup can start another catch-up attempt.
+            // A source defect backs off; a failed catch-up waits for a session or foreground wakeup.
             return Stream.fromEffect(
               setStreamError(
                 cause.reasons.some(
@@ -1238,7 +1262,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                       (session) => Option.isSome(session) && session.value !== failedSession,
                     ),
                   ),
-                  foregroundResubscriptions,
+                  Stream.merge(
+                    foregroundResubscriptions,
+                    retryDefects && Cause.hasDies(cause)
+                      ? Stream.fromEffect(waitAfterDefect)
+                      : Stream.never,
+                  ),
                 ).pipe(
                   Stream.take(1),
                   Stream.drain,
@@ -1251,7 +1280,36 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ),
     );
   };
-  yield* Effect.forkScoped(subscribeThread().pipe(Stream.runForEachArray(applyItems)));
+  const followThread = (): Effect.Effect<
+    void,
+    never,
+    EnvironmentSupervisor.EnvironmentSupervisor
+  > =>
+    subscribeThread().pipe(
+      Stream.runForEachArray((items) =>
+        applyItems(items).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              defectRetries = 0;
+            }),
+          ),
+        ),
+      ),
+      // A defect while applying items ends the stream; resubscribe for a fresh snapshot.
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("Thread subscription failed; resubscribing.", {
+              cause: Cause.pretty(cause),
+              environmentId,
+              threadId,
+            }).pipe(
+              Effect.andThen(backOffAfterDefect),
+              Effect.andThen(Effect.suspend(followThread)),
+            ),
+      ),
+    );
+  yield* Effect.forkScoped(followThread());
 
   return state;
 });

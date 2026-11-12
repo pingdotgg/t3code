@@ -127,6 +127,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  /** Answers per load call; the last one repeats. Overrides `httpSnapshot`. */
+  readonly httpSnapshots?: readonly ThreadSnapshotLoadResult[];
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -206,11 +208,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
-      Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
+      Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
+        Effect.map((count) =>
           threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
+            ? (options?.httpSnapshots?.[Math.min(count, options.httpSnapshots.length) - 1] ??
+              options?.httpSnapshot ??
+              ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
             : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
         ),
       ),
@@ -812,6 +815,27 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("keeps asking a mounted thread over HTTP after a miss until it exists", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshots: [
+          { _tag: "missing" },
+          { _tag: "missing" },
+          {
+            _tag: "present",
+            snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+          },
+        ],
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* TestClock.adjust("250 millis");
+      yield* TestClock.adjust("500 millis");
+      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(3);
+    }),
+  );
+
   it.effect.each([
     // The HTTP retry decides, so a missing thread never flashes an error.
     {
@@ -883,7 +907,7 @@ describe("EnvironmentThreads", () => {
       let configReads = 0;
       const harness = yield* makeHarness({
         httpSnapshot: { _tag: "missing" },
-        // The retry's config read dies too, so a stale flag would resubscribe forever.
+        // The retry's config read dies too, so a stale flag would resubscribe without backing off.
         initialConfig: Effect.suspend(() =>
           ++configReads === 1
             ? Effect.succeed({ threadSnapshotPagination: true })
@@ -901,6 +925,8 @@ describe("EnvironmentThreads", () => {
       );
       expect(settled.status).toBe("empty");
       expect(configReads).toBe(2);
+      yield* TestClock.adjust("250 millis");
+      expect(configReads).toBe(3);
     }),
   );
 
@@ -2551,6 +2577,71 @@ describe("EnvironmentThreads", () => {
       yield* TestClock.adjust("1 minute");
       expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
     }),
+  );
+
+  it.effect(
+    "resubscribes after a snapshot decode defect ends the thread subscription (#23041)",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          httpSnapshot: { _tag: "unavailable" },
+          completionMarker: true,
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count >= 1),
+          Stream.runHead,
+        );
+        yield* Queue.offer(harness.inputs, TEST_DEFECT);
+        const failed = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(failed.status).toBe("empty");
+        expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize the thread.");
+
+        yield* TestClock.adjust("60 seconds");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+
+        yield* Queue.offerAll(harness.inputs, [
+          snapshot({
+            ...BASE_PROJECTION,
+            thread: { ...BASE_PROJECTION.thread, title: "Recovered thread" },
+          }),
+          synchronized(),
+        ]);
+        const recovered = yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" &&
+            Option.isSome(value.data) &&
+            value.data.value.thread.title === "Recovered thread",
+        );
+        expect(Option.isNone(recovered.error)).toBe(true);
+
+        yield* Queue.offer(harness.wakeups, "application-active");
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 3),
+          Stream.runHead,
+        );
+        yield* Queue.offer(harness.inputs, TEST_DEFECT);
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 4),
+          Stream.runHead,
+        );
+        yield* Queue.offer(harness.inputs, TEST_DEFECT);
+        const failedSnapshot = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(Option.getOrThrow(failedSnapshot.data).thread.title).toBe("Recovered thread");
+        yield* Queue.offer(harness.wakeups, "application-active");
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 5),
+          Stream.runHead,
+        );
+        yield* Queue.offerAll(harness.inputs, [snapshot(BASE_PROJECTION), synchronized()]);
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        yield* TestClock.adjust("1 minute");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(5);
+      }),
   );
 
   it.effect("keeps replayed updates synchronizing until the completion marker arrives", () =>
