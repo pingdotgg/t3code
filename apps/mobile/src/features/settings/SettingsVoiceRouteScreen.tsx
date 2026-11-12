@@ -2,7 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -33,7 +33,7 @@ import { LocalModelChoice } from "./VoiceModelSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { LocalVoiceEngine } from "../../native/voiceTranscription";
+import { getLocalVoiceTranscriber, type LocalVoiceEngine } from "../../native/voiceTranscription";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
@@ -217,6 +217,13 @@ function EnvironmentMethodSection({
 
 export function SettingsVoiceRouteScreen() {
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  const setTranscriber = useAtomSet(localVoiceTranscriberAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dictation can download a model, so re-probe the native engine without a "checking" flash
+  useEffect(() => {
+    void getLocalVoiceTranscriber()
+      .catch(() => null)
+      .then(setTranscriber);
+  }, [setTranscriber]);
   const localEngine =
     transcriber === null || transcriber === "checking" ? null : transcriber.engine;
   const grant = useAtomValue(voiceGrantAtom);
@@ -296,6 +303,9 @@ export function SettingsVoiceRouteScreen() {
         >
           <ListChoiceRow
             label="This device"
+            accessibilityLabel={
+              localEngine ? `This device, ${localEngineLabel(localEngine)}` : undefined
+            }
             description="Audio stays on this device and is transcribed here."
             meta={
               localEngine ? (
