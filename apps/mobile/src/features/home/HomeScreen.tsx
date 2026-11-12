@@ -83,6 +83,7 @@ import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
   findHomeProjectScope,
+  hasHomeThreadListContent,
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
@@ -678,10 +679,12 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfEnabled,
   };
 
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) ||
-    props.pendingTasks.length > 0 ||
-    threadListV2Layout.settledCount > 0;
+  const hasListContent = hasHomeThreadListContent({
+    threads: props.threads,
+    pendingTaskCount: props.pendingTasks.length,
+    settledCount: threadListV2Layout.settledCount,
+    items: threadListV2Items,
+  });
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -692,7 +695,7 @@ export function HomeScreen(props: HomeScreenProps) {
     projectCount: props.projects.length,
   });
 
-  if (!hasAnyThreads) {
+  if (!hasListContent) {
     return (
       <View className={containerClassName}>
         <ScreenContent surface={sidebarSurface ? "drawer" : "screen"}>

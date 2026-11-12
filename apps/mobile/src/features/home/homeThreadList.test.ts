@@ -5,9 +5,13 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  findHomeProjectScope,
+  hasHomeThreadListContent,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
-import { buildThreadListV2Items } from "../threads/threadListV2";
+import { buildThreadListV2Items, buildThreadListV2ListItems } from "../threads/threadListV2";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -45,6 +49,42 @@ function makeThread(
 }
 
 describe("home project scopes", () => {
+  it("renders eligible empty project folders without conversation history", () => {
+    const environmentId = EnvironmentId.make("environment-empty");
+    const scopes = buildHomeProjectScopes({
+      projects: [
+        makeProject({
+          environmentId,
+          id: ProjectId.make("project-empty"),
+          title: "Empty project",
+          pinnedAt: "2026-06-01T00:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    const input = { threads: [], pendingTaskCount: 0, settledCount: 0 };
+    const listInput = { items: [], pendingTasks: [] };
+    const pinnedFolders = buildThreadListV2ListItems({
+      ...listInput,
+      projectFolders: scopes,
+    });
+    expect(hasHomeThreadListContent({ ...input, items: pinnedFolders })).toBe(true);
+    const unpinnedScopes = scopes.map((scope) => ({ ...scope, pinned: false }));
+    const scopedFolders = buildThreadListV2ListItems({
+      ...listInput,
+      projectFolders: unpinnedScopes,
+      keepEmptyProjectFolders: true,
+    });
+    expect(hasHomeThreadListContent({ ...input, items: scopedFolders })).toBe(true);
+    for (const projectFolders of [null, unpinnedScopes]) {
+      const items = buildThreadListV2ListItems({ ...listInput, projectFolders });
+      expect(hasHomeThreadListContent({ ...input, items })).toBe(false);
+    }
+    expect(hasHomeThreadListContent({ ...input, items: [], settledCount: 1 })).toBe(true);
+    expect(hasHomeThreadListContent({ ...input, items: [], pendingTaskCount: 1 })).toBe(true);
+  });
+
   it("filters threads across both scratch hosts while retaining the selected environment boundary", () => {
     const localEnvironmentId = EnvironmentId.make("local");
     const remoteEnvironmentId = EnvironmentId.make("remote");
