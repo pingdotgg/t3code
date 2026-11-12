@@ -713,7 +713,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     return manual;
   }
   // MacPorts installs into a root-owned prefix with npm's layout and disables the CLIs' updaters.
-  if (context.platform === "darwin" && (yield* isMacPortsOwned(context))) {
+  if (yield* isMacPortsOwned(context)) {
     return manual;
   }
 
