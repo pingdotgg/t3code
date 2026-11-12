@@ -41,7 +41,7 @@ function Header({
     props: mergeProps<"div">(
       {
         className:
-          "flex min-h-8 w-full min-w-0 items-center gap-2 ps-2.5 pe-3.25 text-start [button&]:cursor-pointer [button&]:rounded-control [button&]:outline-none [button&]:focus-visible:outline-2 [button&]:focus-visible:-outline-offset-2 [button&]:focus-visible:outline-ring",
+          "flex min-h-8 w-full min-w-0 items-center gap-2 ps-2.5 pe-3.25 text-start [button&]:cursor-pointer [button&]:rounded-control [button&]:outline-none [button&]:hover:surface-ghost-hover [button&]:focus-visible:outline-2 [button&]:focus-visible:-outline-offset-2 [button&]:focus-visible:outline-ring",
         children: (
           <>
             <span aria-hidden className="flex shrink-0 items-center [&>svg]:size-[13px]">
