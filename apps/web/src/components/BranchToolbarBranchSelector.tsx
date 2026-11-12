@@ -183,6 +183,7 @@ export function BranchToolbarBranchSelector({
     branch: string | null,
     worktreePath: string | null,
     automatic = false,
+    onMetadataFailure?: () => void,
   ) => {
     if (
       !activeThreadId ||
@@ -219,6 +220,8 @@ export function BranchToolbarBranchSelector({
           worktreePath,
           ...(automatic ? { expectedEmpty: true } : {}),
         },
+      }).then((result) => {
+        if (result._tag !== "Success") onMetadataFailure?.();
       });
     }
     if (hasServerThread) {
@@ -487,24 +490,35 @@ export function BranchToolbarBranchSelector({
         const nextBranchName = refName.isRemote
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
-        const applied = setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
+        const movesCheckout = selectionTarget.checkoutCwd !== branchCwd;
+        let hold: BranchHold | null = null;
+        const applied = setThreadBranch(
+          nextBranchName,
+          selectionTarget.nextWorktreePath,
+          false,
+          // A failed move leaves the thread in its old checkout, which never had the new branch.
+          movesCheckout
+            ? () => setBranchHold((current) => (current === hold ? null : current))
+            : undefined,
+        );
         if (applied) {
-          setBranchHold({
+          hold = {
             branch: nextBranchName,
             environmentId,
             // The thread keeps its old checkout until the metadata update moves it to the new one.
             checkouts: [
               { cwd: branchCwd, replaces: canonicalActiveBranch },
-              ...(selectionTarget.checkoutCwd === branchCwd
-                ? []
-                : [
+              ...(movesCheckout
+                ? [
                     {
                       cwd: selectionTarget.checkoutCwd,
                       replaces: projectStatusQuery.data?.refName ?? null,
                     },
-                  ]),
+                  ]
+                : []),
             ],
-          });
+          };
+          setBranchHold(hold);
         }
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
         return;
