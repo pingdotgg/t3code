@@ -9099,6 +9099,15 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
       assert.isNotNull(visited.thread.lastVisitedAt);
       assert.equal(DateTime.formatIso(visited.thread.lastVisitedAt!), visitedAt);
       assert.deepEqual(visited.thread.updatedAt, createdUpdatedAt);
+      const sql = yield* SqlClient.SqlClient;
+      const [visitEvent] = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_events
+        WHERE command_id = ${"runtime-layer-visited-thread-visit"}
+      `;
+      assert.isDefined(visitEvent);
+      const visitPayload = JSON.parse(visitEvent!.payload_json);
+      assert.isUndefined(visitPayload.title);
+      assert.isUndefined(visitPayload.modelSelection);
 
       yield* orchestrator.dispatch({
         type: "thread.visit",
@@ -9124,7 +9133,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
         .pipe(Effect.flip);
       assert.instanceOf(markUnread, Orchestrator.OrchestratorDispatchError);
 
-      const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items (
         turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
       ) VALUES (
