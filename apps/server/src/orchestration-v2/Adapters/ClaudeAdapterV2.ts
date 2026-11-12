@@ -8814,6 +8814,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const model = input.model ?? priorTask?.model ?? null;
           const movesToCurrentRun =
             input.reopen === true && input.status === "running" && existingSubagent !== undefined;
+          const childModelSelection = claudeSubagentModelSelection(
+            modelCatalog,
+            input.context.input.modelSelection.instanceId,
+            model ?? input.context.input.modelSelection.model,
+            effort,
+          );
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -8842,16 +8848,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
             model,
-            ...(existingSubagent === undefined || existingSubagent.task.modelSelection !== undefined
-              ? {
-                  modelSelection: claudeSubagentModelSelection(
-                    modelCatalog,
-                    input.context.input.modelSelection.instanceId,
-                    model || input.context.input.modelSelection.model,
-                    effort,
-                  ),
-                }
-              : {}),
+            modelSelection: model === null ? undefined : childModelSelection,
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
             ...(input.result === undefined ? {} : { result: input.result }),
@@ -8951,7 +8948,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 parentNodeId: nodeId,
                 activeProviderThreadId: null,
                 providerInstanceId: input.context.input.modelSelection.instanceId,
-                modelSelection: task.modelSelection ?? input.context.input.modelSelection,
+                modelSelection: childModelSelection,
                 title: subagentThreadTitle({
                   parentTitle: input.context.input.appThread.title,
                   prompt: task.prompt,
