@@ -114,6 +114,21 @@ describe("workspace root navigation", () => {
     expect(workspaceTabsReducer(state, { type: "cancel" }).tabs.threads.scrollOffset).toBe(500);
   });
 
+  it("a natively dismissed search reopens from where the list is now", () => {
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+      type: "scroll",
+      tab: "threads",
+      offset: 500,
+    });
+    state = workspaceTabsReducer(state, { type: "search" });
+    state = workspaceTabsReducer(state, { type: "expand" });
+    state = workspaceTabsReducer(state, { type: "dismiss" });
+    expect(state.tabs.threads).toMatchObject({ searchMode: "resting", scrollOffset: 500 });
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "threads", offset: 120 });
+    state = workspaceTabsReducer(state, { type: "search" });
+    expect(workspaceTabsReducer(state, { type: "cancel" }).tabs.threads.scrollOffset).toBe(120);
+  });
+
   it("keeps the Settings search apart from the tab Settings opened over", () => {
     let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
       type: "query",
