@@ -77,7 +77,7 @@ a fixture the data it saves.
 The server config has its own budget in `apps/server/src/ws.test.ts`. A client that asks for
 catalog digests and status deltas gets the provider list of its first config in under 1 KiB, for a
 provider with 250 slash commands and 200 skills. The lists load with the first cwd snapshot, and a
-machine refresh sends back neither the lists nor a reply body.
+machine refresh replies with an empty provider list.
 
 ## Event store and startup
 
