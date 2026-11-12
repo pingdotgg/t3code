@@ -731,7 +731,7 @@ export function orchestrationV2RunWorkStartedAt(
 /**
  * Work started now would run in the project checkout, not the worktree the thread asked for. A
  * failed or interrupted setup leaves the request standing until a worktree exists, or until a
- * later run has started work in the project checkout anyway.
+ * later run has started work in the project checkout anyway. A retried setup is pending again.
  */
 export function orchestrationV2WorktreePending(
   worktreePath: string | null,
@@ -743,15 +743,16 @@ export function orchestrationV2WorktreePending(
     worktreePath === null &&
     runs.some(
       (run) =>
-        (run.status === "preparing" || run.status === "failed" || run.status === "interrupted") &&
         run.workspacePreparation?.type === "worktree" &&
-        !runs.some(
-          (later) =>
-            later.ordinal > run.ordinal &&
-            later.status !== "queued" &&
-            later.status !== "preparing" &&
-            !(later.status === "cancelled" && later.startedAt === null),
-        ),
+        (run.status === "preparing" ||
+          ((run.status === "failed" || run.status === "interrupted") &&
+            !runs.some(
+              (later) =>
+                later.ordinal > run.ordinal &&
+                later.status !== "queued" &&
+                later.status !== "preparing" &&
+                !(later.status === "cancelled" && later.startedAt === null),
+            ))),
     )
   );
 }

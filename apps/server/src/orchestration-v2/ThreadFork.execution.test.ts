@@ -1053,6 +1053,31 @@ it.effect("a side chat opens once a later run has worked in the project checkout
 
     yield* forkSideChat("side-chat-worktree-abandoned-fork", parentId, sideChatId);
     assert.isNull((yield* orchestrator.getThreadProjection(sideChatId)).thread.deletedAt);
+
+    // Retrying the failed setup puts the same run back into preparing.
+    const retriedParentId = ThreadId.make("side-chat-worktree-retried-parent");
+    yield* createParent(retriedParentId);
+    yield* writeParentRun({
+      threadId: retriedParentId,
+      runId: RunId.make("side-chat-worktree-retried-run-2"),
+      ordinal: 2,
+      status: "completed",
+      text: "Worked in the project checkout",
+      stable: true,
+    });
+    yield* writeParentRun({
+      threadId: retriedParentId,
+      runId: RunId.make("side-chat-worktree-retried-run-1"),
+      ordinal: 1,
+      status: "preparing",
+      text: "Retrying setup",
+    });
+    const rejected = yield* forkSideChat(
+      "side-chat-worktree-retried-fork",
+      retriedParentId,
+      ThreadId.make("side-chat-worktree-retried-child"),
+    ).pipe(Effect.flip);
+    assert.include(String(rejected.cause), "has no worktree yet");
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
