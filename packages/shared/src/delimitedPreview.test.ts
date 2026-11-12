@@ -11,10 +11,6 @@ describe("delimited file previews", () => {
       ["a", "b"],
       ["1", "2,5"],
     ]);
-    expect(parseDelimitedPreview('\ufeffsep=;\r\na;b\r\n"1;2";2,5', ",").rows).toEqual([
-      ["a", "b"],
-      ["1;2", "2,5"],
-    ]);
     expect(parseDelimitedPreview('name,notes\nAlice,"a;b;c"', ",").rows).toEqual([
       ["name", "notes"],
       ["Alice", "a;b;c"],
@@ -37,6 +33,13 @@ describe("delimited file previews", () => {
     expect(parseDelimitedPreview("one\ttwo\n\tthree", "\t").rows).toEqual([
       ["one", "two"],
       ["", "three"],
+    ]);
+  });
+  it("keeps a leading sep= line as semicolon-separated data", () => {
+    expect(parseDelimitedPreview("sep=;\r\na;b\r\n1;2,5", ",").rows).toEqual([
+      ["sep=", ""],
+      ["a", "b"],
+      ["1", "2,5"],
     ]);
   });
   describe.each([",", "\t"] as const)("with delimiter %j", (delimiter) => {

@@ -20,9 +20,7 @@ export function parseDelimitedPreview(
   },
 ) {
   if (delimiter === "," && limits.detectCsv !== false) {
-    const format = csvPreviewFormat(text);
-    delimiter = format.delimiter;
-    text = text.slice(format.offset);
+    delimiter = csvPreviewDelimiter(text);
   }
   const rows: string[][] = [];
   let row: string[] = [];
@@ -77,11 +75,7 @@ export function parseDelimitedPreview(
   return { rows, truncated: truncated || quoted };
 }
 
-export function csvPreviewFormat(text: string) {
-  const directive = /^\ufeff?sep=([,;\t])(?:\r\n|\n|\r|$)/i.exec(text);
-  if (directive) {
-    return { delimiter: directive[1] as "," | ";" | "\t", offset: directive[0].length };
-  }
+export function csvPreviewDelimiter(text: string) {
   let commas = 0;
   let semicolons = 0;
   for (const match of text.matchAll(/"(?:[^"]|"")*"|([,;\r\n])/g)) {
@@ -90,5 +84,5 @@ export function csvPreviewFormat(text: string) {
     if (separator === ",") commas++;
     if (separator === ";") semicolons++;
   }
-  return { delimiter: semicolons > commas ? (";" as const) : ("," as const), offset: 0 };
+  return semicolons > commas ? ";" : ",";
 }

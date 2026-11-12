@@ -1,4 +1,4 @@
-import { csvPreviewFormat, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
+import { csvPreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import {
   LARGE_TEXT_MAX_BYTES,
   LARGE_TEXT_MAX_ROWS,
@@ -96,7 +96,7 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       let length = 0;
       let quoted = false;
       let ended = false;
-      while (length <= 1024 * 1024 && (!ended || parts.at(-1)?.at(-1) === 13)) {
+      while (length <= 1024 * 1024 && !ended) {
         const next = await reader.read();
         if (next.done) break;
         parts.push(next.value);
@@ -105,13 +105,9 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
           if (byte === 34) quoted = !quoted;
           if (!quoted && (byte === 10 || byte === 13)) ended = true;
         }
-        if (length > 1024 * 1024) ended = true;
       }
       prefix = new Uint8Array(await new Blob(parts).arrayBuffer());
-      const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(prefix);
-      const format = csvPreviewFormat(text);
-      delimiter = format.delimiter;
-      set(0, new TextEncoder().encode(text.slice(0, format.offset)).length);
+      delimiter = csvPreviewDelimiter(new TextDecoder().decode(prefix));
     }
     while (true) {
       const { value, done } = prefix ? { value: prefix, done: false } : await reader.read();
@@ -123,7 +119,6 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       for (let i = 0; i < value.length; i++) {
         const byte = value[i]!;
         const pos = size + i;
-        if (pos < at(0)) continue;
         if (
           (pos === 0 && byte === 239) ||
           (pos === 1 && byte === 187) ||
