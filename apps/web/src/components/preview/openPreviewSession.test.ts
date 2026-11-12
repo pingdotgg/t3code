@@ -97,6 +97,22 @@ describe("openPreviewSession", () => {
       });
     },
   );
+
+  it("opens a server tab with the default zoom and appearance", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      browserDefaultZoomFactor: 0.8,
+      browserDefaultAppearance: "dark",
+    });
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+    await openPreviewSession({ openPreview, threadRef, runtime: "server" });
+
+    expect(openPreview).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: expect.objectContaining({ runtime: "server", zoomFactor: 0.8, colorScheme: "dark" }),
+    });
+  });
 });
 
 describe("openUrlInPreview from a link", () => {
