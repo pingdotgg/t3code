@@ -45,7 +45,7 @@ const DECORATOR_CALL_REFERENCE_REGEX = /^[\p{ID_Start}_$][\p{ID_Continue}.$\u200
 /** Only a local SKILL.md can bind a mention, so `[$PATH](https://…)` stays an ordinary link. */
 export function isLinkableSkillPath(path: string): boolean {
   const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
-  return !hasExternalScheme && /(?:^|[\\/])SKILL\.md$/.test(path);
+  return !hasExternalScheme && /(?:^|[\\/])SKILL\.md$/i.test(path);
 }
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
@@ -128,6 +128,33 @@ export function formatLinkedSkillMention(skill: {
   readonly path: string;
 }): string {
   return `[$${skill.name}](${encodeMarkdownLinkDestination(skill.path)})`;
+}
+
+/**
+ * `[$name](path)` picks one of several same-name files. When it is the copy the
+ * provider's own `$name` runs (`nativeSkillPath`), it stays a native mention;
+ * otherwise the sigil goes, so the provider cannot run another copy, and the
+ * text points at the picked file.
+ */
+export function bindLinkedSkillMentions(
+  prompt: string,
+  nativeSkillPath: (name: string) => string | undefined = () => undefined,
+): string {
+  // Tokens need a delimiter after them, and a prompt may end on a mention.
+  const linked = collectComposerInlineTokens(`${prompt} `).flatMap((token) =>
+    token.type === "skill" && token.path !== undefined ? [{ ...token, path: token.path }] : [],
+  );
+  let result = "";
+  let cursor = 0;
+  for (const mention of linked) {
+    result += prompt.slice(cursor, mention.start);
+    result +=
+      nativeSkillPath(mention.value) === mention.path
+        ? `$${mention.value}`
+        : `${mention.value} [The user invoked this skill. Follow the instructions at: ${mention.path}]`;
+    cursor = mention.end;
+  }
+  return result + prompt.slice(cursor);
 }
 
 /**

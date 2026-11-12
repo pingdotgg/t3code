@@ -72,6 +72,7 @@ import type {
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
+import { bindLinkedSkillMentions } from "@t3tools/shared/composerInlineTokens";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -165,7 +166,6 @@ import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
-  bindLinkedClaudeSkillMentions,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -2772,7 +2772,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   const text =
     input.skills === undefined
       ? input.text
-      : bindLinkedClaudeSkillMentions(input.text, input.skills);
+      : bindLinkedSkillMentions(input.text, (name) => input.skills?.get(name)?.path);
   if (input.attachments.length === 0) {
     const message = makeClaudeUserMessage({
       text,

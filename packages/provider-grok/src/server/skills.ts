@@ -55,7 +55,8 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
     return undefined;
   }
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  // Same-name entries from different files each stay; a repeated file keeps its last entry.
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   for (const entry of entries) {
     if (typeof entry !== "object" || entry === null) {
       continue;
@@ -72,7 +73,8 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
     }
     const scope = typeof source?.type === "string" ? source.type.trim() : "";
     const description = typeof record.description === "string" ? record.description.trim() : "";
-    skillsByName.set(name, {
+    skillsByPath.delete(path);
+    skillsByPath.set(path, {
       name,
       path,
       enabled: record.userInvocable !== false,
@@ -81,7 +83,7 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
     });
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (

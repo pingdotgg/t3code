@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
+import { bindLinkedSkillMentions } from "@t3tools/shared/composerInlineTokens";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -212,6 +213,8 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
+    // Antigravity has no native skill dispatch here, so a linked pick names its file.
+    rewriteUserText: (text) => Effect.succeed(bindLinkedSkillMentions(text)),
     buildPrompt: ({
       text,
       attachments,

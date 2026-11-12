@@ -1,5 +1,4 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 
 /**
  * Claude expands one skill per message only when `/name` starts the text block.
@@ -18,32 +17,6 @@ export interface ClaudeSkillDispatch {
   readonly leadingText: string | undefined;
   /** `/name` plus the trailing text, ready to be the message's last text block. */
   readonly commandText: string;
-}
-
-/**
- * `[$name](path)` picks one of several same-name files. The copy `/name` runs
- * keeps native dispatch; any other drops the sigil so Claude cannot run the
- * wrong copy, and points at the picked file instead.
- */
-export function bindLinkedClaudeSkillMentions(
-  prompt: string,
-  skills: ReadonlyMap<string, ClaudeSkillTarget>,
-): string {
-  // Tokens need a delimiter after them, and a prompt may end on a mention.
-  const linked = collectComposerInlineTokens(`${prompt} `).flatMap((token) =>
-    token.type === "skill" && token.path !== undefined ? [{ ...token, path: token.path }] : [],
-  );
-  let result = "";
-  let cursor = 0;
-  for (const mention of linked) {
-    result += prompt.slice(cursor, mention.start);
-    result +=
-      skills.get(mention.value)?.path === mention.path
-        ? `$${mention.value}`
-        : `${mention.value} [The user invoked this skill. Follow the instructions at: ${mention.path}]`;
-    cursor = mention.end;
-  }
-  return result + prompt.slice(cursor);
 }
 
 export function planClaudeSkillDispatch(

@@ -47,6 +47,12 @@ describe("discoverGrokSkills", () => {
           enabled: true,
         },
         {
+          name: "deploy",
+          path: "/home/dev/.grok/skills/deploy/SKILL.md",
+          scope: "user",
+          enabled: true,
+        },
+        {
           name: "writing-docs",
           description: "Write user docs.",
           path: "/home/dev/.grok/skills/writing-docs/SKILL.md",
@@ -72,6 +78,11 @@ describe("discoverGrokSkills", () => {
                 type: "plugin",
                 path: "/home/dev/.grok/installed-plugins/pkg/plug/skills/deploy/SKILL.md",
               },
+              userInvocable: true,
+            },
+            {
+              name: "deploy",
+              source: { type: "user", path: "/home/dev/.grok/skills/deploy/SKILL.md" },
               userInvocable: true,
             },
           ]),

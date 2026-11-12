@@ -1,11 +1,30 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  bindLinkedSkillMentions,
   collectComposerInlineTokens,
   composerMathRanges,
   formatLinkedSkillMention,
 } from "./composerInlineTokens.ts";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
+
+describe("bindLinkedSkillMentions", () => {
+  it("keeps the native copy a mention and points elsewhere at the picked file", () => {
+    const user = "/home/me/.claude/skills/review/SKILL.md";
+    const project = "/repo/.claude/skills/review/SKILL.md";
+    const native = (name: string) => (name === "review" ? user : undefined);
+    expect(bindLinkedSkillMentions(`[$review](${user}) go`, native)).toBe("$review go");
+    expect(bindLinkedSkillMentions(`[$review](${project})`, native)).toBe(
+      `review [The user invoked this skill. Follow the instructions at: ${project}]`,
+    );
+    expect(bindLinkedSkillMentions(`[$review](${user})`)).toBe(
+      `review [The user invoked this skill. Follow the instructions at: ${user}]`,
+    );
+    expect(bindLinkedSkillMentions("see [$PATH](https://example.com) now", native)).toBe(
+      "see [$PATH](https://example.com) now",
+    );
+  });
+});
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {

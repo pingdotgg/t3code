@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  bindLinkedClaudeSkillMentions,
-  planClaudeSkillDispatch,
-  type ClaudeSkillTarget,
-} from "./ClaudeSkillDispatch.ts";
+import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDispatch.ts";
 
 const skillPath = (name: string) => `/home/me/.claude/skills/${name}/SKILL.md`;
 
@@ -12,21 +8,6 @@ const skillMap = (names: Iterable<string>) =>
   new Map<string, ClaudeSkillTarget>([...names].map((name) => [name, { path: skillPath(name) }]));
 
 const SKILLS = skillMap(["2spec", "implement", "review", "re-release-version"]);
-
-describe("bindLinkedClaudeSkillMentions", () => {
-  it("dispatches the copy `/name` runs and points elsewhere at the picked file", () => {
-    const project = "/repo/.claude/skills/review/SKILL.md";
-    expect(bindLinkedClaudeSkillMentions(`[$review](${skillPath("review")}) go`, SKILLS)).toBe(
-      "$review go",
-    );
-    expect(bindLinkedClaudeSkillMentions(`[$review](${project})`, SKILLS)).toBe(
-      `review [The user invoked this skill. Follow the instructions at: ${project}]`,
-    );
-    expect(bindLinkedClaudeSkillMentions("see [$PATH](https://example.com) now", SKILLS)).toBe(
-      "see [$PATH](https://example.com) now",
-    );
-  });
-});
 
 describe("planClaudeSkillDispatch", () => {
   // regression: #9128 skills picked from the composer did not run
