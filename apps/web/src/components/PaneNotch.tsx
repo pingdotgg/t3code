@@ -140,7 +140,7 @@ function observeNotchGap(notch: HTMLDivElement, side: "left" | "right"): () => v
  * connected pane tabs): from md up, except under light, black chrome, which
  * keeps the notch.
  */
-function useConnectedPaneTabs(): boolean {
+export function useConnectedPaneTabs(): boolean {
   const isMobile = useMediaQuery("max-md");
   const { blackChrome, resolvedTheme } = useTheme();
   return !isMobile && !(blackChrome && resolvedTheme === "light");
