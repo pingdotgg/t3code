@@ -196,6 +196,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { neutralizeSkillInvocations } from "./neutralizeSkillInvocations.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -814,7 +815,7 @@ function delegatedCompletionWakeDetail(
       const task = tasks.find((candidate) => candidate.id === taskId);
       const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
       if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
+        const detail = `${label}:\n${neutralizeSkillInvocations(task.result)}`;
         const bytes = Buffer.byteLength(detail);
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
