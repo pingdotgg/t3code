@@ -1129,6 +1129,8 @@ it.live.each(["exclusive", "shared"] as const)(
     Effect.scoped(
       Effect.gen(function* () {
         const name = `delegated-workspace-handoff-${sessionMode}`;
+        const providerInstanceId = ProviderInstanceId.make("codex");
+        const modelSelection = { ...initialSelection, instanceId: providerInstanceId };
         const childReady = yield* Deferred.make<{
           input: ProviderAdapter.ProviderAdapterV2TurnInput;
           publish: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>;
@@ -1178,7 +1180,7 @@ it.live.each(["exclusive", "shared"] as const)(
             threadId: parentId,
             projectId: ProjectId.make(`project:${name}`),
             title: name,
-            modelSelection: initialSelection,
+            modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,
@@ -1216,7 +1218,7 @@ it.live.each(["exclusive", "shared"] as const)(
             parentRunId: parentRun.id,
             parentNodeId: parentRun.rootNodeId!,
             task: "bind my workspace",
-            modelSelection: initialSelection,
+            modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
           });

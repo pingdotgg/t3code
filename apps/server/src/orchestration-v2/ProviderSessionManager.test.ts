@@ -625,6 +625,9 @@ function layerTest(input: {
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
+  readonly wrapProjectionStore?: (
+    store: ProjectionStore.ProjectionStoreV2Shape,
+  ) => ProjectionStore.ProjectionStoreV2Shape;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -689,6 +692,13 @@ function layerTest(input: {
         : { scopeCloseReached: input.scopeCloseReached }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
+  const layerConfiguredProjectionStore =
+    input.wrapProjectionStore === undefined
+      ? layerTestStores
+      : Layer.effect(
+          ProjectionStore.ProjectionStoreV2,
+          Effect.map(ProjectionStore.ProjectionStoreV2, input.wrapProjectionStore),
+        ).pipe(Layer.provide(layerTestStores));
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
       ? layerTestMcpRegistry
@@ -729,7 +739,7 @@ function layerTest(input: {
           IdAllocator.layer,
           layerProviderEventIngestorTest,
           layerConfiguredMcpRegistry,
-          layerTestStores,
+          layerConfiguredProjectionStore,
           input.installationGateLayer ?? ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
@@ -1767,14 +1777,24 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
   }),
 );
 
-it.effect.each(["pending", "running", "completed", "interrupt-failed"] as const)(
-  "orders detach after a selected %s turn and only interrupts active native work",
-  (status) =>
+it.effect.each([
+  { status: "pending", mode: "shared", failure: "none" },
+  { status: "running", mode: "shared", failure: "none" },
+  { status: "completed", mode: "shared", failure: "none" },
+  { status: "running", mode: "shared", failure: "interrupt" },
+  { status: "running", mode: "exclusive", failure: "close" },
+  { status: "running", mode: "shared", failure: "projection" },
+] as const)(
+  "orders detach after a selected $status turn ($mode, $failure)",
+  ({ status, mode, failure }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const milestones: Array<string> = [];
       const interruptStarted = yield* Deferred.make<void>();
       const releaseInterrupt = yield* Deferred.make<void>();
+      const closeStarted = yield* Deferred.make<void>();
+      let failProjection = false;
+      if (mode === "exclusive") yield* Deferred.succeed(releaseInterrupt, undefined);
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1814,17 +1834,24 @@ it.effect.each(["pending", "running", "completed", "interrupt-failed"] as const)
           modelSelection,
           runtimePolicy,
         });
-        const siblingId = ThreadId.make("thread:detach-sibling");
-        yield* sink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: siblingId, now })],
-        });
-        const siblingRuntime = yield* manager.open({
-          threadId: siblingId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-        const sibling = yield* siblingRuntime.subscribeEvents!(siblingId);
+        const sibling =
+          mode === "exclusive"
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const siblingId = ThreadId.make("thread:detach-sibling");
+                yield* sink.write({
+                  events: [
+                    yield* makeThreadCreatedEvent({ idAllocator, threadId: siblingId, now }),
+                  ],
+                });
+                const siblingRuntime = yield* manager.open({
+                  threadId: siblingId,
+                  providerSessionId,
+                  modelSelection,
+                  runtimePolicy,
+                });
+                return yield* siblingRuntime.subscribeEvents!(siblingId);
+              });
         const subscription = yield* runtime.subscribeEvents!(threadId);
         const turnEvent: ProviderAdapter.ProviderAdapterV2Event = {
           type: "provider_turn.updated",
@@ -1839,7 +1866,7 @@ it.effect.each(["pending", "running", "completed", "interrupt-failed"] as const)
             runAttemptId: null,
             nativeTurnRef: null,
             ordinal: 1,
-            status: status === "completed" || status === "interrupt-failed" ? "running" : status,
+            status: status === "completed" ? "running" : status,
             startedAt: now,
             completedAt: null,
           },
@@ -1898,12 +1925,13 @@ it.effect.each(["pending", "running", "completed", "interrupt-failed"] as const)
             return new Tracer.NativeSpan(options);
           },
         });
+        failProjection = failure === "projection";
         const detach = yield* manager
           .detach({ providerSessionId, threadId, reason: "workspace_changed" })
           .pipe(Effect.withTracer(tracer), Effect.forkScoped({ startImmediately: true }));
         yield* Deferred.await(detaching);
         yield* Deferred.succeed(releaseOffer, undefined);
-        if (status !== "completed") {
+        if (status !== "completed" && sibling !== undefined && failure !== "projection") {
           yield* Deferred.await(interruptStarted);
           const siblingEvent = { ...event };
           const receivedBySibling = yield* sibling.events.pipe(
@@ -1918,30 +1946,69 @@ it.effect.each(["pending", "running", "completed", "interrupt-failed"] as const)
           yield* TestClock.adjust("15 seconds");
           yield* Fiber.join(receivedBySibling);
         }
+        if (mode === "exclusive") {
+          yield* Deferred.await(closeStarted);
+          yield* TestClock.adjust("30 seconds");
+        }
         yield* Fiber.join(detach);
         const exit = yield* Fiber.join(reading);
         assert.isTrue(Exit.isFailure(exit));
-        if (status === "interrupt-failed" && Exit.isFailure(exit)) {
+        if (failure === "interrupt" && Exit.isFailure(exit)) {
           assert.instanceOf(
             Cause.squash(exit.cause),
             ProviderAdapter.ProviderAdapterInterruptError,
           );
         }
+        if (failure === "projection" && Exit.isFailure(exit)) {
+          assert.instanceOf(
+            Cause.squash(exit.cause),
+            ProviderAdapter.ProviderAdapterEventStreamError,
+          );
+        }
         assert.deepEqual(received, status === "completed" ? [turnEvent, event] : [event]);
         assert.deepEqual(
           milestones,
-          status === "completed" ? ["detached"] : ["interrupt", "detached"],
+          status === "completed" || failure === "projection"
+            ? ["detached"]
+            : ["interrupt", "detached"],
         );
       }).pipe(
         Effect.provide(
           layerTest({
             state,
             idleTimeoutMs: 60_000,
+            hangSessionScopeClose: mode === "exclusive",
+            scopeCloseReached: closeStarted,
+            capabilities:
+              mode === "exclusive"
+                ? {
+                    ...CodexCapabilities,
+                    sessions: {
+                      ...CodexCapabilities.sessions,
+                      supportsMultipleProviderThreadsPerSession: false,
+                    },
+                  }
+                : CodexCapabilities,
+            wrapProjectionStore: (store) => ({
+              ...store,
+              getThreadRecords: (threadId, fields, filter) => {
+                if (failProjection && fields.some((field) => field === "providerTurns")) {
+                  failProjection = false;
+                  return Effect.fail(
+                    new ProjectionStore.ProjectionStoreReadError({
+                      threadId,
+                      cause: "detach read failed",
+                    }),
+                  );
+                }
+                return store.getThreadRecords(threadId, fields, filter);
+              },
+            }),
             interruptTurn: Deferred.succeed(interruptStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseInterrupt)),
               Effect.andThen(Effect.sync(() => milestones.push("interrupt"))),
               Effect.andThen(
-                status === "interrupt-failed"
+                failure === "interrupt"
                   ? Effect.fail(
                       new ProviderAdapter.ProviderAdapterInterruptError({
                         driver: CODEX_DRIVER,
@@ -4373,14 +4440,19 @@ it.effect(
 );
 
 it.effect.each([
-  { name: "default load key", normalizeThreadLoadModelSelection: undefined },
+  {
+    name: "default load key",
+    normalizeThreadLoadModelSelection: undefined,
+    interruptTurn: Effect.void,
+  },
   {
     name: "Codex load key",
     normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
+    interruptTurn: Effect.die("native interrupt defect"),
   },
 ])(
   "ProviderSessionManagerV2 opens one shared runtime, broadcasts events, and detaches threads independently ($name)",
-  ({ normalizeThreadLoadModelSelection }) =>
+  ({ normalizeThreadLoadModelSelection, interruptTurn }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const settings = yield* ServerSettings.ServerSettingsService.pipe(
@@ -4655,6 +4727,7 @@ it.effect.each([
               ? {}
               : { normalizeThreadLoadModelSelection }),
             serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+            interruptTurn,
           }),
         ),
       );

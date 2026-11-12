@@ -3028,14 +3028,17 @@ export const layerWithOptions = (
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
             let interruptActiveTurns: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> =
               Effect.void;
-            if (currentEntry?.supportsMultipleProviderThreads === true) {
-              const projection = yield* Effect.option(
+            if (
+              currentEntry !== undefined &&
+              (currentEntry.supportsMultipleProviderThreads || input.reason === "workspace_changed")
+            ) {
+              const projection = yield* Effect.exit(
                 projectionStore.getThreadRecords(input.threadId, [
                   "providerThreads",
                   "providerTurns",
                 ]),
               );
-              if (Option.isSome(projection)) {
+              if (Exit.isSuccess(projection)) {
                 const providerThreads = new Map(
                   projection.value.providerThreads
                     .filter((thread) => thread.providerSessionId === input.providerSessionId)
@@ -3082,6 +3085,14 @@ export const layerWithOptions = (
                     if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
                   }
                 });
+              } else {
+                interruptActiveTurns = Effect.fail(
+                  new ProviderAdapter.ProviderAdapterEventStreamError({
+                    driver: currentEntry.runtime.driver,
+                    providerSessionId: input.providerSessionId,
+                    cause: projection.cause,
+                  }),
+                );
               }
             }
             const detachResult = yield* Ref.modify(sessions, (current) => {
@@ -3155,7 +3166,7 @@ export const layerWithOptions = (
                 interruptActiveTurns,
               );
             } else {
-              yield* interruptActiveTurns.pipe(Effect.ignore);
+              yield* interruptActiveTurns.pipe(Effect.ignoreCause);
             }
             if (
               detached.value.attachedThreadIds.size === 0 &&
