@@ -142,6 +142,8 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+
+import { makeEventEmitter, mapDispatchError } from "./orchestrationEmitters.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   DispatchModeLimit,
@@ -702,6 +704,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const eventSink = yield* EventSinkV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const { makeEvent, emit } = makeEventEmitter({ idAllocator });
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
@@ -770,20 +773,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  const mapDispatchError =
-    (command: OrchestrationV2ServerCommand) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, OrchestratorDispatchError, R> =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
-
   const mapDelegatedCompletionError = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.mapError(
@@ -815,33 +804,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
       ),
     );
-
-  const makeEvent =
-    /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
-    Effect.fnUntraced(function* <Event extends OrchestrationV2DomainEvent>(
-      command: OrchestrationV2ServerCommand,
-      event: Omit<Event, "id">,
-    ) {
-      const eventId = yield* mapDispatchError(command)(
-        idAllocator.allocate.event({
-          threadId: event.threadId,
-          commandId: command.commandId,
-        }),
-      );
-      return {
-        ...event,
-        id: eventId,
-      } as Event;
-    });
-
-  const emit =
-    (events: Ref.Ref<Array<OrchestrationV2DomainEvent>>, command: OrchestrationV2ServerCommand) =>
-    <Event extends OrchestrationV2DomainEvent>(event: Omit<Event, "id">) =>
-      Effect.gen(function* () {
-        const withId = yield* makeEvent(command, event);
-        yield* Ref.update(events, (existing) => [...existing, withId]);
-        return withId;
-      });
 
   // Detaching kills background work running inside the provider process.
   // Probe even with an empty roster: Claude's native subagents never reach
