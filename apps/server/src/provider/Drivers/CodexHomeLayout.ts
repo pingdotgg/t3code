@@ -89,7 +89,14 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "readDirectory",
+      "readFile",
+      "remove",
+      "symlink",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -258,7 +265,30 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   );
 
   if (state._tag === "NotSymlink") {
-    if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
+    if (input.entryName === "config.toml") {
+      const readConfig = (configPath: string) =>
+        input.fileSystem.readFileString(configPath).pipe(
+          Effect.catchTags({
+            PlatformError: (cause) =>
+              new CodexShadowHomeFileSystemError({
+                sharedHomePath: input.sharedHomePath,
+                effectiveHomePath: input.effectiveHomePath,
+                operation: "readFile",
+                path: configPath,
+                entryName: input.entryName,
+                cause,
+              }),
+          }),
+        );
+      // A config that differs may be this account's own, so it is kept and the shared one is not
+      // touched. An identical copy (Codex re-saving by rename) is linked again.
+      if ((yield* readConfig(link)) !== (yield* readConfig(target))) {
+        return yield* Effect.logWarning(
+          "Codex shadow home has its own config.toml; it is used instead of the shared one.",
+          { path: link },
+        );
+      }
+    } else if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
       return yield* new CodexShadowHomeEntryConflictError({
         sharedHomePath: input.sharedHomePath,
         effectiveHomePath: input.effectiveHomePath,

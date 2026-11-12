@@ -343,6 +343,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           for (const entryName of rewrittenEntries) {
             yield* writeTextFile(path.join(sharedHome, entryName), '{"owner":"shared"}\n');
           }
+          yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({
               homePath: sharedHome,
@@ -357,6 +358,9 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             yield* fileSystem.writeFileString(temporaryPath, '{"owner":"shadow"}\n');
             yield* fileSystem.rename(temporaryPath, path.join(shadowHome, entryName));
           }
+          const temporaryConfig = path.join(shadowHome, ".config.toml.tmp");
+          yield* fileSystem.writeFileString(temporaryConfig, 'model = "gpt-5-codex"\n');
+          yield* fileSystem.rename(temporaryConfig, path.join(shadowHome, "config.toml"));
 
           const result = yield* materializeCodexShadowHome(layout).pipe(Effect.result);
 
@@ -369,6 +373,38 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
               '{"owner":"shared"}\n',
             );
           }
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "config.toml"))).toBe(
+            path.join(sharedHome, "config.toml"),
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "keeps a shadow home's own config.toml without touching the shared one",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
+          yield* writeTextFile(path.join(shadowHome, "config.toml"), 'model = "local"\n');
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "config.toml"))).toBe(
+            'model = "local"\n',
+          );
+          expect(yield* fileSystem.readFileString(path.join(sharedHome, "config.toml"))).toBe(
+            'model = "gpt-5-codex"\n',
+          );
         }),
     );
 
@@ -380,8 +416,8 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const sharedHome = yield* makeTempDir("t3code-codex-shared-");
           const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
           const shadowHome = path.join(shadowRoot, "shadow");
-          yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
-          yield* writeTextFile(path.join(shadowHome, "config.toml"), 'model = "local"\n');
+          yield* writeTextFile(path.join(sharedHome, "history.jsonl"), "shared\n");
+          yield* writeTextFile(path.join(shadowHome, "history.jsonl"), "local\n");
 
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({
@@ -396,12 +432,12 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(error).toMatchObject({
             sharedHomePath: sharedHome,
             effectiveHomePath: shadowHome,
-            entryName: "config.toml",
-            linkPath: path.join(shadowHome, "config.toml"),
-            targetPath: path.join(sharedHome, "config.toml"),
+            entryName: "history.jsonl",
+            linkPath: path.join(shadowHome, "history.jsonl"),
+            targetPath: path.join(sharedHome, "history.jsonl"),
           });
           expect(error.message).toBe(
-            `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
+            `Cannot create Codex shadow home entry 'history.jsonl' because '${path.join(shadowHome, "history.jsonl")}' already exists and is not a symlink.`,
           );
         }),
     );
