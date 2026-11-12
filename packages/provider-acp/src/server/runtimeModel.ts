@@ -11,6 +11,7 @@ import {
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -1081,6 +1082,26 @@ const T3_MCP_TITLE_SUFFIX_CALL =
  */
 const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
 
+export function acpMcpToolCallOutput(rawOutput: unknown): unknown {
+  if (!isRecord(rawOutput)) return rawOutput;
+  // Grok reports MCP results as { type: "MCP", output: { OkayOutput: "<result>" } | { Error: "<message>" } }.
+  if (rawOutput.type === "MCP" && isRecord(rawOutput.output)) {
+    const { OkayOutput: result, Error: message } = rawOutput.output;
+    if (typeof message === "string") return { error: message };
+    if (result !== undefined) return result;
+  }
+  if (!("result" in rawOutput) && !("error" in rawOutput)) return rawOutput;
+  const result = isRecord(rawOutput.result) ? rawOutput.result : undefined;
+  const resultOutput = result === undefined ? undefined : mcpToolResultOutput(result);
+  const errorMessage = isRecord(rawOutput.error) ? rawOutput.error.message : undefined;
+  if (typeof errorMessage !== "string") {
+    return resultOutput ?? rawOutput;
+  }
+  return resultOutput === undefined
+    ? { error: errorMessage }
+    : { error: errorMessage, result: resultOutput };
+}
+
 /** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
 export function extractMcpToolCallIdentity(
   toolCall: AcpToolCallState,
@@ -1094,6 +1115,20 @@ export function extractMcpToolCallIdentity(
   const tool = typeof rawInput?.tool === "string" ? rawInput.tool.trim() : "";
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
+  }
+  // Grok calls every MCP tool through its `use_tool` built-in, naming it "<server>__<tool>".
+  const xaiTool = isRecord(meta?.["x.ai/tool"]) ? meta["x.ai/tool"] : undefined;
+  const grokToolName = typeof rawInput?.tool_name === "string" ? rawInput.tool_name.trim() : "";
+  const grokSeparator = grokToolName.indexOf("__");
+  if (xaiTool?.name === "use_tool" && grokSeparator > 0) {
+    const grokTool = grokToolName.slice(grokSeparator + 2);
+    if (grokTool.length > 0) {
+      return {
+        server: grokToolName.slice(0, grokSeparator),
+        tool: grokTool,
+        ...(isRecord(rawInput?.tool_input) ? { input: rawInput.tool_input } : {}),
+      };
+    }
   }
   // Kiro names the server in `_meta.kiro.serverName` and the call in `rawInput.tool_id`
   // ("<server>::<tool>"), with the tool's own input under `rawInput.arguments`.
