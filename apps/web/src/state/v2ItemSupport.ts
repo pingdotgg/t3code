@@ -9,6 +9,7 @@ import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Atom } from "effect/reactivity";
 
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "./threads";
 
 function supportKey(input: {
@@ -51,6 +52,23 @@ export function useV2ItemSupport(input: {
   readonly sourceItemId: TurnItemId;
 }): V2ItemSupport {
   return useAtomValue(
+    itemSupportAtomFamily(
+      supportKey({
+        environmentId: input.environmentId,
+        threadId: input.sourceThreadId,
+        itemId: input.sourceItemId,
+      }),
+    ),
+  );
+}
+
+/** The same support `useV2ItemSupport` reports, read once outside render. */
+export function readV2ItemSupport(input: {
+  readonly environmentId: EnvironmentId;
+  readonly sourceThreadId: ThreadId;
+  readonly sourceItemId: TurnItemId;
+}): V2ItemSupport {
+  return appAtomRegistry.get(
     itemSupportAtomFamily(
       supportKey({
         environmentId: input.environmentId,

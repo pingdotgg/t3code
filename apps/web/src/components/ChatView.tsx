@@ -46,6 +46,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -238,6 +239,7 @@ import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQueryRefresh } from "../state/query";
+import { readV2ItemSupport } from "../state/v2ItemSupport";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
@@ -262,6 +264,7 @@ import {
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
   useQuietThreadVisibleTurnItems,
+  readThreadVisibleTurnItems,
   useThreadStatus,
   useThreadHistory,
   useQuietThreadShell,
@@ -420,6 +423,15 @@ type ChatViewProps =
     };
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
+
+// Mirrors the server's isForkableSourceRunStatus; a run still in progress cannot be forked.
+const FORKABLE_RUN_STATUSES = new Set([
+  "completed",
+  "waiting",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
 
 export default function ChatView(props: ChatViewProps) {
   const {
@@ -2732,6 +2744,30 @@ export default function ChatView(props: ChatViewProps) {
       ...threadLifecycleShortcuts,
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
+      },
+      "thread.fork": ({ event }) => {
+        if (routeThreadDetailRef === null) return false;
+        const latest = readThreadVisibleTurnItems(routeThreadDetailRef).findLast(
+          (projectedItem) => {
+            if (projectedItem.item.type !== "assistant_message") return false;
+            const support = readV2ItemSupport({
+              environmentId,
+              sourceThreadId: projectedItem.sourceThreadId,
+              sourceItemId: projectedItem.sourceItemId,
+            });
+            return (
+              (support.run === null || FORKABLE_RUN_STATUSES.has(support.run.status)) &&
+              canForkProjectedAssistantItem({
+                projectedItem,
+                capabilities: support.providerSession?.capabilities,
+              })
+            );
+          },
+        );
+        const runId = latest?.item.runId;
+        if (latest === undefined || runId == null) return false;
+        if (event.repeat) return;
+        void onForkFromRunStable({ sourceThreadId: latest.sourceThreadId, runId });
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)

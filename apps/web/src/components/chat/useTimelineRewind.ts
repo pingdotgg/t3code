@@ -57,6 +57,9 @@ interface TimelineRewindInput {
  * Going back in a thread's timeline: reverting to an earlier turn (restoring that message into
  * the composer) and forking a new thread from a run.
  */
+// Outlives remounts, so a fork still in flight blocks a second one from the same thread.
+const forkingSourceThreads = new Set<string>();
+
 export function useTimelineRewind(input: TimelineRewindInput) {
   const {
     environmentId,
@@ -172,6 +175,15 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onConfirmRevertStable = useStableCallback(onConfirmRevert);
 
   const onForkFromRun = async (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => {
+    const key = `${environmentId}:${input.sourceThreadId}`;
+    if (forkingSourceThreads.has(key)) return;
+    forkingSourceThreads.add(key);
+    await forkFromRun(input).finally(() => forkingSourceThreads.delete(key));
+  };
+  const forkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
   }) => {
