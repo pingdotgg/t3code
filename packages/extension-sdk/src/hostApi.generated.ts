@@ -618,6 +618,7 @@ type Wire146 = ReadonlyArray<{
 }>;
 type Wire136 = Wire137 | string;
 type Wire52 = {
+  readonly cursorStoreCwd?: Wire8;
   readonly modelSelection?: Wire49;
   readonly title?: string | null | undefined;
   readonly updatedAt?: string | null | undefined;
