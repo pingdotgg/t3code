@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { OrchestrationV2ProviderTurnTokenUsage } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { formatContextWindowCompactionMessage } from "../components/chat/ContextWindowMeter.logic";
+import { formatContextWindowCompactionMessage } from "../components/chat/compaction.logic";
 import * as DateTime from "effect/DateTime";
 import {
   ContextTransferId,
@@ -11,8 +11,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { makeThreadProjectionFixture } from "../test-fixtures";
-import { shouldOfferResumeCompaction } from "../components/chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot, latestProviderTurnTokenUsage } from "./contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+  shouldOfferResumeCompaction,
+} from "@t3tools/client-runtime/state/context-window";
 
 const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
 
@@ -45,25 +48,6 @@ describe("V2 context window presentation", () => {
     expect(snapshot?.usedTokens).toBe(2_000);
     expect(snapshot?.totalProcessedTokens).toBe(10_000);
   });
-
-  it("prefers current provider usage and preserves ACP cost", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([], undefined, {
-      contextUsage: {
-        usedTokens: 2_500,
-        maxTokens: 10_000,
-        cost: { amount: 0.42, currency: "USD" },
-      },
-      updatedAt: DateTime.makeUnsafe("2026-08-23T00:00:00.000Z"),
-    });
-
-    expect(snapshot).toMatchObject({
-      usedTokens: 2_500,
-      maxTokens: 10_000,
-      remainingTokens: 7_500,
-      usedPercentage: 25,
-      cost: { amount: 0.42, currency: "USD" },
-    });
-  });
 });
 
 describe("live provider-turn usage (#8144)", () => {
@@ -83,21 +67,8 @@ describe("live provider-turn usage (#8144)", () => {
     expect(snapshot?.remainingTokens).toBe(158_000);
     expect(snapshot?.usedPercentage).toBe(21);
     expect(snapshot?.autoCompactThreshold).toBe(150_000);
-    expect(
-      formatContextWindowCompactionMessage("Claude Sonnet 4.6", snapshot?.autoCompactThreshold),
-    ).toBe("Compacts automatically at about 150,000 tokens.");
-  });
-
-  it("handles a report without a known context window", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([], {
-      usedTokens: 42_000,
-      updatedAt: "2026-08-27T00:00:00.000Z",
-    });
-    expect(snapshot?.maxTokens).toBeNull();
-    expect(snapshot?.usedPercentage).toBeNull();
-    expect(snapshot?.autoCompactThreshold).toBeNull();
-    expect(formatContextWindowCompactionMessage(null, snapshot?.autoCompactThreshold)).toBe(
-      "Context compacts automatically when needed.",
+    expect(formatContextWindowCompactionMessage(snapshot?.autoCompactThreshold)).toBe(
+      "Compacts automatically at about 150,000 tokens.",
     );
   });
 });

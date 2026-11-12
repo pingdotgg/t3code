@@ -29,7 +29,7 @@ const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceService
 });
 
 describe("device setup guidance", () => {
-  it("waits for complete Android discovery before advising creation of an AVD", () => {
+  it("waits for complete discovery before advising device setup", () => {
     const state = deviceState({
       hostStatus: "idle",
       hosts: [{ ...deviceState().hosts[0]!, id: "remote", kind: "ssh" }],
@@ -41,48 +41,12 @@ describe("device setup guidance", () => {
       platformSetupStatus({ ...state, hostStatuses: { remote: { status: "ready" } } }, "android")
         .message,
     ).toContain("Device Manager");
-  });
-
-  it("names an EAS host instead of local tooling when only the cloud can run iOS", () => {
-    const state = deviceState({
-      hostStatus: "idle",
-      hostStatuses: { eas: { status: "ready" } },
-      hosts: [
-        {
-          ...deviceState().hosts[0]!,
-          platforms: [
-            { platform: "ios", available: false, reason: "Xcode was not found." },
-            { platform: "android", available: false, reason: "No SDK." },
-          ],
-        },
-        {
-          id: "eas",
-          kind: "eas",
-          label: "EAS Simulator",
-          hubInstalled: true,
-          agentDeviceInstalled: true,
-          platforms: [
-            { platform: "ios", available: true },
-            { platform: "android", available: false, reason: "Not supported yet." },
-          ],
-        },
-      ],
-      devices: [
-        {
-          hostId: "eas",
-          id: "eas-ios",
-          platform: "ios",
-          name: "iPhone (EAS Simulator)",
-          version: "Cloud",
-          booted: false,
-          physical: false,
-        },
-      ],
-    });
-    expect(platformSetupStatus(state, "ios")).toEqual({
-      ready: true,
-      message: "EAS Simulator starts iOS Simulators in the cloud with EAS Simulator.",
-    });
+    expect(
+      platformSetupStatus(
+        { ...state, hostStatuses: { remote: { status: "ready", incompletePlatforms: ["ios"] } } },
+        "ios",
+      ).message,
+    ).toContain("discovery reported a problem");
   });
 
   it("counts a remote device host when this machine has no simulator tooling", () => {

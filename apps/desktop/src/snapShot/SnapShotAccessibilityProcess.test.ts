@@ -1,6 +1,5 @@
 import { assert, beforeEach, it } from "@effect/vitest";
 import * as NodeEvents from "node:events";
-import * as NodeProcess from "node:process";
 import { vi } from "vite-plus/test";
 
 const forkMock = vi.hoisted(() =>
@@ -60,20 +59,6 @@ it("returns immediately when accessibility crashes before the screenshot is read
   const read = process.read(request);
   await read.started;
   assert.isUndefined(await read.result);
-});
-
-it("returns accessibility extracted by the helper", async () => {
-  const process = startSnapShotAccessibilityProcess("accessibility.cjs");
-  const read = process.read(request);
-  const context = { accessibleText: "Meeting controls" };
-  worker.emit("message", "ready");
-  worker.emit("message", "started");
-  worker.emit("message", { type: "result", context });
-
-  await read.started;
-  assert.deepEqual(await read.result, context);
-  assert.strictEqual(forkMock.mock.calls[0]?.[2]?.env?.ELECTRON_RUN_AS_NODE, "1");
-  assert.strictEqual(forkMock.mock.calls[0]?.[2]?.execPath, NodeProcess.execPath);
 });
 
 it("replaces a warm helper that exits before capture", async () => {

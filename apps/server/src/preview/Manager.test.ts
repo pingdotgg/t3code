@@ -2,7 +2,6 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
-import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -17,19 +16,11 @@ interface EventCollector {
   readonly drain: Effect.Effect<ReadonlyArray<PreviewEvent>>;
 }
 
-/**
- * Each `it.effect` shares the live PreviewManager layer across the whole
- * `it.layer` block, so tests that assert per-thread counts must use a unique
- * thread id to avoid bleeding state from earlier tests.
- */
+/** The shared live layer retains state between tests; counts need unique thread ids. */
 let nextThreadId = 0;
 const freshThreadId = () => ThreadId.make(`thread-${++nextThreadId}`);
 
-/**
- * Subscribe to the manager's event stream BEFORE the test publishes. We
- * use `subscribeEvents` (synchronous PubSub.subscribe under the hood) so
- * no event can land between subscribe and the consumer drain.
- */
+/** Subscribe synchronously before publishing so the forked consumer cannot miss events. */
 const collectEvents = Effect.gen(function* () {
   const manager = yield* PreviewManager.PreviewManager;
   const subscription = yield* manager.subscribeEvents;
@@ -68,20 +59,13 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
-  it.effect("keeps the tab's profile across navigation and status reports", () =>
+  it.effect("keeps the tab's profile across status reports", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
       const manager = yield* PreviewManager.PreviewManager;
 
       const opened = yield* manager.open({ threadId, profileId: "work" });
       expect(opened.profileId).toBe("work");
-
-      const navigated = yield* manager.navigate({
-        threadId,
-        tabId: opened.tabId,
-        url: "localhost:5173",
-      });
-      expect(navigated.profileId).toBe("work");
 
       yield* manager.reportStatus({
         threadId,
@@ -105,10 +89,6 @@ it.layer(layer)("PreviewManager", (it) => {
       const first = (yield* manager.list({ threadId })).sessions[0];
       expect(first?.reveal).toBe(true);
       expect(first?.revealRequest?.force).toBe(true);
-      const refused = yield* manager
-        .navigate({ threadId, tabId: opened.tabId, url: "localhost:5173" })
-        .pipe(Effect.flip);
-      expect(refused._tag).toBe("PreviewControlRequiredError");
       yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,
@@ -140,10 +120,12 @@ it.layer(layer)("PreviewManager", (it) => {
       const before = yield* manager.list({ threadId });
 
       const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
-      yield* manager.navigate({
+      yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,
-        url: "http://localhost:5173/ready",
+        navStatus: { _tag: "Success", url: "http://localhost:5173/ready", title: "Ready" },
+        canGoBack: true,
+        canGoForward: false,
       });
 
       const events = yield* collector.drain;
@@ -155,27 +137,6 @@ it.layer(layer)("PreviewManager", (it) => {
       expect(events[1]!.revision).toBeGreaterThan(events[0]!.revision);
       expect(listed.revision).toBe(events[1]!.revision);
       expect(listed.sessions).toHaveLength(1);
-    }),
-  );
-
-  it.effect("preserves URL parser failures as the invalid URL cause chain", () =>
-    Effect.gen(function* () {
-      const threadId = freshThreadId();
-      const manager = yield* PreviewManager.PreviewManager;
-      const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
-      const error = yield* Effect.flip(manager.open({ threadId, url: rawUrl }));
-
-      expect(error).toMatchObject({
-        inputLength: rawUrl.length,
-        reason: "parse",
-        protocol: "https:",
-      });
-      expect(error).not.toHaveProperty("rawUrl");
-      expect(error.cause).toBeInstanceOf(PreviewUrlNormalizationError);
-      const normalizationError = error.cause as PreviewUrlNormalizationError;
-      expect(normalizationError.cause).toBeInstanceOf(Error);
-      expect(error.message).not.toContain((normalizationError.cause as Error).message);
-      expect(error.message).not.toMatch(/user|password|access_token|secret|fragment/);
     }),
   );
 
@@ -193,13 +154,6 @@ it.layer(layer)("PreviewManager", (it) => {
       });
       expect(resized.viewport).toEqual({ _tag: "freeform", width: 1024, height: 768 });
 
-      const navigated = yield* manager.navigate({
-        threadId,
-        tabId: opened.tabId,
-        url: "http://localhost:5173/resized",
-      });
-      expect(navigated.viewport).toEqual(resized.viewport);
-
       yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,
@@ -211,12 +165,7 @@ it.layer(layer)("PreviewManager", (it) => {
       expect(listed.sessions[0]?.viewport).toEqual(resized.viewport);
 
       const events = yield* collector.drain;
-      expect(events.map((event) => event.type)).toEqual([
-        "opened",
-        "resized",
-        "navigated",
-        "navigated",
-      ]);
+      expect(events.map((event) => event.type)).toEqual(["opened", "resized", "navigated"]);
     }),
   );
 

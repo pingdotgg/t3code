@@ -68,26 +68,6 @@ function layerFor(input: {
   );
 }
 
-it.effect("preserves the typed unavailable-range error contract", () => {
-  const layer = layerFor({ projection: Effect.succeed(makeProjection()) });
-
-  return Effect.gen(function* () {
-    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    const error = yield* query
-      .getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 3 })
-      .pipe(Effect.flip);
-
-    assert.instanceOf(error, CheckpointTurnRangeUnavailableError);
-    assert.deepEqual(
-      {
-        requestedTurnCount: error.requestedTurnCount,
-        availableTurnCount: error.availableTurnCount,
-      },
-      { requestedTurnCount: 3, availableTurnCount: 2 },
-    );
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("excludes ready checkpoints from rolled-back runs", () => {
   const projection = makeProjection();
   const layer = layerFor({

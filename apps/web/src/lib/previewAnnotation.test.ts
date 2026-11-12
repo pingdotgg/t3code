@@ -41,6 +41,7 @@ describe("preview annotation capture", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  // regression: #12636 desktop annotation screenshots must be decoded without fetch (CSP)
   it.each(["data:image/jpeg;base64,AA==", "data:image/png;base64,", "data:image/png;base64,%%%"])(
     "reports a malformed screenshot as failed: %s",
     (dataUrl) => {

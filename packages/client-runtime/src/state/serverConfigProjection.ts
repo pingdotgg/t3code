@@ -1,4 +1,5 @@
 import type { ServerConfig, ServerConfigStreamEvent } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 
 export interface ServerConfigProjection {
@@ -20,12 +21,8 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
 }
 
 /**
- * Returns `next` with every part deep-equal to `previous` replaced by the
- * previous object. A provider status push re-sends every provider even when
- * only one field (often just `checkedAt`) changed, so this keeps unchanged
- * providers, models and skills identical and lets memoized UI skip them.
- * A reconnect snapshot re-sends the whole config the same way.
- * A settings write re-sends the whole settings document for one changed field.
+ * Provider pushes, reconnects, and settings writes resend unchanged data.
+ * Reuse deep-equal objects so memoized UI can skip unchanged providers, models, and skills.
  */
 export function reuseUnchanged<T>(previous: unknown, next: T): T {
   if (Object.is(previous, next)) return next;
@@ -48,6 +45,8 @@ export function reuseUnchanged<T>(previous: unknown, next: T): T {
     });
     return (same ? previous : merged) as T;
   }
+  // Decoded settings carry Durations, which are fresh instances on every push.
+  if (Equal.isEqual(next)) return (Equal.equals(previous, next) ? previous : next) as T;
   if (Object.getPrototypeOf(next) !== Object.prototype) return next;
   const before = previous as Record<string, unknown>;
   const after = next as Record<string, unknown>;
@@ -69,17 +68,13 @@ export function applyServerConfigProjection(
   switch (event.type) {
     case "snapshot": {
       // Wire snapshots never contain published themes. Keep the previous set
-      // until a capable server sends its authoritative theme event. A legacy
-      // server cannot send a later removal, so a downgrade must clear the set.
-      const capabilities = event.config.environment.capabilities;
-      const carriedThemes =
-        capabilities.environmentThemes === true && Option.isSome(current)
-          ? current.value.config.environmentThemes
-          : undefined;
-      const carriedSources =
-        capabilities.usageLimitSources === true && Option.isSome(current)
-          ? current.value.config.usageLimitSources
-          : undefined;
+      // until the server sends its authoritative theme event.
+      const carriedThemes = Option.isSome(current)
+        ? current.value.config.environmentThemes
+        : undefined;
+      const carriedSources = Option.isSome(current)
+        ? current.value.config.usageLimitSources
+        : undefined;
       const config: ServerConfig = {
         ...event.config,
         ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),
@@ -112,14 +107,17 @@ export function applyServerConfigProjection(
         source: "live",
       }));
     case "settingsUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          settings: reuseUnchanged(projection.config.settings, event.payload.settings),
-        },
-        latestEvent: event,
-        source: "live",
-      }));
+      return Option.map(current, (projection) => {
+        const settings = reuseUnchanged(projection.config.settings, event.payload.settings);
+        return {
+          config:
+            settings === projection.config.settings
+              ? projection.config
+              : { ...projection.config, settings },
+          latestEvent: event,
+          source: "live",
+        };
+      });
     case "environmentThemesUpdated":
       return Option.map(current, (projection) => ({
         config: {

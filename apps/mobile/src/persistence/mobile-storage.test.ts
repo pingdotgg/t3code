@@ -55,6 +55,7 @@ describe("mobile device identity", () => {
     }),
   );
 
+  // regression: #18837 serialize initial device identity creation
   it.effect("reuses an existing device identity without generating or writing", () =>
     Effect.gen(function* () {
       values.set(deviceIdKey, "existing-device");

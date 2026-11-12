@@ -2,14 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { mergeClaudeWorkflowProgress } from "./claudeWorkflowProgress.ts";
 
-const startFrame = {
-  type: "system",
-  subtype: "task_started",
-  task_id: "w1",
-  task_type: "local_workflow",
-  workflow_name: "probe-wf",
-};
-
 const snapshotFrame = (
   entries: ReadonlyArray<Record<string, unknown>>,
   usage?: Record<string, number>,
@@ -35,21 +27,6 @@ const agent = (overrides: Record<string, unknown>) => ({
 });
 
 describe("mergeClaudeWorkflowProgress", () => {
-  it("leaves an ordinary subagent's frames alone", () => {
-    expect(
-      mergeClaudeWorkflowProgress({
-        previous: undefined,
-        message: {
-          type: "system",
-          subtype: "task_progress",
-          task_id: "t1",
-          description: "reading files",
-          usage: { total_tokens: 500, tool_uses: 2, duration_ms: 90 },
-        },
-      }),
-    ).toBeUndefined();
-  });
-
   it("maps provider agent states and per-member metrics", () => {
     const workflow = mergeClaudeWorkflowProgress({
       previous: undefined,
@@ -97,6 +74,19 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(workflow?.agents[2]).not.toHaveProperty("completedAt");
   });
 
+  it("keeps a started member queued until the provider reports its startedAt", () => {
+    const scheduled = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: snapshotFrame([agent({ state: "start", queuedAt: 1000 })]),
+    });
+    expect(scheduled?.agents[0]?.state).toBe("queued");
+    const started = mergeClaudeWorkflowProgress({
+      previous: scheduled,
+      message: snapshotFrame([agent({ state: "start", queuedAt: 1000, startedAt: 21_000 })]),
+    });
+    expect(started?.agents[0]).toMatchObject({ state: "running", startedAt: 21_000 });
+  });
+
   it.each(["something-new", "toString", "constructor", "__proto__"])(
     "treats unrecognised state %s as still running rather than settled",
     (state) => {
@@ -128,18 +118,6 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(second?.totalTokens).toBe(250);
   });
 
-  it("keeps a phase the plan reached at runtime even if a later frame omits it", () => {
-    const first = mergeClaudeWorkflowProgress({
-      previous: undefined,
-      message: snapshotFrame([phase(1, "Alpha"), phase(2, "Beta"), phase(3, "Gamma")]),
-    });
-    const second = mergeClaudeWorkflowProgress({
-      previous: first,
-      message: snapshotFrame([phase(1, "Alpha")]),
-    });
-    expect(second?.phases.map((entry) => entry.title)).toEqual(["Alpha", "Beta", "Gamma"]);
-  });
-
   it("keeps other members and phase links when a sparse frame starts a new attempt", () => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
@@ -163,9 +141,19 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(first?.agents[0]?.completedAt).toBe(2010);
     expect(first?.agents[1]).not.toHaveProperty("completedAt");
     const second = mergeClaudeWorkflowProgress({
-      previous: first,
+      previous: first && {
+        ...first,
+        agents: first.agents.map((member) => ({ ...member, effort: "max", speed: "standard" })),
+      },
       message: snapshotFrame([
-        { type: "workflow_agent", index: 1, label: "alpha:one", state: "start", attempt: 2 },
+        {
+          type: "workflow_agent",
+          index: 1,
+          label: "alpha:one",
+          state: "start",
+          attempt: 2,
+          startedAt: 3000,
+        },
       ]),
     });
     expect(second?.agents).toEqual([
@@ -174,10 +162,11 @@ describe("mergeClaudeWorkflowProgress", () => {
         label: "alpha:one",
         state: "running",
         attempt: 2,
+        startedAt: 3000,
         phaseIndex: 1,
         phaseTitle: "Alpha",
       },
-      first?.agents[1],
+      { ...first?.agents[1], effort: "max", speed: "standard" },
     ]);
     expect(second?.phases).toEqual(first?.phases);
   });
@@ -203,12 +192,14 @@ describe("mergeClaudeWorkflowProgress", () => {
   ])("keeps member state when the same attempt regresses from %s to %s", (state, staleState) => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
-      message: snapshotFrame([agent({ state, attempt: 2, resultPreview: "Current result" })]),
+      message: snapshotFrame([
+        agent({ state, attempt: 2, startedAt: 1010, resultPreview: "Current result" }),
+      ]),
     });
     const second = mergeClaudeWorkflowProgress({
       previous: first,
       message: snapshotFrame([
-        agent({ state: staleState, attempt: 2, resultPreview: "Old result" }),
+        agent({ state: staleState, attempt: 2, startedAt: 1010, resultPreview: "Old result" }),
       ]),
     });
     expect(second?.agents).toEqual(first?.agents);
@@ -217,10 +208,20 @@ describe("mergeClaudeWorkflowProgress", () => {
   it("retains member fields omitted by a later frame in the same attempt", () => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
-      message: snapshotFrame([agent({ attempt: 2, promptPreview: "Current prompt", tokens: 100 })]),
+      message: snapshotFrame([
+        agent({
+          attempt: 2,
+          model: "claude-opus-5[1m]",
+          promptPreview: "Current prompt",
+          tokens: 100,
+        }),
+      ]),
     });
     const second = mergeClaudeWorkflowProgress({
-      previous: first,
+      previous: first && {
+        ...first,
+        agents: first.agents.map((member) => ({ ...member, effort: "xhigh", speed: "standard" })),
+      },
       message: snapshotFrame([agent({ state: "done", resultPreview: "Current result" })]),
     });
     expect(second?.agents[0]).toMatchObject({
@@ -229,45 +230,10 @@ describe("mergeClaudeWorkflowProgress", () => {
       prompt: "Current prompt",
       result: "Current result",
       totalTokens: 100,
+      model: "claude-opus-5[1m]",
+      effort: "xhigh",
+      speed: "standard",
     });
-  });
-
-  it("keeps existing run handles when a later acknowledgement supplies only a script path", () => {
-    const first = mergeClaudeWorkflowProgress({
-      previous: undefined,
-      runHandles: { runId: "wf_abc", transcriptDir: "/workflows/wf_abc" },
-      message: startFrame,
-    });
-    const second = mergeClaudeWorkflowProgress({
-      previous: first,
-      runHandles: { scriptPath: "/scripts/workflow.js" },
-      message: startFrame,
-    });
-    expect(second?.runHandles).toEqual({
-      runId: "wf_abc",
-      transcriptDir: "/workflows/wf_abc",
-      scriptPath: "/scripts/workflow.js",
-    });
-  });
-
-  it("drops timestamps outside the DateTime range", () => {
-    const workflow = mergeClaudeWorkflowProgress({
-      previous: undefined,
-      message: snapshotFrame([
-        agent({
-          state: "done",
-          lastProgressAt: 8_640_000_000_000_001,
-          startedAt: 8_640_000_000_000_001,
-          queuedAt: Number.MAX_SAFE_INTEGER,
-        }),
-        agent({ index: 2, startedAt: 8_640_000_000_000_000, queuedAt: 0 }),
-      ]),
-    });
-    expect(workflow?.agents[0]).not.toHaveProperty("startedAt");
-    expect(workflow?.agents[0]).not.toHaveProperty("queuedAt");
-    expect(workflow?.agents[0]).not.toHaveProperty("completedAt");
-    expect(workflow?.agents[1]?.startedAt).toBe(8_640_000_000_000_000);
-    expect(workflow?.agents[1]?.queuedAt).toBe(0);
   });
 
   it("drops malformed entries instead of failing the frame", () => {

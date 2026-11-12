@@ -5,6 +5,17 @@ import {
   derivePendingBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
+describe("backgroundWorkHoldsCompletion", () => {
+  it.each([
+    ["a dev server", false, [{ taskId: "dev", kind: "command" }]],
+    ["a dev server's watchdog monitor", false, [{ taskId: "watch", kind: "monitor" }]],
+    ["a command the agent waits on", true, [{ taskId: "tests", kind: "command", awaited: true }]],
+    ["a subagent", true, [{ taskId: "review", kind: "subagent" }]],
+  ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
+    expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
+  });
+});
+
 describe("derivePendingBackgroundWork", () => {
   it("takes each subagent item's instance from its joined owner", () => {
     const owner = ProviderInstanceId.make("claude-owner");
@@ -137,23 +148,6 @@ describe("derivePendingBackgroundWork", () => {
         kind: "command",
       },
     ]);
-  });
-
-  it("returns the provider-thread roster after settlement", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            { taskId: "bg-1", description: "Run Codex review", kind: "command" },
-          ],
-        },
-      ],
-      turnItems: [],
-      activeProviderThreadId: "pt-1",
-    });
-    expect(tasks).toEqual([{ taskId: "bg-1", description: "Run Codex review", kind: "command" }]);
   });
 
   it("includes nonterminal turn items and excludes completed ones", () => {
@@ -326,6 +320,7 @@ describe("derivePendingBackgroundWork kinds", () => {
           id: "pt-1" as never,
           pendingBackgroundTasks: [
             { taskId: "bash", kind: "command" },
+            { taskId: "tests", kind: "command", awaited: true },
             { taskId: "watch", kind: "monitor" },
             { taskId: "workflow", kind: "background_task" },
           ],
@@ -352,6 +347,7 @@ describe("derivePendingBackgroundWork kinds", () => {
     });
     expect(tasks).toEqual([
       { taskId: "bash", kind: "command" },
+      { taskId: "tests", kind: "command", awaited: true },
       { taskId: "watch", kind: "monitor" },
       { taskId: "workflow", kind: "background_task" },
       {
@@ -378,22 +374,29 @@ describe("derivePendingBackgroundWork kinds", () => {
     };
     const link = (
       number: number,
-      extra: { source?: "agent" | "stack-dismissed"; watched?: boolean },
+      extra: {
+        source?: "agent" | "stack-dismissed";
+        watched?: boolean;
+        state?: "open" | "closed" | "merged";
+      },
     ) => ({
       host: "github.com",
       repository: "acme/app",
       number,
       url: `https://github.com/acme/app/pull/${number}`,
       source: extra.source ?? "agent",
+      snapshot: extra.state === undefined ? null : { state: extra.state },
       ...(extra.watched === false ? {} : { watch }),
     });
     const pullRequests = [
       link(1, {}),
       link(2, { watched: false }),
       link(3, { source: "stack-dismissed" }),
+      link(4, { state: "merged" }),
+      link(5, { state: "closed" }),
     ];
 
-    it("keeps a settled run waiting on each visible watch, as a monitor", () => {
+    it("keeps a settled run waiting on each visible watch, as an awaited monitor", () => {
       const tasks = derivePendingBackgroundWork({
         latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
         providerThreads: [],
@@ -405,6 +408,13 @@ describe("derivePendingBackgroundWork kinds", () => {
           taskId: "pull-request-watch:github.com/acme/app#1",
           description: "Watching pull request #1",
           kind: "monitor",
+          awaited: true,
+        },
+        {
+          taskId: "pull-request-watch:github.com/acme/app#5",
+          description: "Watching pull request #5",
+          kind: "monitor",
+          awaited: true,
         },
       ]);
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
@@ -418,7 +428,10 @@ describe("derivePendingBackgroundWork kinds", () => {
           turnItems: [],
           pullRequests,
         }).map((task) => task.taskId),
-      ).toEqual(["pull-request-watch:github.com/acme/app#1"]);
+      ).toEqual([
+        "pull-request-watch:github.com/acme/app#1",
+        "pull-request-watch:github.com/acme/app#5",
+      ]);
     });
 
     it("lists no watch while a run is active", () => {

@@ -1,5 +1,6 @@
 package expo.modules.t3reviewdiff
 
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -49,6 +50,9 @@ class T3ReviewDiffModule : Module() {
       Prop("initialRowIndex") { view: T3ReviewDiffView, initialRowIndex: Double ->
         view.setInitialRowIndex(initialRowIndex)
       }
+      Prop("initialFileId") { view: T3ReviewDiffView, fileId: String ->
+        view.setInitialFileId(fileId)
+      }
 
       Events(
         "onDebug",
@@ -65,14 +69,19 @@ class T3ReviewDiffModule : Module() {
       AsyncFunction("scrollToTop") { view: T3ReviewDiffView, animated: Boolean ->
         view.scrollToTop(animated)
       }
-      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String ->
+      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String, resetKey: String ->
+        view.setContentResetKey(resetKey)
         view.setRowsJson(rowsJson)
       }
       AsyncFunction("setTokensJson") { view: T3ReviewDiffView, tokensJson: String ->
         view.setTokensJson(tokensJson)
       }
-      AsyncFunction("setTokensPatchJson") { view: T3ReviewDiffView, tokensPatchJson: String ->
-        view.setTokensPatchJson(tokensPatchJson)
+      AsyncFunction("setTokensPatchJson") {
+          view: T3ReviewDiffView,
+          tokensPatchJson: String,
+          promise: Promise
+        ->
+        view.setTokensPatchJson(tokensPatchJson) { accepted -> promise.resolve(accepted) }
       }
 
       OnViewDestroys { view: T3ReviewDiffView ->

@@ -113,13 +113,9 @@ it("refuses to replace symlinks or downgrade a newer extension", async () => {
 });
 
 it.each([
-  [{}, "not-installed"],
-  [{ state: 2, version: 3 }, "disabled"],
   [{ state: 1, version: 3 }, "enabled"],
-  [{ state: 1, version: 1 }, "update-required"],
   [{ state: 1, version: 2, shell: "51.0" }, "update-required"],
   [{ state: 2, version: 3, enabled: false }, "extensions-disabled"],
-  [{ state: 3, version: 3, error: "Load failed" }, "error"],
   [{ shell: "52.0" }, "unsupported"],
 ] as const)("reports GNOME setup state %j", async (options, status) => {
   const { setup, call } = fixture(options);

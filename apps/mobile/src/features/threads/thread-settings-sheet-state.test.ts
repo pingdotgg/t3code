@@ -133,6 +133,7 @@ describe("thread settings sheet state", () => {
     ]);
   });
 
+  // regression: #16816 sync model favorites and visibility across clients
   it("cannot select a hidden model exposed only for visibility management", () => {
     const pending = modelOption("gpt-next");
     expect(

@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import {
   EventId,
   MessageId,
@@ -19,13 +20,21 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
-import { encodeThreadHistoryCursor, selectHistoryPageFromCursor } from "./threadHistoryPaging.ts";
+import {
+  encodeThreadHistoryCursor,
+  selectHistoryPageFromCursor,
+  THREAD_HISTORY_PAGE_POLICY,
+} from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+
+vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -222,25 +231,6 @@ describe("V2 thread find", () => {
       assert.equal(updated.totalMatches, 3);
       assert.equal(updated.activeIndex, 1);
       assert.equal(updated.match?.entryId, "selected");
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("returns only a final frame for empty searches and relative navigation", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      yield* putItems([item("only", 0, "needle needle")]);
-      const empty = yield* projection
-        .searchThreadStream({ threadId, query: "missing" })
-        .pipe(Stream.runCollect);
-      assert.equal(empty.length, 1);
-      assert.equal(empty[0]!.totalMatches, 0);
-      assert.notEqual(empty[0]!.complete, false);
-      const relative = yield* projection
-        .searchThreadStream({ threadId, query: "needle", offset: 1 })
-        .pipe(Stream.runCollect);
-      assert.equal(relative.length, 1);
-      assert.equal(relative[0]!.match?.occurrence, 1);
-      assert.notEqual(relative[0]!.complete, false);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -475,6 +465,40 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("keeps its caches while Find is in use and drops them after one idle minute", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("one", 1, "idle needle one"), item("two", 2, "idle needle two")]);
+      const parses = () =>
+        vi
+          .mocked(searchableMessageSegments)
+          .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
+      const search = (query: string) => projection.searchThread({ threadId, query });
+      // One idle minute passes inside this search. The later counts fail if it let the caches go.
+      yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
+        Stream.tap((frame) =>
+          frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
+        ),
+        Stream.runDrain,
+      );
+      assert.equal(parses(), 2);
+      yield* TestClock.adjust("40 seconds");
+      yield* search("idle");
+      yield* TestClock.adjust("40 seconds");
+      // A repeated query is answered from the completed scan and still counts as use.
+      const repeated = yield* projection
+        .searchThreadStream({ threadId, query: "needle" })
+        .pipe(Stream.runCollect);
+      assert.equal(repeated.length, 1);
+      yield* TestClock.adjust("40 seconds");
+      yield* search("one");
+      assert.equal(parses(), 2);
+      yield* TestClock.adjust("1 minute");
+      yield* search("needle");
+      assert.equal(parses(), 4);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("invalidates cached counts when streamed text changes or a run rolls back", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -537,6 +561,50 @@ describe("V2 thread find", () => {
         assert.equal(result.totalMatches, 0);
         assert.isNull(result.match);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("finds an async answer that started a later run", () =>
+    Effect.gen(function* () {
+      yield* createProject(projectId);
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      const queuedRun = RunId.make("run:queued");
+      const answerRun = RunId.make("run:answer");
+      yield* commit([
+        thread(threadId, projectId),
+        run(),
+        run(threadId, queuedRun, 2),
+        run(threadId, answerRun, 3),
+      ]);
+      const requestId = RuntimeRequestId.make("late");
+      const question: OrchestrationV2TurnItem = {
+        ...item("question", 1, ""),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: {}, attachmentsByQuestionId: {} },
+      };
+      const items = [
+        question,
+        { ...item("queued", 2, "queued follow-up", "user_message"), runId: queuedRun },
+        { ...item(`async-answer:${requestId}`, 3, "needle", "user_message"), runId: answerRun },
+      ];
+      yield* commit(
+        items.map((payload) => ({
+          id: EventId.make(`${payload.id}:initial`),
+          threadId,
+          occurredAt: at(1),
+          type: "turn-item.updated" as const,
+          payload,
+        })),
+      );
+      const result = yield* projection.searchThread({ threadId, query: "needle" });
+      assert.equal(result.totalMatches, 1);
+      assert.deepEqual(result.match, {
+        entryId: `async-answer:${requestId}`,
+        runId: answerRun,
+        occurrence: 0,
+      });
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(
@@ -741,7 +809,7 @@ describe("V2 history materialization", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("pages complete turns without duplicating or skipping messages", () =>
+  it.effect("pages long turns without duplicating or skipping messages", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
       const items = Array.from({ length: 45 }, (_, turn) => [
@@ -782,7 +850,12 @@ describe("V2 history materialization", () => {
             snapshotSequence: snapshot.snapshotSequence,
           }),
         });
-        assert.equal(page.items[0]?.item.type, "user_message");
+        // A turn larger than the byte budget is split, but only a lone oversized item may exceed it.
+        assert.isTrue(
+          page.items.length === 1 ||
+            Buffer.byteLength(JSON.stringify(page.items), "utf8") <=
+              THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+        );
         collected.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }

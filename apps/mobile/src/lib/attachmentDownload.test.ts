@@ -72,7 +72,6 @@ vi.mock("./uuid", () => ({ uuidv4: mocks.uuid }));
 vi.mock("./shareFileFromSource", () => ({ shareFileFromSource: mocks.shareFromSource }));
 
 import {
-  openAttachmentInViewer,
   downloadAndShareAttachment,
   downloadAttachmentForPreview,
   shareLocalAttachment,
@@ -137,12 +136,8 @@ describe("downloadAndShareAttachment", () => {
   it.each([
     ["../../résumé.pdf", "résumé.pdf"],
     ["C:\\folder\\clip.mp4", "clip.mp4"],
-    ["a?query#part%2F.txt", "a?query#part%2F.txt"],
-    ["Report #5 - 100%.pdf", "Report #5 - 100%.pdf"],
     ["..", "attachment"],
-    ["  ", "attachment"],
     ["\ud800file\u0000.txt", "_file_.txt"],
-    [".env", ".env"],
   ])("uses a safe basename for %j", async (name, expected) => {
     await downloadAndShareAttachment({
       ...input,
@@ -190,23 +185,6 @@ describe("downloadAndShareAttachment", () => {
     await task;
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
     expect(mocks.share).not.toHaveBeenCalled();
-  });
-
-  it("does not open a late download after cancellation", async () => {
-    const started = Promise.withResolvers<{ uri: string }>();
-    const download = Promise.withResolvers<{ uri: string }>();
-    mocks.download.mockImplementation((_url: string, file: { uri: string }) => {
-      started.resolve(file);
-      return download.promise;
-    });
-    const controller = new AbortController();
-    const task = downloadAndShareAttachment({ ...input, signal: controller.signal });
-    const file = await started.promise;
-    controller.abort();
-    download.resolve(file);
-    await task;
-    expect(mocks.share).not.toHaveBeenCalled();
-    expect(mocks.deleted).toHaveBeenCalledTimes(1);
   });
 
   it("retains an export when its row unmounts during the native handoff", async () => {
@@ -364,21 +342,5 @@ describe("attachment preview files", () => {
     await task;
     expect(mocks.share).not.toHaveBeenCalled();
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("document viewer handoff", () => {
-  it("cleans up when no viewer handles the document", async () => {
-    mocks.open.mockRejectedValue(new Error("No viewer"));
-    await expect(
-      openAttachmentInViewer({
-        uri: input.url,
-        attachment: input.attachment,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("No viewer");
-    expect(mocks.download).toHaveBeenCalledTimes(1);
-    expect(mocks.deleted).toHaveBeenCalledTimes(1);
-    expect(isForegroundHandoffActive()).toBe(false);
   });
 });

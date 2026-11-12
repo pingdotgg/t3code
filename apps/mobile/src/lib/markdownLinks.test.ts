@@ -1,17 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "./markdownLinks";
-
-describe("resolveMarkdownLinkIcon", () => {
-  it("gives GitHub hosts the brand mark and everything else the generic glyph", () => {
-    expect(resolveMarkdownLinkIcon("github.com")).toBe("github");
-    expect(resolveMarkdownLinkIcon("GitHub.com")).toBe("github");
-    expect(resolveMarkdownLinkIcon("gist.github.com")).toBe("github");
-    expect(resolveMarkdownLinkIcon("github.community")).toBeNull();
-    expect(resolveMarkdownLinkIcon("notgithub.com")).toBeNull();
-    expect(resolveMarkdownLinkIcon("example.com")).toBeNull();
-  });
-});
+import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 
 describe("resolveMarkdownLinkPresentation", () => {
   it("opens relative directory links as workspace paths", () => {
@@ -81,21 +70,12 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
+  // regression: #8098 open agent file links in the file viewer
   it("recognizes spaced relative paths", () => {
     expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({
       kind: "file",
       path: "docs/My Folder/checklist.xml",
       label: "checklist.xml",
-    });
-  });
-
-  it("extracts line fragments from relative file links", () => {
-    expect(resolveMarkdownLinkPresentation("src/main.ts#L18C2")).toMatchObject({
-      kind: "file",
-      path: "src/main.ts",
-      line: 18,
-      column: 2,
-      label: "main.ts · L18:C2",
     });
   });
 

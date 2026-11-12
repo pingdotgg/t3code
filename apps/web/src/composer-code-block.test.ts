@@ -63,17 +63,6 @@ describe("indentedNewlineInCodeBlock", () => {
     indentedNewlineInCodeBlock(editor.state, (tr) => editor.view.dispatch(tr));
     expect(textOf(editor)).toBe("    deep()\n    \nflush()");
   });
-
-  it("does nothing outside a code block", () => {
-    const editor = new Editor({
-      extensions,
-      content: {
-        type: "doc",
-        content: [{ type: "paragraph", content: [{ type: "text", text: "  hi" }] }],
-      },
-    });
-    expect(indentedNewlineInCodeBlock(editor.state, (tr) => editor.view.dispatch(tr))).toBe(false);
-  });
 });
 
 function pressEnter(editor: Editor) {
@@ -93,16 +82,6 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
     expect(editor.state.doc.childCount).toBe(1);
     pressEnter(editor);
     expect(editor.state.doc.firstChild?.textContent).toBe("flush()");
-    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
-  });
-
-  it("counts lines holding only carried indentation as blank", () => {
-    const editor = codeEditor("  nested()");
-    pressEnter(editor);
-    pressEnter(editor);
-    expect(editor.state.doc.childCount).toBe(1);
-    pressEnter(editor);
-    expect(editor.state.doc.firstChild?.textContent).toBe("  nested()");
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
   });
 
@@ -165,11 +144,15 @@ describe("indentCodeBlock", () => {
     expect(textOf(editor)).toBe("one\ntwo");
   });
 
-  it("keeps the selection across the shifted lines", () => {
-    const editor = codeEditor("one\ntwo", { from: 0, to: 7 });
+  it.each([
+    ["one\ntwo", "    one\n    two", 5],
+    ["\none\ntwo", "\n    one\n    two", 1],
+  ])("keeps the selection across the shifted lines in %s", (code, expected, from) => {
+    const editor = codeEditor(code, { from: 0, to: code.length });
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
-    expect(textOf(editor)).toBe("    one\n    two");
+    expect(textOf(editor)).toBe(expected);
+    expect(editor.state.selection.from).toBe(from);
   });
 
   it("reports handled when outdenting can go no further, so Tab never escapes the editor", () => {

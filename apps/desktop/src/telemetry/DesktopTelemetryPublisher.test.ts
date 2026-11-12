@@ -1,14 +1,13 @@
-import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Context from "effect/Context";
+import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -22,6 +21,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopTelemetryPublisher from "./DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 
 const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
   register: () => Effect.void,
@@ -37,6 +37,7 @@ function layerElectronApp(
     metadata: Effect.die("unexpected metadata read"),
     name: Effect.succeed("T3 Code"),
     systemLocale: Effect.succeed("en-US"),
+    preferredSystemLanguages: Effect.succeed(["en-US"]),
     whenReady: Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
     quit: Effect.void,
@@ -61,114 +62,67 @@ function layerElectronApp(
 }
 
 describe("DesktopTelemetryPublisher", () => {
-  it.effect("stops when its scope closes during an Electron telemetry sample", () =>
-    Effect.gen(function* () {
-      const pollStarted = yield* Deferred.make<void>();
-      const blockPoll = yield* Deferred.make<void>();
-      const layerPower = Layer.succeed(
-        ElectronPowerMonitor.ElectronPowerMonitor,
-        ElectronPowerMonitor.ElectronPowerMonitor.of({
-          isOnBatteryPower: Effect.succeed(false),
-          getSystemIdleTime: Deferred.succeed(pollStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(blockPoll)),
-            Effect.as(0),
-          ),
-          getSystemIdleState: () => Effect.succeed("active"),
-          getCurrentThermalState: Effect.succeed("nominal"),
-          onSimpleEvent: () => Effect.void,
-          onThermalStateChange: () => Effect.void,
-          onSpeedLimitChange: () => Effect.void,
-        }),
-      );
-      const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
-      );
-      const scope = yield* Scope.make();
-
-      yield* Layer.buildWithScope(layer, scope);
-      yield* Deferred.await(pollStarted);
-
-      const closeFiber = yield* Scope.close(scope, Exit.void).pipe(Effect.forkDetach);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
-
-      assert.isDefined(closeFiber.pollUnsafe());
-    }),
-  );
-
-  it.effect("routes requestDesktopUpdate control messages and replays update reports", () =>
-    Effect.gen(function* () {
-      const layerPower = Layer.succeed(
-        ElectronPowerMonitor.ElectronPowerMonitor,
-        ElectronPowerMonitor.ElectronPowerMonitor.of({
-          isOnBatteryPower: Effect.succeed(false),
-          getSystemIdleTime: Effect.succeed(0),
-          getSystemIdleState: () => Effect.succeed("active"),
-          getCurrentThermalState: Effect.succeed("nominal"),
-          onSimpleEvent: () => Effect.void,
-          onThermalStateChange: () => Effect.void,
-          onSpeedLimitChange: () => Effect.void,
-        }),
-      );
-      const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
-      );
-
-      yield* Effect.gen(function* () {
-        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
-
-        const requestFiber = yield* Stream.runHead(publisher.updateRequests).pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* publisher.handleControlForSource("test", {
-          version: 1,
-          type: "requestDesktopUpdate",
-          requestId: "req-9",
-        });
-        const received = yield* Fiber.join(requestFiber);
-        assert.equal(Option.getOrThrow(received).requestId, "req-9");
-
-        const report = {
-          version: 1,
-          type: "desktopUpdateStatus",
-          outcome: "up-to-date",
-          state: {
-            enabled: true,
-            status: "up-to-date",
-            channel: "latest",
-            currentVersion: "1.2.3",
-            hostArch: "arm64",
-            appArch: "arm64",
-            runningUnderArm64Translation: false,
-            availableVersion: null,
-            downloadedVersion: null,
-            releaseNotes: [],
-            downloadPercent: null,
-            checkedAt: null,
-            message: null,
-            errorContext: null,
-            canRetry: false,
-            omittedReleaseCount: 0,
-          },
-        } as const;
-        yield* publisher.publishUpdateReport(report);
-
-        const decoder = new TextDecoder();
-        const decodeMessage = Schema.decodeUnknownEffect(
-          Schema.fromJsonString(DesktopHostTelemetryMessage),
+  it.effect(
+    "forwards shell discovery while a telemetry sample is pending and stops on scope close",
+    () =>
+      Effect.gen(function* () {
+        const pollStarted = yield* Deferred.make<void>();
+        const blockPoll = yield* Deferred.make<void>();
+        const layerPower = Layer.succeed(
+          ElectronPowerMonitor.ElectronPowerMonitor,
+          ElectronPowerMonitor.ElectronPowerMonitor.of({
+            isOnBatteryPower: Effect.succeed(false),
+            getSystemIdleTime: Deferred.succeed(pollStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(blockPoll)),
+              Effect.as(0),
+            ),
+            getSystemIdleState: () => Effect.succeed("active"),
+            getCurrentThermalState: Effect.succeed("nominal"),
+            onSimpleEvent: () => Effect.void,
+            onThermalStateChange: () => Effect.void,
+            onSpeedLimitChange: () => Effect.void,
+          }),
         );
-        const replayed = yield* publisher.encoded.pipe(
-          Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
-          Stream.filter((message) => message.type === "desktopUpdateStatus"),
+        const layer = DesktopTelemetryPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerElectronApp([]),
+              layerPower,
+              layerHistory,
+              Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
+                installIntoProcess: Effect.succeed(true),
+                awaitDiscovery: Effect.succeed(true),
+                awaitUserShellDiscovery: Effect.succeed(true),
+                updates: Stream.make({
+                  version: 1,
+                  type: "shellEnvironment",
+                  discovered: true,
+                  platform: "darwin",
+                  environment: { PATH: "/discovered/bin" },
+                }),
+              }),
+            ),
+          ),
+        );
+        const scope = yield* Scope.make();
+
+        const context = yield* Layer.buildWithScope(layer, scope);
+        const publisher = Context.get(context, DesktopTelemetryPublisher.DesktopTelemetryPublisher);
+        const update = yield* publisher.encoded.pipe(
+          Stream.filter((bytes) => new TextDecoder().decode(bytes).includes("shellEnvironment")),
           Stream.runHead,
         );
-        const replayedReport = Option.getOrThrow(replayed);
-        if (replayedReport.type !== "desktopUpdateStatus") {
-          return assert.fail("Expected a desktop update status report.");
-        }
-        assert.equal(replayedReport.outcome, "up-to-date");
-        assert.equal(replayedReport.state.currentVersion, "1.2.3");
-      }).pipe(Effect.provide(layer));
-    }),
+        assert.isTrue(Option.isSome(update));
+        if (Option.isSome(update))
+          assert.include(new TextDecoder().decode(update.value), "/discovered/bin");
+        yield* Deferred.await(pollStarted);
+
+        const closeFiber = yield* Scope.close(scope, Exit.void).pipe(Effect.forkDetach);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        assert.isDefined(closeFiber.pollUnsafe());
+      }),
   );
 });
 

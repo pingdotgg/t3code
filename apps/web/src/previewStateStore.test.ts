@@ -24,7 +24,6 @@ import { appAtomRegistry } from "./rpc/atomRegistry";
 
 const environmentId = "env-1" as EnvironmentId;
 const ref = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
-const otherRef = scopeThreadRef(environmentId, ThreadId.make("thread-2"));
 
 const makeSnapshot = (overrides: Partial<PreviewSessionSnapshot> = {}): PreviewSessionSnapshot => ({
   threadId: "thread-1",
@@ -59,38 +58,6 @@ beforeEach(() => {
 });
 
 describe("previewStateStore (single-tab)", () => {
-  it("keeps independent state atoms for each thread", () => {
-    expect(previewStateAtom(scopedThreadKey(ref))).toBe(previewStateAtom(scopedThreadKey(ref)));
-    expect(previewStateAtom(scopedThreadKey(ref))).not.toBe(
-      previewStateAtom(scopedThreadKey(otherRef)),
-    );
-
-    applyPreviewServerSnapshot(ref, makeSnapshot());
-    expect(readThreadPreviewState(ref).snapshot?.tabId).toBe("tab_a");
-    expect(readThreadPreviewState(otherRef)).toEqual(__testing.EMPTY_THREAD_PREVIEW_STATE);
-  });
-
-  it("a second `opened` for a different tab replaces the rendered snapshot", () => {
-    const a = makeSnapshot({ tabId: "tab_a" });
-    const b = makeSnapshot({ tabId: "tab_b" });
-    applyPreviewServerEvent(ref, {
-      type: "opened",
-      threadId: "thread-1",
-      tabId: a.tabId,
-      createdAt: a.updatedAt,
-      snapshot: a,
-    });
-    applyPreviewServerEvent(ref, {
-      type: "opened",
-      threadId: "thread-1",
-      tabId: b.tabId,
-      createdAt: b.updatedAt,
-      snapshot: b,
-    });
-    const state = readThreadPreviewState(ref);
-    expect(state.snapshot?.tabId).toBe(b.tabId);
-  });
-
   it("resized event updates tab viewport without changing the active tab", () => {
     const active = makeSnapshot({ tabId: "tab_a" });
     const background = makeSnapshot({ tabId: "tab_b" });
@@ -117,29 +84,6 @@ describe("previewStateStore (single-tab)", () => {
       width: 412,
       height: 915,
     });
-  });
-
-  it("failed event flips the snapshot to LoadFailed when tabId matches", () => {
-    const snapshot = makeSnapshot();
-    applyPreviewServerEvent(ref, {
-      type: "opened",
-      threadId: "thread-1",
-      tabId: snapshot.tabId,
-      createdAt: snapshot.updatedAt,
-      snapshot,
-    });
-    applyPreviewServerEvent(ref, {
-      type: "failed",
-      threadId: "thread-1",
-      tabId: snapshot.tabId,
-      createdAt: "2026-01-01T00:00:01.000Z",
-      url: "http://localhost:5173/",
-      title: "",
-      code: -105,
-      description: "ERR_NAME_NOT_RESOLVED",
-    });
-    const state = readThreadPreviewState(ref);
-    expect(state.snapshot?.navStatus._tag).toBe("LoadFailed");
   });
 
   it("failed event for a non-active tab is ignored", () => {

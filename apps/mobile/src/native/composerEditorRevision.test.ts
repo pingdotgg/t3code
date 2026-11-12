@@ -8,12 +8,6 @@ import {
   resolveComposerControlledEventCount,
 } from "./composerEditorRevision";
 
-describe("acknowledgeComposerNativeEvent", () => {
-  it("rejects events older than the latest native text revision", () => {
-    expect(acknowledgeComposerNativeEvent(5, 4)).toBeNull();
-  });
-});
-
 describe("isComposerNativeEcho", () => {
   const snapshots = [{ eventCount: 3, value: "native", selection: { start: 6, end: 6 } }];
 
@@ -168,5 +162,12 @@ describe("typing immediately before an intercepted paste", () => {
     );
     expect(isComposerNativeEcho("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(false);
     expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
+  });
+});
+
+describe("acknowledgeComposerNativeEvent", () => {
+  it("drops a native edit a send already read, so it cannot refill the cleared draft", () => {
+    expect(acknowledgeComposerNativeEvent(76, 77)).toBe(77);
+    expect(acknowledgeComposerNativeEvent(77, 77)).toBeNull();
   });
 });

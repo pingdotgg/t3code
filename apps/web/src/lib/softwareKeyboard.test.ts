@@ -43,6 +43,7 @@ describe("software keyboard detection", () => {
     expect(observed).toEqual([true, false]);
   });
 
+  // regression: #21763 composer Enter sent instead of inserting a newline on software keyboards
   it("prefers overlay geometry over a misleading viewport height", () => {
     const { store, resize, geometry } = fixture({ native: true, overlay: true });
     const unsubscribe = store.subscribe(() => {});
@@ -69,6 +70,7 @@ describe("software keyboard detection", () => {
     unsubscribe();
   });
 
+  // regression: #21763 composer Enter sent instead of inserting a newline on software keyboards
   it("detects a docked keyboard when subscribing after it has opened", () => {
     const { store, resize } = fixture();
     resize(500);

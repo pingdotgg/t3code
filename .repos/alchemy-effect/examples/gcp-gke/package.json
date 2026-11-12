@@ -16,9 +16,14 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/gcp": "workspace:*",
+    "@alchemy.run/kubernetes": "workspace:*",
     "@distilled.cloud/gcp": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*"
   }
 }

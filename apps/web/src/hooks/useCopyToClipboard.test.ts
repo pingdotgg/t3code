@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 
-import { ClipboardWriteError, writeTextToClipboard } from "./useCopyToClipboard";
+import { writeTextToClipboard } from "./useCopyToClipboard";
 
 describe("writeTextToClipboard", () => {
   it("reserves plain text even when an extra flavor attempts to replace it", async () => {
@@ -52,25 +52,5 @@ describe("writeTextToClipboard", () => {
     const html = await items[0]!.data["text/html"]!.text();
     expect(html).toContain(rich);
     expect(html).toContain("data-t3-context-fragment=");
-  });
-
-  it("preserves the exact clipboard failure without exposing copied contents", async () => {
-    const cause = new Error("browser clipboard failure");
-    const writeText = vi.fn().mockRejectedValue(cause);
-    vi.stubGlobal("window", {});
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-
-    const error = await writeTextToClipboard("secret clipboard contents", "error-message").then(
-      () => undefined,
-      (failure: unknown) => failure,
-    );
-
-    expect(writeText).toHaveBeenCalledWith("secret clipboard contents");
-    expect(error).toBeInstanceOf(ClipboardWriteError);
-    expect(error).toMatchObject({
-      target: "error-message",
-      cause,
-    });
-    expect((error as Error).message).not.toContain("secret clipboard contents");
   });
 });

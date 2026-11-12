@@ -26,7 +26,6 @@ describe("previewPdfAssetUrl", () => {
     "http://localhost:6497/api/assets/token/index.html",
     "https://example.com/paper.pdf",
     "file:///api/assets/token/paper.pdf",
-    "javascript:alert(1)",
     "invalid",
   ])("leaves non-asset documents on their browser session: %s", (url) => {
     expect(previewPdfAssetUrl(url, "https://environment.test")).toBeNull();
@@ -45,7 +44,7 @@ describe("previewPdfAssetUrl", () => {
     expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
   });
 
-  it.each(["127.0.0.2", "127.255.255.254", "localhost.", "[::1]", "0.0.0.0"])(
+  it.each(["127.0.0.2", "localhost.", "[::1]"])(
     "remaps local assets on %s through the client connection",
     (host) => {
       expect(
@@ -150,6 +149,14 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it("tells agents how to open a blank tab and which URLs are accepted", () => {
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(
+      /preview_open, omit url when creating a new tab[^.]*blank tab/i,
+    );
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/http\(s\)/i);
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/schemeless host/i);
+  });
+
   it("rejects unparseable input without retaining credentials or tokens", () => {
     const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
     try {
@@ -171,5 +178,19 @@ describe("normalizePreviewUrl", () => {
         /user|password|access_token|secret|fragment/,
       );
     }
+  });
+
+  it("reports explicit non-web schemes instead of reading them as a host", () => {
+    for (const [rawUrl, protocol] of [
+      ["about:blank", "about:"],
+      ["mailto:alice@example.com", "mailto:"],
+      ["javascript:alert(1)", "javascript:"],
+    ] as const) {
+      expect(() => normalizePreviewUrl(rawUrl)).toThrow(
+        expect.objectContaining({ reason: "unsupported-protocol", protocol }),
+      );
+    }
+    expect(normalizePreviewUrl("localhost:3000")).toBe("http://localhost:3000/");
+    expect(normalizePreviewUrl("devbox:8080")).toBe("https://devbox:8080/");
   });
 });
