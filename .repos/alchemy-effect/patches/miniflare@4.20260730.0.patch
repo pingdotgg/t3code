@@ -1,0 +1,13 @@
+diff --git a/dist/src/index.js b/dist/src/index.js
+index ae57410a970d7d47f9f1810567529df69e9d8df1..ea6272f2f26e218a2630786f270e7f1090d6ab77 100644
+--- a/dist/src/index.js
++++ b/dist/src/index.js
+@@ -94360,7 +94360,7 @@ Ensure all assets in your assets directory "${dir2}" conform with the Workers ma
+           contentHash
+         });
+         assetsReverseMap[bytesToHex(contentHash)] = {
+-          filePath: relativeFilepath,
++          filePath: relativeFilepath.split(import_node_path16.default.sep).join("/"),
+           contentType: getContentType(filepath)
+         };
+         counter++;

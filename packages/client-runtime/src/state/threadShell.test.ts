@@ -57,6 +57,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
       catalogValueAtom,
       snapshotAtom,
       connectionPhaseAtom,
+      hiddenThreadTagsAtom: () => Atom.make(null),
     }),
   };
 }

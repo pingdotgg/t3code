@@ -1,0 +1,82 @@
+---
+title: Storage events
+description: Run code when an object lands in a Cloud Storage bucket with GCP.Storage.consumeBucketEvents.
+---
+
+`consumeBucketEvents` runs a handler when objects are written to or
+deleted from a Bucket. Uploads stay fast because the work happens in
+the background, on another service.
+
+## Handle new uploads
+
+```typescript
+// src/Indexer.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Stream from "effect/Stream";
+import { Uploads } from "./resources.ts";
+
+export default class Indexer extends GCP.Function<Indexer>()(
+  "Indexer",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const bucket = yield* Uploads;
+    const uploads = yield* GCP.Storage.ReadBucket(bucket);
+
+    yield* GCP.Storage.consumeBucketEvents(
+      bucket,
+      { eventTypes: ["OBJECT_FINALIZE"], prefix: "uploads/" },
+      (events) =>
+        events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              const object = yield* uploads.get(event.object, {
+                generation: event.generation,
+              });
+              if (object === undefined) return;
+              yield* Effect.log(`${event.object}: ${object.body.byteLength} bytes`);
+            }),
+          ),
+          Effect.orDie,
+        ),
+    );
+
+    return { fetch: Effect.succeed(HttpServerResponse.text("ok")) };
+  }).pipe(
+    Effect.provide([GCP.Storage.BucketEventSourceLive, GCP.Storage.ReadBucketHttp]),
+    Effect.provide(GCP.Run.TopicEventSource),
+  ),
+) {}
+```
+
+`OBJECT_FINALIZE` fires when an object is written. `prefix` limits
+events to one folder.
+
+Cloud Storage publishes each event to a Pub/Sub topic, and Pub/Sub
+pushes it to the service. That's why the service provides
+`GCP.Run.TopicEventSource` as well.
+
+## Read the exact version
+
+Pass `event.generation` to `get`. If the object was overwritten or
+deleted since the event, you get `undefined` and a later event owns
+the work.
+
+## Retries
+
+A failed handler fails the delivery, and Pub/Sub sends the event
+again. Write results keyed by the object name so a second run
+overwrites the first.
+
+## Example
+
+[`examples/gcp-storage-uploads`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-storage-uploads)
+uploads through one service and indexes each file into Firestore from
+another.
+
+## Where next
+
+- [Cloud Storage](/gcp/data/storage) — buckets and their bindings.
+- [Eventarc](/gcp/messaging/eventarc) — events from other Google
+  services.

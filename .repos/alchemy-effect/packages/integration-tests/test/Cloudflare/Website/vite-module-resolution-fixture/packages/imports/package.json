@@ -1,0 +1,12 @@
+{
+  "name": "@playground/module-resolution-imports",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./cloudflare-builtins": {
+      "default": "./cloudflare-builtins.js",
+      "types": "./cloudflare-builtins.d.ts"
+    }
+  }
+}

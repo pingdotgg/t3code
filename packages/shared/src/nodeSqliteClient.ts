@@ -201,7 +201,7 @@ let db;
 try {
   // A read-only open cannot be undone by SQL, unlike PRAGMA query_only.
   const next = new DatabaseSync(workerData.filename, {
-    readOnly: true,
+    readOnly: workerData.readOnly,
     allowExtension: workerData.allowExtension,
   });
   next.exec("PRAGMA busy_timeout = 5000;");
@@ -300,6 +300,7 @@ const READER_POOL_SIZE = 4;
 const makeReader = Effect.fnUntraced(function* (
   options: SqliteClientConfig,
   pool: { unavailable: boolean },
+  readOnly = true,
 ) {
   let current:
     | {
@@ -315,6 +316,7 @@ const makeReader = Effect.fnUntraced(function* (
       eval: true,
       workerData: {
         filename: options.filename,
+        readOnly,
         allowExtension: false,
         prepareCacheSize: 200,
       },
@@ -358,7 +360,10 @@ const makeReader = Effect.fnUntraced(function* (
 
     const request = (input: ReaderRequest) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-        const endsTransaction = endsReadTransaction(input.sql);
+        // A COMMIT that never reached a writer must fail; only its ROLLBACK is moot.
+        const endsTransaction = readOnly
+          ? endsReadTransaction(input.sql)
+          : /^\s*ROLLBACK\b/i.test(input.sql);
         if (stoppedMessage !== undefined) {
           return endsTransaction
             ? Effect.succeed([])
@@ -411,7 +416,7 @@ const makeReader = Effect.fnUntraced(function* (
       },
       executeUnprepared(sql, params, rowTransform) {
         // Read snapshots need deferred BEGIN; readonly connections reject IMMEDIATE and EXCLUSIVE.
-        const statement = /^\s*BEGIN\b/i.test(sql) ? "BEGIN" : sql;
+        const statement = readOnly && /^\s*BEGIN\b/i.test(sql) ? "BEGIN" : sql;
         const effect = request({
           sql: statement,
           params: params ?? [],
@@ -443,8 +448,7 @@ const makeReader = Effect.fnUntraced(function* (
         if (current === reader) current = undefined;
         void reader.worker.terminate();
       }
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-      if (pool.unavailable) return Effect.succeed(undefined);
+      if (pool.unavailable) return Effect.undefined;
       pool.unavailable = true;
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
         reason,
@@ -452,8 +456,7 @@ const makeReader = Effect.fnUntraced(function* (
     });
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-    if (pool.unavailable) return Effect.succeed(undefined);
+    if (pool.unavailable) return Effect.undefined;
     let reader: NonNullable<typeof current>;
     try {
       reader = current ?? start();
@@ -473,8 +476,7 @@ const makeReader = Effect.fnUntraced(function* (
       (startup): Effect.Effect<Connection | undefined> =>
         // A late ready event must not hand out a worker retired by another acquire timeout.
         pool.unavailable || current !== reader
-          ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
-            Effect.succeed(undefined)
+          ? Effect.undefined
           : Option.isSome(startup) && startup.value.type === "ready"
             ? Effect.succeed(reader.connection)
             : turnOff(
@@ -489,7 +491,7 @@ const makeReader = Effect.fnUntraced(function* (
 
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
-const CHECKPOINT_BACKPRESSURE_FRAMES = 10 * CHECKPOINT_FRAMES;
+const CHECKPOINT_BACKPRESSURE_FRAMES = 32_768;
 
 const readSafeSqliteInteger = (value: unknown) => {
   const number = typeof value === "bigint" ? Number(value) : value;
@@ -527,8 +529,9 @@ const initialize = () => {
 const atCeiling = (state) => state.log >= workerData.backpressureFrames;
 const exceedsSizeLimit = () =>
   journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
-const schedule = (state, blocked) => {
-  if (blocked || state.log - state.checkpointed >= workerData.frames) {
+// Retry a WAL past its limits even with admission open, so it resets once a pinning reader closes.
+const schedule = (state, retry) => {
+  if (retry || state.log - state.checkpointed >= workerData.frames) {
     idle = setTimeout(() => check(undefined, undefined, true), workerData.idleMs);
   }
 };
@@ -538,8 +541,11 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
   if (Number.isSafeInteger(nextJournalSizeLimit)) journalSizeLimit = nextJournalSizeLimit;
   let state = frames.get();
   const oversized = exceedsSizeLimit();
+  let pinned = false;
   if (force || state.log - state.checkpointed >= workerData.frames || oversized) {
-    checkpoint.get();
+    const result = checkpoint.get();
+    // A reader's snapshot stopped the backfill; holding writes cannot let it catch up.
+    pinned = result.checkpointed < result.log;
     state = frames.get();
   }
   if (state.checkpointed === state.log && (atCeiling(state) || oversized)) {
@@ -553,24 +559,22 @@ const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => 
     });
     return;
   }
-  const blocked = (atCeiling(state) || oversized) && state.checkpointed < state.log;
+  const blocked = !pinned && (atCeiling(state) || oversized) && state.checkpointed < state.log;
   parentPort.postMessage({ type: "checkpoint", id, generation, ...state, blocked });
-  schedule(state, blocked);
+  schedule(state, atCeiling(state) || oversized);
 };
 const finishTruncate = (truncateId) => {
   if (pendingTruncate === undefined || pendingTruncate.truncateId !== truncateId) return;
   const pending = pendingTruncate;
   parentPort.postMessage({ type: "truncate-start", truncateId });
-  let busy;
   // Admission is paused here; a pinned reader must not make truncation wait.
   db.exec("PRAGMA busy_timeout = 0;");
   try {
-    busy = truncate.get().busy !== 0;
+    truncate.get();
   } finally {
     db.exec("PRAGMA busy_timeout = 5000;");
   }
   const state = frames.get();
-  const blocked = (atCeiling(state) && (busy || state.checkpointed < state.log)) || exceedsSizeLimit();
   pendingTruncate = undefined;
   parentPort.postMessage({
     type: "checkpoint",
@@ -578,13 +582,15 @@ const finishTruncate = (truncateId) => {
     generation: pending.generation,
     truncateId,
     ...state,
-    blocked,
+    // With writes held, only a reader can stop the reset, and holding them longer would not
+    // release it.
+    blocked: false,
   });
   while (pendingBarriers > 0) {
     pendingBarriers--;
     parentPort.postMessage("barrier");
   }
-  schedule(state, blocked);
+  schedule(state, atCeiling(state) || exceedsSizeLimit());
 };
 parentPort.on("message", (request) => {
   clearTimeout(idle);
@@ -629,18 +635,26 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     yield* warn("Node SQLite lacks transaction-state or statement-authorizer support");
     return undefined;
   }
-  // These are the writer's first statements, before callers set their own wait.
-  writer.exec("PRAGMA busy_timeout = 5000;");
-  const version = String(writer.prepare("SELECT sqlite_version() AS version").get()?.version);
+  // These are the writer's first statements, before callers set their own wait. A file that is
+  // not a database first fails here.
+  const { version, frames, sizeLimit } = yield* Effect.try({
+    try: () => {
+      writer.exec("PRAGMA busy_timeout = 5000;");
+      return {
+        version: String(writer.prepare("SELECT sqlite_version() AS version").get()?.version),
+        frames: writer.prepare("PRAGMA wal_checkpoint(NOOP)"),
+        sizeLimit: writer.prepare("PRAGMA journal_size_limit"),
+      };
+    },
+    catch: (cause) => failed(cause, "Failed to open database", "open"),
+  });
   const [major = 0, minor = 0] = version.split(".").map(Number);
   // Older SQLite treats NOOP as PASSIVE, which would checkpoint on the writer.
   if (major < 3 || (major === 3 && minor < 51)) {
     yield* warn(`SQLite ${version} has no NOOP checkpoint`);
     return undefined;
   }
-  const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
-  const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
-  const started = yield* Effect.try(
+  const started = Result.try(
     () =>
       new NodeWorkerThreads.Worker(checkpointWorkerSource, {
         eval: true,
@@ -651,9 +665,9 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
           idleMs: CHECKPOINT_IDLE_MS,
         },
       }),
-  ).pipe(Effect.result);
+  );
   if (Result.isFailure(started)) {
-    yield* warn(String(started.failure.cause));
+    yield* warn(String(started.failure));
     return undefined;
   }
   const worker = started.success;
@@ -672,9 +686,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
   const gated = () =>
-    !stopped &&
-    !writer.isTransaction &&
-    (unknown || blocked || truncate !== undefined || log >= CHECKPOINT_BACKPRESSURE_FRAMES);
+    !stopped && !writer.isTransaction && (unknown || blocked || truncate !== undefined);
   const wake = () => {
     if (!gated() && elected === undefined) {
       elected = waiters.shift();
@@ -722,6 +734,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       log = nextLog;
       checkpointed = nextCheckpointed;
       unknown = false;
+      // Past the ceiling, hold writes until the worker judges this WAL; a reader can pin it there.
+      if (log >= CHECKPOINT_BACKPRESSURE_FRAMES) blocked = true;
     } catch {
       unknown = true;
     }
@@ -1242,6 +1256,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   );
 
   const client = yield* Client.make({
+    driver: "node:sqlite",
     acquirer: transactionAcquirer,
     borrower,
     compiler,
@@ -1277,6 +1292,40 @@ const make = Effect.fn("makeWithDatabase")(function* (
       }),
   });
 });
+
+const makeWorker = Effect.fn("makeWorkerClient")(function* (filename: string) {
+  yield* checkNodeSqliteCompat();
+  const acquire = yield* makeReader({ filename }, { unavailable: false }, false);
+  const connection = yield* acquire;
+  if (connection === undefined) {
+    return yield* failed(
+      new Error("database worker is unavailable"),
+      readerFailureMessages.open,
+      "open",
+    );
+  }
+  const { acquirer, borrower, onCommitFailure, transactionAcquirer } = Client.makeSqliteAcquirers({
+    connection: Effect.succeed(connection),
+    semaphore: yield* Semaphore.make(1),
+  });
+  return yield* Client.make({
+    driver: "node:sqlite",
+    acquirer,
+    borrower,
+    compiler: Statement.makeCompilerSqlite(),
+    transactionAcquirer,
+    onCommitFailure,
+    beginTransaction: "BEGIN IMMEDIATE",
+    spanAttributes: [[ATTR_DB_SYSTEM_NAME, "sqlite"]],
+  });
+});
+
+/**
+ * A read-write client whose one connection runs in a worker thread, so long statements such as
+ * index builds leave the event loop free. Requires a file database already in WAL mode.
+ */
+export const layerWorker = (filename: string): Layer.Layer<Client.SqlClient, SqlError> =>
+  Layer.effect(Client.SqlClient, makeWorker(filename)).pipe(Layer.provide(Reactivity.layer));
 
 export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient, SqlError> =>
   Layer.effect(Client.SqlClient, make(config)).pipe(Layer.provide(Reactivity.layer));
