@@ -168,8 +168,8 @@ describe("Antigravity process environment", () => {
     expect(vertexAdc.GOOGLE_APPLICATION_CREDENTIALS).toBe("/keys/service-account.json");
     expect(vertexAdc.GOOGLE_API_KEY).toBeUndefined();
 
-    // When credentialsFile is blank, GOOGLE_APPLICATION_CREDENTIALS from the environment is preserved.
-    const vertexEnvAdc =
+    // When credentialsFile is blank, ambient GOOGLE_APPLICATION_CREDENTIALS is ignored.
+    const vertexBlankAdc =
       buildAntigravityAcpSpawnInput({
         installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
         profile,
@@ -183,7 +183,7 @@ describe("Antigravity process environment", () => {
           credentialsFile: "",
         },
       }).env ?? {};
-    expect(vertexEnvAdc.GOOGLE_APPLICATION_CREDENTIALS).toBe("/env/adc.json");
+    expect(vertexBlankAdc.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
 
     const business = spawnFor({
       authMethod: "oauth-business",

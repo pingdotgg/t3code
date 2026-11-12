@@ -898,7 +898,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Credentials file",
         description:
-          "Application Default Credentials or service account JSON. Agent Platform uses it when no API key is set, in place of GOOGLE_APPLICATION_CREDENTIALS.",
+          "Application Default Credentials or service account JSON. Set the file path here; ambient GOOGLE_APPLICATION_CREDENTIALS environment variables are ignored.",
         providerSettingsForm: { placeholder: "Default ADC", clearWhenEmpty: "omit" },
       }),
     ),
