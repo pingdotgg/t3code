@@ -11,12 +11,9 @@ const password = document.querySelector<HTMLInputElement>("#password")!;
 
 async function refresh() {
   const session = await authClient.getSession();
-  if (session.error)
-    throw new Error(session.error.message ?? "Session lookup failed");
+  if (session.error) throw new Error(session.error.message ?? "Session lookup failed");
   sessionOutput.textContent = JSON.stringify(
-    session.data
-      ? { user: session.data.user, expiresAt: session.data.session.expiresAt }
-      : null,
+    session.data ? { user: session.data.user, expiresAt: session.data.session.expiresAt } : null,
     null,
     2,
   );
@@ -82,20 +79,16 @@ document.querySelector("#sign-in")!.addEventListener("click", () => {
 document.querySelector("#sign-out")!.addEventListener("click", () => {
   void run(async () => {
     const result = await authClient.signOut();
-    if (result.error)
-      throw new Error(result.error.message ?? "Sign out failed");
+    if (result.error) throw new Error(result.error.message ?? "Sign out failed");
     await refresh();
   });
 });
 
-document
-  .querySelector("#refresh")!
-  .addEventListener("click", () => void run(refresh));
+document.querySelector("#refresh")!.addEventListener("click", () => void run(refresh));
 
 void run(async () => {
   const response = await fetch("/api/providers");
-  if (!response.ok)
-    throw new Error(`Provider lookup returned ${response.status}`);
+  if (!response.ok) throw new Error(`Provider lookup returned ${response.status}`);
   const enabled: { github: boolean } = await response.json();
   if (enabled.github) {
     const button = document.createElement("button");
@@ -107,8 +100,7 @@ void run(async () => {
           provider: "github",
           callbackURL: "/",
         });
-        if (result.error)
-          throw new Error(result.error.message ?? "GitHub sign in failed");
+        if (result.error) throw new Error(result.error.message ?? "GitHub sign in failed");
       });
     });
     providers.append(button);
