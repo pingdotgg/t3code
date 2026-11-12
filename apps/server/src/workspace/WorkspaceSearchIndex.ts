@@ -411,8 +411,11 @@ const makeWorker = Effect.gen(function* () {
           },
           destroy: async () => {
             if (worker.exited) return;
-            await worker.request(finderId, "destroy", []);
-            worker.release();
+            try {
+              await worker.request(finderId, "destroy", []);
+            } finally {
+              worker.release();
+            }
           },
           directorySearch: call("directorySearch"),
           fileSearch: call("fileSearch"),
@@ -534,24 +537,15 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     ),
   );
 
-  // Reopen first, so a rebuilt index whose scan timed out still reports truncated results.
-  const hasIncompleteInitialScan = currentFinder.pipe(
-    Effect.ignore,
-    Effect.andThen(
-      Effect.suspend(() =>
-        initialScanTimedOut
-          ? Effect.promise(() => finder.isScanning().catch(() => true))
-          : Effect.succeed(false),
-      ),
-    ),
-  );
-
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
     execute: (finder: RemoteFileFinder) => Promise<Result<A>>,
-  ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
+  ): Effect.fn.Return<
+    { readonly value: A; readonly incompleteBeforeQuery: boolean },
+    WorkspaceSearchIndexSearchFailed
+  > {
     const finder = yield* currentFinder.pipe(
       Effect.mapError(
         (cause) =>
@@ -564,6 +558,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           }),
       ),
     );
+    // Read from the finder that answers, before it answers: a scan finishing mid-query still leaves a partial result.
+    const incompleteBeforeQuery =
+      initialScanTimedOut && (yield* Effect.promise(() => finder.isScanning().catch(() => true)));
     const result = yield* Effect.tryPromise({
       try: () => execute(finder),
       catch: (cause) =>
@@ -583,7 +580,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         reason: result.error,
       });
     }
-    return result.value;
+    return { value: result.value, incompleteBeforeQuery };
   });
 
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
@@ -630,9 +627,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const incompleteBeforeQuery = yield* hasIncompleteInitialScan;
-      const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", (finder) =>
-        finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+      const { value: result, incompleteBeforeQuery } = yield* runSearch(
+        "",
+        WORKSPACE_INDEX_PAGE_SIZE,
+        "mixedSearch",
+        (finder) => finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
@@ -654,23 +653,31 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     // matching is subsequence-based, so dropping "[" still matches "[id]" folders.
     const query = rawQuery.replaceAll("[", "");
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
-    const incompleteBeforeQuery = yield* hasIncompleteInitialScan;
     if (kind === "file" || imageOnly) {
-      const result = yield* runSearch(query, pageSize, "fileSearch", (finder) =>
-        finder.fileSearch(query, { pageSize }),
+      const { value: result, incompleteBeforeQuery } = yield* runSearch(
+        query,
+        pageSize,
+        "fileSearch",
+        (finder) => finder.fileSearch(query, { pageSize }),
       );
       const mapped = mapFileSearchResult(result, limit, imageOnly);
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     if (kind === "directory") {
-      const result = yield* runSearch(query, pageSize, "directorySearch", (finder) =>
-        finder.directorySearch(query, { pageSize }),
+      const { value: result, incompleteBeforeQuery } = yield* runSearch(
+        query,
+        pageSize,
+        "directorySearch",
+        (finder) => finder.directorySearch(query, { pageSize }),
       );
       const mapped = mapDirectorySearchResult(result, limit);
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
-    const result = yield* runSearch(query, pageSize, "mixedSearch", (finder) =>
-      finder.mixedSearch(query, { pageSize }),
+    const { value: result, incompleteBeforeQuery } = yield* runSearch(
+      query,
+      pageSize,
+      "mixedSearch",
+      (finder) => finder.mixedSearch(query, { pageSize }),
     );
     const mapped = mapMixedSearchResult(result, limit);
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
@@ -692,7 +699,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
-      const result = yield* runSearch(input.query, input.limit, "grep", (finder) =>
+      const { value: result } = yield* runSearch(input.query, input.limit, "grep", (finder) =>
         finder.grep(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,

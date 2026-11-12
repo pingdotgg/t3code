@@ -169,6 +169,61 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
   ),
 );
 
+it.effect("reads an incomplete scan from the finder that answers the search", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let firstExited = false;
+      const timedOutScan = vi.fn(async () => ({ ok: true as const, value: false }));
+      const fileSearch = vi.fn(async () => ({
+        ok: true as const,
+        value: { items: [fileItem("src/a.ts")], scores: [], totalMatched: 1, totalFiles: 1 },
+      }));
+      const first = {
+        get alive() {
+          return !firstExited;
+        },
+        destroy: vi.fn(async () => {}),
+        waitForIndexReady: timedOutScan,
+        // The scan finished, then the process exited right after replying.
+        isScanning: vi.fn(async () => {
+          firstExited = true;
+          return false;
+        }),
+        fileSearch: vi.fn(async () => {
+          throw new Error("The workspace search worker exited.");
+        }),
+      } as unknown as WorkspaceSearchIndex.RemoteFileFinder;
+      const rebuilt = {
+        alive: true,
+        destroy: vi.fn(async () => {}),
+        waitForIndexReady: timedOutScan,
+        isScanning: vi.fn(async () => true),
+        fileSearch,
+      } as unknown as WorkspaceSearchIndex.RemoteFileFinder;
+      const finders = [first, rebuilt];
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provideService(WorkspaceSearchIndex.WorkspaceSearchWorker, {
+          create: async () => ({ ok: true, value: finders.shift()! }),
+        }),
+      );
+
+      const duringExit = yield* searchIndex.search("", 10, "file").pipe(
+        Effect.map(({ truncated }) => truncated),
+        Effect.catchTags({
+          WorkspaceSearchIndexSearchFailed: (error) => Effect.succeed(error._tag),
+        }),
+      );
+      const afterRebuild = yield* searchIndex.search("", 10, "file");
+
+      expect(duringExit).toBe("WorkspaceSearchIndexSearchFailed");
+      expect(afterRebuild).toEqual({
+        entries: [{ kind: "file", path: "src/a.ts" }],
+        truncated: true,
+      });
+    }),
+  ),
+);
+
 it.live("rebuilds the index in a new search process after the worker exits", () =>
   Effect.gen(function* () {
     const cwd = yield* makeNeedleWorkspace;
