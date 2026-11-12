@@ -193,7 +193,7 @@ function inferDefaultVariant(
   if (providerID === "anthropic" || providerID.startsWith("google")) {
     return variants.includes("high") ? "high" : undefined;
   }
-  if (providerID === "openai" || providerID === "opencode") {
+  if (providerID === "openai" || providerID === "opencode" || providerID === "opencode-go") {
     return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
   }
   return undefined;
@@ -578,16 +578,18 @@ export interface OpenCode2Workspace {
 /**
  * Reading a location the server has not loaded boots its scan, and only reads after the scan's
  * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
- * loaded location listing no commands is still scanning. OpenCode exposes no readiness signal,
- * so one another caller booted moments earlier can still read partial.
+ * loaded location listing no commands is still scanning. A location another caller booted
+ * moments earlier lists as loaded with only built-ins, so `settled` waits out its scan first.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
   function* <E>(
     read: Effect.Effect<OpenCode2Workspace, E>,
     scanned: Effect.Effect<void>,
     loaded: Effect.Effect<boolean>,
+    settled: Effect.Effect<void> = Effect.void,
   ) {
     const wasLoaded = yield* loaded;
+    yield* settled;
     const first = yield* read;
     if (wasLoaded && first.commands.length > 0) return first;
     yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
