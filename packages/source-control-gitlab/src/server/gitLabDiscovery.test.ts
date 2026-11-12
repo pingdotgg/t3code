@@ -113,24 +113,11 @@ it.effect.each([
     name: "without relying on host naming",
     remoteUrl: "https://self-hosted.example.test/group/project.git",
     host: "self-hosted.example.test",
-    stdout: `gitlab.com
-  x gitlab.com: API call failed: 401 Unauthorized
-  ! No token found
-self-hosted.example.test
-  ✓ Logged in to self-hosted.example.test as gitlab-user
-  ✓ Token found: ******
-`,
-    exitCode: 1,
   },
   {
     name: "on a non-standard port",
     remoteUrl: "https://self-hosted.example.test:8443/group/project.git",
     host: "self-hosted.example.test:8443",
-    stdout: `self-hosted.example.test:8443
-  ✓ Logged in to self-hosted.example.test:8443 as gitlab-user
-  ✓ Token found: ******
-`,
-    exitCode: 0,
   },
 ] as const)("claims a self-hosted remote glab is signed in to $name", (scenario) =>
   Effect.gen(function* () {
@@ -148,15 +135,11 @@ self-hosted.example.test
       process: {
         run: ({ command, args }) => {
           asked.push([command, ...args]);
-          return Effect.succeed(
-            processOutput(scenario.stdout, {
-              exitCode: ChildProcessSpawner.ExitCode(scenario.exitCode),
-            }),
-          );
+          return Effect.succeed(processOutput("gitlab-user\n"));
         },
       },
     });
-    assert.deepStrictEqual(asked, [["glab", "auth", "status", "--hostname", scenario.host]]);
+    assert.deepStrictEqual(asked, [["glab", "config", "get", "user", "--host", scenario.host]]);
     assert.strictEqual(verdict.provider?.kind, "gitlab");
     assert.strictEqual(verdict.settled, true);
   }),
