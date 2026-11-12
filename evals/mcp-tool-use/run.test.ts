@@ -35,6 +35,7 @@ import {
   type SampleRun,
   shellOutput,
   namedPathsLine,
+  nextMock,
   shellRequest,
   shellResponsesRequest,
   summarize,
@@ -767,8 +768,21 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
     const cases = NodeFS.readdirSync(new URL("./cases/", import.meta.url))
       .filter((file) => file.endsWith(".ndjson"))
       .flatMap(casesIn);
+    const stale = cases.find(({ id }) => id === "stale-review-not-cancelled-on-ship")!;
+    const sequenced: McpToolUseCase = {
+      ...stale,
+      id: `${stale.id} with $sequence mocks`,
+      setup: {
+        ...stale.setup,
+        mocks: {
+          ...stale.setup.mocks,
+          delegate_task: { $sequence: ["default"] },
+          task_status: { $sequence: [stale.setup.mocks?.task_status] },
+        },
+      },
+    };
     const invalid: Array<string> = [];
-    for (const testCase of cases) {
+    for (const testCase of [...cases, sequenced]) {
       const sample = makeSample(testCase, base);
       yield* withDevices(sample);
       const blocks = buildMessages(sample).flatMap((message) => message.content);
@@ -776,20 +790,18 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
         const tool = normalizeToolName(String(use.name));
         if (use.type !== "tool_use" || !["delegate_task", "task_status"].includes(tool)) return [];
         const result = blocks.find((block) => block.tool_use_id === use.id);
-        return [{ tool, value: JSON.parse(String(result?.content)), live: false }];
+        const value = JSON.parse(String(result?.content));
+        return [{ tool, value, mock: undefined as unknown, live: false }];
       });
-      const delegated = t3Result(sample, "delegate_task", { task: "Review the diff." });
-      seen.push({ tool: "delegate_task", value: delegated, live: true });
+      // Live calls take the mock step `answerToolCall` would pick.
+      const call = (tool: string, input: Record<string, unknown>) => {
+        const mock = nextMock(sample, tool, testCase.setup.mocks?.[tool]);
+        seen.push({ tool, value: t3Result(sample, tool, input, mock), mock, live: true });
+      };
+      call("delegate_task", { task: "Review the diff." });
       const taskIds = new Set(seen.map(({ value }) => value.taskId).filter(Boolean));
-      for (const taskId of taskIds.size > 0 ? taskIds : ["task-1"]) {
-        seen.push({
-          tool: "task_status",
-          value: t3Result(sample, "task_status", { taskId }),
-          live: true,
-        });
-      }
-      for (const { tool, value, live } of seen) {
-        const mock = testCase.setup.mocks?.[tool];
+      for (const taskId of taskIds.size > 0 ? taskIds : ["task-1"]) call("task_status", { taskId });
+      for (const { tool, value, mock, live } of seen) {
         const decoded = decodeTaskResult(value);
         if (live && isFailureMock(mock)) {
           assert.deepEqual(value, mock);
@@ -806,17 +818,28 @@ it.effect("gives the model every delegated-task result in T3's contract shape", 
     }
     assert.deepEqual(invalid, []);
 
-    // A later status names the child and model the task's earlier results gave it.
-    const stale = cases.find(({ id }) => id === "stale-review-not-cancelled-on-ship")!;
+    // A later status names the child, model and stored result the task's earlier results gave it.
     const sample = makeSample(stale, base);
     buildMessages(sample);
+    const review = stale.setup.priorTurns
+      ?.flatMap((turn) => turn.toolCalls ?? [])
+      .find((call) => call.tool === "task_status")?.result as { summary: string };
     assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-1" }), {
       childRunId: "run-child-1",
       providerInstanceId: "codex",
       model: "gpt-6.1-sol",
       status: "completed",
+      summary: review.summary,
       hasPendingChildRuns: true,
       latestTerminalRunId: "run-child-1",
+    });
+
+    // A child in a linked environment has no local thread or run, as in T3's remote task result.
+    const remote = { taskId: "task-9", childThreadId: null, status: "completed", summary: "Done." };
+    assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-9" }, remote), {
+      childRunId: null,
+      latestTerminalRunId: null,
+      latestTerminalSummary: "Done.",
     });
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
