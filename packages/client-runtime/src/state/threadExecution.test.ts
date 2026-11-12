@@ -34,6 +34,7 @@ import {
   presentProviderGoal,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
+  usageLimitNoticeResetAt,
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
@@ -644,5 +645,81 @@ describe("presentPendingBackgroundWork", () => {
       },
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
+  });
+});
+
+describe("usageLimitNoticeResetAt", () => {
+  const runId = RunId.make("limited-run");
+  const stoppedAt = "2026-07-28T10:00:00.000Z";
+  const retryAt = "2026-07-28T10:02:00.000Z";
+  const expired = "2026-07-28T09:00:00.000Z";
+  const later = "2026-07-28T11:00:00.000Z";
+  const recovery = { runId, resetAt: retryAt, autoResume: true, snooze: false };
+  const cancelled = { ...recovery, autoResume: false };
+  const snoozed = { ...cancelled, snooze: true };
+  const otherRun = { ...recovery, runId: RunId.make("earlier-run") };
+  it.each([
+    ["the provider's later reset", later, recovery, null, stoppedAt, later],
+    [
+      "a retry armed for the run when the provider gave no reset",
+      null,
+      recovery,
+      null,
+      stoppedAt,
+      retryAt,
+    ],
+    [
+      "a retry armed for the run over an expired reset",
+      expired,
+      recovery,
+      null,
+      stoppedAt,
+      retryAt,
+    ],
+    ["a retry the recovery's pending snooze holds", null, snoozed, retryAt, stoppedAt, retryAt],
+    [
+      "the expired reset when the recovery is for another run",
+      expired,
+      otherRun,
+      null,
+      stoppedAt,
+      expired,
+    ],
+    [
+      "nothing when the recovery's own reset has expired",
+      null,
+      { ...recovery, resetAt: expired },
+      null,
+      stoppedAt,
+      null,
+    ],
+    [
+      "the expired reset after auto-resume is cancelled",
+      expired,
+      cancelled,
+      null,
+      stoppedAt,
+      expired,
+    ],
+    [
+      "nothing after Stop holds the retry without auto-resume",
+      null,
+      cancelled,
+      null,
+      stoppedAt,
+      null,
+    ],
+    ["nothing once the recovery's snooze has passed", null, snoozed, retryAt, retryAt, null],
+  ] as const)("offers %s", (_label, resetAt, limitRecovery, snoozedUntil, now, expected) => {
+    expect(
+      usageLimitNoticeResetAt({
+        runId,
+        resetAt,
+        stoppedAtMs: Date.parse(stoppedAt),
+        recovery: limitRecovery,
+        snoozedUntilMs: snoozedUntil === null ? null : Date.parse(snoozedUntil),
+        nowMs: Date.parse(now),
+      }),
+    ).toBe(expected);
   });
 });

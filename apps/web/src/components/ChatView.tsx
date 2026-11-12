@@ -88,6 +88,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
+  usageLimitNoticeResetAt,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveWorkflowOpening,
@@ -211,6 +212,7 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
+import { useNowAfter } from "../hooks/useDeadline";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -1007,10 +1009,25 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime?.status === "failed" && serverRuntime.lastErrorClass === "usage_limit"
       ? (activeThreadShell?.latestRun ?? null)
       : null;
+  const snoozedUntilMs = activeThreadShell?.snoozedUntil
+    ? Date.parse(activeThreadShell.snoozedUntil)
+    : null;
+  const limitRecoveryNowMs = useNowAfter(snoozedUntilMs);
+  const limitRecoveryResetAt =
+    limitRecoveryRun === null || activeThreadShell === null
+      ? null
+      : usageLimitNoticeResetAt({
+          runId: limitRecoveryRun.runId,
+          resetAt: serverRuntime?.usageLimitResetAt,
+          stoppedAtMs: Date.parse(limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt),
+          recovery: activeThreadShell.limitRecovery,
+          snoozedUntilMs,
+          nowMs: limitRecoveryNowMs,
+        });
   // The recovery banner offers Wake now for a snooze it set.
   const limitRecoveryHoldsSnooze = limitRecoveryOwnsSnooze({
     runId: limitRecoveryRun?.runId,
-    resetAt: serverRuntime?.usageLimitResetAt,
+    resetAt: limitRecoveryResetAt,
     recovery: activeThreadShell?.limitRecovery,
     snoozedUntil: activeThreadShell?.snoozedUntil,
   });
@@ -2553,7 +2570,7 @@ export default function ChatView(props: ChatViewProps) {
       ? usageLimitRecoveryBannerItem({
           runId: limitRecoveryRun.runId,
           errorCode: serverRuntime?.lastErrorCode ?? null,
-          resetAt: serverRuntime?.usageLimitResetAt ?? null,
+          resetAt: limitRecoveryResetAt,
           stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
           settled: activeThreadShell.settledOverride === "settled",
           requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,

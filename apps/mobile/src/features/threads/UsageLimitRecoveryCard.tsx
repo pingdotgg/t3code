@@ -1,7 +1,10 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  limitRecoveryOwnsSnooze,
+  usageLimitNoticeResetAt,
+} from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
@@ -14,7 +17,7 @@ import { useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { AppText as Text } from "../../components/ui/AppText";
-import { useDeadlinePassed } from "../../lib/clock";
+import { useDeadlinePassed, useNowAfter } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -28,14 +31,24 @@ export function UsageLimitRecoveryCard({
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const resetAt = thread.runtime?.usageLimitResetAt ?? null;
+  const runId = thread.latestRun?.runId;
+  const recovery = thread.limitRecovery;
+  const stoppedAt = thread.latestRun?.completedAt ?? thread.updatedAt;
+  const snoozedUntilMs = thread.snoozedUntil ? Date.parse(thread.snoozedUntil) : null;
+  const nowMs = useNowAfter(snoozedUntilMs);
+  const resetAt = usageLimitNoticeResetAt({
+    runId,
+    resetAt: thread.runtime?.usageLimitResetAt,
+    stoppedAtMs: Date.parse(stoppedAt),
+    recovery,
+    snoozedUntilMs,
+    nowMs,
+  });
   const canSchedule =
     thread.settledOverride !== "settled" &&
     resetAt !== null &&
-    Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
+    Date.parse(resetAt) > Date.parse(stoppedAt);
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
-  const runId = thread.latestRun?.runId;
-  const recovery = thread.limitRecovery;
   const scheduled =
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
   const displayAt =

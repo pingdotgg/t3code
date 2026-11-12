@@ -63,6 +63,7 @@ import {
   type BackgroundWorkStopRequest,
   isBackgroundWorkStopPending,
   limitRecoveryOwnsSnooze,
+  usageLimitNoticeResetAt,
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -668,15 +669,25 @@ function ThreadDetailBody(
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-arm if timer clamping fires before the wake time.
   }, [snoozed, snoozedUntil, lifecycleNow]);
   // The usage-limit recovery card shows this snooze and its Wake now.
+  const limitRunId =
+    props.selectedThread.runtime?.status === "failed" &&
+    props.selectedThread.runtime.lastErrorClass === "usage_limit"
+      ? props.selectedThread.latestRun?.runId
+      : null;
   const lifecycleSnoozed =
     snoozed &&
     !limitRecoveryOwnsSnooze({
-      runId:
-        props.selectedThread.runtime?.status === "failed" &&
-        props.selectedThread.runtime.lastErrorClass === "usage_limit"
-          ? props.selectedThread.latestRun?.runId
-          : null,
-      resetAt: props.selectedThread.runtime?.usageLimitResetAt,
+      runId: limitRunId,
+      resetAt: usageLimitNoticeResetAt({
+        runId: limitRunId,
+        resetAt: props.selectedThread.runtime?.usageLimitResetAt,
+        stoppedAtMs: Date.parse(
+          props.selectedThread.latestRun?.completedAt ?? props.selectedThread.updatedAt,
+        ),
+        recovery: props.selectedThread.limitRecovery,
+        snoozedUntilMs: snoozedUntil === null ? null : Date.parse(snoozedUntil),
+        nowMs: Date.parse(lifecycleNow),
+      }),
       recovery: props.selectedThread.limitRecovery,
       snoozedUntil,
     });

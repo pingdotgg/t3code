@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2LimitRecovery,
   OrchestrationV2ProviderFailure,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
@@ -104,6 +105,95 @@ export function usageLimitBlockedRun(
   if (executed?.status !== "failed") return null;
   const summary = threadErrorSummary(latestRootProviderFailure(executed, turnItems), sessionError);
   return summary.lastErrorClass === "usage_limit" ? executed : null;
+}
+
+const REFUSED_CONTINUATION_BACKOFF_MINUTES = [2, 5, 15] as const;
+
+/** A usage-limit failure's reset when it is after the run ended; null when not limited. */
+function laterUsageLimitReset(
+  run: OrchestrationV2Run,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): { readonly resetAt: string | null } | null {
+  const failure = latestRootProviderFailure(run, turnItems);
+  if (failure?.class !== "usage_limit") return null;
+  const endedMs = DateTime.toEpochMillis(run.completedAt ?? run.requestedAt);
+  return {
+    resetAt: failure.resetAt && Date.parse(failure.resetAt) > endedMs ? failure.resetAt : null,
+  };
+}
+
+/**
+ * When usage-limit recovery may resume `run`: the provider's reset when it is after the run
+ * ended. A continuation refused with no later reset retries after a backoff, giving up after
+ * the last step; any other limited run without a later reset has nothing to wait for.
+ */
+export function usageLimitRecoveryResetAt(
+  run: OrchestrationV2Run | null,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): string | null {
+  const limit = run === null ? null : laterUsageLimitReset(run, turnItems);
+  if (run === null || limit === null) return null;
+  if (limit.resetAt !== null) return limit.resetAt;
+  let refusals = 0;
+  for (const current of usageLimitContinuationChain(run, runs)) {
+    if (current.usageLimitContinuationOfRunId === undefined) break;
+    const refused = laterUsageLimitReset(current, turnItems);
+    if (refused === null || refused.resetAt !== null) break;
+    refusals += 1;
+  }
+  return refusedContinuationRetryAt(run.completedAt ?? run.requestedAt, refusals);
+}
+
+/** When recovery retries a continuation refused `refusals` times in a row; null once it gives up. */
+export function refusedContinuationRetryAt(endedAt: DateTime.Utc, refusals: number): string | null {
+  const minutes = REFUSED_CONTINUATION_BACKOFF_MINUTES[refusals - 1];
+  return minutes === undefined ? null : DateTime.formatIso(DateTime.add(endedAt, { minutes }));
+}
+
+/**
+ * `run` and the runs its continuation chain retries, as far as the backoff can count, so a
+ * long or cyclic chain costs at most one more step than the backoff has.
+ */
+export function usageLimitContinuationChain(
+  run: OrchestrationV2Run,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const chain = [run];
+  let current: OrchestrationV2Run | undefined = run;
+  while (
+    chain.length <= REFUSED_CONTINUATION_BACKOFF_MINUTES.length &&
+    current.usageLimitContinuationOfRunId !== undefined
+  ) {
+    const sourceRunId: string = current.usageLimitContinuationOfRunId;
+    current = runs.find((candidate) => candidate.id === sourceRunId);
+    if (current === undefined) break;
+    chain.push(current);
+  }
+  return chain;
+}
+
+/**
+ * The reset a usage-limit notice offers for `runId`, which stopped at `stoppedAtMs`: the
+ * provider's reset when it is later. Otherwise a recovery still armed for the run (auto-resume
+ * on, or its snooze still ahead) carries the server's retry time; else the provider's reset.
+ */
+export function usageLimitNoticeResetAt(input: {
+  readonly runId: string | null | undefined;
+  readonly resetAt: string | null | undefined;
+  readonly stoppedAtMs: number;
+  readonly recovery: OrchestrationV2LimitRecovery | null | undefined;
+  readonly snoozedUntilMs: number | null;
+  readonly nowMs: number;
+}): string | null {
+  const { runId, resetAt, stoppedAtMs, recovery, snoozedUntilMs, nowMs } = input;
+  if (resetAt != null && Date.parse(resetAt) > stoppedAtMs) return resetAt;
+  if (runId == null || recovery?.runId !== runId) return resetAt ?? null;
+  const retryMs = Date.parse(recovery.resetAt);
+  const armed =
+    recovery.autoResume ||
+    (recovery.snooze === true && snoozedUntilMs === retryMs && retryMs > nowMs);
+  return armed && retryMs > stoppedAtMs ? recovery.resetAt : (resetAt ?? null);
 }
 
 /** Retains a limited run's outcome when higher-ordinal runs never started. */
