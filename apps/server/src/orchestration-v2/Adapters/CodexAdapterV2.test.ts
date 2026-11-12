@@ -2012,6 +2012,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             },
             { type: "emit_inbound", frame: { id: 5, result: { turnId: nativeTurnId } } },
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update back to priority",
+              frame: {
+                id: 6,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, serviceTier: "priority" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 6, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "second turn/steer",
+              frame: {
+                id: 7,
+                method: "turn/steer",
+                params: {
+                  threadId: nativeThreadId,
+                  expectedTurnId: nativeTurnId,
+                  input: [{ type: "text", text: steeredText }],
+                },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 7, result: { turnId: nativeTurnId } } },
           ],
         }),
       );
@@ -2042,6 +2066,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         modelSelection: {
           ...CODEX_TEST_MODEL_SELECTION,
           options: [{ id: "serviceTier", value: "default" }],
+        },
+      });
+      yield* harness.runtime.steerTurn({
+        threadId: turnInput.threadId,
+        runId: turnInput.runId,
+        providerThread: harness.providerThread,
+        providerTurnId,
+        message: { ...turnInput.message, text: steeredText },
+        modelSelection: {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "serviceTier", value: "priority" }],
         },
       });
     }).pipe(
