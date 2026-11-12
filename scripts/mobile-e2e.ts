@@ -35,12 +35,15 @@ const log = (scope: string, message: string) => NodeProcess.stderr.write(`[${sco
 /** This machine's Tailscale address, which pool devices reach it on. */
 async function tailnetAddress(): Promise<string> {
   // Other VPNs share 100.64.0.0/10, so ask Tailscale instead of matching interface ranges.
-  const stdout = await run("tailscale", ["ip", "-4"]).then(
-    (result) => result.stdout,
-    () => "",
-  );
-  const address = stdout.trim().split("\n")[0];
-  if (address) return address;
+  // The macOS app bundles its CLI without putting a launcher on PATH.
+  for (const cli of ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]) {
+    const stdout = await run(cli, ["ip", "-4"]).then(
+      (result) => result.stdout,
+      () => "",
+    );
+    const address = stdout.trim().split("\n")[0];
+    if (address) return address;
+  }
   throw new Error("No Tailscale IPv4 address: pool devices reach Metro and the fixture over it.");
 }
 
