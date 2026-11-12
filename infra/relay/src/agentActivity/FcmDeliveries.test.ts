@@ -403,6 +403,33 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect("groups an off-card completion with a new on-card failure", () => {
+    const h = harness();
+    const oldFailures = Array.from({ length: 4 }, (_, i) => ({
+      ...state,
+      threadId: ThreadId.make(`failure-${i}`),
+      threadTitle: `Old failure ${i}`,
+      phase: "failed" as const,
+      unread: true,
+      retained: true,
+    }));
+    const newFailure = {
+      ...oldFailures[0]!,
+      threadId: ThreadId.make("new-failure"),
+      threadTitle: "New failure",
+    };
+    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, ...oldFailures]));
+    h.current.state = { ...state, phase: "completed", unread: true, retained: true };
+    h.current.otherStates = [...oldFailures, newFailure];
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent[0]?.data.alert_title).toBe("2 agents finished");
+      expect(h.sent[0]?.data.alert_body).toContain(state.threadTitle);
+      expect(h.sent[0]?.data.alert_body).toContain("New failure");
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it("expires an Android card immediately after its last result is read", () => {
     const read = { ...state, phase: "completed" as const, unread: false, retained: true };
     expect(androidActivityData(aggregateFor([read]), 60_000)).toMatchObject({

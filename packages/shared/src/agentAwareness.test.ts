@@ -252,18 +252,21 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
-  it.each(["starting", "running", "waiting"] as const)("excludes settled %s work", (status) => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({ status, settledOverride: "settled" }),
-      }),
-    ).toBeNull();
-  });
+  it.each(["starting", "running", "waiting"] as const)(
+    "keeps settled %s work visible",
+    (status) => {
+      expect(
+        projectThreadAwarenessV2({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: v2Thread({ status, settledOverride: "settled" }),
+        }),
+      ).toMatchObject({ phase: status === "starting" ? "starting" : "running" });
+    },
+  );
 
   it.each(["user_input", "command"] as const)(
-    "excludes a settled thread with a pending %s request",
+    "keeps a settled terminal thread with a pending %s request",
     (kind) => {
       expect(
         projectThreadAwarenessV2({
@@ -279,11 +282,13 @@ describe("projectThreadAwarenessV2", () => {
             },
           }),
         }),
-      ).toBeNull();
+      ).toMatchObject({
+        phase: kind === "user_input" ? "waiting_for_input" : "waiting_for_approval",
+      });
     },
   );
 
-  it("excludes a settled thread with an awaited monitor", () => {
+  it("keeps settled work held open by an awaited monitor", () => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
@@ -294,7 +299,7 @@ describe("projectThreadAwarenessV2", () => {
           pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
         }),
       }),
-    ).toBeNull();
+    ).toMatchObject({ phase: "running" });
   });
 
   it.each([

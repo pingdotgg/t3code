@@ -374,7 +374,7 @@ function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number)
   );
 }
 
-// Matches the relay's retention of unread results; older rows would be dropped on arrival.
+// Matches the relay's retention of results; older rows have already expired there.
 const RETAINED_RESULT_REPLAY_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
@@ -399,16 +399,14 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         thread,
         now: input.now,
       });
-      if (state === null) return false;
-      if (state.phase !== "completed" && state.phase !== "failed") return true;
-      // A result since startup may replace a row published before a restart or while publishing was off.
-      if (terminalWorkSinceStart(thread, input.startedAt)) return true;
-      // Catch-up runs on every restart and relink, so replay older results only while the phone shows them.
+      if (state !== null && state.phase !== "completed" && state.phase !== "failed") return true;
+      // The relay may still hold a result from before a restart or while publishing was off: re-send
+      // it so read results update and settled or hidden ones (null, a tombstone) clear the row.
       return (
-        state.unread === true &&
         thread.latestRunCompletedAt != null &&
-        input.now - DateTime.toEpochMillis(thread.latestRunCompletedAt) <=
-          RETAINED_RESULT_REPLAY_WINDOW_MS
+        (terminalWorkSinceStart(thread, input.startedAt) ||
+          input.now - DateTime.toEpochMillis(thread.latestRunCompletedAt) <=
+            RETAINED_RESULT_REPLAY_WINDOW_MS)
       );
     })
     .map((thread) => thread.id);

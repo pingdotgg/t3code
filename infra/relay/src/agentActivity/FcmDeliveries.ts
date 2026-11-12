@@ -274,21 +274,26 @@ const make = Effect.gen(function* () {
             !isExpiredAgentActivityState(state, now.epochMilliseconds)
               ? state
               : null;
-          alert =
-            androidAlertForAggregate({
-              previousAggregate,
-              nextAggregate: {
-                ...aggregate,
-                activities: aggregate.activities.filter((row) =>
-                  allowedEnvironments.has(row.environmentId),
-                ),
-              },
-              preferences: preferences.value,
-              nowMs: now.epochMilliseconds,
-            }) ??
-            (hiddenCurrentState
-              ? androidAlertForState(hiddenCurrentState, preferences.value, now.epochMilliseconds)
-              : null);
+          // An off-card result joins the group instead of losing to another thread's alert.
+          const hiddenRow = hiddenCurrentState
+            ? makeAggregateState({
+                activeStates: [hiddenCurrentState],
+                terminalState: null,
+                nowMs: now.epochMilliseconds,
+              })?.activities[0]
+            : undefined;
+          alert = androidAlertForAggregate({
+            previousAggregate,
+            nextAggregate: {
+              ...aggregate,
+              activities: [
+                ...aggregate.activities.filter((row) => allowedEnvironments.has(row.environmentId)),
+                ...(hiddenRow ? [hiddenRow] : []),
+              ],
+            },
+            preferences: preferences.value,
+            nowMs: now.epochMilliseconds,
+          });
         } else if (
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&

@@ -105,12 +105,7 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (
-    !isListedThreadLineage(thread.lineage) ||
-    thread.archivedAt != null ||
-    thread.settledOverride === "settled"
-  )
-    return null;
+  if (!isListedThreadLineage(thread.lineage) || thread.archivedAt != null) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
   if (
     input.now !== undefined &&
@@ -147,6 +142,18 @@ export function projectThreadAwarenessV2(
     return null;
   }
   if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  const runStatus = thread.activityRunStatus ?? thread.status;
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" ||
+      phase === "failed" ||
+      phase === "woke" ||
+      (phase === "running" && runStatus === "completed")) &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
+    return null;
+  }
   const completedAt =
     phase === "completed" || phase === "failed" ? thread.latestRunCompletedAt : null;
   const unread =

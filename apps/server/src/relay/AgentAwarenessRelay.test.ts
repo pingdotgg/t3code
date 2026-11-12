@@ -161,7 +161,7 @@ describe("startup agent activity", () => {
     },
   );
 
-  it("publishes active work, results since startup, and older unread results inside the retention window", () => {
+  it("publishes active work and every result inside the retention window", () => {
     const startedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(NOW));
     const oldCompleted = ThreadId.make("old-completed");
     const newCompleted = ThreadId.make("new-completed");
@@ -205,17 +205,25 @@ describe("startup agent activity", () => {
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
           lastVisitedAt: DateTime.makeUnsafe("2026-09-04T11:00:00.000Z"),
         }),
+        shell({
+          id: ThreadId.make("settled-completed"),
+          status: "completed",
+          settledOverride: "settled",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
+        }),
         shell({ id: ThreadId.make("idle"), status: "idle" }),
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
       ],
     });
-    // Completions never visited count as read; one since startup still replaces a stale row.
+    // Read and settled results still replace a row the relay may hold from before.
     assert.deepStrictEqual(ids, [
       THREAD_ID,
+      oldCompleted,
       newCompleted,
       oldFailed,
       newFailed,
       ThreadId.make("unread-completed"),
+      ThreadId.make("settled-completed"),
     ]);
   });
 });
@@ -1060,7 +1068,7 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("removes settled live work while its monitor is still running", () =>
+  it.effect("keeps settled live work until its awaited monitor finishes", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* relay.publishThread(THREAD_ID);
@@ -1073,15 +1081,15 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
-      assert.equal(publications.length, 2);
-      assert.equal(publications[1]?.state, null);
+      assert.equal(publications.length, 1);
       assert.equal(publications[0]?.state?.phase, "running");
 
       yield* Ref.set(currentShell, { ...held, pendingBackgroundTasks: [] });
       yield* relay.publishThread(THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
-      assert.isTrue(publications.slice(1).every((publication) => publication.state === null));
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state, null);
     }),
   );
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>
