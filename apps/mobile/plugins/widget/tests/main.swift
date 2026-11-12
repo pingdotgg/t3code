@@ -134,6 +134,29 @@ var unknown = local
 unknown.removeValue(forKey: "activeCount")
 assert(props(AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: unknown, now: now)[0])["activeCount"] as? Int == -1)
 
+// Capped relay rows can hide direct work whose environment is still unconfirmed.
+let cappedObservation: [String: Any] = [
+  "activeCount": 6, "workingCount": 1, "attentionCount": 5, "totalCount": 6,
+  "activities": (0..<5).map { _ in row("relay", "waiting_for_approval") },
+  "observedEnvironmentIds": ["relay", "direct"]
+]
+let completedRelay: [String: Any] = [
+  "activeCount": 0, "workingCount": 0, "attentionCount": 0, "totalCount": 5,
+  "activities": (0..<5).map { _ in row("relay", "completed") }
+]
+let cappedTimeline = AgentWidgetState.timeline(aggregate: completedRelay, environmentIds: ["relay"], localObservation: cappedObservation, now: now)
+assert(props(cappedTimeline[0])["activeCount"] as? Int == -1)
+assert(props(cappedTimeline[0])["workingCount"] == nil)
+assert(props(cappedTimeline[0])["attentionCount"] == nil)
+var cappedTerminalObservation = cappedObservation
+cappedTerminalObservation["activeCount"] = 5
+cappedTerminalObservation["workingCount"] = 0
+let cappedTerminalTimeline = AgentWidgetState.timeline(aggregate: completedRelay, environmentIds: ["relay"], localObservation: cappedTerminalObservation, now: now)
+assert(props(cappedTerminalTimeline[0])["activeCount"] as? Int == -1)
+assert(props(cappedTerminalTimeline[0])["totalCount"] == nil)
+let coveredCappedTimeline = AgentWidgetState.timeline(aggregate: completedRelay, environmentIds: ["relay", "direct"], localObservation: cappedObservation, now: now)
+assert(props(coveredCappedTimeline[0])["activeCount"] as? Int == 0)
+
 // Fully relay-covered rows must not invalidate an authoritative relay count.
 let coveredUnknown: [String: Any] = ["activities": [row("relay", "running")]]
 let coveredTimeline = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: coveredUnknown, now: now)
