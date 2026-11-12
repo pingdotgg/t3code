@@ -5,7 +5,6 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
-  orchestrationV2WorktreePending,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -638,30 +637,5 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
-  });
-});
-
-describe("orchestrationV2WorktreePending", () => {
-  const run = (status: string, type: string) => ({
-    status,
-    ...(type === "none" ? {} : { workspacePreparation: { type } }),
-  });
-
-  it("holds a latest failed sandbox run but releases once a newer run supersedes it", () => {
-    expect(orchestrationV2WorktreePending("/w", [run("failed", "sandbox") as never])).toBe(true);
-    expect(
-      orchestrationV2WorktreePending("/w", [
-        run("failed", "sandbox") as never,
-        run("completed", "none") as never,
-      ]),
-    ).toBe(false);
-    // A worktree failure still holds until its path exists, whatever came after.
-    expect(
-      orchestrationV2WorktreePending(null, [
-        run("failed", "worktree") as never,
-        run("completed", "none") as never,
-      ]),
-    ).toBe(true);
-    expect(orchestrationV2WorktreePending("/w", [run("failed", "worktree") as never])).toBe(false);
   });
 });

@@ -64,6 +64,26 @@ export function latestExecutedRun(
   return latest;
 }
 
+/**
+ * Work started now would run in the project checkout, not the worktree the thread asked for. A
+ * failed or interrupted setup leaves the request standing until a worktree exists or later work
+ * has run past it.
+ */
+export function orchestrationV2WorktreePending(
+  worktreePath: string | null,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): boolean {
+  const latest = latestExecutedRun(runs);
+  const unresolved =
+    latest?.status === "preparing" ||
+    latest?.status === "failed" ||
+    latest?.status === "interrupted";
+  // A sandbox run can never resolve to a local workspace, so it holds only
+  // while it is the latest run; a worktree holds until its path exists.
+  if (unresolved && latest?.workspacePreparation?.type === "sandbox") return true;
+  return worktreePath === null && unresolved && latest?.workspacePreparation?.type === "worktree";
+}
+
 /** Held queues can execute out of ordinal order; unfinished runs count as latest. */
 export function runRanAfter(
   run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,

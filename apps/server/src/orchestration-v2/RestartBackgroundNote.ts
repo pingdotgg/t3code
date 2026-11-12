@@ -56,6 +56,7 @@ export function cancelledTurnItemWork(
         kind: item.monitor === true ? "monitor" : "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
         id: item.id,
+        ...(item.completionWake === "always" ? { awaited: true as const } : {}),
       };
     case "dynamic_tool": {
       const monitor =

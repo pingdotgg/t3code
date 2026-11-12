@@ -603,7 +603,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const existing = childrenByItemId.get(item.itemId);
         const childSessionId = item.childSessionId;
         if (existing || !childSessionId) return existing;
-        const childThreadId = idAllocator.derive.threadFromProviderThread({
+        const childThreadId = idAllocator.derive.subagentThread({
           driver: MUSE_PROVIDER,
           providerInstanceId: options.instanceId,
           nativeThreadId: childSessionId,
