@@ -5,7 +5,7 @@ export function observeComposerPromptLayout(
 ): () => void {
   let frame = 0;
   let editor: HTMLElement | null = null;
-  let lineHeight = 0;
+  let lineHeight: number | null = null;
   let actionsWidth = 0;
   let actionsHeight = 0;
   let multiline = false;
@@ -58,6 +58,8 @@ export function observeComposerPromptLayout(
       actionsHeight = entry.contentRect.height;
     }
     if (editor) {
+      // After layout, so the style read is clean.
+      lineHeight ??= Number.parseFloat(getComputedStyle(editor).lineHeight);
       const first = editor.firstElementChild;
       const last = editor.lastElementChild;
       const textHeight =
@@ -75,8 +77,9 @@ export function observeComposerPromptLayout(
     if (editor) observer.unobserve(editor);
     editor = next;
     if (!editor) return true;
-    // Read typography only on mount or a rich/plain editor replacement.
-    lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight);
+    // Read typography once per mount or rich/plain editor replacement, at its first resize
+    // delivery; reading it here, mid-mutation, forces a style recalc.
+    lineHeight = null;
     observer.observe(editor);
     return true;
   };

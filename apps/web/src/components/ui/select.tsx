@@ -214,14 +214,7 @@ function SelectPopup({
   );
 }
 
-function SelectItem({
-  className,
-  children,
-  hideIndicator: _hideIndicator = false,
-  ...props
-}: SelectPrimitive.Item.Props & {
-  hideIndicator?: boolean;
-}) {
+function SelectItem({ className, children, ...props }: SelectPrimitive.Item.Props) {
   return (
     <SelectPrimitive.Item
       className={cn(

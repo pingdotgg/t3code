@@ -316,7 +316,11 @@ import GitActionsControl from "./GitActionsControl";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import { PanelLayoutControls, type PanelLayoutControlsProps } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { ThreadDetailsPanel, type ThreadDetailsPanelHandle } from "./chat/ThreadDetailsPanel";
+import {
+  resolveThreadDetailsVisibility,
+  shouldShowComposerWorkspace,
+} from "./chat/threadDetailsItems";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -665,6 +669,8 @@ export default function ChatView(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const [headerControlsInset, measureHeaderControls] = useHeaderControlsInset();
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
+  const threadDetailsPanelRef = useRef<ThreadDetailsPanelHandle>(null);
+  const detailsVisibility = useClientSettings(resolveThreadDetailsVisibility);
   const [composerStashHost, setComposerStashHost] = useState<HTMLDivElement | null>(null);
   const [composerTrayControlsHost, setComposerTrayControlsHost] = useState<HTMLDivElement | null>(
     null,
@@ -1646,7 +1652,7 @@ export default function ChatView(props: ChatViewProps) {
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadDetailRef);
   const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection);
   // A paged history window cannot identify the first loaded run as the thread start.
-  const threadStartCheckpointReady =
+  const threadStartCheckpointAvailable =
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
 
@@ -1999,6 +2005,18 @@ export default function ChatView(props: ChatViewProps) {
         detailsCardInlineOpen: threadPanelInlineOpen,
       }).detailsCardMode,
   );
+  const workspaceInDetails = !shouldShowComposerWorkspace({
+    isServerThread,
+    embedded,
+    visibility: detailsVisibility,
+  });
+  const openWorkspaceDetailsStable = useStableCallback(() => {
+    threadDetailsPanelRef.current?.openBranch(threadPanelPresentation);
+  });
+  const openStartedWorkspaceStable = useStableCallback(() => {
+    if (workspaceInDetails) openWorkspaceDetailsStable();
+    else branchToolbarRef.current?.openBranchPicker();
+  });
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
       state.threadPanelVisibilityByThreadKey,
@@ -2499,6 +2517,17 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable;
+  const compactUnavailableReason = !compactThreadUnavailable
+    ? null
+    : isWorking
+      ? "Compact when the agent finishes"
+      : pendingApprovals.length > 0 || pendingUserInputs.length > 0
+        ? "Answer the pending request first"
+        : !manualCompactionProviderAvailable
+          ? "This provider cannot compact on request"
+          : !activeThreadHasCompactableConversation
+            ? "Nothing to compact yet"
+            : "Compacting is unavailable right now";
   const resumeCompactionTokens =
     activeContextWindow &&
     resolveIdleCompaction(
@@ -2813,7 +2842,7 @@ export default function ChatView(props: ChatViewProps) {
       document.activeElement?.getAttribute("data-testid") === "composer-editor" &&
       isInSideChatPane(document.activeElement) === embedded,
     draftThreadRoute: routeKind === "draft",
-    turnRunning: phase === "running",
+    turnRunning: phase === "running" || phase === "connecting",
     composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, promptRef.current),
     assistantSelection: hasCitableAssistantSelection(),
     isWeb: !isElectron,
@@ -3015,7 +3044,7 @@ export default function ChatView(props: ChatViewProps) {
       : (timelineMessages.findLast(
           (message) => message.role === "user" && message.runId === failedRunId,
         ) ?? null);
-  const { onSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
+  const { onSend, withdrawQueuedSend, onRetryFailedRun, retryingFailedRunId } = useComposerSend({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3092,6 +3121,7 @@ export default function ChatView(props: ChatViewProps) {
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
   });
+  const withdrawQueuedSendStable = useStableCallback(withdrawQueuedSend);
 
   const onRetryFailedRunStable = useStableCallback(onRetryFailedRun);
   const canRetryFailedRun =
@@ -3103,6 +3133,7 @@ export default function ChatView(props: ChatViewProps) {
   const trayStatusItems = useChatBannerLane({
     environmentId,
     activeProviderStatus,
+    selectedModel: composerSelectedModelSelection?.model ?? activeThread?.modelSelection.model,
     providerStatuses,
     usageLimitSources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
     canSwitchProvider: lockedProvider === null || supportsProviderSwitchingViaHandoff,
@@ -3201,6 +3232,7 @@ export default function ChatView(props: ChatViewProps) {
           })}
           onEditQueuedRun={queuedRunEdit.beginEdit}
           onCancelEdit={queuedRunEdit.cancelEdit}
+          onRemovePending={withdrawQueuedSendStable}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
         />
@@ -3587,7 +3619,7 @@ export default function ChatView(props: ChatViewProps) {
                   }
                   workflowOpening={workflowOpening}
                   supportsConversationRollback={supportsConversationRollback}
-                  threadStartCheckpointReady={threadStartCheckpointReady}
+                  threadStartCheckpointAvailable={threadStartCheckpointAvailable}
                   availableRevertTurnCounts={availableRevertTurnCounts}
                   onRevertToTurnCount={onRevertTimelineTurnStable}
                   onUseArtifactTemplate={insertArtifactTemplateStable}
@@ -3739,6 +3771,9 @@ export default function ChatView(props: ChatViewProps) {
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
+                              onWorkspaceRequest={
+                                isServerThread ? openStartedWorkspaceStable : undefined
+                              }
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
@@ -3853,7 +3888,6 @@ export default function ChatView(props: ChatViewProps) {
                               stashHost={composerStashHost}
                               trayControlsHost={composerTrayControlsHost}
                               onComposerOverlayHeightChange={publishComposerOverlayHeightStable}
-                              permissionsShownInStrip={showComposerContextStrip && !isServerThread}
                               promptRef={promptRef}
                               composerImagesRef={composerImagesRef}
                               composerFilesRef={composerFilesRef}
@@ -3903,6 +3937,9 @@ export default function ChatView(props: ChatViewProps) {
                           {composerMounted && (
                             <div className="pointer-events-auto">
                               <BranchToolbar
+                                onOpenWorkspaceDetails={
+                                  workspaceInDetails ? openWorkspaceDetailsStable : undefined
+                                }
                                 forceNewWorktree={multipleModelSelections !== null}
                                 ref={branchToolbarRef}
                                 environmentId={activeThread.environmentId}
@@ -3987,6 +4024,7 @@ export default function ChatView(props: ChatViewProps) {
                 />
 
                 <ThreadDetailsPanel
+                  ref={threadDetailsPanelRef}
                   anchor={threadPanelPopoverAnchorRef}
                   handle={threadPanelPopoverHandle}
                   forceNewWorktree={multipleModelSelections !== null}
@@ -4050,7 +4088,7 @@ export default function ChatView(props: ChatViewProps) {
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
                   onCompactContext={onComposerCompactContextStable}
-                  compactDisabled={compactDisabled}
+                  compactUnavailableReason={compactUnavailableReason}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
@@ -4072,7 +4110,11 @@ export default function ChatView(props: ChatViewProps) {
         </div>
       </div>
 
-      <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
+      <RevertConfirmHost
+        threadKey={routeThreadKey}
+        checkpoints={serverProjection?.checkpoints}
+        onConfirm={onConfirmRevertStable}
+      />
       {embedded ? null : <LinkPullRequestDialogHost hostThreadRef={routeThreadRef} />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
