@@ -84,3 +84,30 @@ it("shows a tab in an unfocused pane that runs off screen with one click on it",
   await clickHeld(inSecondPane(`[data-layout-pane-tab="${tabs.second.id}"]`));
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
 });
+
+const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
+const joinOffset = (strip: HTMLElement) =>
+  strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx");
+const tabOffset = (strip: HTMLElement, tabId: string) => {
+  const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
+  const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+  return `${Math.round(left + strip.scrollLeft)}px`;
+};
+
+it("keeps a pane's tab strip and moves its joined tab when the pane switches tabs", async () => {
+  using tabs = setup();
+  await using _screen = await renderHost();
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
+  const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
+  useLayoutStore.getState().focusTab(first.id);
+  await vi.waitFor(() =>
+    expect(joinOffset(secondPaneStrip())).toBe(tabOffset(secondPaneStrip(), first.id)),
+  );
+  const strip = secondPaneStrip();
+
+  useLayoutStore.getState().focusTab(tabs.second.id);
+  await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
+  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, tabs.second.id)));
+  expect(secondPaneStrip()).toBe(strip);
+  expect(strip.isConnected).toBe(true);
+});
