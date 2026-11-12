@@ -36,6 +36,25 @@ it.effect.each([
   );
 });
 
+it.effect("reports a signed-out tg session as unauthenticated when reading the viewer", () => {
+  const host = Host.layer({
+    process: {
+      run: () => Effect.succeed(Host.processOutput(JSON.stringify({ authenticated: false }))),
+    },
+  });
+  const client = HttpClient.make(() => Effect.die("No HTTP request is expected"));
+  return Effect.gen(function* () {
+    const provider = yield* Provider.make;
+    const error = yield* provider
+      .getViewer({ cwd: "/repo", host: "tangled.org" })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.reason, "unauthenticated");
+  }).pipe(
+    Effect.provide(Cli.layer.pipe(Layer.provideMerge(host))),
+    Effect.provideService(HttpClient.HttpClient, client),
+  );
+});
+
 it.effect("uses numeric ticket keys for PR numbers without reading the web page", () => {
   const older = {
     rkey: "9",
@@ -58,7 +77,7 @@ it.effect("uses numeric ticket keys for PR numbers without reading the web page"
       run: (input) => {
         if (input.args[1] === "list")
           return Effect.succeed(Host.processOutput(JSON.stringify({ items: [newest, older] })));
-        if (input.args[1] === "view" && input.args[2] === "11")
+        if (input.args[1] === "view" && input.args[2] === "11" && !input.args.includes("--repo"))
           return Effect.succeed(
             Host.processOutput(JSON.stringify({ ...newest, body: "Actual PR description" })),
           );
@@ -72,7 +91,7 @@ it.effect("uses numeric ticket keys for PR numbers without reading the web page"
     const reference = {
       cwd: "/repo",
       host: "tangled.org",
-      repository: "alice.example/repo",
+      repository: "did:plc:repo",
       number: 11,
     };
     const list = yield* provider.listChangeRequests({
@@ -85,9 +104,20 @@ it.effect("uses numeric ticket keys for PR numbers without reading the web page"
     assert.deepStrictEqual(
       list.items.map((pull) => [pull.number, pull.url]),
       [
-        [9, "https://tangled.org/alice.example/repo/pulls/9"],
-        [11, "https://tangled.org/alice.example/repo/pulls/11"],
+        [11, "https://tangled.org/did:plc:repo/pulls/11"],
+        [9, "https://tangled.org/did:plc:repo/pulls/9"],
       ],
+    );
+    const newestOnly = yield* provider.listChangeRequests({
+      ...reference,
+      state: "all",
+      involvement: "all",
+      viewer: "alice.example",
+      limit: 1,
+    });
+    assert.deepStrictEqual(
+      newestOnly.items.map((pull) => pull.number),
+      [11],
     );
     const detail = yield* provider.getChangeRequest(reference);
     assert.strictEqual(detail.body, "Actual PR description");
@@ -179,8 +209,8 @@ it.effect("reads a closed PR's activity and details through its list number and 
     assert.deepStrictEqual(
       list.items.map((pull) => [pull.number, pull.title]),
       [
-        [1, "Still open"],
         [2, "Closed newest PR"],
+        [1, "Still open"],
       ],
     );
     assert.strictEqual(calls.filter((args) => args[1] === "view" && args[2] === "b").length, 2);

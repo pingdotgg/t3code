@@ -428,6 +428,22 @@ describe("appSignInTargetForRemote", () => {
     expect(kindOf("https://knot1.tangled.sh/acme.example/web/pulls/7")).toBe("tangled");
     // A knot the appview does not serve still falls through to the host that claims any domain.
     expect(kindOf("https://forge.example/acme/web/pulls/7")).toBe("forgejo");
+    // A checkout from a knot still owns the appview's links to its pull requests.
+    const tangled = sourceControlClients.get("tangled");
+    const link = tangled.parseChangeRequestUrl(
+      new URL("https://tangled.org/acme.example/web/pulls/7"),
+    )!;
+    const knotCheckout = {
+      canonicalKey: "knot1.tangled.sh/acme.example/web",
+      displayName: "acme.example/web",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://knot1.tangled.sh/acme.example/web",
+      },
+    };
+    expect(tangled.isChangeRequestInRepository(knotCheckout, link)).toBe(true);
+    expect(tangled.canReadChangeRequestOnHost(knotCheckout, link)).toBe(true);
   });
 
   it("offers Tangled no change request actions, because no server provider backs them", () => {

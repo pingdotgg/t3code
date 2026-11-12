@@ -40,6 +40,16 @@ export const TangledPullListSchema = Schema.Struct({
   items: Schema.Array(TangledPullSchema),
 });
 
+/**
+ * A repository address below the host, which Tangled writes in two forms: `handle/repo`, and the
+ * repository's own DID. `tg` prefers the DID whenever the repository record carries one, so a DID
+ * is the shape most real remotes have — and both forms are served by tangled.org and accepted by
+ * git, which is what lets every URL here be derived from the address instead of looked up.
+ */
+export function isTangledRepositoryDid(address: string): boolean {
+  return /^did:[a-z0-9]+:[a-z0-9]+$/iu.test(address.trim());
+}
+
 /** A pull request and its position, counting from one, among every pull request in the repo. */
 export interface NumberedPull {
   readonly pull: TangledPull;
@@ -56,6 +66,9 @@ export function numberPulls(items: ReadonlyArray<TangledPull>): ReadonlyArray<Nu
     .map((pull, at) => ({ pull, index: at + 1 }));
 }
 
+const normalizedTitle = (title: string) => title.replace(/\s+/gu, " ").trim();
+const sameTitle = (a: string, b: string) => normalizedTitle(a) === normalizedTitle(b);
+
 /**
  * The per-repository offset tangled.org's numbering carries beyond the records `tg pr list`
  * returns, learned from the numbers it prints on the repository's own page. Two rows agreeing is
@@ -69,7 +82,7 @@ export function offsetFromRows(
   const matched = rows
     .map((row) => ({
       number: row.number,
-      matches: pulls.filter((entry) => entry.pull.title.trim() === row.title.trim()),
+      matches: pulls.filter((entry) => sameTitle(entry.pull.title, row.title)),
     }))
     .filter((row) => row.matches.length > 0);
   const [first, ...rest] = matched;

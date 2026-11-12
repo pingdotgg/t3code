@@ -20,6 +20,7 @@ import {
 
 import { TangledAuthStatusSchema, TangledCli, type TangledCliError } from "./TangledCli.ts";
 import {
+  isTangledRepositoryDid,
   numberPulls,
   offsetFromRows,
   parsePullPageRows,
@@ -184,7 +185,10 @@ export const make = Effect.gen(function* () {
           changeRequest: toChangeRequest(entry, number, input.repository),
         }));
     }
-    const offset = yield* Cache.get(offsets, input.repository);
+    const offset = yield* Cache.get(offsets, input.repository).pipe(
+      // A failed lookup, such as an expired session, must not outlast the sign-in that fixes it.
+      Effect.tapError(() => Cache.invalidate(offsets, input.repository)),
+    );
     if (offset === null) {
       // A repository may gain enough rows to resolve its numbering on the next attempt.
       yield* Cache.invalidate(offsets, input.repository);
@@ -227,7 +231,10 @@ export const make = Effect.gen(function* () {
     const detail = yield* cli
       .runJson({
         cwd: input.cwd,
-        args: ["pr", "view", entry.pull.rkey, "--repo", input.repository],
+        // `--repo` takes `handle/repo`; a repository DID is only ever resolved from the checkout.
+        args: isTangledRepositoryDid(input.repository)
+          ? ["pr", "view", entry.pull.rkey]
+          : ["pr", "view", entry.pull.rkey, "--repo", input.repository],
         schema: TangledPullViewSchema,
       })
       .pipe(Effect.mapError((cause) => cliFailure(input.operation, cause)));
@@ -254,8 +261,18 @@ export const make = Effect.gen(function* () {
           schema: TangledAuthStatusSchema,
         })
         .pipe(
-          Effect.map((status) => status.handle ?? status.did ?? ""),
           Effect.mapError((cause) => cliFailure("getViewer", cause)),
+          Effect.flatMap((status) =>
+            status.authenticated && status.status !== "expired"
+              ? Effect.succeed(status.handle ?? status.did ?? "")
+              : Effect.fail(
+                  failure(
+                    "getViewer",
+                    "Run `tg auth login` to sign the Tangled CLI in.",
+                    "unauthenticated",
+                  ),
+                ),
+          ),
         ),
 
     listChangeRequests: (input) =>
@@ -280,7 +297,7 @@ export const make = Effect.gen(function* () {
                 item.title.toLowerCase().includes(input.query!.toLowerCase()),
               )
             : matches;
-          const page = searched.slice(0, input.limit);
+          const page = searched.toSorted((a, b) => b.number - a.number).slice(0, input.limit);
           return {
             items: page,
             truncated: searched.length > page.length,

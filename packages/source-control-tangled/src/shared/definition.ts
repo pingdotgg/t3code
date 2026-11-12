@@ -6,6 +6,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  type ChangeRequestLink,
+  type ChangeRequestProjectIdentity,
+  type CommitLink,
   defineSourceControl,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
@@ -53,6 +56,15 @@ function isTangledHost(hostname: string): boolean {
   );
 }
 
+/** A knot checkout and its tangled.org pages are one server, so any Tangled host matches. */
+function comparedProjectHost(
+  identity: ChangeRequestProjectIdentity,
+  link: ChangeRequestLink | CommitLink,
+): string {
+  const host = projectChangeRequestHost(identity, KIND);
+  return isTangledHost(host) && isTangledHost(link.host) ? link.host.toLowerCase() : host;
+}
+
 export const definition = defineSourceControl({
   kind: KIND,
   label: "Tangled",
@@ -95,9 +107,9 @@ export const definition = defineSourceControl({
   isChangeRequestReference: () => false,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
+    isChangeRequestInProjectRepository(comparedProjectHost(identity, link), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+    isChangeRequestOnProjectHost(comparedProjectHost(identity, link), identity, link),
   recognizeRemote: ({ hostname }) =>
     isTangledHost(hostname)
       ? { kind: KIND, name: "Tangled", baseUrl: `https://${hostname}` }

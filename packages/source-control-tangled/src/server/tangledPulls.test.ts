@@ -66,6 +66,9 @@ describe("offsetFromRows", () => {
     // A repository whose page shows one row: nothing `tg` omits can sit after the newest, so
     // that row's offset cannot be shifted. This is what small repositories look like.
     assert.strictEqual(offsetFromRows([{ number: 17, title: "title 6" }], pulls), 11);
+    // The page collapses runs of whitespace in titles; the record keeps them.
+    const spaced = numberPulls([pull("3m6bb2zk52i22", "Fix  spacing")]);
+    assert.strictEqual(offsetFromRows([{ number: 4, title: "Fix spacing" }], spaced), 3);
   });
 
   it("reads nothing when the rows imply different offsets", () => {

@@ -18,6 +18,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 
 import * as TangledClient from "../shared/definition.ts";
 import * as TangledPullRequestProvider from "./TangledPullRequestProvider.ts";
+import { isTangledRepositoryDid } from "./tangledPulls.ts";
 import {
   isTangledCliError,
   TangledAuthStatusSchema,
@@ -80,16 +81,6 @@ function cloneUrls(repository: string): SourceControlRepositoryCloneUrls {
 }
 
 /**
- * A repository address below the host, which Tangled writes in two forms: `handle/repo`, and the
- * repository's own DID. `tg` prefers the DID whenever the repository record carries one, so a DID
- * is the shape most real remotes have — and both forms are served by tangled.org and accepted by
- * git, which is what lets every URL here be derived from the address instead of looked up.
- */
-function isTangledRepositoryDid(address: string): boolean {
-  return /^did:[a-z0-9]+:[a-z0-9]+$/iu.test(address.trim());
-}
-
-/**
  * The path below a remote's host. The shared reader needs at least one `/` between segments,
  * which a repository DID does not have, so a single-segment remote is read here instead.
  */
@@ -117,15 +108,14 @@ function unsupported(operation: string, cwd: string) {
       operation,
       cwd,
       detail:
-        "This build cannot read Tangled pull requests: the tg CLI addresses them by record key, not by the number their pages show.",
+        "Tangled pull requests cannot be looked up or checked out here by number: the tg CLI addresses them by record key.",
     }),
   );
 }
 
 /**
- * `tg pr list --json`. Its items carry an AT Protocol record key, never the number tangled.org
- * gives the same pull request, which is why this build cannot turn one into a `ChangeRequest`.
- * `sourceBranch` is absent on some answers, so it is not required.
+ * The fields of `tg pr list --json` a duplicate check needs. Unlike the full list read, this one
+ * requires no timestamps. `sourceBranch` is absent on some answers, so it is not required.
  */
 const TangledPullListSchema = Schema.Struct({
   items: Schema.Array(
@@ -343,6 +333,7 @@ export const make = Effect.gen(function* () {
         // Filter before limiting: an older PR on another branch must not hide this branch's PR.
         return page.items
           .filter((pull) => pull.headBranch === SourceControlProvider.sourceBranch(input))
+          .toSorted((a, b) => b.number - a.number)
           .slice(0, input.limit)
           .map((pull) => ({
             provider: KIND,
