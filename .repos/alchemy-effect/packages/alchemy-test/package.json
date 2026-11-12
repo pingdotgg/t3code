@@ -1,14 +1,36 @@
 {
-  "name": "alchemy-test",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@alchemy.run/test",
+  "version": "2.0.0-beta.85",
+  "description": "Minimal Effect-native, vitest-compatible test harness and single-process runner for Bun.",
+  "keywords": [
+    "alchemy",
+    "bun",
+    "effect",
+    "test",
+    "test-runner",
+    "vitest"
+  ],
+  "homepage": "https://alchemy.run",
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
   "license": "Apache-2.0",
-  "description": "Minimal Effect-native, vitest-compatible test harness and single-process runner for alchemy",
-  "type": "module",
-  "sideEffects": false,
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "packages/alchemy-test"
+  },
   "bin": {
     "alchemy-test": "./bin/alchemy-test.ts"
   },
+  "files": [
+    "bin",
+    "lib",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
@@ -24,18 +46,64 @@
       "types": "./lib/*.d.ts",
       "bun": "./src/*.ts",
       "import": "./src/*.ts"
-    }
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "access": "public"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "test:vitest": "vitest run --config vitest/vitest.config.ts"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@opentui/core": "catalog:",
-    "effect": "catalog:"
+    "@effect/platform-bun": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@opentui/core": "catalog:",
     "@types/bun": "catalog:",
-    "typescript": "catalog:"
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/vitest": "catalog:",
+    "@opentui/core": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@effect/vitest": {
+      "optional": true
+    },
+    "@opentui/core": {
+      "optional": true
+    },
+    "alchemy": {
+      "optional": true
+    },
+    "vitest": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "bun": ">=1.3"
   }
 }

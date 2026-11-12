@@ -1,0 +1,244 @@
+---
+title: Testing an Api
+description: Test what each client may do and see, in process, over HTTP, and against a real deployment.
+---
+
+Stories check your model. To check what a client can do and see through an Api, sessions and all, call the Api with a real client.
+
+## Sign sessions in tests
+
+```typescript
+// packages/server/test/session.ts
+import type { Actor } from "@bank/domain/Actor";
+import { sessionClient } from "@bank/domain/Session.middleware";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import { SessionKey, signSession } from "../src/Session.ts";
+
+/** A fixed key in place of the deployed stage's random one. */
+export const SessionKeyTest = Layer.succeed(
+  SessionKey,
+  Effect.succeed(Redacted.make("a-test-session-key-a-test-session-key")),
+);
+
+/** Client middleware that sends a session signed for `actor`. */
+export const signedInAs = (actor: Actor) =>
+  Layer.unwrap(Effect.map(signSession(actor), sessionClient));
+```
+
+The bank only accepts sessions it signed. Tests sign their own with a fixed key, so `signedInAs` gives a client any actor without going through sign-in.
+
+## Test in process
+
+`clientInProcess` calls the Api in the same process, through its real middleware. Sign each client in with `signedInAs`, and check every outcome a caller can get.
+
+```typescript
+// packages/server/test/access.test.ts
+import { expect, it } from "@effect/vitest";
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import { AccountId } from "@bank/domain/Account/Account.id";
+import { Bank, BankHandlers } from "@bank/domain/Bank.model";
+import { MemoryLedgerStore } from "@bank/domain/Ledger/LedgerStore";
+import { CustomerId } from "@bank/domain/Customer/Customer.id";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+import { SiftFraudCheck } from "../src/Fraud/SiftFraudCheck.ts";
+import { MfaChallengeLive } from "../src/MfaChallenge.ts";
+import { SessionLive } from "../src/Session.ts";
+import { agent, customer } from "@bank/domain/Actor";
+import { sessionClient } from "@bank/domain/Session.middleware";
+import { StripePayments } from "../src/Settlement/StripePayments.ts";
+import { SupportApi } from "@bank/domain/SupportApi.api";
+import { register } from "./flows.ts";
+import { SessionKeyTest, signedInAs } from "./session.ts";
+
+const World = Layer.mergeAll(SessionLive, MfaChallengeLive).pipe(
+  Layer.provideMerge(Bank.layer(BankHandlers)),
+  Layer.provide(Layer.mergeAll(Domain.InMemory, SiftFraudCheck, StripePayments, MemoryLedgerStore)),
+  Layer.provideMerge(SessionKeyTest),
+);
+
+const asCustomer = (id: string) =>
+  CustomerApi.clientInProcess.pipe(Effect.provide(signedInAs(customer(id))));
+const asAgent = (id: string) =>
+  SupportApi.clientInProcess.pipe(Effect.provide(signedInAs(agent(id))));
+
+// Each test gets a fresh bank.
+const inBank = <A, E>(effect: Effect.Effect<A, E, Scope.Scope | Layer.Success<typeof World>>) =>
+  effect.pipe(Effect.scoped, Effect.provide(World));
+
+it.live("only the owner, or an agent, reads an account", () =>
+  inBank(
+    Effect.gen(function* () {
+      const sam = yield* asCustomer("c-1");
+      const alex = yield* asCustomer("c-2");
+      const support = yield* asAgent("support-7");
+      const accountId = yield* register(sam, "c-1", "sam");
+
+      expect(yield* sam.AccountSummary.get(accountId)).toMatchObject({ balance: 0 });
+      expect(yield* support.AccountSummary.get(accountId)).toMatchObject({ balance: 0 });
+      expect((yield* alex.AccountSummary.get(accountId).pipe(Effect.flip))._tag).toBe("NotOwner");
+      expect(
+        (yield* alex.CustomerDashboard.get(CustomerId.make("c-1")).pipe(Effect.flip))._tag,
+      ).toBe("Forbidden");
+    }),
+  ),
+);
+
+it.live("a request without a session is unauthorized", () =>
+  inBank(
+    Effect.gen(function* () {
+      const nobody = yield* CustomerApi.clientInProcess.pipe(Effect.provide(sessionClient("nobody")));
+      const refused = yield* nobody.AccountSummary.get(AccountId.make("c-1-main")).pipe(Effect.flip);
+      expect(refused._tag).toBe("Unauthorized");
+    }),
+  ),
+);
+
+it.live("a watch ends with NotOwner when the account changes hands", () =>
+  inBank(
+    Effect.gen(function* () {
+      const sam = yield* asCustomer("c-1");
+      const alex = yield* asCustomer("c-2");
+      const support = yield* asAgent("support-7");
+      const accountId = yield* register(sam, "c-1", "sam");
+      yield* register(alex, "c-2", "alex");
+
+      const watched = yield* sam.AccountSummary.watch(accountId).pipe(
+        Stream.result,
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.sleep("50 millis");
+      yield* support.ChangeOwner(accountId, { customerId: CustomerId.make("c-2") });
+
+      const [first, second] = yield* Fiber.join(watched);
+      expect(first).toMatchObject({ _tag: "Success", success: { state: { balance: 0 } } });
+      expect(second).toMatchObject({ _tag: "Failure", failure: { _tag: "NotOwner" } });
+    }),
+  ),
+);
+```
+
+`register` is a helper from the example: it registers a customer, then watches their dashboard until the main account opens.
+
+## Test over HTTP
+
+Serve the Api on a real HTTP server, and call it with the same client a script would use.
+
+```typescript
+// packages/server/test/HttpTransport.test.ts
+import { Bank, BankHandlers } from "@bank/domain/Bank.model";
+import { CustomerId } from "@bank/domain/Customer/Customer.id";
+import { CustomerDashboard } from "@bank/domain/Customer/CustomerDashboard.view";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+import { MemoryLedgerStore } from "@bank/domain/Ledger/LedgerStore";
+import { sessionClient } from "@bank/domain/Session.middleware";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { expect, it } from "@effect/vitest";
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import * as HttpServer from "effect/http/HttpServer";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import { SiftFraudCheck } from "../src/Fraud/SiftFraudCheck.ts";
+import { MfaChallengeLive } from "../src/MfaChallenge.ts";
+import { SessionLive } from "../src/Session.ts";
+import { StripePayments } from "../src/Settlement/StripePayments.ts";
+import { register } from "./flows.ts";
+
+// The Worker's HTTP surface (`yield* CustomerApi`, its `fetch`) on a real HTTP server, over the in-memory platform.
+const Ports = Layer.mergeAll(SiftFraudCheck, StripePayments, MemoryLedgerStore);
+const World = Layer.mergeAll(SessionLive, MfaChallengeLive).pipe(
+  Layer.provideMerge(
+    Bank.layer(BankHandlers).pipe(Layer.provide(Layer.mergeAll(Ports, Domain.InMemory))),
+  ),
+  Layer.provideMerge(SessionKeyTest),
+);
+
+// A test server on a random port, plus an HttpClient pointed at it.
+const Served = Layer.unwrap(Effect.map(CustomerApi, (api) => HttpServer.serve()(api.fetch))).pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provide(World),
+);
+
+// The test server serves the Api at its root; its HttpClient already targets the server.
+const Client = Layer.mergeAll(Domain.protocolHttp(""), signedInAs(customer("c-1"))).pipe(
+  Layer.provide(SessionKeyTest),
+);
+
+it.live("the CustomerApi round-trips over HTTP, including a streamed watch", () =>
+  Effect.gen(function* () {
+    const sam = yield* CustomerApi.client;
+    const accountId = yield* register(sam, "c-1", "sam");
+    yield* sam.DepositMoney(accountId, { amount: 70 });
+    const dashboard = yield* sam.CustomerDashboard.watch(CustomerId.make("c-1")).pipe(
+      Stream.map(({ state }) => state),
+      Stream.filter((d) => d !== null && CustomerDashboard.computed.totalBalance(d) === 70),
+      Stream.runHead,
+    );
+    expect(accountId as string).toBe("c-1-main");
+    expect(Option.getOrThrow(dashboard)).toMatchObject({ name: "sam" });
+  }).pipe(Effect.provide(Client.pipe(Layer.provideMerge(Served))), Effect.scoped),
+);
+```
+
+## Test a deployment
+
+The example's integration test deploys the whole bank with `@alchemy.run/test/Bun` and drives it over the network. A client that isn't a browser can set headers on its WebSockets, so it sends `Authorization` on each live read, as it does on every call.
+
+```typescript
+// packages/domain/test/liveClient.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Socket from "effect/socket/Socket";
+import { CustomerApi } from "../src/CustomerApi.api.ts";
+import { sessionClient } from "../src/Session.middleware.ts";
+
+/** Sign a customer in through the bank's `/api/session` route; returns the signed session token. */
+const signIn = Effect.fn(function* (url: string, customerId: string) {
+  const response = yield* HttpClient.execute(
+    HttpClientRequest.post(`${url}/api/session`).pipe(
+      HttpClientRequest.bodyJsonUnsafe({ customerId }),
+    ),
+  ).pipe(Effect.provide(FetchHttpClient.layer));
+  return ((yield* response.json) as { readonly token: string }).token;
+});
+
+export const customerClient = Effect.fn(function* (url: string, customerId: string) {
+  const token = yield* signIn(url, customerId);
+  // Bun's WebSocket accepts headers; a browser sends its session cookie instead.
+  const webSockets = Layer.succeed(
+    Socket.WebSocketConstructor,
+    (socketUrl, protocols) =>
+      new WebSocket(socketUrl, {
+        protocols,
+        headers: { authorization: `Bearer ${token}` },
+      } as unknown as string[]),
+  );
+  return yield* CustomerApi.client.pipe(
+    Effect.provide(
+      Layer.mergeAll(Domain.protocolWebSocket(`${url}/api`), sessionClient(token)).pipe(
+        Layer.provide(Layer.mergeAll(FetchHttpClient.layer, webSockets)),
+      ),
+    ),
+  );
+});
+```
+
+The whole test is in [`test/integ.test.ts`](https://github.com/alchemy-run/alchemy/blob/main/examples/cloudflare-domain/test/integ.test.ts).
+
+:::note
+Check the model itself with [stories](/domain/testing-models). Sessions and middleware are covered in [Sessions and middleware](/domain/sessions).
+:::
