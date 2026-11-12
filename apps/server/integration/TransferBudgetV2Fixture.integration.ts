@@ -1,9 +1,12 @@
 import {
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   EventId,
   MessageId,
   NodeId,
+  PlanId,
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
@@ -437,6 +440,398 @@ export function longTurnThreadBatches(
     turn(1, 4),
     turn(2, 4),
     turn(3, LONG_TURN_WORK_ROWS),
+  ];
+}
+
+export const STALE_TODO_THREAD_ID = ThreadId.make("transfer-budget-stale-todo-lists");
+export const STALE_TODO_SETTLED_RUNS = 40;
+export const STALE_TODO_SUBAGENTS_PER_RUN = 2;
+export const STALE_TODO_LIVE_ROWS = 600;
+const STALE_TODO_HANDOFF_HISTORY_BYTES = 256 * 1024;
+const staleTodoCheckpointId = (index: number) =>
+  CheckpointId.make(`checkpoint:thread:${STALE_TODO_THREAD_ID}:ordinal:${index + 1}`);
+/** The checkpoint clients read the last finished turn's diff from. */
+export const STALE_TODO_LAST_FINISHED_CHECKPOINT_ID = staleTodoCheckpointId(
+  STALE_TODO_SETTLED_RUNS - 1,
+);
+const staleTodoRunId = (index: number) =>
+  RunId.make(`run:thread:${STALE_TODO_THREAD_ID}:ordinal:${index + 1}`);
+export const STALE_TODO_LIVE_RUN_ID = staleTodoRunId(STALE_TODO_SETTLED_RUNS);
+
+/**
+ * A long thread: many finished runs, then one run still at work with more rows than a window
+ * holds. Every run leaves its todo list node `running` and its plan `active`, as adapters do,
+ * and has subagents, a provider turn and (once finished) a checkpoint. One batch per run.
+ */
+export function staleTodoListThreadBatches(
+  provider: ProviderDriverKind,
+): ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>> {
+  const threadId = STALE_TODO_THREAD_ID;
+  const providerInstanceId = ProviderInstanceId.make(provider);
+  const modelSelection = {
+    instanceId: providerInstanceId,
+    model: provider === "codex" ? "gpt-5.4" : "claude-sonnet-4-6",
+  };
+  const providerThreadId = ProviderThreadId.make(
+    `provider-thread:provider:${provider}:native-thread:stale-todo-lists`,
+  );
+  const scopeId = CheckpointScopeId.make(`checkpoint-scope:thread:${threadId}:root`);
+  let ordinal = 0;
+  const text = (run: number, row: number, targetBytes: number) =>
+    diagnosticOutput({ provider, turnIndex: 200 + run, toolIndex: row, targetBytes });
+
+  const turn = (index: number, live: boolean): OrchestrationV2DomainEvent[] => {
+    const now = DateTime.makeUnsafe(Date.UTC(2026, 5, 4, 0, index));
+    const runId = staleTodoRunId(index);
+    const runKey = encodeURIComponent(runId);
+    const rootNodeId = NodeId.make(`node:run:${runKey}:root`);
+    const todoNodeId = NodeId.make(`node:run:${runKey}:todo-list`);
+    const planId = PlanId.make(`plan:run:${runKey}:todo-list`);
+    const providerTurnId = ProviderTurnId.make(
+      `provider-turn:provider:${provider}:native-turn:${encodeURIComponent(`turn:run-attempt:${runKey}:attempt:1`)}`,
+    );
+    const status = live ? ("running" as const) : ("completed" as const);
+    const completedAt = live ? null : now;
+    const common = {
+      threadId,
+      runId,
+      nodeId: rootNodeId,
+      driver: provider,
+      providerInstanceId,
+      occurredAt: now,
+    };
+    const messageId = (role: "user" | "assistant") =>
+      MessageId.make(`message:provider:${provider}:native-item:msg_01StaleTodo${role}${index}`);
+    const run = {
+      id: runId,
+      threadId,
+      ordinal: index + 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: messageId("user"),
+      rootNodeId,
+      activeAttemptId: null,
+      status: "running" as const,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const base = (row: string, title: string | null, nodeId: NodeId = rootNodeId) => {
+      ordinal += 1;
+      const nativeId = `toolu_01StaleTodo${index}x${row}`;
+      return {
+        id: TurnItemId.make(`turn-item:provider:${provider}:native-item:${nativeId}`),
+        threadId,
+        runId,
+        nodeId,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: { driver: provider, nativeId, strength: "strong" as const },
+        parentItemId: null,
+        ordinal,
+        status: "completed" as const,
+        title,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+    };
+    const events: OrchestrationV2DomainEvent[] = [
+      { ...common, id: EventId.make(`stale-todo-run-${index}`), type: "run.created", payload: run },
+    ];
+    const node = (
+      id: NodeId,
+      kind: "root_turn" | "todo_list" | "subagent",
+      nodeStatus: "running" | "completed",
+    ) =>
+      events.push({
+        ...common,
+        id: EventId.make(`stale-todo-node-${id}`),
+        type: "node.updated",
+        nodeId: id,
+        payload: {
+          id,
+          threadId,
+          runId,
+          parentNodeId: kind === "root_turn" ? null : rootNodeId,
+          rootNodeId,
+          kind,
+          status: nodeStatus,
+          countsForRun: kind === "root_turn",
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: kind === "root_turn" ? scopeId : null,
+          startedAt: now,
+          completedAt: nodeStatus === "running" ? null : now,
+        },
+      });
+    const message = (role: "user" | "assistant", messageText: string) => {
+      const id = messageId(role);
+      const createdBy = role === "user" ? ("user" as const) : ("agent" as const);
+      events.push(
+        {
+          ...common,
+          id: EventId.make(`stale-todo-message-${index}-${role}`),
+          type: "message.updated",
+          payload: {
+            id,
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            role,
+            text: messageText,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+            createdBy,
+            creationSource: "web",
+          },
+        },
+        {
+          ...common,
+          id: EventId.make(`stale-todo-message-item-${index}-${role}`),
+          type: "turn-item.updated",
+          payload:
+            role === "user"
+              ? {
+                  ...base(role, null),
+                  type: "user_message",
+                  createdBy,
+                  creationSource: "web",
+                  messageId: id,
+                  inputIntent: "turn_start",
+                  text: messageText,
+                  attachments: [],
+                }
+              : {
+                  ...base(role, null),
+                  type: "assistant_message",
+                  messageId: id,
+                  text: messageText,
+                  streaming: false,
+                },
+        },
+      );
+    };
+
+    if (index === 0)
+      events.push({
+        ...common,
+        id: EventId.make("stale-todo-scope"),
+        type: "checkpoint-scope.created",
+        payload: {
+          id: scopeId,
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          parentScopeId: null,
+          providerThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/workspace/transfer-budget",
+          createdAt: now,
+        },
+      });
+    node(rootNodeId, "root_turn", status);
+    events.push({
+      ...common,
+      id: EventId.make(`stale-todo-provider-turn-${index}`),
+      type: "provider-turn.updated",
+      payload: {
+        id: providerTurnId,
+        providerThreadId,
+        nodeId: rootNodeId,
+        runAttemptId: null,
+        nativeTurnRef: null,
+        ordinal: index + 1,
+        status,
+        startedAt: now,
+        completedAt,
+      },
+    });
+    message("user", `Continue the migration, step ${index}.`);
+
+    // The list is done but never closed: the node stays running and the plan stays active.
+    const steps = Array.from({ length: 6 }, (_, step) => ({
+      id: `step-${step + 1}`,
+      text: `Migrate module group ${index}.${step + 1} and run its checks`,
+      status: live && step > 2 ? ("pending" as const) : ("completed" as const),
+    }));
+    node(todoNodeId, "todo_list", "running");
+    events.push(
+      {
+        ...common,
+        id: EventId.make(`stale-todo-plan-${index}`),
+        type: "plan.updated",
+        nodeId: todoNodeId,
+        payload: {
+          id: planId,
+          threadId,
+          runId,
+          nodeId: todoNodeId,
+          status: "active",
+          kind: "todo_list",
+          steps,
+        },
+      },
+      {
+        ...common,
+        id: EventId.make(`stale-todo-plan-item-${index}`),
+        type: "turn-item.updated",
+        nodeId: todoNodeId,
+        payload: { ...base("todo", "Todo list", todoNodeId), type: "todo_list", planId, steps },
+      },
+    );
+
+    for (let subagent = 0; subagent < STALE_TODO_SUBAGENTS_PER_RUN; subagent++) {
+      const subagentId = NodeId.make(`node:run:${runKey}:subagent:${subagent + 1}`);
+      node(subagentId, "subagent", "completed");
+      events.push({
+        ...common,
+        id: EventId.make(`stale-todo-subagent-${index}-${subagent}`),
+        type: "subagent.updated",
+        nodeId: subagentId,
+        payload: {
+          id: subagentId,
+          threadId,
+          runId,
+          parentNodeId: rootNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: provider,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: text(index, subagent * 2, 2_048),
+          title: `Review module group ${index}.${subagent + 1}`,
+          model: modelSelection.model,
+          status: "completed",
+          result: text(index, subagent * 2 + 1, 4_096),
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+
+    const workRows = live ? STALE_TODO_LIVE_ROWS : 6;
+    for (let row = 0; row < workRows; row++)
+      events.push({
+        ...common,
+        id: EventId.make(`stale-todo-work-${index}-${row}`),
+        type: "turn-item.updated",
+        payload:
+          row % 10 === 0
+            ? {
+                ...base(String(row), "Reasoning"),
+                type: "reasoning",
+                text: text(index, 10 + row, 1_024),
+                streaming: false,
+              }
+            : {
+                ...base(String(row), `Run check ${row}`),
+                type: "command_execution",
+                input: `vp test run src/migration/module-${index}-${row}.test.ts`,
+                output: text(index, 10 + row, 2_048),
+                exitCode: 0,
+              },
+      });
+    if (live) {
+      // A ready handoff rides along with every window. Its history and delivery are for the
+      // provider turn start and must not reach a client.
+      const earlierItemId = TurnItemId.make(`turn-item:stale-todo:${index}:handoff-source`);
+      events.push({
+        ...common,
+        id: EventId.make(`stale-todo-handoff-${index}`),
+        type: "context-handoff.updated",
+        payload: {
+          id: ContextHandoffId.make(`handoff:run:${runKey}`),
+          transferId: null,
+          threadId,
+          targetRunId: runId,
+          fromProviderThreadIds: [providerThreadId],
+          toProviderThreadId: providerThreadId,
+          coveredRunOrdinals: { from: 1, to: index },
+          strategy: "full_thread_summary",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: text(index, 6, 1_024),
+          history: {
+            messages: [
+              {
+                role: "user",
+                text: text(index, 7, STALE_TODO_HANDOFF_HISTORY_BYTES),
+                threadId,
+                runId: null,
+                itemId: earlierItemId,
+                providerThreadId,
+                status: "completed",
+                kind: "user_message",
+              },
+            ],
+            coverage: "full",
+            omittedItems: 0,
+          },
+          delivery: { nativeThreadId: "native", status: "injected", itemIds: [earlierItemId] },
+          createdByProviderInstanceId: providerInstanceId,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      return events;
+    }
+
+    message("assistant", text(index, 5, 1_200));
+    const checkpointId = staleTodoCheckpointId(index);
+    events.push(
+      {
+        ...common,
+        id: EventId.make(`stale-todo-checkpoint-${index}`),
+        type: "checkpoint.captured",
+        payload: {
+          id: checkpointId,
+          threadId,
+          scopeId,
+          runId,
+          nodeId: rootNodeId,
+          parentCheckpointId: index === 0 ? null : staleTodoCheckpointId(index - 1),
+          ordinalWithinScope: index + 1,
+          appRunOrdinal: index + 1,
+          ref: CheckpointRef.make(
+            `refs/t3/orchestration-v2/checkpoints/stale-todo-lists/ordinal/${index + 1}`,
+          ),
+          status: "ready",
+          files: Array.from({ length: 12 }, (_, file) => ({
+            path: `src/migration/module-${index}-${file}.ts`,
+            kind: "modified",
+            additions: file + 1,
+            deletions: file,
+          })),
+          capturedAt: now,
+        },
+      },
+      {
+        ...common,
+        id: EventId.make(`stale-todo-complete-${index}`),
+        type: "run.updated",
+        payload: { ...run, status: "completed", completedAt: now, checkpointId },
+      },
+    );
+    return events;
+  };
+
+  return [
+    [threadCreated(provider, threadId)],
+    ...Array.from({ length: STALE_TODO_SETTLED_RUNS }, (_, index) => turn(index, false)),
+    turn(STALE_TODO_SETTLED_RUNS, true),
   ];
 }
 
