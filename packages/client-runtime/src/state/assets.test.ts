@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   type AssetCreateUrlResult,
   type AssetResource,
+  AssetWorkspaceAssetNotFoundError,
   EnvironmentId,
   ThreadId,
   WS_METHODS,
@@ -23,6 +24,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { resolveMediaSource } from "../mediaSource.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import {
   ASSET_URL_MAX_IN_FLIGHT,
@@ -232,6 +234,106 @@ describe("asset URL requests", () => {
           yield* Queue.take(harness.started);
         }
         expect(harness.maxInFlight(remote)).toBe(ASSET_URL_MAX_IN_FLIGHT);
+      }),
+    ),
+  );
+});
+
+describe("desktop-local media fallback", () => {
+  const remote = EnvironmentId.make("media-remote");
+  const local = EnvironmentId.make("media-local");
+  const threadId = ThreadId.make("remote-thread");
+
+  // The remote is missing every file; the desktop has one at every absolute path.
+  const makeFallback = Effect.fn("TestAssetUrl.makeFallback")(function* () {
+    const calls: Array<EnvironmentId> = [];
+    const supervisor = (environmentId: EnvironmentId) =>
+      Effect.gen(function* () {
+        const session = {
+          client: {
+            [WS_METHODS.assetsCreateUrl]: ({ resource }: { resource: AssetResource }) =>
+              Effect.suspend(() => {
+                calls.push(environmentId);
+                return environmentId === remote
+                  ? Effect.fail(new AssetWorkspaceAssetNotFoundError({ resource }))
+                  : Effect.succeed({ relativeUrl: "/api/assets/t/local.png", expiresAt: 4e12 });
+              }),
+          },
+        } as unknown as RpcSession.RpcSession;
+        return EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: new PrimaryConnectionTarget({
+            environmentId,
+            label: environmentId,
+            httpBaseUrl: `https://${environmentId}.test`,
+            wsBaseUrl: `wss://${environmentId}.test`,
+          }),
+          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+            ...AVAILABLE_CONNECTION_STATE,
+            desired: true,
+            network: "online",
+            phase: "connected",
+            attempt: 1,
+            generation: 1,
+          }),
+          session: yield* SubscriptionRef.make(Option.some(session)),
+          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      });
+    const supervisors = new Map([
+      [remote, yield* supervisor(remote)],
+      [local, yield* supervisor(local)],
+    ]);
+    type Registry = EnvironmentRegistry.EnvironmentRegistry["Service"];
+    const run: Registry["run"] = (environmentId, effect) =>
+      Effect.provideService(
+        effect,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisors.get(environmentId)!,
+      );
+    const followStream: Registry["followStream"] = (environmentId, stream) =>
+      Stream.provideService(
+        stream,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisors.get(environmentId)!,
+      );
+    const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+      run,
+      followStream,
+    } as unknown as Registry);
+    const registry = AtomRegistry.make();
+    yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+    const atoms = createAssetEnvironmentAtoms(
+      Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry)),
+      Atom.make({ environmentId: local, httpBaseUrl: "https://media-local.test" }),
+    );
+    const load = (source: string) => {
+      const media = resolveMediaSource(source, { threadId, workspaceRoot: "/tmp/repo" });
+      if (media?.access !== "environment") throw new Error(`${source} is not host media`);
+      calls.length = 0;
+      return AtomRegistry.getResult(
+        registry,
+        atoms.createUrl({ environmentId: remote, input: { resource: media.resource } }),
+      ).pipe(
+        Effect.result,
+        Effect.map((result) => ({ loaded: result._tag === "Success", calls: [...calls] })),
+      );
+    };
+    return { load };
+  });
+
+  it.effect("keeps a relative Markdown image on the thread's environment", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { load } = yield* makeFallback();
+        expect(yield* load("docs/report.png")).toEqual({ loaded: false, calls: [remote] });
+        // The same resolved path written absolute still falls back, and shares no cached result.
+        expect(yield* load("/tmp/repo/docs/report.png")).toEqual({
+          loaded: true,
+          calls: [remote, local],
+        });
       }),
     ),
   );
