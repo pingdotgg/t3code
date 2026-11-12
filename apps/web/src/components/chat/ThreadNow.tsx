@@ -24,7 +24,7 @@ const lineClassName = cn(
   "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",
 );
 
-/** One line of thread state at the end of the timeline: icon, title, detail, then actions. */
+/** One line of thread state: icon, title, detail, then actions. */
 export function ThreadNowLine({
   item,
   announce = false,
