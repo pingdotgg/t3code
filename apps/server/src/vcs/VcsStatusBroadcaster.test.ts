@@ -1365,13 +1365,10 @@ describe("VcsStatusBroadcaster", () => {
 
   it.effect("a checkout read that fails while index.lock is held retries until it succeeds", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const gitDir = yield* fs.makeTempDirectoryScoped({ prefix: "vcs-head-watch-" });
-      const headPath = path.join(gitDir, "HEAD");
-      yield* fs.writeFileString(headPath, "ref: refs/heads/main\n");
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const headPath = "/repo/.git/HEAD";
       const failed = yield* Deferred.make<void>();
-      const state = {
+      const state: Parameters<typeof layerTestFor>[0] = {
         currentLocalStatus: { ...baseLocalStatus, isDefaultRef: true, refName: "main" },
         currentRemoteStatus: null,
         localStatusCalls: 0,
@@ -1379,6 +1376,12 @@ describe("VcsStatusBroadcaster", () => {
         localInvalidationCalls: 0,
         remoteInvalidationCalls: 0,
         headPath,
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: () => Effect.succeed(true),
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(Stream.onStart(Effect.sync(() => options?.onReady?.()))),
+        }),
         failLocalStatus: false,
         onLocalStatusFailure: Deferred.succeed(failed, undefined).pipe(Effect.asVoid),
       };
@@ -1402,9 +1405,7 @@ describe("VcsStatusBroadcaster", () => {
         // A terminal commit holds index.lock across the checkout, so the HEAD event's read fails.
         state.failLocalStatus = true;
         state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName: "repro" };
-        const lockPath = path.join(gitDir, "HEAD.lock");
-        yield* fs.writeFileString(lockPath, "ref: refs/heads/repro\n");
-        yield* fs.rename(lockPath, headPath);
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
         yield* Deferred.await(failed);
         const failedCalls = state.localStatusCalls;
 
@@ -1414,7 +1415,7 @@ describe("VcsStatusBroadcaster", () => {
         yield* Deferred.await(checkedOut);
         assert.strictEqual(state.localStatusCalls, failedCalls + 1);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("subscribers share one HEAD watch that ends with the last of them", () =>
