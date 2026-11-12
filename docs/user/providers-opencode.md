@@ -75,5 +75,9 @@ refreshes or text-generation work, then refresh again to reload the files. Repea
 refreshes keep the helper alive. An external server may need its own reload or
 restart before T3 Code can see configuration changes.
 
+Models defined in a project's own `opencode.json` appear only in that project's
+model picker, after T3 Code reads the project's catalog the first time the picker
+opens there.
+
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.

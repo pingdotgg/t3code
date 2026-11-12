@@ -66,6 +66,14 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
   },
 });
+const bunOutdatedTable = (row: string) => [
+  "|-------------------------------------------------------|",
+  "| Package               | Current | Update | Latest   |",
+  "|-----------------------|---------|--------|----------|",
+  row,
+  "|-------------------------------------------------------|",
+  "Note: The * indicates that version isn't true latest due to minimum release age",
+];
 const miseToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("packageTool"),
   npmPackageName: "@example/package-tool",
@@ -1016,6 +1024,63 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      name: "a home-manager link in the native location",
+      definition: claudeUpdate,
+      resolved: "/home/me/.local/bin/claude",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-claude-code-with-bun/bin/claude",
+    },
+    {
+      name: "another provider's profile link",
+      definition: otherProviderUpdate,
+      resolved: "/etc/profiles/per-user/me/bin/native-package-tool",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-native-package-tool-1.0.0/bin/native-package-tool",
+    },
+  ] as const)("keeps a Nix store install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ ...fixture, platform: "linux" });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect.skipIf(windowsHost)("upgrades a mise tool through a shim of a Nix-installed mise", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-nix-mise-shim");
+      const mise = miseFixture(tempDir, { misePresent: false });
+      const nixMise = "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-mise-2026.1.0/bin/mise";
+      const spawned: Array<ReadonlyArray<string>> = [];
+
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("packageTool"),
+          npmPackageName: "@example/package-tool",
+          mise: { tool: "package-tool" },
+          nativeUpdate: null,
+        },
+        {
+          binaryPath: "package-tool",
+          resolvedCommandPath: NodePath.join(tempDir, "mise", "shims", "package-tool"),
+          realCommandPath: nixMise,
+          env: { PATH: "" },
+          platform: "linux",
+        },
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, spawned),
+        ),
+      );
+
+      expect(capabilities.update).toMatchObject({
+        executable: nixMise,
+        args: ["upgrade", "package-tool"],
+      });
+    }),
+  );
+
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");
@@ -1208,6 +1273,75 @@ it.layer(
         expect(npmProbes).toBe(fixture.exitCode === 2 && fixture.npmOutput !== undefined ? 1 : 0);
       }),
     { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.each([
+    {
+      case: "the eligible release under minimumReleaseAge",
+      row: "| @example/package-tool | 1.0.0   | 1.0.0  | 1.1.0 *  |",
+      expected: "1.1.0",
+    },
+    {
+      case: "no update when the installed version is the eligible release",
+      row: "| @example/package-tool | 1.0.0   | 1.0.0 * | 1.0.0 * |",
+      expected: "1.0.0",
+    },
+    {
+      // bun prints only its banner both when nothing is outdated and when the registry fails.
+      case: "the npm fallback when bun reports no row",
+      row: null,
+      expected: "1.2.0",
+    },
+  ])(
+    "advertises $case for bun-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-bun-latest");
+        const bunBinDir = NodePath.join(tempDir, ".bun", "bin");
+        writeExecutable(NodePath.join(bunBinDir, "bun"));
+        writeExecutable(NodePath.join(bunBinDir, "package-tool"));
+        const outdated = [
+          "bun outdated v1.3.3 (274e01c7)",
+          ...(fixture.row === null ? [] : bunOutdatedTable(fixture.row)),
+          "",
+        ].join("\n");
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: "package-tool", env: { PATH: bunBinDir } },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner((_command, args) =>
+              args[0] === "outdated"
+                ? outdated
+                : `${tempDir} node_modules (1)\n└── @example/package-tool@1.0.0\n`,
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+      }),
+    { skip: windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(

@@ -2266,6 +2266,169 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("records the model Codex reports on the root provider turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "reported-model-thread";
+        const nativeTurnId = "reported-model-turn";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-reported-model",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "say hi" }),
+            {
+              type: "emit_inbound",
+              label: "rerouted",
+              frame: {
+                method: "model/rerouted",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  fromModel: "gpt-6-astra",
+                  toModel: "gpt-5.6-sol",
+                  reason: "highRiskCyberActivity",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("reported-model-attempt"),
+            text: "say hi",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const completed = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completed?.type, "provider_turn.updated");
+        if (completed?.type !== "provider_turn.updated") return;
+        assert.deepEqual(completed.providerTurn.turnTokenUsage?.models, ["gpt-5.6-sol"]);
+        assert.equal(completed.providerTurn.model, "gpt-5.6-sol");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["before", "during"] as const)(
+    "surfaces a user MCP server that fails to start %s the turn",
+    (timing) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "mcp-startup-failed-thread";
+          const nativeTurnId = "mcp-startup-failed-turn";
+          const startupError =
+            "MCP client for `example_mcp` failed to start: MCP startup failed: handshaking with MCP server failed";
+          const startup: Array<CodexReplay.CodexAppServerReplayEntry> = [
+            {
+              type: "emit_inbound",
+              label: "mcp-starting",
+              frame: {
+                method: "mcpServer/startupStatus/updated",
+                params: {
+                  threadId: nativeThreadId,
+                  name: "example_mcp",
+                  status: "starting",
+                  error: null,
+                  failureReason: null,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "mcp-failed",
+              frame: {
+                method: "mcpServer/startupStatus/updated",
+                params: {
+                  threadId: nativeThreadId,
+                  name: "example_mcp",
+                  status: "failed",
+                  error: startupError,
+                  failureReason: null,
+                },
+              },
+            },
+          ];
+          const preamble = codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt: "use example_mcp",
+          });
+          const turnStart = preamble.findIndex(
+            (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-mcp-startup-failed",
+            entries: [
+              ...(timing === "before"
+                ? [...preamble.slice(0, turnStart), ...startup, ...preamble.slice(turnStart)]
+                : [...preamble, ...startup]),
+              {
+                type: "emit_inbound",
+                label: "complete",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("mcp-startup-failed-attempt"),
+              text: "use example_mcp",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const surfaced = harness.events.filter((event) => {
+            const serialized = JSON.stringify(event);
+            return serialized.includes("example_mcp") && serialized.includes("failed to start");
+          });
+          assert.isNotEmpty(surfaced);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect("stops asking for commands the user allowed for the session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3184,6 +3347,109 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #33747 Codex refuses thread/resume until an unsubscribed thread finishes closing
+  it.effect.each([
+    { name: "waits for thread/closed after a closing error", closedFirst: false },
+    { name: "retries at once when the thread already closed", closedFirst: true },
+  ])("$name", ({ name, closedFirst }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "closing-thread";
+        const params = {
+          threadId: nativeThreadId,
+          excludeTurns: true,
+          cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
+          model: CODEX_TEST_MODEL_SELECTION.model,
+          config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+        };
+        const closed: CodexReplay.CodexAppServerReplayEntry = {
+          type: "emit_inbound",
+          label: "thread closed",
+          frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
+        };
+        const closingError: CodexReplay.CodexAppServerReplayEntry = {
+          type: "emit_inbound",
+          label: "resume closing error",
+          frame: {
+            id: 4,
+            error: {
+              code: -32600,
+              message: `thread ${nativeThreadId} is closing; retry thread/resume after the thread is closed`,
+            },
+          },
+        };
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: name,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "unsubscribe",
+                frame: {
+                  id: 3,
+                  method: "thread/unsubscribe",
+                  params: { threadId: nativeThreadId },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "unsubscribe result",
+                frame: { id: 3, result: { status: "unsubscribed" } },
+              },
+              {
+                type: "expect_outbound",
+                label: "resume closing thread",
+                frame: { id: 4, method: "thread/resume", params },
+              },
+              ...(closedFirst ? [closed, closingError] : [closingError, closed]),
+              {
+                type: "expect_outbound",
+                label: "retry identical resume",
+                frame: { id: 5, method: "thread/resume", params },
+              },
+              {
+                type: "emit_inbound",
+                label: "retry result",
+                frame: {
+                  id: 5,
+                  result: {
+                    thread: {
+                      id: nativeThreadId,
+                      updatedAt: 1782622450,
+                      turns: [{ type: "unknown-history-item" }],
+                    },
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
+        assert.equal(resumed.status, "idle");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -4772,6 +5038,52 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect("marks a root command it wakes the agent for once the command finishes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeCodexReplayHarness({
+        ...backgroundExecTranscript,
+        entries: backgroundExecTranscript.entries.map((entry) =>
+          entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+            ? { ...entry, afterMs: 0 }
+            : entry,
+        ),
+      });
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-completion-wake"),
+          text: BG_PROMPT,
+        }),
+      );
+      const commands = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.status, event.turnItem.completionWake]]
+            : [],
+        );
+      yield* harness.until(
+        () => harness.continuationRequests.length === 1 && commands().length === 2,
+      );
+      // Restart recovery reads this to keep the wake the restart cut.
+      assert.deepEqual(commands(), [
+        ["running", "always"],
+        ["completed", "always"],
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -5873,6 +6185,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.equal(childCommandUpdates.at(-1)?.turnItem.status, "interrupted");
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+        assert.isDefined(
+          harness
+            .subagentUpdates()
+            .find((event) => event.subagent.status === "running" && event.subagent.progress),
+          "a running native subagent reports its child's current command as progress",
+        );
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(
@@ -9557,6 +9875,145 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           harness.terminalEvents().map((event) => event.status),
           ["completed"],
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("pauses a goal at once while a delegated task will wake the thread", () =>
+      Effect.gen(function* () {
+        const lookupStarted = yield* Deferred.make<void>();
+        const lookupAnswered = yield* Deferred.make<void>();
+        const turnStart = (id: number, text: string) =>
+          Effect.map(
+            CodexAdapterV2.buildCodexTurnStartParams({
+              nativeThreadId,
+              codexInput: [{ type: "text", text }],
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              hasT3Mcp: true,
+            }),
+            (params): CodexReplay.CodexAppServerReplayEntry => ({
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: { id, method: "turn/start", params },
+            }),
+          );
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-paused-for-wake",
+          entries: [
+            ...sessionStart,
+            yield* turnStart(3, "Delegate and wait"),
+            ...withReplayRequestId(
+              codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn", prompt: "" }).slice(
+                6,
+              ),
+              3,
+            ),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn",
+              goal: codexGoal("active", 10),
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+            }),
+            // Codex continues before the wake lookup answers.
+            notification("continuation", "turn/started", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+            }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "paused" },
+              { goal: codexGoal("paused", 10) },
+            ),
+            ...request(
+              5,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "paused" },
+              { goal: codexGoal("paused", 10) },
+            ),
+            ...request(
+              6,
+              "turn/interrupt",
+              { threadId: nativeThreadId, turnId: "goal-turn-2" },
+              {},
+            ),
+            ...request(
+              7,
+              "thread/goal/get",
+              { threadId: nativeThreadId },
+              { goal: codexGoal("paused", 10) },
+            ),
+            yield* turnStart(8, "Child finished"),
+            ...withReplayRequestId(
+              codexReplayPreamble({ nativeThreadId, nativeTurnId: "wake-turn", prompt: "" }).slice(
+                6,
+              ),
+              8,
+            ),
+            ...request(
+              9,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "active" },
+              { goal: codexGoal("active", 10) },
+            ),
+            notification("goal resumed", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "wake-turn",
+              goal: codexGoal("active", 10),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("test"),
+          threadId: harness.threadId,
+          providerSessionId: "wake-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test",
+          browserToolsAvailable: true,
+          hasPendingWake: Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(lookupAnswered)),
+            Effect.as(true),
+          ),
+        });
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "Delegate and wait"));
+        yield* Deferred.await(lookupStarted);
+        yield* Deferred.succeed(lookupAnswered, undefined);
+        // Settles without waiting out the continuation grace.
+        yield* harness.firstTerminal;
+        assert.deepEqual(providerGoals(harness.events), ["active", "paused"]);
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+        yield* harness.until(() => harness.terminalEvents().length === 1);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+              ? [event.providerTurn.ordinal]
+              : [],
+          ),
+          [1],
+        );
+
+        // Inspecting the goal must not cancel its resume on the wake.
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "/goal"));
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "Child finished"));
+        yield* harness.until(() => providerGoals(harness.events).at(-1) === "active");
       }).pipe(
         Effect.scoped,
         Effect.provide(
