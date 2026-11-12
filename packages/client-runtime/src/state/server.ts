@@ -551,13 +551,14 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
       ...(subscription.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
     }).pipe(
-      Stream.map(
-        (event): Update =>
-          (current) =>
-            Option.map(applyServerConfigProjection(current, event), (projection) =>
+      Stream.map((event): Update => (current) => {
+        const next = applyServerConfigProjection(current, event);
+        return fetchedCatalogs.length === 0
+          ? next
+          : Option.map(next, (projection) =>
               withFetchedMachineCatalogs(projection, fetchedCatalogs),
-            ),
-      ),
+            );
+      }),
     );
     const catalogUpdates = machineCatalogs.pipe(
       Stream.map((catalogs): Update => (current) => {
