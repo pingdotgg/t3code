@@ -4,6 +4,7 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { FileSurfaceLoading } from "../fileSurfaceChrome";
 import { OfficePages, type PaintPage } from "./OfficePages";
+import { rasterize } from "./vector-pictures";
 import { createWorkerClient } from "./worker-rpc";
 import {
   layerFont,
@@ -39,8 +40,14 @@ export default function WordDocument(props: {
     worker.addEventListener("error", fail);
     worker.addEventListener("messageerror", fail);
     const buffer = bytes.slice(0);
-    const paint: PaintPage = async (index, canvas, scale, signal) => {
-      const bitmap = await engine.call(
+    const paint = async (
+      index: number,
+      canvas: HTMLCanvasElement,
+      scale: number,
+      signal: AbortSignal,
+      again = false,
+    ): Promise<void> => {
+      const painted = await engine.call(
         "paint",
         { index, scale, ratio: window.devicePixelRatio || 1 },
         { key: `paint:${index}`, signal },
@@ -48,22 +55,35 @@ export default function WordDocument(props: {
       void engine
         .call("build", { index: index + 1 }, { key: "build", signal })
         .catch(() => undefined);
-      if (!bitmap) return;
+      if (!painted) return;
       const context = canvas.getContext("bitmaprenderer");
       if (!context || signal.aborted) {
-        bitmap.close();
+        painted.bitmap.close();
         return;
       }
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      context.transferFromImageBitmap(bitmap);
+      canvas.width = painted.bitmap.width;
+      canvas.height = painted.bitmap.height;
+      context.transferFromImageBitmap(painted.bitmap);
+      if (again || !painted.vectors.length) return;
+      const bitmaps = await Promise.all(painted.vectors.map(rasterize));
+      if (signal.aborted) {
+        bitmaps.forEach((value) => value.bitmap?.close());
+        return;
+      }
+      await engine.call("vectors", bitmaps, {
+        transfer: bitmaps.flatMap((value) => (value.bitmap ? [value.bitmap] : [])),
+        signal,
+      });
+      if (!signal.aborted) await paint(index, canvas, scale, signal, true);
     };
     void engine
       .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
       .then(async (first) => {
         if (controller.signal.aborted) return;
         setOpened({ pages: first.pages, paint, engine });
-        onDetails(`${first.pages.length}${first.loading ? "+" : ""} pages`);
+        onDetails(
+          `${first.pages.length}${first.loading ? "+" : ""} page${first.pages.length === 1 && !first.loading ? "" : "s"}`,
+        );
         if (!first.loading) return;
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         while (!controller.signal.aborted) {
@@ -71,7 +91,7 @@ export default function WordDocument(props: {
           if (!step.done) continue;
           if (step.pages.length > 1000) throw new Error("Preview limited to 1,000 pages.");
           setOpened({ pages: step.pages, paint, engine });
-          onDetails(`${step.pages.length} pages`);
+          onDetails(`${step.pages.length} page${step.pages.length === 1 ? "" : "s"}`);
           break;
         }
       })
