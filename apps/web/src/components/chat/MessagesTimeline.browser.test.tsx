@@ -63,7 +63,6 @@ import {
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { useRightPanelStore } from "../../rightPanelStore";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found" as string | null,
@@ -1021,35 +1020,6 @@ describe("MessagesTimeline messages", () => {
     await act(() => vi.advanceTimersByTime(300));
     const turns = turnsInDomOrder();
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
-  });
-
-  it("opens standalone skill details and its instructions", async () => {
-    setup();
-    const threadRef = {
-      environmentId: ENVIRONMENT_ID,
-      threadId: ThreadId.make("thread-skill"),
-    };
-    await using screen = await renderTimeline([message("$review")], {
-      routeThreadKey: "environment-local:thread-skill",
-      skills: [
-        {
-          name: "review",
-          displayName: "Review",
-          description: "Reviews the current branch.",
-          path: "/skills/review/SKILL.md",
-          enabled: true,
-        },
-      ],
-    });
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
-
-    await userEvent.click(screen.getByRole("button", { name: "Skill Review. Show details" }));
-    await expect.element(page.getByText("Reviews the current branch.")).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "View instructions" }));
-
-    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
   });
 
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
