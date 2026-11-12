@@ -5,6 +5,10 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -20,6 +24,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -180,22 +185,30 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
-    if (action === "remove") {
-      await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-    } else if (workflow?.canSendNow) {
-      await resume({ ...target, input: { threadId: target.threadId, runId } });
-    } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
-      await promote({
-        ...target,
-        input: {
-          threadId: target.threadId,
-          queuedRunId: runId,
-          targetRunId: workflow.activeRun.id,
-        },
-      });
-    }
+    const result =
+      action === "remove"
+        ? await cancel(buildCancelQueuedRunCommand({ ...target, runId }))
+        : workflow?.canSendNow
+          ? await resume({ ...target, input: { threadId: target.threadId, runId } })
+          : workflow?.activeRun && workflow.canPromoteToSteer
+            ? await promote({
+                ...target,
+                input: {
+                  threadId: target.threadId,
+                  queuedRunId: runId,
+                  targetRunId: workflow.activeRun.id,
+                },
+              })
+            : null;
     busyRef.current = false;
     setBusyRunId(null);
+    if (action === "steer" && result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Could not send queued message",
+        error instanceof Error ? error.message : "Try again.",
+      );
+    }
   };
 
   const content = (

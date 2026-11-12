@@ -1,6 +1,14 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  OrchestrationV2DispatchCommandError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import { AsyncResult } from "effect/reactivity";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -8,6 +16,7 @@ import { page } from "vite-plus/test/browser";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  commandResult: undefined as unknown,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -40,7 +49,7 @@ vi.mock(import("../../state/query"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: (() => async () => state.commandResult) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -51,11 +60,13 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 
 import "~/index.css";
 import { render as renderUi } from "../../../test/render";
+import { ToastProvider } from "../ui/toast";
 import { QueuedRunsControl } from "./QueuedRunsControl";
 
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.commandResult = undefined;
 }
 
 const baseProps = {
@@ -230,4 +241,39 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   await expect.element(page.getByText("Later", { exact: true })).toBeInTheDocument();
   const column = screen.getByTestId("column").element();
   expect(column.scrollHeight).toBe(column.clientHeight);
+});
+
+it("tells the user why Send now was rejected", async () => {
+  setup();
+  const reason = "Target run run:active is stopping and cannot be steered.";
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:queued", userMessageId: "message:queued" },
+        text: "Follow up",
+        attachments: [],
+      },
+    ],
+  };
+  state.commandResult = AsyncResult.failure(
+    Cause.fail(
+      new OrchestrationV2DispatchCommandError({
+        commandId: CommandId.make("command:promote"),
+        commandType: "queued-message.promote-to-steer",
+        message: reason,
+        detail: reason,
+      }),
+    ),
+  );
+  await using _screen = await renderUi(
+    <ToastProvider timeout={0}>
+      <QueuedRunsControl {...baseProps} />
+    </ToastProvider>,
+  );
+
+  await page.getByRole("button", { name: "Send now" }).click();
+  await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
 });
