@@ -2771,7 +2771,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reports an answer to a form OpenCode already cancelled as closed, not delivered", () =>
+  it.effect.each([
+    {
+      name: "cancelled it (a location reload), as closed",
+      settled: event("form.cancelled", { id: colorForm.id, sessionID: SESSION }),
+      closed: true,
+    },
+    {
+      name: "committed it on a reply whose response was lost, as delivered",
+      settled: event("form.replied", {
+        id: colorForm.id,
+        sessionID: SESSION,
+        answer: { q0: "Red" },
+      }),
+      closed: false,
+    },
+  ])("reports an answer to a form OpenCode already $name", ({ settled, closed }) =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
@@ -2782,7 +2797,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           formID: colorForm.id,
           answer: { q0: "Red" },
         }),
-        // A location reload cancels open forms; the cancel event can land after T3 starts answering.
+        settled,
         reply("session.form.reply", {
           status: 409,
           body: {
@@ -2795,10 +2810,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
       const request = yield* Fiber.join(requested);
-      const answered = yield* runtime
-        .respondToRuntimeRequest({ requestId: request!.id, answers: { q0: "Red" } })
-        .pipe(Effect.flip);
-      assert.deepInclude(answered, { reason: "request_closed" });
+      const answer = runtime.respondToRuntimeRequest({
+        requestId: request!.id,
+        answers: { q0: "Red" },
+      });
+      if (closed) assert.deepInclude(yield* Effect.flip(answer), { reason: "request_closed" });
+      else yield* answer;
     }).pipe(Effect.scoped),
   );
 
