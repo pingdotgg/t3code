@@ -734,6 +734,8 @@ export interface ProviderAdapterV2SessionRuntime {
   }) => Effect.Effect<void | ProviderAdapterV2SubagentOutcome, ProviderAdapterV2Error>;
   readonly unloadThread?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
+    /** Also hide it from the provider's own clients where it can; resuming it must restore it. */
+    readonly archive?: boolean;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
