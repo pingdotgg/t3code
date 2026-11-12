@@ -201,9 +201,12 @@ export function resolveBranchToolbarValue(input: {
 
 export interface BranchHold {
   readonly branch: string | null;
-  readonly replaces: string | null;
   readonly environmentId: EnvironmentId;
-  readonly cwd: string;
+  /**
+   * Each checkout the thread can show before it catches up, with the branch its status reported
+   * before the switch. A move from a worktree to the project root lists both.
+   */
+  readonly checkouts: ReadonlyArray<{ readonly cwd: string; readonly replaces: string | null }>;
 }
 
 /**
@@ -220,8 +223,9 @@ export function isBranchHoldCurrent(
 ): boolean {
   return (
     hold.environmentId === current.environmentId &&
-    hold.cwd === current.cwd &&
-    hold.replaces === current.canonicalBranch
+    hold.checkouts.some(
+      (checkout) => checkout.cwd === current.cwd && checkout.replaces === current.canonicalBranch,
+    )
   );
 }
 

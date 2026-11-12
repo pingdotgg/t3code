@@ -491,9 +491,19 @@ export function BranchToolbarBranchSelector({
         if (applied) {
           setBranchHold({
             branch: nextBranchName,
-            replaces: canonicalActiveBranch,
             environmentId,
-            cwd: selectionTarget.checkoutCwd,
+            // The thread keeps its old checkout until the metadata update moves it to the new one.
+            checkouts: [
+              { cwd: branchCwd, replaces: canonicalActiveBranch },
+              ...(selectionTarget.checkoutCwd === branchCwd
+                ? []
+                : [
+                    {
+                      cwd: selectionTarget.checkoutCwd,
+                      replaces: projectStatusQuery.data?.refName ?? null,
+                    },
+                  ]),
+            ],
           });
         }
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
@@ -537,9 +547,8 @@ export function BranchToolbarBranchSelector({
         if (applied) {
           setBranchHold({
             branch: nextBranchName,
-            replaces: canonicalActiveBranch,
             environmentId,
-            cwd: branchCwd,
+            checkouts: [{ cwd: branchCwd, replaces: canonicalActiveBranch }],
           });
         }
         setOptimisticBranch(applied ? nextBranchName : previousBranch);
