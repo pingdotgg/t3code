@@ -107,6 +107,9 @@ const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
+// Each background fetch re-runs the credential helper, which can raise an OS dialog (macOS
+// Keychain). After this many credential failures in a row, polling stops until a pull succeeds.
+const STATUS_UPSTREAM_REFRESH_MAX_AUTH_FAILURES = 3;
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
@@ -1404,7 +1407,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               statusRemoteRefreshFailures.delete(key);
             }),
           ),
-          Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
+          Effect.tapError((error) => recordStatusRemoteRefreshFailure(key, error)),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
           statusFetchProcesses.withPermits(1),
           Effect.onExit(() =>
@@ -1641,7 +1644,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const statusRemoteRefreshFailures = new Map<string, { count: number; retryAt: number }>();
+  const statusRemoteRefreshFailures = new Map<
+    string,
+    { count: number; authFailures: number; retryAt: number }
+  >();
   const untrackedTotalsFailures = new Map<
     string,
     {
@@ -1655,14 +1661,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
     "GitVcsDriver.recordStatusRemoteRefreshFailure",
-  )(function* (key: string) {
-    const nextCount = (statusRemoteRefreshFailures.get(key)?.count ?? 0) + 1;
+  )(function* (key: string, error: GitCommandError) {
+    const previous = statusRemoteRefreshFailures.get(key);
+    const nextCount = (previous?.count ?? 0) + 1;
+    const authFailures =
+      error.reason === "authentication_failed" ? (previous?.authFailures ?? 0) + 1 : 0;
     const now = yield* Clock.currentTimeMillis;
+    const stopped = authFailures >= STATUS_UPSTREAM_REFRESH_MAX_AUTH_FAILURES;
     statusRemoteRefreshFailures.delete(key);
     statusRemoteRefreshFailures.set(key, {
       count: nextCount,
-      retryAt: now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
+      authFailures,
+      retryAt: stopped
+        ? Number.POSITIVE_INFINITY
+        : now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
     });
+    if (stopped) {
+      yield* Effect.logWarning(
+        "Background Git fetch keeps failing on credentials; upstream status needs attention. Pull to resume background fetches.",
+      );
+    }
     if (statusRemoteRefreshFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
       const oldestKey = statusRemoteRefreshFailures.keys().next().value;
       if (oldestKey !== undefined) {
@@ -2968,9 +2986,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     const remote = yield* readConfigValue(cwd, `branch.${refName}.remote`);
-    if (remote) {
-      const gitCommonDir = yield* resolveGitCommonDir(cwd);
-      const pending = statusFetches.get(`${gitCommonDir}\0${remote}`);
+    const statusRefreshKey = remote
+      ? new StatusRemoteRefreshCacheKey({
+          gitCommonDir: yield* resolveGitCommonDir(cwd),
+          remoteName: remote,
+        })
+      : null;
+    if (statusRefreshKey) {
+      const pending = statusFetches.get(statusRemoteRefreshFailureKey(statusRefreshKey));
       // The status wait can finish while its fetch still owns reference locks.
       // Let our existing writer finish before starting the pull's fetch.
       if (pending) yield* Fiber.await(pending);
@@ -3044,6 +3067,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         stdoutLength: result.stdout.length,
         stderrLength: result.stderr.length,
       });
+    }
+    // The pull may have run the credential helper the background poll gave up on.
+    if (statusRefreshKey) {
+      statusRemoteRefreshFailures.delete(statusRemoteRefreshFailureKey(statusRefreshKey));
+      yield* Cache.invalidate(statusRemoteRefreshCache, statusRefreshKey);
     }
     const afterSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.afterSha",

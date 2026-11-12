@@ -4389,7 +4389,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             });
             server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
           }),
-          (server) => Effect.callback<void>((resume) => server.close(() => resume(Effect.void))),
+          (server) =>
+            Effect.callback<void>((resume) => {
+              server.close(() => resume(Effect.void));
+            }),
         ).pipe(Effect.map((server) => (server.address() as { port: number }).port));
 
         yield* git(cwd, ["remote", "add", "origin", `http://127.0.0.1:${port}/private.git`]);
@@ -4408,6 +4411,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }
 
         assert.equal(yield* helperRuns, 3);
+
+        // A successful pull resumes background fetches.
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["push", remote, `HEAD:refs/heads/${initialBranch}`]);
+        yield* git(cwd, ["remote", "set-url", "origin", remote]);
+        yield* driver.pullCurrentBranch(cwd);
+        yield* git(cwd, ["remote", "set-url", "origin", `http://127.0.0.1:${port}/private.git`]);
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(yield* helperRuns, 4);
       }),
     );
 
