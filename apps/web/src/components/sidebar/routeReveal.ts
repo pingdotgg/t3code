@@ -1,5 +1,7 @@
 import { useRef } from "react";
 
+import { observeResize } from "~/lib/observeResize";
+
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
 // AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen project scope.
@@ -32,38 +34,30 @@ export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
 // The row can mount after the route, once its shells arrive, so its ref scrolls.
 export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string | null) {
   const mountRevealOwed = useRef(true);
-  const glideRef = useRef<{ animation: Animation; offset: number } | null>(null);
   pendingSidebarRouteReveal(reveal, routeKey);
-  return (row: HTMLElement | null, rowKey: string) => {
-    if (row === null) return;
-    if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return;
+  // Returns a ref cleanup while it waits on a hidden row, so an unmount releases the wait.
+  const revealRow = (row: HTMLElement | null, rowKey: string): (() => void) | undefined => {
+    if (row === null) return undefined;
+    if (reveal.pendingKey !== rowKey && !mountRevealOwed.current) return undefined;
+    // The closed narrow sheet keeps rows mounted but hidden, and opening it does not
+    // re-render them, so wait for the row to get a box before spending the reveal.
+    if (row.getClientRects().length === 0) {
+      const stopWaiting = observeResize(row, () => {
+        if (row.getClientRects().length === 0) return;
+        stopWaiting();
+        revealRow(row, rowKey);
+      });
+      return stopWaiting;
+    }
     completeSidebarRouteReveal(reveal);
-    const glide =
-      !mountRevealOwed.current &&
-      !row.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
     mountRevealOwed.current = false;
-    // A hovered row is already visible; avoid forcing layout during its click commit.
-    if (row.matches(":hover")) return;
-    const previous = glideRef.current;
-    const carried = previous
-      ? previous.offset * (1 - (previous.animation.effect?.getComputedTiming().progress ?? 1))
-      : 0;
-    previous?.animation.cancel();
-    glideRef.current = null;
-    const scroller = glide ? row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') : null;
-    const from = scroller?.scrollTop ?? 0;
-    row.scrollIntoView({ block: "nearest", behavior: "instant" });
-    const list = row.closest("li")?.parentElement;
-    if (!scroller || !list) return;
-    const moved = scroller.scrollTop - from;
-    const offset = moved + carried;
-    if (offset === 0 || Math.abs(moved) > scroller.clientHeight / 4) return;
-    const animation = list.animate(
-      [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }],
-      { duration: 200, easing: "ease-out" },
-    );
-    glideRef.current = { animation, offset };
+    // A row under the pointer was just clicked, so it is in view; scrolling it would force a
+    // layout mid-commit. Keyboard activation can come from a focused row scrolled out of view.
+    if (row.matches(":hover")) return undefined;
+    row.scrollIntoView({ block: "nearest" });
+    return undefined;
   };
+  return revealRow;
 }
 
 type RevealableThread = Parameters<typeof filterSidebarV2VisibleThreads>[0][number];

@@ -372,6 +372,28 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("skips the empty-response fallback the timeline hides beside an HTML render", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const shownRunId = RunId.make("run:shown");
+      yield* commit([run(threadId, shownRunId, 2)]);
+      yield* putItems([
+        {
+          ...item("render", 0, ""),
+          type: "dynamic_tool",
+          toolName: "html_render",
+          input: {},
+          output: { htmlRender: { attachmentId: "visual", title: "Result", height: 120 } },
+        },
+        item("hidden", 1, ""),
+        { ...item("shown", 2, ""), runId: shownRunId },
+      ]);
+      const result = yield* projection.searchThread({ threadId, query: "empty" });
+      assert.equal(result.totalMatches, 1);
+      assert.equal(result.match?.entryId, "shown");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("searches displayed skill labels and invalidates parsed text when labels change", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -561,6 +583,50 @@ describe("V2 thread find", () => {
         assert.equal(result.totalMatches, 0);
         assert.isNull(result.match);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("finds an async answer that started a later run", () =>
+    Effect.gen(function* () {
+      yield* createProject(projectId);
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      const queuedRun = RunId.make("run:queued");
+      const answerRun = RunId.make("run:answer");
+      yield* commit([
+        thread(threadId, projectId),
+        run(),
+        run(threadId, queuedRun, 2),
+        run(threadId, answerRun, 3),
+      ]);
+      const requestId = RuntimeRequestId.make("late");
+      const question: OrchestrationV2TurnItem = {
+        ...item("question", 1, ""),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: {}, attachmentsByQuestionId: {} },
+      };
+      const items = [
+        question,
+        { ...item("queued", 2, "queued follow-up", "user_message"), runId: queuedRun },
+        { ...item(`async-answer:${requestId}`, 3, "needle", "user_message"), runId: answerRun },
+      ];
+      yield* commit(
+        items.map((payload) => ({
+          id: EventId.make(`${payload.id}:initial`),
+          threadId,
+          occurredAt: at(1),
+          type: "turn-item.updated" as const,
+          payload,
+        })),
+      );
+      const result = yield* projection.searchThread({ threadId, query: "needle" });
+      assert.equal(result.totalMatches, 1);
+      assert.deepEqual(result.match, {
+        entryId: `async-answer:${requestId}`,
+        runId: answerRun,
+        occurrence: 0,
+      });
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(
