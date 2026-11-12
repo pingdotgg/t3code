@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -147,6 +148,43 @@ const layerTest = CursorAgentSdk.layer.pipe(
 );
 
 describe("CursorAgentSdkRunner", () => {
+  it.effect("resumes from the original store after the working directory changes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-resume-" });
+      const loaders = yield* Effect.promise(() =>
+        vi.importActual<typeof import("./sdk.ts")>("./sdk.ts"),
+      );
+      const sdk = loaders.loadCursorSdk();
+      const store = new sdk.JsonlLocalAgentStore(workspace);
+      const storeCwd = `${workspace}/checkout`;
+      const cwd = `${workspace}/worktree`;
+      const platform = yield* Effect.promise(() =>
+        sdk.createAgentPlatform({ localStore: store, workspaceRef: storeCwd }),
+      );
+      const { agent } = yield* Effect.promise(() =>
+        platform.store.createAgent({ agentId: "agent-moved", workspaceRef: storeCwd }),
+      );
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provideService(CursorSdk.CursorSdk, {
+          load: loaders.loadCursorSdk,
+          loadSqlite: loaders.loadCursorSqlite,
+        }),
+      );
+      const session = yield* runner.open({
+        operation: "resume",
+        agentId: agent.agentId,
+        storeCwd,
+        options: { apiKey: "synthetic-cursor-key", local: { cwd, store } },
+        threadId: ThreadId.make("moved-workspace"),
+        providerSessionId: ProviderSessionId.make("moved-workspace"),
+      });
+      assert.equal(session.agentId, agent.agentId);
+      assert.deepStrictEqual(yield* session.listMessages, []);
+      yield* session.close;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
     Effect.gen(function* () {
       const failure = new Error("missing SDK chunk");
@@ -232,6 +270,55 @@ describe("CursorAgentSdkRunner", () => {
           cwd: process.cwd(),
         },
       ]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("forwards the agent's own shell stream output as shell-output-delta", () =>
+    Effect.gen(function* () {
+      const publish = (conversationId: string, data: string) =>
+        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.shellStreamOutput")) as Function)({
+          conversationId,
+          toolCallId: "tool-shell",
+          event: { case: "stdout", value: { data } },
+        });
+      cursorSdkMock.runWait.mockImplementationOnce(async () => {
+        publish("agent-cursor-agent-sdk-test", "tick 1\n");
+        publish("agent-someone-else", "not ours\n");
+        return {
+          id: "run-cursor-agent-sdk-test",
+          requestId: "request-cursor-agent-sdk-test",
+          status: "finished",
+          result: "ok",
+          model: { id: "default" },
+          durationMs: 1,
+        };
+      });
+      const updates: Array<unknown> = [];
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-shell"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-shell"),
+      });
+      const run = yield* session.send({
+        message: "run it",
+        onDelta: (update) => Effect.sync(() => updates.push(update)),
+      });
+      yield* run.wait;
+      publish("agent-cursor-agent-sdk-test", "after the run\n");
+
+      assert.deepStrictEqual(
+        updates.filter(
+          (update) => (update as { readonly type: string }).type === "shell-output-delta",
+        ),
+        [
+          {
+            type: "shell-output-delta",
+            event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "tool-shell" },
+          },
+        ],
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
