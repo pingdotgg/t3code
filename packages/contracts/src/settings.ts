@@ -1024,13 +1024,19 @@ const SecretProviderConfigWrite = Schema.Struct({
   label: SecretProviderLabel,
 });
 
-/** A 1Password account `op account list` reports on the server; `account` is what to save. */
-export const OnePasswordAccountSummary = Schema.Struct({
-  account: TrimmedNonEmptyString,
-  address: Schema.String,
-  email: Schema.String,
+/** A value a secret provider's driver suggests for one config field. */
+export const SecretProviderConfigChoice = Schema.Struct({
+  value: TrimmedNonEmptyString,
+  label: Schema.String,
+  description: Schema.optional(Schema.String),
 });
-export type OnePasswordAccountSummary = typeof OnePasswordAccountSummary.Type;
+export type SecretProviderConfigChoice = typeof SecretProviderConfigChoice.Type;
+
+export const SecretProviderConfigChoicesInput = Schema.Struct({
+  kind: SecretProviderKind,
+  field: TrimmedNonEmptyString,
+});
+export type SecretProviderConfigChoicesInput = typeof SecretProviderConfigChoicesInput.Type;
 
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;

@@ -361,7 +361,8 @@ import {
   StorageCleanupReport,
   DatabaseReclaimError,
   DatabaseStorageStatus,
-  OnePasswordAccountSummary,
+  SecretProviderConfigChoice,
+  SecretProviderConfigChoicesInput,
   ServerSettings,
   ServerSettingsError,
   ServerSettingsPatch,
@@ -526,7 +527,7 @@ export const WS_METHODS = {
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
-  serverListOnePasswordAccounts: "server.listOnePasswordAccounts",
+  serverListSecretProviderConfigChoices: "server.listSecretProviderConfigChoices",
   serverCheckSecretSource: "server.checkSecretSource",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
@@ -880,11 +881,14 @@ const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourc
   error: EnvironmentAuthorizationError,
 });
 
-const WsServerListOnePasswordAccountsRpc = Rpc.make(WS_METHODS.serverListOnePasswordAccounts, {
-  payload: Schema.Struct({}),
-  success: Schema.Array(OnePasswordAccountSummary),
-  error: EnvironmentAuthorizationError,
-});
+const WsServerListSecretProviderConfigChoicesRpc = Rpc.make(
+  WS_METHODS.serverListSecretProviderConfigChoices,
+  {
+    payload: SecretProviderConfigChoicesInput,
+    success: Schema.Array(SecretProviderConfigChoice),
+    error: EnvironmentAuthorizationError,
+  },
+);
 
 const WsServerCheckSecretSourceRpc = Rpc.make(WS_METHODS.serverCheckSecretSource, {
   payload: Schema.Struct({ source: SecretReference }),
@@ -2135,7 +2139,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
   WsServerDiscoverSourceControlRpc,
-  WsServerListOnePasswordAccountsRpc,
+  WsServerListSecretProviderConfigChoicesRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

@@ -185,7 +185,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-import * as OnePasswordAccounts from "./secrets/OnePasswordAccounts.ts";
+import * as SecretProviderConfigChoices from "@t3tools/secret-provider-core/server/SecretProviderConfigChoices";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
@@ -1534,6 +1534,8 @@ export const layerWsRpc = (
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
+      const secretProviderConfigChoices =
+        yield* SecretProviderConfigChoices.SecretProviderConfigChoices;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1558,7 +1560,6 @@ export const layerWsRpc = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
-      const onePasswordAccounts = yield* OnePasswordAccounts.OnePasswordAccounts;
       const secretCheck = yield* SecretCheck.SecretCheck;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const textGenerators = yield* TextGenerators.TextGenerators;
@@ -2665,7 +2666,8 @@ export const layerWsRpc = (
             return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
-        [WS_METHODS.serverListOnePasswordAccounts]: (_input) => onePasswordAccounts.list,
+        [WS_METHODS.serverListSecretProviderConfigChoices]: (input) =>
+          secretProviderConfigChoices.list(input.kind, input.field),
         [WS_METHODS.serverCheckSecretSource]: (input) => secretCheck.check(input.source),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           TraceDiagnostics.readTraceDiagnostics({

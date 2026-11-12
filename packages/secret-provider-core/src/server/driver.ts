@@ -1,4 +1,4 @@
-import type { SecretProviderKind } from "@t3tools/contracts";
+import type { SecretProviderConfigChoice, SecretProviderKind } from "@t3tools/contracts";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
@@ -24,6 +24,14 @@ export interface SecretProviderDriver {
     config: unknown,
     references: ReadonlyArray<string>,
   ) => Effect.Effect<ReadonlyArray<string | undefined>, never, SecretProviderDriverServices>;
+  /** Suggestions for a config field the definition lists as discoverable; empty when it cannot answer. */
+  readonly listConfigChoices?: (
+    field: string,
+  ) => Effect.Effect<
+    ReadonlyArray<SecretProviderConfigChoice>,
+    never,
+    SecretProviderDriverServices
+  >;
 }
 
 export const defineSecretProviderDriver = <Config>(driver: {
@@ -33,6 +41,7 @@ export const defineSecretProviderDriver = <Config>(driver: {
     config: Config,
     references: ReadonlyArray<string>,
   ) => Effect.Effect<ReadonlyArray<string | undefined>, never, SecretProviderDriverServices>;
+  readonly listConfigChoices?: SecretProviderDriver["listConfigChoices"];
 }): SecretProviderDriver => {
   const isConfig = Schema.is(driver.definition.configSchema);
   return {
@@ -42,5 +51,8 @@ export const defineSecretProviderDriver = <Config>(driver: {
       isConfig(config)
         ? driver.read(config, references)
         : Effect.succeed(references.map(() => undefined)),
+    ...(driver.listConfigChoices === undefined
+      ? {}
+      : { listConfigChoices: driver.listConfigChoices }),
   };
 };

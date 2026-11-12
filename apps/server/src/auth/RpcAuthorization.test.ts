@@ -51,8 +51,8 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("lists 1Password accounts only with the grant that saves a secret provider", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.serverListOnePasswordAccounts)).toBe(
+  it("lists secret provider config choices only with the grant that saves a secret provider", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverListSecretProviderConfigChoices)).toBe(
       AuthProvidersManageScope,
     );
   });

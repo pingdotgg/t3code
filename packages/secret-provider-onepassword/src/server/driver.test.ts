@@ -14,7 +14,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as NodeFS from "node:fs";
 
 import { OnePasswordAccount } from "../shared/definition.ts";
-import { driver, listAccounts } from "./driver.ts";
+import { driver } from "./driver.ts";
 
 const encoder = new TextEncoder();
 const account = OnePasswordAccount.make("my.1password.com");
@@ -168,7 +168,9 @@ describe("1Password driver", () => {
   });
 });
 
-describe("1Password listAccounts", () => {
+const listChoices = (field: string) => driver.listConfigChoices?.(field) ?? Effect.succeed([]);
+
+describe("1Password listConfigChoices", () => {
   it.effect("lists each account by a value `op --account` accepts unambiguously", () => {
     const op = fakeOp(() => ({
       stdout: JSON.stringify([
@@ -178,10 +180,14 @@ describe("1Password listAccounts", () => {
       ]),
     }));
     return Effect.gen(function* () {
-      assert.deepStrictEqual(yield* listAccounts(), [
-        { account: "acme.1password.com", address: "acme.1password.com", email: "me@acme.example" },
-        { account: "U2", address: "my.1password.com", email: "me@example.com" },
-        { account: "U3", address: "my.1password.com", email: "family@example.com" },
+      assert.deepStrictEqual(yield* listChoices("account"), [
+        {
+          value: "acme.1password.com",
+          label: "acme.1password.com",
+          description: "me@acme.example",
+        },
+        { value: "U2", label: "my.1password.com", description: "me@example.com" },
+        { value: "U3", label: "my.1password.com", description: "family@example.com" },
       ]);
       assert.deepStrictEqual(op.invocations, [
         ["--cache=false", "account", "list", "--format", "json"],
@@ -200,7 +206,7 @@ describe("1Password listAccounts", () => {
       (answer: OpResult) => {
         const op = fakeOp(() => answer);
         return Effect.gen(function* () {
-          const listing = yield* listAccounts().pipe(Effect.forkChild);
+          const listing = yield* listChoices("account").pipe(Effect.forkChild);
           yield* Deferred.await(op.spawned);
           yield* TestClock.adjust("1 minute");
           assert.deepStrictEqual(yield* Fiber.join(listing), []);
@@ -209,4 +215,12 @@ describe("1Password listAccounts", () => {
       { discard: true },
     ),
   );
+
+  it.effect("has no choices for another field and does not spawn `op`", () => {
+    const op = fakeOp(() => ({ stdout: "[]" }));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(yield* listChoices("vault"), []);
+      assert.deepStrictEqual(op.invocations, []);
+    }).pipe(Effect.provide(op.layer));
+  });
 });

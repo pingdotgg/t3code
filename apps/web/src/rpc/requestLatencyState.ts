@@ -28,11 +28,11 @@ interface PendingRpcAckRequest {
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
 // Background reports nobody waits on. A busy host delays them first, and warning
 // about a request the user never made does not say what is wrong. A sign-in wait
-// lasts as long as the user takes on the forge. 1Password suggestions only fill in a field
-// the user can type into, and `op` may wait on its desktop app.
+// lasts as long as the user takes on the forge. Config suggestions only fill in a field
+// the user can type into, and a driver may wait on its desktop app.
 const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.serverGetUsageSummary,
-  WS_METHODS.serverListOnePasswordAccounts,
+  WS_METHODS.serverListSecretProviderConfigChoices,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.sourceControlSignInWait,
 ]);

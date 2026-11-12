@@ -103,8 +103,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverSetAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverDisableAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
-  // Spawns `op` on the host and lists account emails; the same grant that saves a secret provider.
-  [WS_METHODS.serverListOnePasswordAccounts]: AuthProvidersManageScope,
+  // A driver may run its CLI on the host and list account names; the grant that saves a provider.
+  [WS_METHODS.serverListSecretProviderConfigChoices]: AuthProvidersManageScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,

@@ -1,4 +1,4 @@
-import type { OnePasswordAccountSummary } from "@t3tools/contracts";
+import type { SecretProviderConfigChoice } from "@t3tools/contracts";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -97,22 +97,6 @@ const bounded = <A, E extends { readonly _tag: string }, R>(
     ),
   );
 
-export const driver = defineSecretProviderDriver({
-  kind: definition.kind,
-  definition,
-  read: Effect.fn("OnePasswordDriver.read")(function* ({ account }, references) {
-    if (references.length > 1) {
-      const together = yield* bounded("inject", readTogether(account, references));
-      // Reading one by one after a timeout would only wait that long again for each reference.
-      if (Option.isNone(together)) return references.map(() => undefined);
-      if (together.value !== undefined) return together.value;
-    }
-    return yield* Effect.forEach(references, (reference) =>
-      bounded("read", readOne(account, reference)).pipe(Effect.map(Option.getOrUndefined)),
-    );
-  }),
-});
-
 const decodeAccountList = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Array(
@@ -123,7 +107,7 @@ const decodeAccountList = Schema.decodeUnknownOption(
 const isAccount = Schema.is(OnePasswordAccount);
 
 /** Accounts `op` is configured with, by a value `op --account` accepts; empty when it cannot answer. */
-export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function* () {
+const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function* () {
   const result = yield* runOnePassword(["account", "list", "--format", "json"]).pipe(
     Effect.timeoutOption(READ_TIMEOUT),
     Effect.orElseSucceed(Option.none),
@@ -142,9 +126,26 @@ export const listAccounts = Effect.fn("OnePasswordDriver.listAccounts")(function
   );
   const users = new Map<string, number>();
   for (const address of addresses) users.set(address, (users.get(address) ?? 0) + 1);
-  return accounts.value.flatMap(({ email, user_uuid }, index): OnePasswordAccountSummary[] => {
+  return accounts.value.flatMap(({ email, user_uuid }, index): SecretProviderConfigChoice[] => {
     const address = addresses[index] ?? "";
     const account = users.get(address) === 1 && isAccount(address) ? address : user_uuid;
-    return isAccount(account) ? [{ account, address, email }] : [];
+    return isAccount(account) ? [{ value: account, label: address, description: email }] : [];
   });
+});
+
+export const driver = defineSecretProviderDriver({
+  kind: definition.kind,
+  definition,
+  read: Effect.fn("OnePasswordDriver.read")(function* ({ account }, references) {
+    if (references.length > 1) {
+      const together = yield* bounded("inject", readTogether(account, references));
+      // Reading one by one after a timeout would only wait that long again for each reference.
+      if (Option.isNone(together)) return references.map(() => undefined);
+      if (together.value !== undefined) return together.value;
+    }
+    return yield* Effect.forEach(references, (reference) =>
+      bounded("read", readOne(account, reference)).pipe(Effect.map(Option.getOrUndefined)),
+    );
+  }),
+  listConfigChoices: (field) => (field === "account" ? listAccounts() : Effect.succeed([])),
 });

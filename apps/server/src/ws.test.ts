@@ -1,3 +1,4 @@
+import * as SecretProviderConfigChoices from "@t3tools/secret-provider-core/server/SecretProviderConfigChoices";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -114,7 +115,6 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
-import * as OnePasswordAccounts from "./secrets/OnePasswordAccounts.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -847,6 +847,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
+  Layer.mock(SecretProviderConfigChoices.SecretProviderConfigChoices)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
@@ -854,7 +855,6 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(NpmRelease.NpmRelease)({}),
   Layer.mock(SessionStore.SessionStore)({ cookieName: "config-test", legacyCookieName: undefined }),
   Layer.mock(SourceControlDiscovery.SourceControlDiscovery)({}),
-  Layer.mock(OnePasswordAccounts.OnePasswordAccounts)({}),
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(SourceControlSignIn.SourceControlSignIn)({}),
   Layer.mock(StorageCleanup.StorageCleanup)({}),
