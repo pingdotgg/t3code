@@ -47,7 +47,6 @@ import {
 } from "./models.ts";
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
-import { pendingRuntimeRequestIds } from "./threadRequests.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -310,7 +309,7 @@ export function canResumeThread(
   queueHeld: boolean,
 ): boolean {
   if (resumableRunId === null) return queueHeld;
-  return pendingRuntimeRequestIds(projection).length === 0;
+  return !projection.runtimeRequests.some((request) => request.status === "pending");
 }
 
 export function deriveThreadRuntime(
