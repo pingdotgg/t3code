@@ -260,7 +260,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           <div className={cn("px-3 pt-3 pb-3.5", !compactSearchOpen && "max-md:hidden")}>
             {/* Pen EV7oi: a search field with a trailing slash hint. */}
             <div className={compactSearchOpen ? undefined : "max-md:hidden"}>
-              <InputGroup>
+              {/* A search landmark, so the nav holds no group without a heading. */}
+              <InputGroup role="search">
                 <InputGroupAddon>
                   <SearchIcon className="size-3.5" />
                 </InputGroupAddon>
