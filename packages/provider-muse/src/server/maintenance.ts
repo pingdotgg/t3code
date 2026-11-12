@@ -12,6 +12,7 @@ import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
+  resolveMiseProviderMaintenance,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
@@ -37,7 +38,10 @@ export const compareMuseVersions = (current: string, latest: string) =>
     ? compareSemverVersions(comparableMuseVersion(current), comparableMuseVersion(latest))
     : compareSemverVersions(current.replace(MUSE_REVISION, ""), latest.replace(MUSE_REVISION, ""));
 
-/** Only the official launcher owns an update channel; a standalone binary cannot update itself. */
+/**
+ * Mise upgrades a binary it installed. Otherwise only the official launcher owns
+ * an update channel; a standalone binary cannot update itself.
+ */
 export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("MuseMaintenance.resolve")(function* (context) {
     const manual = {
@@ -45,6 +49,12 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
       compareVersions: compareMuseVersions,
     };
     if (!context || context.platform === "win32") return manual;
+    const mise = yield* resolveMiseProviderMaintenance(
+      { provider: DRIVER, packageName: null },
+      { tool: "muse" },
+      context,
+    );
+    if (mise) return { ...mise, compareVersions: compareMuseVersions };
     const fs = yield* FileSystem.FileSystem;
     const isLauncher = yield* Effect.gen(function* () {
       const stat = yield* fs.stat(context.realCommandPath);
@@ -119,6 +129,15 @@ export const enrichMuseSnapshot = Effect.fn("enrichMuseSnapshot")(function* (inp
   readonly environment: NodeJS.ProcessEnv;
 }) {
   const { snapshot } = input;
+  const options = { enableProviderUpdateChecks: input.enableProviderUpdateChecks };
+  // Mise names the version it would install, so its answer alone counts.
+  if (input.maintenanceCapabilities.lookupLatestVersion) {
+    return yield* enrichProviderSnapshotWithVersionAdvisory(
+      snapshot,
+      input.maintenanceCapabilities,
+      options,
+    );
+  }
   const latestVersion =
     input.enableProviderUpdateChecks && snapshot.enabled && snapshot.installed && snapshot.version
       ? yield* latestMuseVersion(input.environment)
@@ -126,6 +145,6 @@ export const enrichMuseSnapshot = Effect.fn("enrichMuseSnapshot")(function* (inp
   return yield* enrichProviderSnapshotWithVersionAdvisory(
     snapshot,
     { ...input.maintenanceCapabilities, latestVersion },
-    { enableProviderUpdateChecks: input.enableProviderUpdateChecks },
+    options,
   );
 });

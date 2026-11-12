@@ -26,7 +26,7 @@ The Kubernetes primitives you'll meet here:
 Alchemy models these directly:
 [`Cluster`](/providers/aws/eks/cluster) with `compute: "auto"`
 stands up the control plane from a VPC, and the cluster-agnostic
-`alchemy/Kubernetes` workloads target it by passing the cluster
+`@alchemy.run/kubernetes` workloads target it by passing the cluster
 resource as their `cluster` prop:
 [`Kubernetes.Deployment`](/providers/kubernetes/deployment)
 synthesizes a Kubernetes `Deployment` + `Service`;
@@ -41,8 +41,8 @@ The workload providers ship in `Kubernetes.providers()` — compose it
 with `AWS.providers()` in the Stack:
 
 ```typescript
-import * as AWS from "alchemy/AWS";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as AWS from "@alchemy.run/aws";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Layer from "effect/Layer";
 
 export default Alchemy.Stack(
@@ -65,7 +65,7 @@ node IAM roles with the standard Auto Mode managed policies:
 
 ```typescript
 // alchemy.run.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 const network = yield* AWS.EC2.Network("Network", {
   cidrBlock: "10.42.0.0/16",
@@ -360,7 +360,7 @@ const cluster: Kubernetes.Connection = {
 
 `region` defaults to the Stack's AWS region. The `aws-eks` auth kind
 is added to the `Kubernetes.Connection` type by importing
-`alchemy/AWS`, and it requires `AWS.providers()` in the Stack. Your
+`@alchemy.run/aws`, and it requires `AWS.providers()` in the Stack. Your
 AWS principal needs an access entry on the cluster. Workloads get
 the same ECR, Pod Identity, and load balancer behavior as on a
 Stack-managed cluster.

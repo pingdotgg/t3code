@@ -1,7 +1,8 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "./assistantCitations.ts";
-import { searchableMessageSegments } from "./threadFindText.ts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerContextReferences.ts";
+import { searchableMessageSegments, searchablePlanSegments } from "./threadFindText.ts";
 
 it("excludes review attachments rendered as context chips", () => {
   const text = [
@@ -29,6 +30,16 @@ it("excludes structured context chips without joining text across them", () => {
       context: { version: 1, records: [] },
     }),
   ).toEqual(["before", "after"]);
+});
+
+it("excludes the hidden prompt of an attachment-only message", () => {
+  expect(
+    searchableMessageSegments({
+      role: "user",
+      streaming: false,
+      text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    }),
+  ).toEqual([]);
 });
 
 it("does not upgrade literal legacy tags in messages with structured context", () => {
@@ -85,7 +96,7 @@ it("indexes nested disclosure summaries and bodies in rendered order", () => {
   ).toEqual(["Outer", "first", "Inner", "second"]);
 });
 
-it("indexes the citation chip label instead of its link text", () => {
+it("indexes a citation by its comment, not its quote or link text", () => {
   const citation = {
     version: 1 as const,
     environmentId: EnvironmentId.make("environment"),
@@ -99,10 +110,21 @@ it("indexes the citation chip label instead of its link text", () => {
   };
   const text = `Please fix ${serializeAssistantCitation(citation)} thanks`;
   expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
-    "Please fix cited needle thanks",
+    "Please fix ",
+    " thanks",
   ]);
-  const commented = serializeAssistantCitation({ ...citation, comment: "my note" });
-  expect(searchableMessageSegments({ role: "user", text: commented, streaming: false })).toEqual([
-    "my note",
-  ]);
+  const commented = serializeAssistantCitation({ ...citation, comment: "my\nnote" });
+  expect(
+    searchableMessageSegments({ role: "user", text: `fix ${commented} thanks`, streaming: false }),
+  ).toEqual(["fix ", "my note thanks"]);
+});
+
+it("indexes insight bodies without hidden fences and keeps user and plan text literal", () => {
+  const text = "★ Insight ─────\nVisible body.\n─────";
+  expect(assistantSegments(text)).toEqual(["Visible body."]);
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })?.join("\n")).toContain(
+    "★ Insight",
+  );
+  expect(searchablePlanSegments(text).join("\n")).toContain("★ Insight");
+  expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });

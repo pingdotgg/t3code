@@ -2,6 +2,11 @@
   "name": "fly-website-nextjs",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-website-nextjs"
+  },
   "type": "module",
   "scripts": {
     "build": "next build",
@@ -16,7 +21,9 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@alchemy.run/fly": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/postcss": "catalog:",
@@ -29,10 +36,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/fly-website-nextjs"
   }
 }
