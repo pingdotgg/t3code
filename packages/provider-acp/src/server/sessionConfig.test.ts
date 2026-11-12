@@ -55,6 +55,49 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
+  it("keeps a later model-category selector reachable after the primary one", () => {
+    // Cline 3.0.70-3.0.73 advertise a provider selector, then the model selector, both as "model".
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "provider",
+          name: "Provider",
+          category: "model",
+          type: "select",
+          currentValue: "cline-pass",
+          options: [
+            { value: "cline", name: "Cline Usage-Billing" },
+            { value: "cline-pass", name: "ClinePass" },
+          ],
+        },
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "cline-pass/kimi-k3.1-pro",
+          options: [
+            { value: "cline-pass/kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
+            { value: "cline-pass/glm-5.3", name: "GLM-5.3" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toContainEqual(
+      expect.objectContaining({
+        id: "model",
+        type: "select",
+        currentValue: "cline-pass/kimi-k3.1-pro",
+        options: [
+          { id: "cline-pass/kimi-k3.1-pro", label: "Kimi K3.1 Pro" },
+          { id: "cline-pass/glm-5.3", label: "GLM-5.3" },
+        ],
+      }),
+    );
+  });
+
   it("flattens grouped select choices and drops empty or duplicate values", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
