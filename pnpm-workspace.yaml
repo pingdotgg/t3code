@@ -206,6 +206,8 @@ overrides:
   vite: "catalog:"
   vite-plus: "catalog:"
   yaml: "catalog:"
+  # @vercel/routing-utils pins exactly 6.1.0, which has a ReDoS advisory (GHSA-9wv6-86v2-598j).
+  "@vercel/routing-utils>path-to-regexp": 6.3.0
 
 packageExtensions:
   "@clerk/expo@*":
