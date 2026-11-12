@@ -247,11 +247,13 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
   });
 
-  it("keeps a plus in the SSH username through Remote-SSH's authority parsing", () => {
+  it.each([
+    { host: "ssh.example.com", username: "vm+demo" },
+    { host: "2001:db8::1", username: "dev" },
+  ])("keeps $username@$host and its port through Remote-SSH's authority parsing", (target) => {
     const url = buildRemoteOpenUrl({
       editor: "vscode",
-      host: "ssh.example.com",
-      username: "vm+demo",
+      ...target,
       port: 2222,
       absolutePath: "/workspace/project",
     });
@@ -267,8 +269,8 @@ describe("buildRemoteOpenUrl", () => {
         ? destination.match(/^(?:(?<user>.*)@)?(?<hostName>.+?)$/)?.groups
         : JSON.parse(new TextDecoder().decode(new Uint8Array(hexBytes)));
     expect({ user: resolved?.user, hostName: resolved?.hostName, port: resolved?.port }).toEqual({
-      user: "vm+demo",
-      hostName: "ssh.example.com",
+      user: target.username,
+      hostName: target.host,
       port: 2222,
     });
   });
