@@ -1,4 +1,8 @@
 import {
+  legacyThreadPullRequestKey,
+  threadPullRequestKeyOf,
+} from "@t3tools/client-runtime/thread-pull-requests";
+import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
@@ -148,11 +152,15 @@ export function useComposerPullRequestSearch(input: {
         })
       : null,
   );
+  const exactEntry = exact.data
+    ? { ...exact.data, ...legacyThreadPullRequestKey(exact.data) }
+    : null;
   const entries = (() => {
     if (input.query === null || input.projectId === null || input.repository === null) return [];
     if (/^\d*$/.test(input.query)) {
       return filterComposerPullRequestMatches({
-        entries: ready ? [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])] : [],
+        keyOf: threadPullRequestKeyOf,
+        entries: ready ? [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])] : [],
         linked,
         projectId: input.projectId,
         repository: input.repository,
@@ -162,6 +170,7 @@ export function useComposerPullRequestSearch(input: {
     }
     if (!ready) {
       return withLinkedComposerPullRequestsFirst({
+        keyOf: threadPullRequestKeyOf,
         matches: [],
         linked,
         query: input.query,
@@ -169,7 +178,7 @@ export function useComposerPullRequestSearch(input: {
       });
     }
     const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-    const found = [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])].filter(
+    const found = [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])].filter(
       (entry) =>
         entry.projectId === input.projectId &&
         entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
@@ -177,9 +186,13 @@ export function useComposerPullRequestSearch(input: {
           `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
         ),
     );
-    const unique = new Map<number, (typeof found)[number]>();
-    for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
+    const unique = new Map<string, (typeof found)[number]>();
+    for (const entry of found) {
+      const key = threadPullRequestKeyOf(entry);
+      if (!unique.has(key)) unique.set(key, entry);
+    }
     return withLinkedComposerPullRequestsFirst({
+      keyOf: threadPullRequestKeyOf,
       matches: [...unique.values()].sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),
