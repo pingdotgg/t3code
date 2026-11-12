@@ -253,6 +253,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
     progress: null,
     result: null,
     error: null,
+    usage: null,
   };
 }
 

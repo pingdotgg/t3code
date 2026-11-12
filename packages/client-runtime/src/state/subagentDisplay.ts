@@ -114,8 +114,9 @@ export function resolveSubagentMetadata(input: {
   return { modelLabel, modelSlug: slug ?? model ?? null, workspace };
 }
 
-export function formatSubagentUsage(totalTokens: number, toolUses: number | undefined): string {
-  const tokens = `${formatTokens(totalTokens)} tokens`;
+/** Claude's subagent `total_tokens` is the latest context size, not what the run consumed. */
+export function formatSubagentUsage(contextTokens: number, toolUses: number | undefined): string {
+  const tokens = `${formatTokens(contextTokens)} context`;
   if (toolUses === undefined) return tokens;
   return `${tokens} · ${toolUses} ${toolUses === 1 ? "tool use" : "tool uses"}`;
 }

@@ -194,7 +194,6 @@ function WorkflowMemberRow(props: {
             status={member.status}
             result={member.result ?? member.error}
             progress={member.progress}
-            usage={member.usage}
           />
         </ThreadHoverCardPopup>
       </Tooltip>
