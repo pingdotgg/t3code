@@ -552,8 +552,6 @@ export function useThreadListActions(): {
           result.value.message ?? "The thread title could not be regenerated.",
         );
         return false;
-      } else if (result.value?.status === "unchanged") {
-        Dialog.alert("Title kept", "The current title already fits this thread.");
       }
       return true;
     })();
