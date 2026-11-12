@@ -11,6 +11,7 @@ import {
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadSendResult,
+  OrchestratorMcpThreadReadResult,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -79,6 +80,7 @@ const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
+const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
@@ -199,6 +201,11 @@ describe("orchestrator MCP toolkit", () => {
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
     { label: "identical", result: delegatedResult, latestSummary: null },
     { label: "emoji", result: "😀", latestSummary: "😀" },
+    {
+      label: "paginated",
+      result: "git safety ".repeat(120),
+      latestSummary: "git safety ".repeat(120),
+    },
   ])("reports $label child results", ({ result, latestSummary }) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -724,11 +731,40 @@ describe("orchestrator MCP toolkit", () => {
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
-            maxCharsPerItem: result === "😀" ? 1 : 20_000,
+            ...(result === "😀" ? { maxCharsPerItem: 1 } : {}),
           }).pipe(Effect.withTracer(tracer));
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
-          expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
+          const firstPage = yield* decodeThreadRead(read.structuredContent);
+          const finalItem = firstPage.items.find((item) => item.text === result.slice(0, 500));
+          expect(finalItem).toBeDefined();
+          if (result.length > 500) {
+            yield* invoke("t3_thread_read", {
+              threadId: delegated.childThreadId,
+              itemId: finalItem!.itemId,
+              textOffset: result.length,
+            });
+          } else {
+            expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
+          }
+          let text = finalItem!.text ?? "";
+          let nextTextOffset = finalItem?.nextTextOffset ?? null;
+          while (nextTextOffset !== null) {
+            const beforeContinuation = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(
+              beforeContinuation.subagents.find((task) => task.id === queuedFollowup.taskId)
+                ?.completionDelivery?.state,
+            ).toBe("claimed");
+            const continuation = yield* invoke("t3_thread_read", {
+              threadId: delegated.childThreadId,
+              itemId: finalItem!.itemId,
+              textOffset: nextTextOffset,
+            }).pipe(Effect.withTracer(tracer));
+            const nextPage = yield* decodeThreadRead(continuation.structuredContent);
+            text += nextPage.items[0]?.text ?? "";
+            nextTextOffset = nextPage.items[0]?.nextTextOffset ?? null;
+          }
+          expect(text).toBe(result);
           // The acknowledgement reads the task and its spawning run by id, not the parent's history.
           expect(acknowledgementReads.length).toBeGreaterThan(0);
           expect(

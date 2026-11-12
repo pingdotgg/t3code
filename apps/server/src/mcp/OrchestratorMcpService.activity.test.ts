@@ -301,17 +301,35 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       updatedAt: now,
     },
   };
+  const rows = [
+    row,
+    ...Array.from({ length: 11 }, (_, index) => ({
+      ...row,
+      position: index + 1,
+      sourceItemId: TurnItemId.make(`turn-item-mcp-${index}`),
+      item: { ...row.item, text: "x".repeat(600) },
+    })),
+  ];
 
   const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () =>
-            Effect.succeed({
-              items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
-              totalItems: 1,
-              hasMore: false,
-            }),
+          getTimelinePage: (_threadId, options) => {
+            const remaining = rows.filter(
+              (candidate) =>
+                candidate.position > (options.afterPosition ?? -1) &&
+                (options.itemId === undefined || candidate.sourceItemId === options.itemId),
+            );
+            return Effect.succeed({
+              items: remaining.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: remaining.length > options.limit,
+            });
+          },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
           getThreadShell: () =>
@@ -358,6 +376,17 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         });
       }
     }
+    const first = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+    });
+    expect(first.items[1]).toMatchObject({
+      text: "x".repeat(500),
+      textTruncated: true,
+      nextTextOffset: 500,
+    });
+    expect(first.items).toHaveLength(10);
+    expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
