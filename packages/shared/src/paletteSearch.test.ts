@@ -333,6 +333,11 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
       ranges: [{ start: 0, end: 7 }],
     });
     expect(scoreThreadSearch("trim", subject, NOW)?.explain?.()).toBeUndefined();
+    // Nor is it in the flat t3-<hex> form used when a `t3` branch blocks nested refs.
+    const flat = thread("Add search", { branch: "t3-abcd1234" });
+    expect(scoreThreadSearch("t3", flat, NOW)).toBeNull();
+    expect(scoreThreadSearch("t3 connect", flat, NOW)).toBeNull();
+    expect(scoreThreadSearch("abcd1234", flat, NOW)).not.toBeNull();
   });
 
   it("reads letters and numbers typed together, without forgiving typos in numbers", () => {
