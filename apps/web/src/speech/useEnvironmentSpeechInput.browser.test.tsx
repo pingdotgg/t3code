@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
   transcripts: [] as Array<string | Error>,
+  transcribeGate: undefined as Promise<void> | undefined,
   committed: vi.fn(),
   draft: "",
 }));
@@ -190,6 +191,7 @@ vi.mock("./browserVoiceInput", () => ({
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
                   : environmentId,
               );
+              await mocks.transcribeGate;
               const next = mocks.transcripts.shift() ?? "dictated";
               if (next instanceof Error) throw next;
               return next;
@@ -234,6 +236,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.recordingOptions = [];
   mocks.projectWords = {};
   mocks.transcripts = [];
+  mocks.transcribeGate = undefined;
   mocks.committed.mockClear();
   mocks.draft = "";
 }
@@ -249,13 +252,14 @@ function Probe(props: {
   readonly projectName?: string;
   readonly cleanup?: boolean;
   readonly showWizard?: boolean;
+  readonly ownerKey?: string;
 }) {
   const value = useEnvironmentSpeechInput({
     environmentId: THREAD_ENV as EnvironmentId,
     projectId: props.projectId as ProjectId | undefined,
     projectName: props.projectName,
     cleanup: props.cleanup,
-    ownerKey: "draft",
+    ownerKey: props.ownerKey ?? "draft",
     draftText: mocks.draft,
     readDraft: () => ({
       text: mocks.draft,
@@ -362,6 +366,21 @@ it.each([
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("delivers a confirmed send once to its owner after the owner changes during transcription", async () => {
+  setup({ destination: "env-a" });
+  const transcription = Promise.withResolvers<void>();
+  mocks.transcribeGate = transcription.promise;
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.submitAfterDictation(submit));
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
+  await screen.rerender(<Probe ownerKey="thread-b" />);
+  transcription.resolve();
+  await screen.rerender(<Probe ownerKey="thread-a" />);
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
 });
 
 it("retries a failed transcription on the same chosen environment", async () => {
