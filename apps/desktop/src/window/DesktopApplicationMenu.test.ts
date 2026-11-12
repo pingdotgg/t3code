@@ -83,7 +83,7 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     createMain: Effect.die("unexpected createMain"),
     ensureMain: Effect.die("unexpected ensureMain"),
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
-    activate: Effect.void,
+    activate: Deferred.succeed(selectedAction, "activate").pipe(Effect.asVoid),
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
@@ -202,6 +202,30 @@ describe("DesktopApplicationMenu", () => {
 
       zoomIn.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
+    }),
+  );
+
+  it.effect("reopens the main window from File > Open Window on macOS", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate, { platform: "darwin" });
+
+      const fileMenu = (yield* Deferred.await(applicationMenuTemplate)).find(
+        (item) => item.label === "File",
+      );
+      if (!Array.isArray(fileMenu?.submenu)) {
+        throw new Error("Expected File menu submenu to be an array.");
+      }
+      const openWindow = fileMenu.submenu.find((item) => item.label === "Open Window");
+      if (typeof openWindow?.click !== "function") {
+        throw new Error("Expected Open Window menu item to have a click handler.");
+      }
+
+      openWindow.click({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), "activate");
     }),
   );
 
