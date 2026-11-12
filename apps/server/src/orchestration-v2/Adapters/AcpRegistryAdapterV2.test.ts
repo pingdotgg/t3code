@@ -1392,6 +1392,78 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("opens and resumes threads on an agent that refuses per-session MCP servers", () =>
+    Effect.gen(function* () {
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* (yield* Path.Path).fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const instanceId = ProviderInstanceId.make("acp-local-openclaw");
+      const threadId = ThreadId.make("thread-acp-local-openclaw");
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment-acp-local-openclaw"),
+        threadId,
+        providerSessionId: "mcp-session-acp-local-openclaw",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        browserToolsAvailable: false,
+        authorizationHeader: "Bearer opened-token",
+      });
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation,
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({
+          source: "local",
+          commandPath: process.execPath,
+          commandArgs: [mockAgentPath],
+        }),
+        environment: {},
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+            resolve: () =>
+              Effect.succeed({
+                distribution: "local" as const,
+                spawn: {
+                  command: process.execPath,
+                  args: [mockAgentPath],
+                  env: { T3_ACP_SESSION_LIFECYCLE: "1", T3_ACP_REJECT_SESSION_MCP: "1" },
+                },
+              }),
+          }),
+        ),
+      );
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-local-openclaw"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.resumeThread({
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: {
+            driver: ACP_REGISTRY_PROVIDER,
+            nativeId: "mock-session-2",
+            strength: "strong",
+          },
+        },
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("the agent process env names the thread it serves", () =>
     Effect.gen(function* () {
       const selfInvocation = yield* resolveSelfInvocation();
