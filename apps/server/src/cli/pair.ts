@@ -48,7 +48,7 @@ import {
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
-import { resolveHostCliCommand } from "./invocation.ts";
+import { hostShellWord, resolveHostCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -84,12 +84,16 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
 
 export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
-  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
+  {
+    serverVersion: Schema.String,
+    serverProtocolVersion: Schema.Number,
+    baseDirArgs: Schema.String,
+  },
 ) {
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair${this.baseDirArgs}\`.`,
     ].join("\n");
   }
 }
@@ -527,8 +531,13 @@ export const pairCommand = Command.make("pair", {
       // before any local layer opens (and migrates) that database.
       const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
       if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
+        const platform = yield* HostProcess.Platform;
         return yield* new IncompatibleServerProtocolError({
           serverVersion: target.descriptor.serverVersion,
+          baseDirArgs: Option.match(flags.baseDir, {
+            onNone: () => "",
+            onSome: (baseDir) => ` --base-dir ${hostShellWord(platform, baseDir)}`,
+          }),
           serverProtocolVersion,
         });
       }
