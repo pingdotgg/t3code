@@ -2,7 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
+  pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
+  pickWorkspaceLinkMatch,
+  workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 
 describe("pickWorkspaceBasenameMatch", () => {
@@ -48,6 +51,64 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "src/Foo.ts", kind: "file" },
         { path: "src/foo.ts", kind: "file" },
       ]),
+    ).toBeNull();
+  });
+});
+
+describe("chat file links an agent shortened", () => {
+  const cwd = "/home/user/acme";
+  const entries = [
+    { path: "packages/server/src/cloud/http.ts", kind: "file" as const },
+    { path: "packages/server/src/cloud", kind: "directory" as const },
+    { path: "packages/web/src/api/http.ts", kind: "file" as const },
+    { path: "packages/server/src/index.ts", kind: "file" as const },
+    { path: "packages/web/src/index.ts", kind: "file" as const },
+  ];
+
+  it("searches for package-relative paths and repeated prefixes, not exact ones", () => {
+    expect(workspaceLinkLookupQuery("cloud/http.ts", cwd)).toBe("cloud/http.ts");
+    expect(workspaceLinkLookupQuery("acme/packages/web/src/index.ts", cwd)).toBe(
+      "packages/web/src/index.ts",
+    );
+    expect(workspaceLinkLookupQuery("./cloud/http.ts", cwd)).toBeNull();
+    expect(workspaceLinkLookupQuery("~/acme/src/config.ts", cwd)).toBeNull();
+    expect(workspaceLinkLookupQuery("packages/server/", cwd)).toBeNull();
+  });
+
+  it("opens the one file a package-relative path is the suffix of", () => {
+    expect(pickWorkspaceLinkMatch("cloud/http.ts", cwd, entries)).toBe(
+      "packages/server/src/cloud/http.ts",
+    );
+    expect(pickWorkspaceLinkMatch("acme/packages/web/src/index.ts", cwd, entries)).toBe(
+      "packages/web/src/index.ts",
+    );
+  });
+
+  it("opens nothing when the suffix names several files or splits a segment", () => {
+    expect(pickWorkspaceLinkMatch("src/index.ts", cwd, entries)).toBeNull();
+    expect(pickWorkspaceLinkMatch("ud/http.ts", cwd, entries)).toBeNull();
+  });
+});
+
+describe("chat file links into another project", () => {
+  const appB = {
+    root: "/home/user/app-b",
+    entries: [{ path: "src/api/rules/categories.ts", kind: "file" as const }],
+  };
+
+  // regression: #10553 a path the agent cited inside another registered project
+  it("resolves to the absolute path in the one project that has the file", () => {
+    expect(
+      pickProjectLinkMatch("rules/categories.ts", [
+        { root: "/home/user/app-c", entries: [] },
+        appB,
+      ]),
+    ).toBe("/home/user/app-b/src/api/rules/categories.ts");
+  });
+
+  it("opens nothing when several projects have the file", () => {
+    expect(
+      pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-c" }]),
     ).toBeNull();
   });
 });
