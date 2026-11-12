@@ -430,6 +430,55 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
   );
 });
 
+it.effect("t3_thread_search tells the calling thread which match is its own", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const caller = McpToolAccessTestkit.liveThreadShell(threadId);
+    const result = yield* server
+      .callTool({ name: "t3_thread_search", arguments: { query: "awareness" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      currentThreadId: threadId,
+      matches: [{ threadId, projectId: caller.projectId, source: "title" }],
+    });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadSearch.ThreadSearch)({
+            searchThreads: () =>
+              Effect.succeed({
+                matches: [
+                  {
+                    threadId,
+                    projectId: McpToolAccessTestkit.liveThreadShell(threadId).projectId,
+                    title: "Agent Thread Awareness",
+                    source: "title",
+                  },
+                ],
+              } as never),
+          }),
+        ),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
