@@ -1457,8 +1457,11 @@ function ScheduledTaskEditorForm({
   const compatibleInteractionMode = planModeUiEnabled ? draft.interactionMode : "default";
 
   const runtimeMode =
-    clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, providerRuntimeMode) ??
-    providerRuntimeMode;
+    clampManagedRuntimeMode(
+      environment?.serverConfig?.managedPolicy,
+      providerRuntimeMode,
+      compatibleRuntimeModes,
+    ) ?? providerRuntimeMode;
   const boundToThread = draft.threadId !== "";
   const interactionMode = planModeUiEnabled ? compatibleInteractionMode : "default";
 

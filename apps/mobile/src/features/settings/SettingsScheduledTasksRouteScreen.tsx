@@ -411,7 +411,11 @@ function TaskRuntimeRow({
     [managedPolicy],
   ).filter((choice) => choice.disabledReason === undefined);
   const runtimeMode =
-    clampManagedRuntimeMode(managedPolicy, draft.runtimeMode) ?? draft.runtimeMode;
+    clampManagedRuntimeMode(
+      managedPolicy,
+      draft.runtimeMode,
+      choices.map((choice) => choice.mode),
+    ) ?? draft.runtimeMode;
   return (
     <SelectRow
       label="Permissions"
@@ -899,7 +903,11 @@ function TaskForm({
                 startFromOrigin: draft.startFromOrigin,
               },
       runtimeMode:
-        clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
+        clampManagedRuntimeMode(
+          config?.managedPolicy,
+          draft.runtimeMode,
+          runtimeChoices.map((choice) => choice.mode),
+        ) ?? draft.runtimeMode,
       interactionMode: boundToThread ? draft.interactionMode : interactionMode,
       creationSource: draft.task?.creationSource ?? "mobile",
     };
