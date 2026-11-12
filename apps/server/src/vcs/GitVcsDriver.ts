@@ -1607,11 +1607,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
+      // Commits left behind count only when the turn dropped them (a reset or rebase); after a
+      // branch switch they are still on a branch.
       const pathLists = yield* Effect.all(
         [
           listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
-          listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
+          listPaths([
+            "log",
+            "--format=",
+            "--diff-merges=remerge",
+            `${endHead}..${startHead}`,
+            "--not",
+            "--branches",
+          ]),
           listPaths([
             "log",
             "--format=",
