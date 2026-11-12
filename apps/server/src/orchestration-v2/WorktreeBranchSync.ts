@@ -108,6 +108,8 @@ const makeFollowSessionMove = Effect.gen(function* () {
         branch: yield* git.currentBranch(location),
         expectedBranch: thread.branch,
         expectedWorktreePath: thread.worktreePath,
+        // The reads above race a follow-up turn, which this update's detach would end.
+        expectedIdle: true,
       })
       .pipe(
         Effect.catchTags({

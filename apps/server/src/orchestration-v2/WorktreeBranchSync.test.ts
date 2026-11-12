@@ -165,6 +165,7 @@ it.effect.each(sessionMoveCases)("follows a provider session's own worktree move
             branch: command.branch,
             expectedWorktreePath: command.expectedWorktreePath,
             expectedBranch: command.expectedBranch,
+            expectedIdle: command.expectedIdle,
           }
         : command.type,
     );
@@ -177,6 +178,7 @@ it.effect.each(sessionMoveCases)("follows a provider session's own worktree move
               ...row.expected,
               expectedWorktreePath: row.thread.worktreePath,
               expectedBranch: row.thread.branch,
+              expectedIdle: true,
             },
           ],
     );
