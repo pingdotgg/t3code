@@ -110,6 +110,7 @@ describe("tailscale", () => {
       ] as const) {
         const reachable = yield* probeTailscaleHttpsEndpoint({
           baseUrl: "https://desktop.example.ts.net",
+          environmentId: "this-environment",
         }).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
@@ -120,6 +121,34 @@ describe("tailscale", () => {
         );
         assert.isFalse(reachable, `HTTP ${status} without a T3 descriptor`);
       }
+    }),
+  );
+
+  it.effect("does not treat another T3 server behind the Serve URL as this server", () =>
+    Effect.gen(function* () {
+      const answer = (environmentId: string) =>
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                environmentId,
+                label: "T3 server",
+                platform: { os: "linux", arch: "x64" },
+                serverVersion: "0.1.9",
+                capabilities: { repositoryIdentity: true },
+              }),
+            ),
+          ),
+        );
+      const probe = (served: string) =>
+        probeTailscaleHttpsEndpoint({
+          baseUrl: "https://desktop.example.ts.net",
+          environmentId: "this-environment",
+        }).pipe(Effect.provideService(HttpClient.HttpClient, answer(served)));
+
+      assert.isTrue(yield* probe("this-environment"));
+      assert.isFalse(yield* probe("another-environment"));
     }),
   );
 

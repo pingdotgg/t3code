@@ -553,6 +553,68 @@ describe("t3 pair", () => {
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+  // regression: #35517 - the macOS Tailscale apps refuse Serve targets other than
+  // localhost, 127.0.0.1 and ::1, so a specific bind needs an explanation.
+  it.effect("names the bind address when Tailscale refuses it as a Serve target", () =>
+    withDescriptorServer(
+      (origin) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-remote-"));
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.2", devUrl: undefined },
+              port: Number(new URL(origin).port),
+            }),
+          });
+          const spawner = ChildProcessSpawner.make((command) => {
+            const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+            const serve = args[0] === "serve" && args[1] !== "status";
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(serve ? 1 : 0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.make(
+                  new TextEncoder().encode(
+                    serve
+                      ? ""
+                      : args[0] === "serve"
+                        ? "{}"
+                        : '{"Self":{"DNSName":"pair-test.tail.ts.net."}}',
+                  ),
+                ),
+                stderr: Stream.make(
+                  new TextEncoder().encode(
+                    serve
+                      ? "Warning: the MacOS extension doesn't support connecting to remote destinations from non-default route\n"
+                      : "",
+                  ),
+                ),
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          });
+
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(HostProcess.Platform, "darwin"),
+              Effect.flip,
+            ),
+          );
+
+          assert.include(String(error), "127.0.0.2");
+        }),
+      "127.0.0.2",
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 });
 
 describe("auth scope options", () => {

@@ -1083,7 +1083,6 @@ function TranscriptionTest(props: {
     projectId: props.projectId,
     projectName: props.projectName,
     ownerKey: JSON.stringify([props.environmentId, props.projectId]),
-    draftText: draft,
     cleanup: false,
     readDraft: () => ({
       text: draftRef.current,

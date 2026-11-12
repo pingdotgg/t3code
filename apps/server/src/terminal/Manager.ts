@@ -1106,7 +1106,7 @@ function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   if (finalByte === "R" && /^[0-9;?]*$/.test(body)) {
     return true;
   }
-  if (finalByte === "c" && /^[>0-9;?]*$/.test(body)) {
+  if (finalByte === "c" && /^[>=0-9;?]*$/.test(body)) {
     return true;
   }
   // Strip DECRQM/DECRPM query traffic to prevent echoed replies during replay; $ guards preserve setters.
