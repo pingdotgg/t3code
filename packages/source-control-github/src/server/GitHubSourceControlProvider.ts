@@ -963,9 +963,9 @@ export const make = Effect.gen(function* () {
     ),
     // GitHub matches bare heads; read a full page to disambiguate forks by owner. A default branch
     // collides with most forks, so its owner-qualified lookup has GitHub filter by owner instead.
-    headBranchProbe: ({ headSelectors, defaultBranchHeadSelector }) => ({
-      headSelectors: defaultBranchHeadSelector
-        ? [defaultBranchHeadSelector]
+    headBranchProbe: ({ headSelectors, ownerHeadSelector }) => ({
+      headSelectors: ownerHeadSelector
+        ? [ownerHeadSelector]
         : headSelectors.filter((selector) => !selector.includes(":")),
       limit: 100,
     }),

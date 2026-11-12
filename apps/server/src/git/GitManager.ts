@@ -575,10 +575,10 @@ function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
   state: "open" | "all",
-  defaultBranchHeadSelector?: string,
+  ownerHeadSelector?: string,
 ) {
   return (
-    provider.headBranchProbe?.({ headSelectors, state, defaultBranchHeadSelector }) ?? {
+    provider.headBranchProbe?.({ headSelectors, state, ownerHeadSelector }) ?? {
       headSelectors,
       limit: state === "open" ? 1 : 20,
     }
@@ -1897,9 +1897,10 @@ export const make = Effect.gen(function* () {
       | "headRepositoryOwnerLogin"
       | "isCrossRepository"
     >,
+    ownerHeadSelector?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const probe = headBranchProbe(provider, headContext.headSelectors, "open");
+    const probe = headBranchProbe(provider, headContext.headSelectors, "open", ownerHeadSelector);
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -1966,7 +1967,13 @@ export const make = Effect.gen(function* () {
     }
     // Forks reusing the head name can fill the page before the branch's own open PR.
     if (pageWasFull) {
-      const openPr = yield* findOpenPr(cwd, headContext);
+      const openPr = yield* findOpenPr(
+        cwd,
+        headContext,
+        headContext.headRepositoryOwnerLogin
+          ? `${headContext.headRepositoryOwnerLogin}:${headContext.headBranch}`
+          : undefined,
+      );
       if (openPr) return openPr;
     }
     return parsed[0] ?? null;

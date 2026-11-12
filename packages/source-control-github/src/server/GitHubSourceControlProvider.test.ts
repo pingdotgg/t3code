@@ -450,11 +450,11 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
-      const probe = (defaultBranchHeadSelector?: string) =>
+      const probe = (ownerHeadSelector?: string) =>
         gh.headBranchProbe?.({
           headSelectors: ["me:main", "main"],
           state: "all",
-          defaultBranchHeadSelector,
+          ownerHeadSelector,
         }).headSelectors;
       assert.deepStrictEqual([probe(), probe("me:main")], [["main"], ["me:main"]]);
       const read = (state: "open" | "merged") =>

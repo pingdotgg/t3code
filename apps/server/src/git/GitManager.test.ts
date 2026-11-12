@@ -439,9 +439,9 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
       : {
           headBranchProbe:
             scenario.headBranchProbe ??
-            (({ headSelectors, defaultBranchHeadSelector }) => ({
-              headSelectors: defaultBranchHeadSelector
-                ? [defaultBranchHeadSelector]
+            (({ headSelectors, ownerHeadSelector }) => ({
+              headSelectors: ownerHeadSelector
+                ? [ownerHeadSelector]
                 : headSelectors.filter((selector) => !selector.includes(":")),
               limit: 100,
             })),
@@ -2188,46 +2188,47 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("finds a fork branch's open PR past a full page of other forks' PRs", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const originDir = yield* createBareRemote();
-      const forkDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature"]);
-      yield* runGit(repoDir, ["push", "-u", "fork", "feature"]);
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "origin",
-        "git@github.com:team/repository.git",
-        originDir,
-      );
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "fork",
-        "git@github.com:alice/repository.git",
-        forkDir,
-      );
-      const otherForks: FakeChangeRequest[] = Array.from({ length: 100 }, (_, index) => ({
-        number: 200 - index,
-        title: "Update docs",
-        url: `https://github.com/team/repository/pull/${200 - index}`,
-        baseRefName: "main",
-        headRefName: "feature",
-        state: "closed",
-        isCrossRepository: true,
-        headRepositoryNameWithOwner: `fork-${index + 1}/repository`,
-        headRepositoryOwnerLogin: `fork-${index + 1}`,
-      }));
-      const { manager, providerCalls } = yield* makeManager({
-        providerScenario: {
-          prListSequenceByHeadSelector: {
-            feature: [
-              otherForks,
-              [
+  it.effect.each(["closed", "open"] as const)(
+    "finds a fork branch's open PR past a full page of other forks' %s PRs",
+    (otherForksState) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature"]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "feature"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:team/repository.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "git@github.com:alice/repository.git",
+          forkDir,
+        );
+        const otherForks: FakeChangeRequest[] = Array.from({ length: 100 }, (_, index) => ({
+          number: 200 - index,
+          title: "Update docs",
+          url: `https://github.com/team/repository/pull/${200 - index}`,
+          baseRefName: "main",
+          headRefName: "feature",
+          state: otherForksState,
+          isCrossRepository: true,
+          headRepositoryNameWithOwner: `fork-${index + 1}/repository`,
+          headRepositoryOwnerLogin: `fork-${index + 1}`,
+        }));
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            prListSequenceByHeadSelector: { feature: [otherForks, otherForks] },
+            prListByHeadSelector: {
+              "alice:feature": [
                 {
                   number: 1,
                   title: "This fork",
@@ -2240,17 +2241,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   headRepositoryOwnerLogin: "alice",
                 },
               ],
-            ],
+            },
           },
-        },
-      });
+        });
 
-      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" })).toMatchObject({
-        number: 1,
-        state: "open",
-      });
-      expect(listed(providerCalls).map((call) => call.state)).toEqual(["all", "open"]);
-    }),
+        expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" })).toMatchObject(
+          {
+            number: 1,
+            state: "open",
+          },
+        );
+        expect(listed(providerCalls).map((call) => [call.headSelector, call.state])).toEqual([
+          ["feature", "all"],
+          ["alice:feature", "open"],
+        ]);
+      }),
   );
 
   it.effect.each([
