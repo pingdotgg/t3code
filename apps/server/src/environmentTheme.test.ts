@@ -1,4 +1,4 @@
-import { EnvironmentThemeFile } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentThemeFile } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
@@ -41,6 +42,8 @@ const withEnvironmentThemes = <A, E>(
     | Path.Path
     | Scope.Scope
   >,
+  /** Receives each theme id the service makes the environment theme. */
+  selected: Array<string | undefined> = [],
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -56,6 +59,15 @@ const withEnvironmentThemes = <A, E>(
       Effect.provide(
         EnvironmentTheme.layer.pipe(
           Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            Layer.mock(ServerSettingsService)({
+              updateSettings: (patch) =>
+                Effect.sync(() => {
+                  selected.push(patch.defaultTheme);
+                  return DEFAULT_SERVER_SETTINGS;
+                }),
+            }),
+          ),
         ),
       ),
     );
@@ -159,33 +171,46 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  it.effect("publishes a theme with CSS and refuses one that loads remote files", () =>
-    withEnvironmentThemes(
+  it.effect("publishes and selects a theme, and refuses unsafe CSS and unknown ids", () => {
+    const selected: Array<string | undefined> = [];
+    return withEnvironmentThemes(
       {},
       Effect.gen(function* () {
         const themes = yield* EnvironmentTheme.EnvironmentThemeService;
         // A comment may name an address. Only a rule that loads one is refused.
         const css =
           "/* from url(https://example.com/guide) */ [data-chat-header] { border-bottom: 1px solid red; }";
-        yield* themes.publish("agent-look", { ...NIGHTFALL_THEME, css });
+        yield* themes.apply({ themeId: "agent-look", theme: { ...NIGHTFALL_THEME, css } });
         assert.deepEqual(yield* themes.current, [{ id: "agent-look", ...NIGHTFALL_THEME, css }]);
 
         const leaky = yield* themes
-          .publish("leaky", {
-            ...NIGHTFALL_THEME,
-            css: 'input[value^="a"] { background: url(https://example.com/a); }',
+          .apply({
+            themeId: "leaky",
+            theme: {
+              ...NIGHTFALL_THEME,
+              css: 'input[value^="a"] { background: url(https://example.com/a); }',
+            },
           })
           .pipe(Effect.flip);
         assert.strictEqual(leaky.reason, "remote-css");
-        const reserved = yield* themes.publish("dark", NIGHTFALL_THEME).pipe(Effect.flip);
+        const reserved = yield* themes
+          .apply({ themeId: "dark", theme: NIGHTFALL_THEME })
+          .pipe(Effect.flip);
         assert.strictEqual(reserved.reason, "invalid-id");
+        const unknown = yield* themes.apply({ themeId: "missing" }).pipe(Effect.flip);
+        assert.strictEqual(unknown.reason, "unknown-id");
+        yield* themes.apply({ themeId: "grove" });
+
         assert.deepEqual(
           (yield* themes.current).map((theme) => theme.id),
           ["agent-look"],
         );
+        // Only a theme that was published or already exists becomes the environment theme.
+        assert.deepEqual(selected, ["agent-look", "grove"]);
       }),
-    ),
-  );
+      selected,
+    );
+  });
 
   it.effect("keeps the served theme when an update does not fit the size limit", () => {
     const large = (name: string): EnvironmentThemeFile => ({
@@ -210,7 +235,9 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         );
         assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
 
-        const refused = yield* themes.publish("zz-look", large("Too much")).pipe(Effect.flip);
+        const refused = yield* themes
+          .apply({ themeId: "zz-look", theme: large("Too much") })
+          .pipe(Effect.flip);
         assert.strictEqual(refused.reason, "not-published");
         assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
       }),

@@ -1,7 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { THEME_GUIDE } from "@t3tools/shared/themeCss";
 import { BUILT_IN_THEME_IDS } from "@t3tools/shared/themePalettes";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Struct from "effect/Struct";
 import * as EnvironmentTheme from "../../../environmentTheme.ts";
@@ -40,29 +39,16 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
       const themes = yield* EnvironmentTheme.EnvironmentThemeService;
-      const settings = yield* Settings.ServerSettingsService;
       const set = Effect.gen(function* () {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;
-        if (theme !== undefined) {
-          yield* themes
-            .publish(themeId, theme)
-            .pipe(Effect.mapError((error) => invalid(error.message)));
-        } else {
-          const known = [...BUILT_IN_THEME_IDS, ...(yield* themes.current).map(({ id }) => id)];
-          if (!known.includes(themeId)) {
-            return yield* invalid(
-              `No theme is named "${themeId}". Available: ${known.join(", ")}.`,
-            );
-          }
-        }
-        // The timestamp makes clients apply the theme again when its id did not change.
-        yield* settings
-          .updateSettings({
-            defaultTheme: themeId,
-            defaultThemeSetAt: DateTime.formatIso(yield* DateTime.now),
-          })
-          .pipe(Effect.mapError(unavailable));
+        yield* themes
+          .apply({ themeId, theme })
+          .pipe(
+            Effect.mapError((error) =>
+              error.reason === "not-selected" ? unavailable() : invalid(error.message),
+            ),
+          );
         return { themeId, published: theme !== undefined };
       });
       return yield* scope.thread === undefined

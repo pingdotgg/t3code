@@ -10,9 +10,10 @@ import {
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
-import { UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
+import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -28,6 +29,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
@@ -49,32 +51,38 @@ interface PublishedThemes {
   readonly themes: ReadonlyArray<EnvironmentTheme>;
 }
 
-const PUBLISH_FAILURES = {
+const APPLY_FAILURES = {
   "invalid-id":
     "is not a valid theme id. Use lowercase letters, digits, and hyphens, and not a built-in name.",
+  "unknown-id": "is not a built-in or published theme.",
   "no-colors": "has no colors. Give canvas and accent, or at least one color role.",
   "remote-css":
     "has CSS that loads files. Remove @import, image-set(), and url() that is not data: or #id.",
   "too-large": `is larger than ${MAX_THEME_FILE_BYTES} bytes.`,
   "not-published": "could not be published. The themes directory may be full or not writable.",
+  "not-selected": "was not made the environment theme, because the settings could not be saved.",
 } as const;
 
-export class EnvironmentThemePublishError extends Schema.TaggedError<EnvironmentThemePublishError>()(
-  "EnvironmentThemePublishError",
+export class EnvironmentThemeApplyError extends Schema.TaggedError<EnvironmentThemeApplyError>()(
+  "EnvironmentThemeApplyError",
   {
     themeId: Schema.String,
     reason: Schema.Literals([
       "invalid-id",
+      "unknown-id",
       "no-colors",
       "remote-css",
       "too-large",
       "not-published",
+      "not-selected",
     ]),
+    known: Schema.optional(Schema.Array(Schema.String)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Theme "${this.themeId}" ${PUBLISH_FAILURES[this.reason]}`;
+    const known = this.known ? ` Available: ${this.known.join(", ")}.` : "";
+    return `Theme "${this.themeId}" ${APPLY_FAILURES[this.reason]}${known}`;
   }
 }
 
@@ -83,11 +91,14 @@ export class EnvironmentThemeService extends Context.Service<
   {
     readonly current: Effect.Effect<ReadonlyArray<EnvironmentTheme>>;
 
-    /** Writes the theme file under `themeId`, replacing one already there. */
-    readonly publish: (
-      themeId: string,
-      file: EnvironmentThemeFile,
-    ) => Effect.Effect<void, EnvironmentThemePublishError>;
+    /**
+     * Makes `themeId` the environment theme, so connected clients switch to it. With `theme`,
+     * first publishes that file under the id, replacing one already there.
+     */
+    readonly apply: (input: {
+      readonly themeId: string;
+      readonly theme?: EnvironmentThemeFile | undefined;
+    }) => Effect.Effect<void, EnvironmentThemeApplyError>;
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -197,6 +208,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
+  const settings = yield* ServerSettingsService;
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
@@ -241,15 +253,10 @@ const make = Effect.gen(function* () {
   // One publish at a time: they share a staging path, and each one checks what is served after it.
   const publishSemaphore = yield* Semaphore.make(1);
 
-  const publish = Effect.fn("EnvironmentThemeService.publish")(function* (
-    themeId: string,
-    file: EnvironmentThemeFile,
-  ) {
-    const fail = (reason: EnvironmentThemePublishError["reason"], cause?: unknown) =>
-      new EnvironmentThemePublishError({ themeId, reason, cause });
-    if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
-      return yield* fail("invalid-id");
-    }
+  const publish = Effect.fnUntraced(function* (themeId: string, file: EnvironmentThemeFile) {
+    const fail = (reason: EnvironmentThemeApplyError["reason"], cause?: unknown) =>
+      new EnvironmentThemeApplyError({ themeId, reason, cause });
+    if (UNPUBLISHABLE_THEME_IDS.has(themeId)) return yield* fail("invalid-id");
     if (!environmentThemeFileHasColors(file)) return yield* fail("no-colors");
     if (file.css !== undefined && themeCssLoadsRemoteFiles(file.css)) {
       return yield* fail("remote-css");
@@ -289,9 +296,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const apply: EnvironmentThemeService["Service"]["apply"] = Effect.fn(
+    "EnvironmentThemeService.apply",
+  )(function* ({ themeId, theme }) {
+    const fail = (reason: EnvironmentThemeApplyError["reason"], known?: ReadonlyArray<string>) =>
+      new EnvironmentThemeApplyError({ themeId, reason, known });
+    if (!isEnvironmentThemeId(themeId)) return yield* fail("invalid-id");
+    if (theme !== undefined) {
+      yield* publish(themeId, theme);
+    } else {
+      const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
+      if (!known.includes(themeId)) return yield* fail("unknown-id", known);
+    }
+    // The timestamp makes clients apply the theme again when its id did not change.
+    yield* settings
+      .updateSettings({
+        defaultTheme: themeId,
+        defaultThemeSetAt: DateTime.formatIso(yield* DateTime.now),
+      })
+      .pipe(Effect.mapError(() => fail("not-selected")));
+  });
+
   return {
     current: Effect.map(refresh, (state) => state.themes),
-    publish,
+    apply,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

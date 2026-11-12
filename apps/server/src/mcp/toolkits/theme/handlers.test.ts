@@ -1,19 +1,15 @@
 import { expect, it } from "@effect/vitest";
 import {
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  type EnvironmentTheme,
   type EnvironmentThemeFile,
   ProviderInstanceId,
-  type ServerSettingsPatch,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { EnvironmentThemeService } from "../../../environmentTheme.ts";
+import { EnvironmentThemeApplyError, EnvironmentThemeService } from "../../../environmentTheme.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
@@ -33,10 +29,8 @@ const AGENT_THEME: EnvironmentThemeFile = {
   css: "[data-chat-header] { border-bottom: 1px solid red; }",
 };
 
-it.effect("publishes a theme, makes it the default, and refuses an unknown theme id", () =>
+it.effect("applies the theme through the service and reports a refusal as an invalid request", () =>
   Effect.gen(function* () {
-    const published = yield* Ref.make<ReadonlyArray<EnvironmentTheme>>([]);
-    const patches = yield* Ref.make<ReadonlyArray<ServerSettingsPatch>>([]);
     const layerDependencies = Layer.mergeAll(
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -55,15 +49,12 @@ it.effect("publishes a theme, makes it the default, and refuses an unknown theme
         getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
       }),
       Layer.mock(EnvironmentThemeService)({
-        current: Ref.get(published),
-        publish: (id, file) =>
-          Ref.update(published, (themes) => [...themes, { id, ...file } as EnvironmentTheme]),
+        apply: ({ themeId }) =>
+          themeId === "missing"
+            ? Effect.fail(new EnvironmentThemeApplyError({ themeId, reason: "unknown-id" }))
+            : Effect.void,
       }),
-      Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-        updateSettings: (patch) =>
-          Ref.update(patches, (all) => [...all, patch]).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
-      }),
+      Layer.mock(Settings.ServerSettingsService)({}),
     );
     yield* Effect.gen(function* () {
       const toolkit = yield* ThemeToolkit;
@@ -78,16 +69,11 @@ it.effect("publishes a theme, makes it the default, and refuses an unknown theme
         themeId: "agent-look",
         published: true,
       });
-      expect(yield* Ref.get(published)).toEqual([{ id: "agent-look", ...AGENT_THEME }]);
-      expect(yield* Ref.get(patches)).toMatchObject([{ defaultTheme: "agent-look" }]);
-      expect((yield* Ref.get(patches))[0]?.defaultThemeSetAt).toMatch(/^\d{4}-/);
-
-      expect(yield* call({ themeId: "missing" })).toMatchObject({ code: "invalid_request" });
       expect(yield* call({ themeId: "grove" })).toEqual({ themeId: "grove", published: false });
-      expect((yield* Ref.get(patches)).map((patch) => patch.defaultTheme)).toEqual([
-        "agent-look",
-        "grove",
-      ]);
+      expect(yield* call({ themeId: "missing" })).toMatchObject({
+        code: "invalid_request",
+        message: 'Theme "missing" is not a built-in or published theme.',
+      });
     }).pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ThemeHandlers.layer).pipe(
