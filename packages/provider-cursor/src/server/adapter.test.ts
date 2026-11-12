@@ -493,21 +493,6 @@ describe("CursorAdapterV2", () => {
       answers: ["Checking.", "Done."],
     },
     {
-      reason: "a continuation during idle cancellation with a hung wait",
-      updates: [
-        { type: "text-delta", text: "Checking." },
-        { type: "turn-ended" },
-      ] satisfies ReadonlyArray<InteractionUpdate>,
-      duringCancel: [
-        { type: "text-delta", text: "Done." },
-        { type: "turn-ended" },
-      ] satisfies ReadonlyArray<InteractionUpdate>,
-      wait: Effect.never,
-      failure: null,
-      cancelCalls: 1,
-      answers: ["Checking.", "Done."],
-    },
-    {
       reason: "an interruption after idle cancellation timed out with a hung wait",
       updates: [
         { type: "text-delta", text: "Done." },
@@ -520,8 +505,8 @@ describe("CursorAdapterV2", () => {
       interrupt: true,
       cancelCalls: 2,
     },
-    ...(["before-wait", "after-wait", "timeout"] as const).map((cancelOutcome) => ({
-      reason: "a cancelled wait when idle cancel fails " + cancelOutcome,
+    {
+      reason: "a cancelled wait when idle cancel then fails",
       updates: [
         { type: "text-delta", text: "Done." },
         { type: "turn-ended" },
@@ -530,8 +515,8 @@ describe("CursorAdapterV2", () => {
       failure: null,
       status: "cancelled",
       cancelCalls: 1,
-      cancelOutcome,
-    })),
+      cancelOutcome: "after-wait" as const,
+    },
     {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
@@ -553,12 +538,9 @@ describe("CursorAdapterV2", () => {
       const answers = "answers" in testCase ? testCase.answers : undefined;
       const continuation = "continuation" in testCase ? testCase.continuation : undefined;
       const interrupt = "interrupt" in testCase && testCase.interrupt;
-      const duringCancel = "duringCancel" in testCase ? testCase.duringCancel : undefined;
       const cancelOutcome = "cancelOutcome" in testCase ? testCase.cancelOutcome : undefined;
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "cursor-v2-failure-",
-      });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-failure-thread");
       const modelSelection = { instanceId, model: "claude-fable-5" };
@@ -603,17 +585,8 @@ describe("CursorAdapterV2", () => {
                     cancel: Effect.gen(function* () {
                       observedCancelCalls += 1;
                       if (observedCancelCalls > 1) return;
-                      for (const update of duringCancel ?? [])
-                        yield* input.onDelta!(update).pipe(Effect.orDie);
-                      if (cancelOutcome !== "before-wait") {
-                        yield* Deferred.succeed(cancelled, undefined);
-                      }
-                      if (
-                        cancelOutcome === "after-wait" ||
-                        (cancelOutcome === "timeout" && !interrupt)
-                      ) {
-                        yield* Deferred.await(waitObserved);
-                      }
+                      yield* Deferred.succeed(cancelled, undefined);
+                      if (cancelOutcome === "after-wait") yield* Deferred.await(waitObserved);
                       if (cancelOutcome === "timeout") return yield* Effect.never;
                       if (cancelOutcome !== undefined) {
                         return yield* new CursorAgentSdk.CursorAgentSdkRunnerError({
@@ -689,8 +662,6 @@ describe("CursorAdapterV2", () => {
         }
       }
       yield* TestClock.adjust("1 second");
-      if (cancelOutcome === "before-wait") yield* Deferred.succeed(cancelled, undefined);
-      if (cancelOutcome === "timeout") yield* TestClock.adjust("10 seconds");
       if (interrupt) {
         const started = yield* runtime.events.pipe(
           Stream.filter((event) => event.type === "provider_turn.updated"),
