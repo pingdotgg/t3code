@@ -205,9 +205,24 @@ const withSender = (
     environmentId: request.headers[McpInvocationContext.SENDER_ENVIRONMENT_HEADER],
     threadId: request.headers[McpInvocationContext.SENDER_THREAD_HEADER],
   });
-  return Option.isNone(sender)
-    ? invocation
-    : { ...invocation, client: { ...invocation.client, sender: sender.value } };
+  if (Option.isNone(sender)) return invocation;
+  const title = decodeTitle(request.headers[McpInvocationContext.SENDER_TITLE_HEADER]);
+  return {
+    ...invocation,
+    client: {
+      ...invocation.client,
+      sender: title === undefined ? sender.value : { ...sender.value, title },
+    },
+  };
+};
+
+const decodeTitle = (header: string | undefined) => {
+  if (header === undefined) return undefined;
+  try {
+    return decodeURIComponent(header);
+  } catch {
+    return undefined;
+  }
 };
 
 // The Linked environments beta is off here: links wait until it is on again.

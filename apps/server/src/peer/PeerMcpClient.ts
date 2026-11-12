@@ -169,6 +169,13 @@ const make = Effect.gen(function* () {
           : {
               [McpInvocationContext.SENDER_ENVIRONMENT_HEADER]: input.sender.environmentId,
               [McpInvocationContext.SENDER_THREAD_HEADER]: input.sender.threadId,
+              ...(input.sender.title === undefined
+                ? {}
+                : {
+                    [McpInvocationContext.SENDER_TITLE_HEADER]: encodeURIComponent(
+                      input.sender.title,
+                    ),
+                  }),
             };
       const sessionKey = `${input.environmentId} ${resolved.url}`;
       const callOnce = (sessionId: string) =>

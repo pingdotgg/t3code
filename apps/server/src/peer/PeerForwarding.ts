@@ -103,10 +103,9 @@ const make = Effect.gen(function* () {
    * link started never uses this environment's links, since the peer would see this
    * environment's session instead of that link, and its fence could not hold.
    */
-  const callerLimits = (scope: Scope) =>
+  const forwardingCaller = (scope: Scope) =>
     readCaller().pipe(
       Effect.tap((caller) => assertNotLinked(caller, "use this environment's links")),
-      Effect.map((caller) => caller.limits),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
       Effect.provideService(ThreadManagement.ThreadManagementService, threads),
     );
@@ -131,7 +130,7 @@ const make = Effect.gen(function* () {
     environmentId: EnvironmentId,
     params: unknown,
   ) {
-    const limits = yield* callerLimits(scope);
+    const { limits, caller } = yield* forwardingCaller(scope);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
@@ -151,9 +150,15 @@ const make = Effect.gen(function* () {
       tool: toolName,
       arguments: args,
       limits,
-      ...(scope.thread === undefined
+      ...(caller === undefined
         ? {}
-        : { sender: { environmentId: scope.environmentId, threadId: scope.thread.threadId } }),
+        : {
+            sender: {
+              environmentId: scope.environmentId,
+              threadId: caller.id,
+              title: caller.title,
+            },
+          }),
       success: success as Schema.Decoder<A>,
     });
   });
@@ -243,7 +248,7 @@ const make = Effect.gen(function* () {
 
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {
-      yield* callerLimits(scope);
+      yield* forwardingCaller(scope);
       yield* requireEnabled;
       const listed = yield* links.list.pipe(
         Effect.mapError(

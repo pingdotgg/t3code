@@ -258,12 +258,16 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
 function senderOf(
   scope: McpInvocationScope,
   parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
-): { senderThreadId?: ThreadId; senderEnvironmentId?: EnvironmentId } {
+): { senderThreadId?: ThreadId; senderEnvironmentId?: EnvironmentId; senderTitle?: string } {
   if (parent !== undefined) return { senderThreadId: parent.thread.id };
   const sender = scope.client?.sender;
   return sender === undefined || sender.environmentId === scope.environmentId
     ? {}
-    : { senderThreadId: sender.threadId, senderEnvironmentId: sender.environmentId };
+    : {
+        senderThreadId: sender.threadId,
+        senderEnvironmentId: sender.environmentId,
+        ...(sender.title === undefined ? {} : { senderTitle: sender.title }),
+      };
 }
 
 function agentStopReason(reason: string | undefined): string {

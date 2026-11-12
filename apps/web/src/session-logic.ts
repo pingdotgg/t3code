@@ -596,6 +596,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
               ...(item.senderEnvironmentId !== undefined
                 ? { senderEnvironmentId: item.senderEnvironmentId }
                 : {}),
+              ...(item.senderTitle !== undefined ? { senderTitle: item.senderTitle } : {}),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),
               ...(item.scheduledTaskId !== undefined
                 ? { scheduledTaskId: item.scheduledTaskId }

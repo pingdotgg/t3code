@@ -307,12 +307,17 @@ const makeLaptop = Effect.gen(function* () {
                   // Work another environment's link started on this laptop.
                   linkOrigin: { sessionId: "session:desk", label: "T3 Code · Desk" },
                 }
-              : liveThreadShell(
-                  threadId,
-                  threadId === ThreadId.make("thread:laptop-plan")
-                    ? { runtimeMode: "full-access", interactionMode: "plan" }
-                    : { runtimeMode: "full-access" },
-                ),
+              : threadId === ThreadId.make("thread:laptop-full")
+                ? {
+                    ...liveThreadShell(threadId, { runtimeMode: "full-access" }),
+                    title: "Café build",
+                  }
+                : liveThreadShell(
+                    threadId,
+                    threadId === ThreadId.make("thread:laptop-plan")
+                      ? { runtimeMode: "full-access", interactionMode: "plan" }
+                      : { runtimeMode: "full-access" },
+                  ),
           ),
         getProjectThreadRecords: ({ threadId }) =>
           Effect.succeed({
@@ -417,9 +422,11 @@ it.effect("an agent here works on a linked environment's threads within its own 
       expect(sent.isError).toBe(false);
       expect(sent.structuredContent).toMatchObject({ threadId: boxThread, delivery: "started" });
       // The box records who sent it, so its clients can name the laptop's thread.
-      const delivered = JSON.stringify((yield* Ref.get(seen)).sends[0]);
-      expect(delivered).toContain(laptop.environmentId);
-      expect(delivered).toContain("thread:laptop-full");
+      expect((yield* Ref.get(seen)).sends[0]).toMatchObject({
+        senderEnvironmentId: laptop.environmentId,
+        senderThreadId: "thread:laptop-full",
+        senderTitle: "Café build",
+      });
 
       // A plan-mode agent here may not steer that thread there: the box
       // refuses it, because the call carries the agent's own modes.

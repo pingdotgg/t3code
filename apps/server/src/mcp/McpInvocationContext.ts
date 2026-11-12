@@ -62,10 +62,14 @@ export const MODE_LIMIT_HEADER = "t3-mode-limit";
 /** The calling thread a peer link passes on; honored only from peer links. */
 export const SENDER_ENVIRONMENT_HEADER = "t3-sender-environment";
 export const SENDER_THREAD_HEADER = "t3-sender-thread";
+/** URI-encoded, since a header carries only Latin-1. */
+export const SENDER_TITLE_HEADER = "t3-sender-title";
 
 export interface McpRemoteSender {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** The sender's title when sent, for clients that cannot read the sender's thread. */
+  readonly title?: string | undefined;
 }
 
 export interface ClientModes {

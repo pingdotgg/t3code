@@ -1132,12 +1132,13 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       const senderHeaders = {
         "t3-sender-environment": "environment-laptop",
         "t3-sender-thread": "thread-laptop",
+        "t3-sender-title": encodeURIComponent("Café build"),
       };
       expect((yield* call(clientToken, senderHeaders)).status).toBe(200);
       expect((yield* call(linkToken, senderHeaders)).status).toBe(200);
       expect(seen.slice(2).map((scope) => scope.client?.sender)).toEqual([
         undefined,
-        { environmentId: "environment-laptop", threadId: "thread-laptop" },
+        { environmentId: "environment-laptop", threadId: "thread-laptop", title: "Café build" },
       ]);
 
       const missing = yield* call(undefined);
