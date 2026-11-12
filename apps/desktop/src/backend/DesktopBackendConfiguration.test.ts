@@ -725,6 +725,52 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("resolveWsl keeps the WSL backend off all interfaces while network access is off", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const localOnlyExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+        getState: Effect.die("unexpected getState"),
+        backendConfig: Effect.succeed({
+          port: 4888,
+          bindHost: "127.0.0.1",
+          httpBaseUrl: new URL("http://127.0.0.1:4888"),
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
+        }),
+        configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
+        setMode: () => Effect.die("unexpected setMode"),
+        setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+        getAdvertisedEndpoints: Effect.succeed([]),
+      } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Ubuntu" });
+
+        assert.notEqual(config.bootstrap.host, "0.0.0.0");
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(localOnlyExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
