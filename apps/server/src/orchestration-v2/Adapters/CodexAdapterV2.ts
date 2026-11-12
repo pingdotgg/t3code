@@ -40,7 +40,10 @@ import {
   type ServerProviderCompatibilityAdvisory,
   isDelegatedAppThread,
 } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import {
+  collectComposerInlineTokens,
+  SKILL_MENTION_PATTERN,
+} from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -451,6 +454,31 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
  */
 function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
+}
+
+/**
+ * A `[$name](path)` mention names one of several same-name skill files. Codex
+ * binds it only through a structured skill input; as text it picks by name.
+ */
+function codexSkillInputs(text: string) {
+  // Tokens need a delimiter after them, and a prompt may end on a mention.
+  const linked = collectComposerInlineTokens(`${text} `).flatMap((token) =>
+    token.type === "skill" && token.path !== undefined ? [{ ...token, path: token.path }] : [],
+  );
+  let body = "";
+  let cursor = 0;
+  for (const mention of linked) {
+    body += text.slice(cursor, mention.start) + `$${mention.value}`;
+    cursor = mention.end;
+  }
+  body += text.slice(cursor);
+  const skills = new Map(
+    linked.map((mention) => [
+      mention.path,
+      { type: "skill" as const, name: mention.value, path: mention.path },
+    ]),
+  );
+  return { text: codexSkillMentionText(body), skills: [...skills.values()] };
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
@@ -3473,10 +3501,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
           >,
+          // turn/steer ignores skill inputs, so a steer keeps the linked text naming the file.
+          options?: { readonly steering?: boolean },
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+          const skillInputs = options?.steering
+            ? { text: codexSkillMentionText(turnInput.message.text), skills: [] }
+            : codexSkillInputs(turnInput.message.text);
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text: skillInputs.text,
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
@@ -3491,6 +3524,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               text,
             });
           }
+          inputItems.push(...skillInputs.skills);
           const attachmentItems = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             resolveCodexAttachment,
@@ -7763,7 +7797,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const codexInput = yield* toCodexInput(turnInput);
+              const codexInput = yield* toCodexInput(turnInput, { steering: true });
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

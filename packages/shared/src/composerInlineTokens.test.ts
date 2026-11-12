@@ -1,11 +1,35 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens, composerMathRanges } from "./composerInlineTokens.ts";
+import {
+  bindLinkedSkillMentions,
+  collectComposerInlineTokens,
+  composerMathRanges,
+  formatLinkedSkillMention,
+} from "./composerInlineTokens.ts";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
+
+describe("bindLinkedSkillMentions", () => {
+  it("keeps the native copy a mention and points elsewhere at the picked file", () => {
+    const user = "/home/me/.claude/skills/review/SKILL.md";
+    const project = "/repo/.claude/skills/review/SKILL.md";
+    const native = (name: string) => (name === "review" ? user : undefined);
+    expect(bindLinkedSkillMentions(`[$review](${user}) go`, native)).toBe("$review go");
+    expect(bindLinkedSkillMentions(`[$review](${project})`, native)).toBe(
+      `review [The user invoked this skill. Follow the instructions at: ${project}]`,
+    );
+    expect(bindLinkedSkillMentions(`[$review](${user})`)).toBe(
+      `review [The user invoked this skill. Follow the instructions at: ${user}]`,
+    );
+    expect(bindLinkedSkillMentions("see [$PATH](https://example.com) now", native)).toBe(
+      "see [$PATH](https://example.com) now",
+    );
+  });
+});
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
-    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please";
+    const linkedSkill = formatLinkedSkillMention({ name: "dup", path: "/a b/dup/SKILL.md" });
+    const text = `Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please ${linkedSkill} go`;
 
     expect(collectComposerInlineTokens(text)).toEqual([
       {
@@ -29,7 +53,18 @@ describe("collectComposerInlineTokens", () => {
         start: 50,
         end: 60,
       },
+      {
+        type: "skill",
+        value: "dup",
+        path: "/a b/dup/SKILL.md",
+        source: "[$dup](/a%20b/dup/SKILL.md)",
+        start: 68,
+        end: 95,
+      },
     ]);
+    for (const link of ["[$PATH](https://example.com/env-docs)", "[$x](/tmp/notes.md)"]) {
+      expect(collectComposerInlineTokens(`Explain ${link} please`)).toEqual([]);
+    }
   });
 
   it.each(["$", "€", "𑿝"])("collects %s skill names that begin with a digit", (prefix) => {

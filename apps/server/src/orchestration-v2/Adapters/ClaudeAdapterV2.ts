@@ -72,6 +72,7 @@ import type {
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
+import { bindLinkedSkillMentions } from "@t3tools/shared/composerInlineTokens";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -2768,9 +2769,13 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
 }) {
+  const text =
+    input.skills === undefined
+      ? input.text
+      : bindLinkedSkillMentions(input.text, (name) => input.skills?.get(name)?.path);
   if (input.attachments.length === 0) {
     const message = makeClaudeUserMessage({
-      text: input.text,
+      text,
       ...(input.skills === undefined ? {} : { skills: input.skills }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
       ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
@@ -2782,7 +2787,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   }
 
   const textWithAttachmentPaths = yield* providerMessageTextWithAttachmentPaths({
-    text: input.text,
+    text,
     attachments: input.attachments,
     resolveExtractedTextPath: (path) =>
       DocumentText.resolveExtractedTextPath(path).pipe(
@@ -5421,14 +5426,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       cwd ?? undefined,
       adapterOptions.environment,
     ).pipe(
-      Effect.map(
-        (skills) =>
-          new Map(
-            skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
-              .map((skill) => [skill.name, skill]),
-          ),
-      ),
+      Effect.map((skills) => {
+        // Discovery lists same-name files in precedence order; the first is the one `/name` runs.
+        const byName = new Map<string, ClaudeSkillTarget>();
+        for (const skill of skills) {
+          if (skill.enabled && skill.userInvocable !== false && !byName.has(skill.name)) {
+            byName.set(skill.name, skill);
+          }
+        }
+        return byName;
+      }),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );

@@ -8,6 +8,10 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import {
+  formatLinkedSkillMention,
+  isLinkableSkillPath,
+} from "@t3tools/shared/composerInlineTokens";
 import { Atom } from "effect/reactivity";
 
 import { deadlineStore } from "./clock.ts";
@@ -19,18 +23,52 @@ function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
 }
 
-export function dedupeProviderSkillsByName(
+/** Same-name skills from different files each keep a row; only repeats of one file collapse. */
+export function dedupeProviderSkills(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {
-  const seenNames = new Set<string>();
+  const seen = new Set<string>();
   return skills.filter((skill) => {
-    const normalizedName = skill.name.trim().toLowerCase();
-    if (seenNames.has(normalizedName)) {
+    const key = `${skill.name.trim().toLowerCase()}\u0000${normalizePathSeparators(skill.path)}`;
+    if (seen.has(key)) {
       return false;
     }
-    seenNames.add(normalizedName);
+    seen.add(key);
     return true;
   });
+}
+
+function isProviderSkillNameShared(
+  skill: Pick<ServerProviderSkill, "name" | "path">,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): boolean {
+  const path = normalizePathSeparators(skill.path);
+  return skills.some(
+    (other) =>
+      other.name === skill.name &&
+      normalizePathSeparators(other.path) !== path &&
+      isProviderSkillUserInvocable(other),
+  );
+}
+
+/** A bare `$name` lets the provider choose among same-name files, so a shared name links its file. */
+export function formatProviderSkillMention(
+  skill: Pick<ServerProviderSkill, "name" | "path">,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): string {
+  return isLinkableSkillPath(skill.path) && isProviderSkillNameShared(skill, skills)
+    ? formatLinkedSkillMention(skill)
+    : `$${skill.name}`;
+}
+
+export function formatProviderSkillMenuDescription(
+  skill: ServerProviderSkill,
+  skills: ReadonlyArray<ServerProviderSkill>,
+  fallback = "",
+): string {
+  const description = skill.shortDescription ?? skill.description ?? fallback;
+  if (!isProviderSkillNameShared(skill, skills)) return description;
+  return description ? `${skill.path} · ${description}` : skill.path;
 }
 
 /**
@@ -48,7 +86,7 @@ export function getProviderSkillsForSlashMenu(
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
   return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable))
+    ? dedupeProviderSkills(skills.filter(isProviderSkillUserInvocable))
     : [];
 }
 

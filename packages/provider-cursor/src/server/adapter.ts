@@ -10,6 +10,7 @@ import type {
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { bindLinkedSkillMentions } from "@t3tools/shared/composerInlineTokens";
 import {
   isOrchestrationV2WorkActive,
   defaultInstanceIdForDriver,
@@ -2309,23 +2310,33 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           return next;
         });
 
-        let cursorSkillNames: ReadonlySet<string> | undefined;
+        // Name to the file Cursor's `/name` runs: the first in discovery's precedence order.
+        let cursorSkillPaths: ReadonlyMap<string, string> | undefined;
         const resolveCursorSkillText = Effect.fn("CursorAdapterV2.resolveCursorSkillText")(
           function* (rawText: string, cwd: string | undefined) {
-            if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
+            const hasLinkedMention = bindLinkedSkillMentions(rawText) !== rawText;
+            if (
+              (hasLinkedMention || hasCursorSkillMention(rawText)) &&
+              cursorSkillPaths === undefined
+            ) {
               const skills = yield* discoverCursorSkills(cwd, adapterOptions.environment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
               );
-              cursorSkillNames = new Set(
-                skills
-                  .filter((skill) => skill.enabled && skill.userInvocable !== false)
-                  .map((skill) => skill.name),
-              );
+              const paths = new Map<string, string>();
+              for (const skill of skills) {
+                if (skill.enabled && skill.userInvocable !== false && !paths.has(skill.name)) {
+                  paths.set(skill.name, skill.path);
+                }
+              }
+              cursorSkillPaths = paths;
             }
-            return cursorSkillNames === undefined
-              ? rawText
-              : rewriteCursorSkillMentions(rawText, cursorSkillNames);
+            if (cursorSkillPaths === undefined) return rawText;
+            const skillPaths = cursorSkillPaths;
+            return rewriteCursorSkillMentions(
+              bindLinkedSkillMentions(rawText, (name) => skillPaths.get(name)),
+              new Set(skillPaths.keys()),
+            );
           },
         );
         const resolveUserMessage = Effect.fnUntraced(function* (

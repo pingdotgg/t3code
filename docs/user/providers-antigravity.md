@@ -92,8 +92,8 @@ though its CLI has `/compact`. Send `/clear` when you need a fresh context.
 ### Skills and attachments
 
 Put project skills in `.agents/skills`. T3 Code also reads `.gemini/skills` and the
-legacy `.agent/skills` directory. Among these project locations, the first copy
-wins in this order: `.gemini/skills`, `.agents/skills`, `.agent/skills`. See
+legacy `.agent/skills` directory. When several locations define the same name, the
+composer lists each copy with its path, and the copy you pick is the one that runs. See
 [commands and skills](./composer.md#commands-and-skills) for invoking them.
 
 Skills for every project go in `~/.gemini/config/skills` or

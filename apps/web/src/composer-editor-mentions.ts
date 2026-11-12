@@ -21,6 +21,7 @@ export type ComposerPromptSegment =
   | {
       type: "skill";
       name: string;
+      path?: string;
       source: string;
     }
   | {
@@ -162,7 +163,12 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
         source: match.source,
       });
     } else {
-      segments.push({ type: "skill", name: match.value, source: match.source });
+      segments.push({
+        type: "skill",
+        name: match.value,
+        ...(match.path === undefined ? {} : { path: match.path }),
+        source: match.source,
+      });
     }
 
     cursor = match.end;

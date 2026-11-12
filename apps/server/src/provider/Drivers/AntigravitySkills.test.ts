@@ -93,7 +93,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("uses native root order for duplicate names", () =>
+  it.effect("lists every copy of a duplicate name in native root order", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -114,8 +114,12 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
 
       for (const [index, root] of roots.entries()) {
         const skills = yield* discoverAntigravitySkills(input);
-        assert.equal(skills.length, 1);
-        assert.equal(skills[0]?.path, path.join(root, `copy-${index}`, "SKILL.md"));
+        assert.deepEqual(
+          skills.map((skill) => skill.path),
+          roots
+            .slice(index)
+            .map((copy, offset) => path.join(copy, `copy-${index + offset}`, "SKILL.md")),
+        );
         yield* fileSystem.remove(root, { recursive: true });
       }
     }),
@@ -234,15 +238,16 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         yield* writeSkill(path.join(root, name), "---\nname: review\n---\n");
       }
 
-      for (const name of nativeOrder) {
-        assert.deepEqual(yield* discoverAntigravitySkills(input), [
-          {
+      for (const [index, name] of nativeOrder.entries()) {
+        assert.deepEqual(
+          yield* discoverAntigravitySkills(input),
+          nativeOrder.slice(index).map((copy) => ({
             name: "review",
-            path: path.join(root, name, "SKILL.md"),
+            path: path.join(root, copy, "SKILL.md"),
             scope: "project",
             enabled: true,
-          },
-        ]);
+          })),
+        );
         yield* fileSystem.remove(path.join(root, name), { recursive: true });
       }
     }),

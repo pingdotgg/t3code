@@ -4,6 +4,7 @@ import {
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
+import { bindLinkedSkillMentions } from "@t3tools/shared/composerInlineTokens";
 import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -330,7 +331,9 @@ export function makeGrokAcpAdapterFlavor(
     supportsCompaction: true,
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
-    rewriteUserText: (text, turnInput) => {
+    // Which same-name copy Grok's `/name` runs is not known, so a linked pick names its file.
+    rewriteUserText: (rawText, turnInput) => {
+      const text = bindLinkedSkillMentions(rawText);
       const mention = leadingGrokSkillMention(text);
       if (mention === undefined) return Effect.succeed(text);
       return discoverGrokSkills(

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { ComposerEditor as NativeComposerEditor } from "../native/T3ComposerEditor";
 import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/T3ComposerEditor";
 import {
@@ -169,10 +170,17 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
-  const selectedSkillName = selected?.source.match(/^\p{Sc}(.+)$/u)?.[1];
-  const selectedSkill = selectedSkillName
-    ? props.skills?.find((skill) => skill.name === selectedSkillName)
+  const selectedSkillToken = selected
+    ? collectComposerInlineTokens(`${selected.source} `)[0]
     : undefined;
+  const selectedSkill =
+    selectedSkillToken?.type === "skill" && selectedSkillToken.source === selected?.source
+      ? props.skills?.find((skill) =>
+          selectedSkillToken.path === undefined
+            ? skill.name === selectedSkillToken.value
+            : skill.path === selectedSkillToken.path,
+        )
+      : undefined;
   const record = draft.context?.records.find(
     (entry) => entry.contextId === selectedReference?.contextId,
   );

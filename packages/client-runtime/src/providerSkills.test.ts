@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
+  formatProviderSkillMention,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
@@ -41,11 +42,11 @@ const provider = {
 } satisfies ServerProvider;
 
 describe("getProviderSkillsForSlashMenu", () => {
-  it("shows one row when enabled skills share a name", () => {
+  it("shows one row per skill file when enabled skills share a name", () => {
     const skills = [
       {
-        name: "babysit-pr",
-        path: "/Users/matt/.codex/skills/babysit-pr/SKILL.md",
+        name: "code-review",
+        path: "/Users/matt/.codex/plugins/review/skills/code-review/SKILL.md",
         enabled: true,
       },
       {
@@ -54,16 +55,26 @@ describe("getProviderSkillsForSlashMenu", () => {
         enabled: true,
       },
       {
-        name: "babysit-pr",
-        path: "/Users/matt/.agents/skills/babysit-pr/SKILL.md",
+        name: "code-review",
+        path: "/Users/matt/.agents/skills/code-review/SKILL.md",
+        enabled: true,
+      },
+      {
+        name: "browser",
+        path: "/Users/matt/.agents/skills/browser/SKILL.md",
         enabled: true,
       },
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
-      "babysit-pr",
-      "browser",
+    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.path)).toEqual([
+      "/Users/matt/.codex/plugins/review/skills/code-review/SKILL.md",
+      "/Users/matt/.agents/skills/browser/SKILL.md",
+      "/Users/matt/.agents/skills/code-review/SKILL.md",
     ]);
+    expect(formatProviderSkillMention(skills[2]!, skills)).toBe(
+      "[$code-review](/Users/matt/.agents/skills/code-review/SKILL.md)",
+    );
+    expect(formatProviderSkillMention(skills[1]!, skills)).toBe("$browser");
   });
 
   it("keeps an enabled skill when a disabled duplicate appears first", () => {
