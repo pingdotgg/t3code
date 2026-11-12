@@ -1,5 +1,15 @@
+import {
+  AVAILABLE_CONNECTION_STATE,
+  BearerConnectionProfile,
+  BearerConnectionTarget,
+  entryWithRoutes,
+  presentConnectionState,
+  RelayConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { projectEnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { splitEnvironmentSections } from "./environmentSections";
@@ -36,6 +46,40 @@ function cloudEnvironment(environmentId: string): RelayClientEnvironmentRecord {
 }
 
 describe("mobile environment settings sections", () => {
+  it("keeps a LAN-paired environment local after T3 Connect is added to it", () => {
+    const environmentId = EnvironmentId.make("environment-mini");
+    const relay = {
+      target: new RelayConnectionTarget({ environmentId, label: "Mac mini" }),
+      profile: Option.none(),
+    };
+    const paired = {
+      target: new BearerConnectionTarget({ environmentId, label: "Mac mini", connectionId: "lan" }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "lan",
+          environmentId,
+          label: "Mac mini",
+          httpBaseUrl: "http://192.168.1.106:3773/",
+          wsBaseUrl: "ws://192.168.1.106:3773/",
+        }),
+      ),
+    };
+    const saved = projectEnvironmentConnectionSummary(environmentId, {
+      entry: entryWithRoutes({ ...relay, enabled: true }, [paired, relay]),
+      connection: presentConnectionState(AVAILABLE_CONNECTION_STATE),
+      serverConfig: null,
+    });
+
+    const sections = splitEnvironmentSections({
+      connectedEnvironments: [saved],
+      cloudEnvironments: [cloudEnvironment("environment-mini")],
+    });
+
+    expect(sections.localEnvironments).toEqual([saved]);
+    expect(sections.connectedCloudEnvironments).toEqual([]);
+    expect(sections.availableCloudEnvironments).toEqual([]);
+  });
+
   it("keeps saved relay-managed connections under T3 Connect", () => {
     const local = connectedEnvironment({
       environmentId: "environment-local",
