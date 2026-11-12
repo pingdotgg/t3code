@@ -1,7 +1,9 @@
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -102,7 +104,7 @@ const layerTestFor = (
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
   );
 
@@ -138,7 +140,7 @@ it.effect("resolves only the requested active project page in creation order", (
       const service = yield* ProjectService.ProjectService;
       const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const changes = yield* enrichment.subscribeChanges;
-      const rows = Array.from({ length: 6 }, (_, index) => ({
+      const rows = Arr.makeBy(6, (index) => ({
         project_id: `page:${index}`,
         title: `Project ${index}`,
         workspace_root: `/work/page-${index}`,
@@ -203,8 +205,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(layerMetadata),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -450,15 +452,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         ],
       };
       const first = yield* service.update(invalid).pipe(Effect.flip);
-      assert.equal(first._tag, "ProjectOperationError");
+      assert.equal(first._tag, "ProjectInvalidError");
+      assert.include(first.message, "Script IDs must be 1-24 lowercase letters");
       const replayed = yield* service
         .update({ ...invalid, scripts: [{ ...invalid.scripts[0]!, id: "valid" }] })
         .pipe(Effect.flip);
-      assert.equal(replayed._tag, "ProjectOperationError");
-      assert.include(
-        String(replayed._tag === "ProjectOperationError" && replayed.cause),
-        "Script ID",
-      );
+      assert.deepEqual(replayed, first);
       const receipts = yield* sql<{ readonly status: string; readonly aggregate_id: string }>`
         SELECT status, aggregate_id FROM orchestration_command_receipts
         WHERE command_id = ${invalid.commandId}

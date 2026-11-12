@@ -1,12 +1,12 @@
-import * as Bundle from "@/Bundle/Bundle";
-import { RAW_RE, rawPlugin, splitFileAndPostfix } from "@/Bundle/RawPlugin";
+import * as NodeFs from "node:fs/promises";
+import { assert, describe, expect, it, layer } from "@alchemy.run/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, expect, it, layer } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
-import * as NodeFs from "node:fs/promises";
+import * as Bundle from "@/Bundle/Bundle";
+import { RAW_RE, rawPlugin, splitFileAndPostfix } from "@/Bundle/RawPlugin";
 
 layer(NodeServices.layer)("Bundle.build with rawPlugin", (it) => {
   it.effect(
@@ -15,23 +15,12 @@ layer(NodeServices.layer)("Bundle.build with rawPlugin", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-raw-bundle-",
-        });
-        yield* fs.writeFileString(
-          path.join(root, "hello.txt"),
-          "HELLO_RAW_MARKER",
-        );
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-bundle-" });
+        yield* fs.writeFileString(path.join(root, "hello.txt"), "HELLO_RAW_MARKER");
         const entry = path.join(root, "entry.ts");
-        yield* fs.writeFileString(
-          entry,
-          `import txt from "./hello.txt?raw";\nconsole.log(txt);\n`,
-        );
+        yield* fs.writeFileString(entry, `import txt from "./hello.txt?raw";\nconsole.log(txt);\n`);
 
-        const result = yield* Bundle.build({
-          input: entry,
-          cwd: root,
-        });
+        const result = yield* Bundle.build({ input: entry, cwd: root });
 
         const code = result.files
           .filter((f) => typeof f.content === "string")
@@ -39,9 +28,7 @@ layer(NodeServices.layer)("Bundle.build with rawPlugin", (it) => {
           .join("\n");
         expect(code).toContain(`"HELLO_RAW_MARKER"`);
         // The bundle should not emit hello.txt as a separate asset.
-        expect(result.files.every((f) => !f.path.endsWith("hello.txt"))).toBe(
-          true,
-        );
+        expect(result.files.every((f) => !f.path.endsWith("hello.txt"))).toBe(true);
 
         yield* fs.remove(root, { recursive: true });
       }),
@@ -54,9 +41,7 @@ layer(NodeServices.layer)("Bundle.build with rawPlugin", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-raw-subdir-",
-        });
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-subdir-" });
         yield* fs.makeDirectory(path.join(root, "sub"), { recursive: true });
         yield* fs.writeFileString(
           path.join(root, "sub", "foo.json"),
@@ -68,10 +53,7 @@ layer(NodeServices.layer)("Bundle.build with rawPlugin", (it) => {
           `import foo from "./sub/foo.json?raw";\nconsole.log(foo);\n`,
         );
 
-        const result = yield* Bundle.build({
-          input: entry,
-          cwd: root,
-        });
+        const result = yield* Bundle.build({ input: entry, cwd: root });
 
         const code = result.files
           .filter((f) => typeof f.content === "string")
@@ -112,9 +94,7 @@ layer(NodeServices.layer)("rawPlugin load hook", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-raw-load-",
-        });
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-load-" });
         const file = path.join(root, "hello.txt");
         yield* fs.writeFileString(file, "Hello, World!\n");
 
@@ -134,9 +114,7 @@ layer(NodeServices.layer)("rawPlugin load hook", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-raw-json-",
-        });
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-raw-json-" });
         const file = path.join(root, "data.json");
         const raw = `{"a": 1, "b": "two"}`;
         yield* fs.writeFileString(file, raw);
@@ -196,10 +174,7 @@ describe("splitFileAndPostfix", { tags: ["unit", "local"] }, () => {
   });
 
   it("splits at the first `#`", () => {
-    expect(splitFileAndPostfix("./foo.txt#frag")).toEqual([
-      "./foo.txt",
-      "#frag",
-    ]);
+    expect(splitFileAndPostfix("./foo.txt#frag")).toEqual(["./foo.txt", "#frag"]);
   });
 
   it("returns empty postfix when no query/hash", () => {
@@ -207,9 +182,6 @@ describe("splitFileAndPostfix", { tags: ["unit", "local"] }, () => {
   });
 
   it("splits at whichever of `?` / `#` comes first", () => {
-    expect(splitFileAndPostfix("./foo.txt#frag?raw")).toEqual([
-      "./foo.txt",
-      "#frag?raw",
-    ]);
+    expect(splitFileAndPostfix("./foo.txt#frag?raw")).toEqual(["./foo.txt", "#frag?raw"]);
   });
 });

@@ -10,6 +10,8 @@ import {
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
+  resolveTextGenerationSelectionEnabled,
+  textGeneratorForSelection,
   isProviderTextGenerationCapable,
   type ModelSelection,
   type ProjectId,
@@ -23,6 +25,7 @@ import {
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
@@ -34,14 +37,23 @@ import {
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
-const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
+// Only observability: a value the server migrates on load elsewhere in the file must not drop it.
+const ServerObservabilitySettingsJson = fromLenientJson(
+  Schema.Struct({ observability: ServerSettings.fields.observability }),
+);
+const decodeServerObservabilitySettingsJson = Schema.decodeUnknownOption(
+  ServerObservabilitySettingsJson,
+);
 
 export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
   selection: ModelSelection,
 ): boolean {
-  const instanceConfig = settings.providerInstances[selection.instanceId];
+  const generator = textGeneratorForSelection(settings, selection.instanceId);
+  if (generator !== undefined) return generator.enabled;
+  const instanceConfig = Object.hasOwn(settings.providerInstances, selection.instanceId)
+    ? settings.providerInstances[selection.instanceId]
+    : undefined;
   if (instanceConfig !== undefined) {
     return resolveProviderInstanceEnabled(instanceConfig);
   }
@@ -60,46 +72,64 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "antigravity",
 ].map((driver) => ProviderDriverKind.make(driver));
 
-/** Only project-scoped callers may include configured instances when falling back; machine-level callers leave it unset. */
+/** Configured instances come after every default instance, so they only win when no default qualifies. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
-  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
-  options?: {
-    readonly includeConfiguredInstances?: boolean;
-    readonly defaultModelSelection?: ModelSelection | null;
-  },
+  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind, model: string) => boolean,
+  options?: { readonly defaultModelSelection?: ModelSelection | null },
 ): ModelSelection | null {
+  const threadDefault = options?.defaultModelSelection;
+  // The thread default's custom model wins on its instance; the driver default still serves when that model is unusable.
+  const selectionsFor = (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => {
+    const config = providerInstances[instanceId]?.config as { customModels?: unknown } | undefined;
+    const driverDefault = { instanceId, model: defaultTextGenerationModel(driver) };
+    return threadDefault?.instanceId === instanceId &&
+      readCustomModelEntries(config?.customModels).some(
+        (entry) => entry.slug === threadDefault.model,
+      )
+      ? [threadDefault, driverDefault]
+      : [driverDefault];
+  };
   const candidates = [
     ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
       (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
     ),
-    ...(options?.includeConfiguredInstances === true
-      ? Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
-          TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
-            ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
-            : [],
-        )
-      : []),
+    ...Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
+      TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
+        ? [[ProviderInstanceId.make(instanceId), instance.driver] as const]
+        : [],
+    ),
   ];
-  const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
-  if (match === undefined) return null;
-  const [instanceId, driver] = match;
-  const threadDefault = options?.defaultModelSelection;
-  const config = providerInstances[instanceId]?.config as { customModels?: unknown } | undefined;
-  if (
-    threadDefault?.instanceId === instanceId &&
-    readCustomModelEntries(config?.customModels).some((entry) => entry.slug === threadDefault.model)
-  ) {
-    return threadDefault;
+  for (const [instanceId, driver] of candidates) {
+    for (const selection of selectionsFor(instanceId, driver)) {
+      if (isEnabled(instanceId, driver, selection.model)) return selection;
+    }
   }
-  return { instanceId, model: defaultTextGenerationModel(driver) };
+  return null;
 }
 
-export function defaultTextGenerationModel(driver: ProviderDriverKind): string {
+function defaultTextGenerationModel(driver: ProviderDriverKind): string {
   return (
     DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
     DEFAULT_MODEL_BY_PROVIDER[driver] ??
     DEFAULT_TEXT_GENERATION_MODEL
+  );
+}
+
+/** A text generator, or a provider whose snapshot can generate text; no snapshots trusts settings. */
+function isTextGenerationTargetUsable(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  instanceId: ProviderInstanceId,
+): boolean {
+  if (providers === undefined || textGeneratorForSelection(settings, instanceId) !== undefined) {
+    return true;
+  }
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  return (
+    provider?.enabled === true &&
+    isProviderAvailable(provider) &&
+    isProviderTextGenerationCapable(provider)
   );
 }
 
@@ -109,20 +139,9 @@ export function resolveSourceControlWriterModelSelection(
   projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (
-    !selection ||
-    !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
-  ) {
-    return settings.textGenerationModelSelection;
-  }
-  if (providers === undefined) {
-    return selection;
-  }
-
-  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  return provider?.enabled === true &&
-    isProviderAvailable(provider) &&
-    isProviderTextGenerationCapable(provider)
+  return selection &&
+    resolveTextGenerationSelectionEnabled(settings, projectId, selection.instanceId) &&
+    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
     ? selection
     : settings.textGenerationModelSelection;
 }
@@ -133,21 +152,26 @@ export function resolveReviewGuideModelSelection(
   projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.reviewGuideModelSelection;
-  if (
-    selection &&
-    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
-  ) {
-    const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
-    if (
-      providers === undefined ||
-      (provider?.enabled === true &&
-        isProviderAvailable(provider) &&
-        isProviderTextGenerationCapable(provider))
-    ) {
-      return selection;
-    }
-  }
-  return resolveSourceControlWriterModelSelection(settings, providers, projectId);
+  // Text generators cannot investigate a checkout, so they never write review guides.
+  return selection &&
+    textGeneratorForSelection(settings, selection.instanceId) === undefined &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId) &&
+    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
+    ? selection
+    : resolveSourceControlWriterModelSelection(settings, providers, projectId);
+}
+
+/** Transcript cleanup follows the text generation model unless its own usable model is set. */
+export function resolveSpeechPostProcessingModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const selection = settings.speechPostProcessingModelSelection;
+  return selection &&
+    isModelSelectionProviderEnabled(settings, selection) &&
+    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
+    ? selection
+    : settings.textGenerationModelSelection;
 }
 
 export interface PersistedServerObservabilitySettings {
@@ -180,7 +204,7 @@ function extractPersistedServerObservabilitySettings(input: {
 export function parsePersistedServerObservabilitySettings(
   raw: string,
 ): PersistedServerObservabilitySettings {
-  const decoded = decodeServerSettingsJson(raw);
+  const decoded = decodeServerObservabilitySettingsJson(raw);
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
@@ -225,6 +249,15 @@ function mergeSettingsEntries<Value>(
   }
   return Object.fromEntries(next);
 }
+
+// Secret persistence keys tokens by trimmed, lowercased host, so merge on the same key.
+const byHost = (tokens: unknown) =>
+  Object.fromEntries(
+    Object.entries(Predicate.isObject(tokens) ? tokens : {}).map(([host, token]) => [
+      host.trim().toLowerCase(),
+      token,
+    ]),
+  );
 
 const knownProjectOverrideKeys = new Set(Object.keys(ProjectSettingsOverrides.fields));
 
@@ -369,6 +402,7 @@ export function applyServerSettingsPatch(
     worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
+    textGenerators: textGeneratorsPatch,
     secretProviders: secretProvidersPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
@@ -530,10 +564,26 @@ export function applyServerSettingsPatch(
           sourceControlHosts: {
             ...current.sourceControlHosts,
             ...Object.fromEntries(
-              Object.entries(sourceControlHostsPatch).map(([kind, fields]) => [
-                kind,
-                { ...current.sourceControlHosts[kind], ...fields },
-              ]),
+              Object.entries(sourceControlHostsPatch).map(([kind, fields]) => {
+                const saved = current.sourceControlHosts[kind];
+                return [
+                  kind,
+                  {
+                    ...saved,
+                    ...fields,
+                    // Older clients send the whole token map; a host missing from it keeps its saved
+                    // token. An empty map still clears them all.
+                    ...(Predicate.isObject(fields.tokens) && Object.keys(fields.tokens).length > 0
+                      ? {
+                          tokens: {
+                            ...byHost(saved?.tokens),
+                            ...byHost(fields.tokens),
+                          },
+                        }
+                      : {}),
+                  },
+                ];
+              }),
             ),
           },
         }
@@ -556,6 +606,9 @@ export function applyServerSettingsPatch(
     ...(patch.fallbackModelSelection !== undefined
       ? { fallbackModelSelection: patch.fallbackModelSelection }
       : {}),
+    ...(patch.speechPostProcessingModelSelection !== undefined
+      ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
+      : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),
@@ -566,6 +619,9 @@ export function applyServerSettingsPatch(
             usageLimitSourcesPatch,
           ),
         }
+      : {}),
+    ...(textGeneratorsPatch !== undefined
+      ? { textGenerators: mergeSettingsEntries(current.textGenerators, textGeneratorsPatch) }
       : {}),
     ...(secretProvidersPatch !== undefined
       ? { secretProviders: mergeSettingsEntries(current.secretProviders, secretProvidersPatch) }
