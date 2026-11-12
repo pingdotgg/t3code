@@ -115,11 +115,18 @@ export const makeDiscovery = Effect.gen(function* () {
                     account: login.user,
                     host: ForgejoCli.parseForgejoRemote(login.url)?.host,
                   })
-                : providerAuth({
-                    status: "unauthenticated",
-                    detail:
-                      "Authenticate this server with `fj --host <server-url> auth add-token`.",
-                  }),
+                : // fj prints this for transport failures (TLS, connect, DNS), never for a rejected token.
+                  login && result.stderr.includes("error sending request for url")
+                  ? providerAuth({
+                      status: "unknown",
+                      detail: `Could not reach ${login.url} to verify the fj login.`,
+                      host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                    })
+                  : providerAuth({
+                      status: "unauthenticated",
+                      detail:
+                        "Authenticate this server with `fj --host <server-url> auth add-token`.",
+                    }),
         },
       });
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
