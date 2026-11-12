@@ -29,7 +29,6 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  orchestrationV2WorktreePending,
   type EnvironmentId,
   type ModelSelection,
   type RuntimeMode,
@@ -90,6 +89,7 @@ import {
   useComposerDraftSettings,
 } from "./use-composer-drafts";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   compactionBlocksSteering,
   resolveComposerDispatchMode,
