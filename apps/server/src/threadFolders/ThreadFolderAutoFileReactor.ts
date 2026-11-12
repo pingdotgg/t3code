@@ -17,6 +17,7 @@ export const layer = Layer.effectDiscard(
           case "thread.created":
           case "thread.metadata-updated":
           case "thread.pull-request-synced":
+          case "thread.provider-switched":
           case "thread.pull-request-link-updated":
             return folders.autoFile(event.threadId).pipe(
               Effect.catchCauseIf(

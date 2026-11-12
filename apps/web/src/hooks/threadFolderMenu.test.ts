@@ -1,8 +1,27 @@
 import type { EnvironmentThreadFolder } from "@t3tools/client-runtime/state/thread-folders";
 import { EnvironmentId, ThreadFolderId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { isThreadFolderMenuId, moveToFolderMenuItem } from "./threadFolderMenu";
+import {
+  createThreadFolder,
+  moveThreadsToFolder,
+  readThreadFolders,
+  requestThreadFolderRename,
+} from "../state/threadFolders";
+
+import {
+  isThreadFolderMenuId,
+  moveToFolderMenuItem,
+  runThreadFolderMenuAction,
+} from "./threadFolderMenu";
+
+vi.mock("../state/threadFolders", () => ({
+  createThreadFolder: vi.fn(),
+  moveThreadsToFolder: vi.fn(),
+  readThreadFolders: vi.fn(),
+  requestThreadFolderRename: vi.fn(),
+  readEnvironmentSupportsThreadFolders: vi.fn(),
+}));
 
 const environmentId = EnvironmentId.make("env-1");
 const folder = (id: string, threadIds: string[]): EnvironmentThreadFolder => ({
@@ -52,3 +71,32 @@ describe("isThreadFolderMenuId", () => {
     expect(isThreadFolderMenuId("pin")).toBe(false);
   });
 });
+
+it.each(["folder:new", "folder:new-from-selection", "folder:id:b", "folder:remove"])(
+  "batches a large selection for %s without creating extra folders",
+  async (action) => {
+    vi.clearAllMocks();
+    const target = folder("b", []);
+    vi.mocked(readThreadFolders).mockReturnValue([target]);
+    vi.mocked(createThreadFolder).mockResolvedValue(target.id);
+    vi.mocked(moveThreadsToFolder).mockResolvedValue({ folders: [target] });
+    const threadIds = Array.from({ length: 205 }, (_, index) => ThreadId.make(`thread:${index}`));
+    expect(runThreadFolderMenuAction(action, { environmentId, threadIds })).toBe(true);
+    const createsFolder = action === "folder:new" || action === "folder:new-from-selection";
+    await vi.waitFor(() => {
+      expect(moveThreadsToFolder).toHaveBeenCalledTimes(createsFolder ? 2 : 3);
+      if (createsFolder) expect(requestThreadFolderRename).toHaveBeenCalledTimes(1);
+    });
+    const created = vi.mocked(createThreadFolder).mock.calls;
+    expect(created).toHaveLength(createsFolder ? 1 : 0);
+    const batches = [
+      ...created.map(([input]) => input.threadIds),
+      ...vi.mocked(moveThreadsToFolder).mock.calls.map(([input]) => input.threadIds),
+    ];
+    expect(batches.map((ids) => ids.length)).toEqual([100, 100, 5]);
+    expect(batches.flat()).toEqual(threadIds);
+    for (const [input] of vi.mocked(moveThreadsToFolder).mock.calls) {
+      expect(input.folderId).toBe(action === "folder:remove" ? null : target.id);
+    }
+  },
+);

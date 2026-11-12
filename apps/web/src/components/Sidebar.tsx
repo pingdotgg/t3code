@@ -559,11 +559,7 @@ function useSidebarThreads(input: {
     visibleCount: settledVisibleCount,
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
-  // Filed settled threads fill the shelf too, so they count toward the pages it needs.
-  useOlderSettledShelfGrowth(
-    olderSettledShelf,
-    partition.settledThreads.filter(olderSettledShelf.isListed),
-  );
+  useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
   const settledFolderThreadCount = threadFolderBlocks
     .filter((block) => block.settled)
     .reduce((total, block) => total + block.threads.length, 0);

@@ -379,7 +379,8 @@ it.effect("orders folders and validates, defaults, and clears rules", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("auto-files only new unfiled threads, respects folder order and explicit moves", () =>
+const autoFileEvents = ["thread.created", "thread.provider-switched"] as const;
+it.effect.each(autoFileEvents)("auto-files on %s", (eventType) =>
   Effect.gen(function* () {
     yield* seedThreads;
     const folders = yield* ThreadFolderService.ThreadFolderService;
@@ -398,32 +399,29 @@ it.effect("auto-files only new unfiled threads, respects folder order and explic
       rule: { titleKeywords: ["thread"] },
       autoFile: true,
     });
-    assert.deepStrictEqual((yield* folders.list()).folders[0]!.rule, { titleKeywords: ["thread"] });
+    assert.deepStrictEqual((yield* folders.list()).folders[0]!.rule, {
+      titleKeywords: ["thread"],
+    });
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-    const subscribed = yield* Deferred.make<void>();
-    const filed = yield* folders.subscribeList().pipe(
-      Stream.tap(() => Deferred.succeed(subscribed, undefined)),
-      Stream.filter((result) => result.folders.some((folder) => folder.threadIds.includes(live))),
-      Stream.take(1),
-      Stream.runDrain,
-      Effect.forkChild,
-    );
-    yield* Deferred.await(subscribed);
+    const processed = yield* Deferred.make<void>();
     yield* Effect.gen(function* () {
       yield* Queue.offer(events, {
-        type: "thread.created",
+        type: eventType,
         id: EventId.make("event:folder-created"),
         threadId: live,
         occurredAt: liveThreadShell(live).createdAt,
         payload: idleThreadProjection(liveThreadShell(live)).thread,
       });
-      yield* Fiber.join(filed);
+      yield* Deferred.await(processed);
     }).pipe(
       Effect.provide(
         ThreadFolderAutoFileReactor.layer.pipe(
           Layer.provide(
             Layer.mock(Orchestrator.OrchestratorV2)({
-              streamDomainEvents: Stream.fromQueue(events),
+              streamDomainEvents: Stream.fromQueue(events).pipe(
+                Stream.take(1),
+                Stream.ensuring(Deferred.succeed(processed, undefined)),
+              ),
             }),
           ),
         ),

@@ -704,6 +704,7 @@ it.effect(
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateThreadTitle: () => Effect.die("unused"),
+          classifyThreadFolder: () => Effect.die("unused"),
           generateTranscriptionPostProcessing: () => Effect.die("unused"),
           generateReviewGuide: (input) =>
             Effect.sync(() => {

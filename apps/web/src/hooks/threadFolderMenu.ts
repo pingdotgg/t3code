@@ -5,6 +5,7 @@ import {
 import {
   type ContextMenuItem,
   type EnvironmentId,
+  MAX_THREAD_FOLDER_MOVE_THREADS,
   ThreadFolderId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -103,8 +104,31 @@ export function buildMultiSelectFolderMenuItems(
 }
 
 async function createFolderAndRename(environmentId: EnvironmentId, threadIds: readonly ThreadId[]) {
-  const id = await createThreadFolder({ environmentId, threadIds });
-  if (id !== null) requestThreadFolderRename(scopedThreadFolderKey({ environmentId, id }));
+  const id = await createThreadFolder({
+    environmentId,
+    threadIds: threadIds.slice(0, MAX_THREAD_FOLDER_MOVE_THREADS),
+  });
+  if (id === null) return;
+  await moveThreadBatches({
+    environmentId,
+    threadIds: threadIds.slice(MAX_THREAD_FOLDER_MOVE_THREADS),
+    folderId: id,
+  });
+  requestThreadFolderRename(scopedThreadFolderKey({ environmentId, id }));
+}
+
+async function moveThreadBatches(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadIds: readonly ThreadId[];
+  readonly folderId: ThreadFolderId | null;
+}) {
+  for (let index = 0; index < input.threadIds.length; index += MAX_THREAD_FOLDER_MOVE_THREADS) {
+    const result = await moveThreadsToFolder({
+      ...input,
+      threadIds: input.threadIds.slice(index, index + MAX_THREAD_FOLDER_MOVE_THREADS),
+    });
+    if (result === null) return;
+  }
 }
 
 export function runThreadFolderMenuAction(
@@ -117,7 +141,7 @@ export function runThreadFolderMenuAction(
     return true;
   }
   if (id === "folder:remove") {
-    void moveThreadsToFolder({ environmentId, threadIds, folderId: null });
+    void moveThreadBatches({ environmentId, threadIds, folderId: null });
     return true;
   }
   if (id.startsWith(FOLDER_ID_PREFIX)) {
@@ -126,7 +150,7 @@ export function runThreadFolderMenuAction(
       (candidate) => candidate.environmentId === environmentId && candidate.id === folderId,
     );
     if (!folder || threadIds.every((threadId) => folder.threadIds.includes(threadId))) return true;
-    void moveThreadsToFolder({ environmentId, threadIds, folderId });
+    void moveThreadBatches({ environmentId, threadIds, folderId });
     return true;
   }
   return id === "folder";
