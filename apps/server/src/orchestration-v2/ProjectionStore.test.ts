@@ -5194,11 +5194,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         statement.includes("AS latest_run_stop_requested"),
       );
       assert.isDefined(threadQuery);
-      const stopRequestLookups = (yield* sql.unsafe<{ readonly detail: string }>(
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
         `EXPLAIN QUERY PLAN ${threadQuery}`,
-      ))
-        .map((row) => row.detail)
-        .filter((detail) => detail.startsWith("SEARCH stop_request "));
+      )).map((row) => row.detail);
+      // A temp sort after a run-candidate search sorts every run of every listed thread.
+      const runCandidateSorts = plan.filter(
+        (detail, index) =>
+          detail.startsWith("SEARCH candidate ") &&
+          plan[index + 1]?.startsWith("USE TEMP B-TREE FOR ORDER BY"),
+      );
+      assert.deepEqual(runCandidateSorts, []);
+      const stopRequestLookups = plan.filter((detail) => detail.startsWith("SEARCH stop_request "));
       assert.lengthOf(stopRequestLookups, 2);
       for (const lookup of stopRequestLookups) {
         assert.include(lookup, "orchestration_v2_projection_turn_items_stop_request_idx");
