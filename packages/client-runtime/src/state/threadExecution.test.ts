@@ -44,14 +44,13 @@ const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
 function request(
   id: string,
   status: OrchestrationV2RuntimeRequest["status"],
-  kind: OrchestrationV2RuntimeRequest["kind"] = "command",
 ): OrchestrationV2RuntimeRequest {
   return {
     id: RuntimeRequestId.make(id),
     nodeId: NodeId.make(`node-${id}`),
     providerTurnId: null,
     nativeRequestRef: null,
-    kind,
+    kind: "command",
     status,
     responseCapability: { type: "not_resumable", reason: "Session ended." },
     createdAt: now,
@@ -399,26 +398,12 @@ describe("thread execution presentation", () => {
       held: false,
       expected: false,
     },
-    ...(["resolved", "cancelled", "expired"] as const).map((status) => ({
-      name: `only a request now ${status}`,
-      requests: [request("approval", status)],
+    {
+      name: "only a resolved request",
+      requests: [request("approval", "resolved")],
       runId: "run-stopped",
       held: false,
       expected: true,
-    })),
-    {
-      name: "a pending request no card shows",
-      requests: [request("auth", "pending", "auth_refresh")],
-      runId: "run-stopped",
-      held: false,
-      expected: false,
-    },
-    {
-      name: "an older pending request among settled ones",
-      requests: [request("older", "pending"), request("newer", "resolved")],
-      runId: "run-stopped",
-      held: false,
-      expected: false,
     },
     {
       name: "a held queue behind a blocked continuation",

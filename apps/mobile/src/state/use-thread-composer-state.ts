@@ -405,7 +405,6 @@ export function useThreadComposerState(input: {
   const canResume = selectedThreadProjection
     ? canResumeThread(selectedThreadProjection.projection, resumableRunId, queueHeld)
     : queueHeld;
-  const resumeBlocked = resumableRunId !== null && !canResume;
 
   const runlessWorkStartedAt = selectedThreadProjection
     ? deriveRunlessWorkStartedAt(selectedThreadProjection.projection)
@@ -925,7 +924,6 @@ export function useThreadComposerState(input: {
     queueHeld,
     resumableRunId,
     canResume,
-    resumeBlocked,
     queuedRunEdit,
     isSavingQueuedEdit,
     cancelQueuedRunEdit,

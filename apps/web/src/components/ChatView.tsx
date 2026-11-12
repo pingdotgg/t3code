@@ -844,7 +844,6 @@ export default function ChatView(props: ChatViewProps) {
   const canResume =
     serverProjection !== null &&
     canResumeThread(serverProjection, resumableRunId, hasHeldQueuedRuns);
-  const resumeBlocked = resumableRunId !== null && !canResume;
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -3633,7 +3632,6 @@ export default function ChatView(props: ChatViewProps) {
                                   isResuming
                                 }
                                 canResume={canResume}
-                                resumeBlocked={resumeBlocked}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
                                   !canOperateThread

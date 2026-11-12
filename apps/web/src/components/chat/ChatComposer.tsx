@@ -373,7 +373,6 @@ export interface ChatComposerProps {
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
-  resumeBlocked: boolean;
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
@@ -521,7 +520,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canInterrupt,
     isSendBusy,
     canResume,
-    resumeBlocked,
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
@@ -2296,7 +2294,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerContextRecords.size === 0 &&
     !isComposerApprovalState &&
     !activePendingProgress &&
-    !resumeBlocked &&
     !projectSelectionRequired &&
     !showProviderUnavailable
       ? promptSuggestion
@@ -3400,8 +3397,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                   ) : showProviderUnavailable ? (
                     "Enable a provider in Settings"
-                  ) : resumeBlocked ? (
-                    "A pending request blocks Resume. Send a message instead."
                   ) : (
                     "Ask anything..."
                   )}
@@ -3567,13 +3562,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             : activePendingProgress.activeQuestion?.options.length === 0
                               ? "Type your answer"
                               : "Type your own answer, or leave this blank to use the selected option"
-                          : resumeBlocked
-                            ? "A pending request blocks Resume. Send a message instead."
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
+                          : projectSelectionRequired
+                            ? "Choose a project above to start a thread"
+                            : showProviderUnavailable
+                              ? "Enable a provider in Settings to send a message"
+                              : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
