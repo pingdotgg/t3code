@@ -9,8 +9,10 @@ import { videoMimeType } from "@t3tools/shared/video";
 import {
   assistantCitationLabel,
   collectAssistantCitations,
+  expandAssistantCitationsForProvider,
 } from "@t3tools/shared/assistantCitations";
 import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   COMPOSER_CONTEXT_MAX_RECORDS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   ComposerContextId,
@@ -39,6 +41,13 @@ import {
 
 const isMessageContext = Schema.is(OrchestrationMessageContext);
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
+
+export function assistantCitationDraftWithinLimit(text: string): boolean {
+  return (
+    text.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS &&
+    expandAssistantCitationsForProvider(text).length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+  );
+}
 
 export function composerContextSendBlockReason(
   context?: OrchestrationMessageContext,

@@ -200,7 +200,8 @@ export function ComposerEditor({
           token.type === "mention" ? token.value : contextRecordFileName(record),
         );
         return {
-          type: token.type === "model" ? "skill" : token.type === "citation" ? "context" : token.type,
+          type:
+            token.type === "model" ? "skill" : token.type === "citation" ? "context" : token.type,
           source: token.source,
           start: token.start,
           end: token.end,
@@ -218,7 +219,7 @@ export function ComposerEditor({
                   ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
                   : token.type === "citation"
                     ? token.value
-                  : basename(token.value),
+                    : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
           iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
           tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",

@@ -32,19 +32,23 @@ export function AssistantCitationSheet(props: {
   readonly onClose: () => void;
   readonly onRemove?: () => void;
   readonly onCommentChange?: (comment: string) => void;
+  readonly canChangeComment?: (comment: string) => boolean;
 }) {
   const openLinkedThread = useOpenLinkedThread();
   const insets = useSafeAreaInsets();
   const citation = props.citation;
   const [comment, setComment] = useState(citation.comment ?? "");
+  const commentChanged = comment.trim() !== (citation.comment ?? "");
+  const commentTooLong = commentChanged && props.canChangeComment?.(comment) === false;
   const close = () => {
-    if (props.onCommentChange && comment.trim() !== (citation.comment ?? "")) {
+    if (commentTooLong) return;
+    if (props.onCommentChange && commentChanged) {
       props.onCommentChange(comment);
     }
     props.onClose();
   };
   return (
-    <Sheet title="Quote" onClose={close}>
+    <Sheet title="Quote" onClose={close} dismissDisabled={commentTooLong}>
       <ScrollView
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
         contentContainerStyle={{
@@ -75,6 +79,11 @@ export function AssistantCitationSheet(props: {
               className="min-h-24 px-4 py-3 text-base text-foreground"
               style={{ textAlignVertical: "top" }}
             />
+            {commentTooLong ? (
+              <Text textRole="body" className="px-4 pb-3 text-foreground-muted">
+                This comment makes the message too long to send. Shorten it to save and close.
+              </Text>
+            ) : null}
           </ListSection>
         ) : citation.comment ? (
           <ListSection title="Comment">
@@ -88,6 +97,7 @@ export function AssistantCitationSheet(props: {
             icon="arrow.up.right"
             label="Go to message"
             onPress={() => {
+              if (commentTooLong) return;
               close();
               requestThreadMessageJump(scopedThreadKey(citation), citation.messageId);
               openLinkedThread(citation);

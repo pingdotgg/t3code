@@ -40,6 +40,7 @@ import { useLinkedEnvironments } from "../state/peerLinks";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./ui/AppText";
 import {
+  assistantCitationDraftWithinLimit,
   composerDocumentAttachment,
   composerMentionPath,
   type ComposerDocumentAttachment,
@@ -206,6 +207,13 @@ export function ComposerEditor({
           );
           const text =
             props.value.slice(0, selected.start) + next + props.value.slice(selected.end);
+          if (!assistantCitationDraftWithinLimit(text)) {
+            Dialog.alert(
+              "Could not update quote",
+              "This comment would make the message too long to send. Shorten the comment or draft.",
+            );
+            return;
+          }
           const cursor = selected.start + next.length;
           if (draftKey)
             rememberComposerDraftSelection(draftKey, text, { start: cursor, end: cursor });
@@ -267,6 +275,18 @@ export function ComposerEditor({
           onClose={() => setSelected(null)}
           onRemove={removeSelected}
           onCommentChange={commentSelectedCitation}
+          canChangeComment={
+            selected && commentSelectedCitation
+              ? (comment) =>
+                  assistantCitationDraftWithinLimit(
+                    props.value.slice(0, selected.start) +
+                      serializeAssistantCitation(
+                        withAssistantCitationComment(selectedCitation, comment),
+                      ) +
+                      props.value.slice(selected.end),
+                  )
+              : undefined
+          }
         />
       ) : null}
       {selected && (selectedReference || selectedSkill) ? (

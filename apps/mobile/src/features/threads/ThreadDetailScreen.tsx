@@ -136,6 +136,7 @@ import {
   setFreshSessionPending,
   insertComposerDraftText,
 } from "../../state/use-composer-drafts";
+import { assistantCitationDraftWithinLimit } from "../../lib/composerContext";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -1409,11 +1410,16 @@ function ThreadDetailBody(
       return;
     const target = captureComposerDraftInsertion(props.composerDraftKey);
     const prefix = target.start > 0 && !/\s/.test(target.text[target.start - 1]!) ? " " : "";
-    insertComposerDraftText(
-      props.composerDraftKey,
-      `${prefix}${serializeAssistantCitation(citation)} `,
-      target,
-    );
+    const value = `${prefix}${serializeAssistantCitation(citation)} `;
+    const text = target.text.slice(0, target.start) + value + target.text.slice(target.end);
+    if (!assistantCitationDraftWithinLimit(text)) {
+      Dialog.alert(
+        "Could not add quote",
+        "This quote would make the message too long to send. Shorten the draft or select less text.",
+      );
+      return;
+    }
+    insertComposerDraftText(props.composerDraftKey, value, target);
     composerEditorRef.current?.focus();
   };
 
@@ -1554,7 +1560,7 @@ function ThreadDetailBody(
                   onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
                   onIsAtEndChange={setIsAtEnd}
                   skills={selectedProviderSkills}
-                  onCiteAssistantText={handleCiteAssistantText}
+                  onCiteAssistantText={canCiteAssistantText ? handleCiteAssistantText : undefined}
                   onUseArtifactTemplate={handleUseArtifactTemplate}
                 />
               </ColumnWidth>

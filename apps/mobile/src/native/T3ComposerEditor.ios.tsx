@@ -218,7 +218,7 @@ export function ComposerEditor({
                   ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
                   : token.type === "citation"
                     ? token.value
-                  : basename(token.value),
+                    : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
           iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
           tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",

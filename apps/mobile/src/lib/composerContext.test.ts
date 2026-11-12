@@ -1,4 +1,5 @@
 import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ComposerContextId,
   EnvironmentId,
   MessageId,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  assistantCitationDraftWithinLimit,
   collectComposerModelTokens,
   composerContextEditorTokens,
   composerSkillLabels,
@@ -203,6 +205,31 @@ describe("mobile composer context", () => {
     expect(collectComposerModelTokens("Use model:codex/gpt-6.1", known, kept)).toHaveLength(1);
     expect(collectComposerModelTokens("Use model:codex/gpt-6.1x", known, kept)).toEqual([]);
     expect(collectComposerModelTokens("model:codex/gpt-6.1", known, kept)).toEqual([]);
+  });
+
+  it("rejects citation drafts exceeding either encoded or expanded input limits", () => {
+    const quote = (text: string) =>
+      serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("thread"),
+        messageId: MessageId.make("message"),
+        text,
+        start: 0,
+        end: text.length,
+        prefix: "",
+        suffix: "",
+      });
+    expect(assistantCitationDraftWithinLimit(`Explain ${quote("short quote")}`)).toBe(true);
+    expect(
+      assistantCitationDraftWithinLimit(
+        `${quote("日".repeat(8_000))} ${quote("語".repeat(8_000))}`,
+      ),
+    ).toBe(false);
+    const short = quote("x");
+    const expandedOverflow = "a".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - short.length) + short;
+    expect(expandedOverflow.length).toBe(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(assistantCitationDraftWithinLimit(expandedOverflow)).toBe(false);
   });
 
   it("keeps exact source positions and repeated references alongside existing native tokens", () => {
