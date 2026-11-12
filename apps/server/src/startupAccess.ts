@@ -125,10 +125,17 @@ export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
   });
 });
 
-export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
+/** The URL host that reaches a listener at the address it binds, for Tailscale Serve. */
+export const boundUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   NetAddress.isUnspecified(address.address)
     ? "127.0.0.1"
     : NetAddress.formatUrlHostString(NetAddress.formatIp(address.address));
+
+/** T3 Connect link proofs accept only a loopback origin, whatever address the listener binds. */
+export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
+  address._tag === "InetAddressV6" && NetAddress.isLoopback(address.address)
+    ? "[::1]"
+    : "127.0.0.1";
 
 const normalizeHost = (host: string): string =>
   host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;

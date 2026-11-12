@@ -17,6 +17,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServerConfig from "./config.ts";
 import {
   acceptsPrivateNetworkConnection,
+  boundUrlHostForAddress,
   closeNonPrivateNetworkConnections,
   headlessServeOutput,
   loopbackUrlHostForAddress,
@@ -113,9 +114,18 @@ it("skips NixOS container and systemd-nspawn veths for a private-network pairing
   ).toBe("http://192.168.0.18:3773");
 });
 
-it("targets the bound interface when the listener binds a specific address", () => {
+it("keeps the T3 Connect origin on loopback when the listener binds a tailnet address", () => {
   const hostFor = (ip: string) =>
     loopbackUrlHostForAddress(NetAddress.inetAddressFromIpStringUnsafe(ip, 3773));
+
+  expect(hostFor("100.101.102.103")).toBe("127.0.0.1");
+  expect(hostFor("0.0.0.0")).toBe("127.0.0.1");
+  expect(hostFor("::1")).toBe("[::1]");
+});
+
+it("targets the bound interface when the listener binds a specific address", () => {
+  const hostFor = (ip: string) =>
+    boundUrlHostForAddress(NetAddress.inetAddressFromIpStringUnsafe(ip, 3773));
 
   expect(hostFor("0.0.0.0")).toBe("127.0.0.1");
   expect(hostFor("::")).toBe("127.0.0.1");
