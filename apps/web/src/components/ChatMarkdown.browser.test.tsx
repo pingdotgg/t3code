@@ -296,6 +296,23 @@ describe("ChatMarkdown favicon privacy", () => {
   });
 });
 
+describe("ChatMarkdown external link labels", () => {
+  it("keeps a leading emoji whole", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown cwd="/tmp/project" text="[😀 Read the documentation](https://example.com)" />,
+    );
+    await vi.waitFor(() => {
+      const link = screen.container.querySelector("a");
+      expect(link?.textContent).toContain("😀 Read");
+      const walker = document.createTreeWalker(link!, NodeFilter.SHOW_TEXT);
+      const textNodes: string[] = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode.nodeValue ?? "");
+      expect(textNodes.filter((node) => /\p{Surrogate}/u.test(node))).toEqual([]);
+    });
+  });
+});
+
 describe("ChatMarkdown streaming", () => {
   it("runs only a complete single-line shell block after a click", async () => {
     setup();
