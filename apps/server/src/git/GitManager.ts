@@ -175,11 +175,12 @@ const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
-const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
+// invalidateStatus drops the checked-out branch's answer, so these lifetimes pace idle branches.
+const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(15);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
-const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(15);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;

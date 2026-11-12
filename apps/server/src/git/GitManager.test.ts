@@ -1104,11 +1104,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         gitCommands,
         providerScenario: {
-          prListSequence: [
-            [pullRequest(1, "merged")],
-            [pullRequest(1, "merged")],
-            [pullRequest(1, "merged")],
-          ],
+          prListSequence: [[pullRequest(1, "merged")], [pullRequest(1, "merged")]],
           prListOtherwise: [pullRequest(2, "open")],
         },
       });
@@ -1137,19 +1133,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* lookup;
       expect(freshLookups()).toBe(0);
 
-      // Remembered git state expires after 5 minutes; that rereads git without a recheck.
-      yield* TestClock.adjust("10 minutes");
-      gitCommands.length = 0;
-      expect((yield* lookup)?.state).toBe("merged");
-      expect(freshLookups()).toBe(1);
-
-      yield* TestClock.adjust("5 minutes");
+      // Remembered git state and the recheck interval both lapse after 15 minutes.
+      yield* TestClock.adjust("15 minutes");
       gitCommands.length = 0;
       expect((yield* lookup)?.state).toBe("merged");
       expect(freshLookups()).toBe(2);
 
       // A new PR from the reused branch shows on the next host query.
-      yield* TestClock.adjust("5 minutes");
+      yield* TestClock.adjust("15 minutes");
       expect((yield* lookup)?.number).toBe(2);
     }),
   );
@@ -1180,11 +1171,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(yield* lookup).toBeNull();
       expect(yield* activeLookup).toBeNull();
 
+      // An idle branch is not reread every few minutes; its answer lasts until the TTL.
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* lookup).toBeNull();
       expect(listedSelectors(providerCalls)).toEqual([
         "feature/idle",
         "feature/active",
         "feature/active",
       ]);
+      yield* TestClock.adjust("5 minutes");
+      expect(yield* lookup).toBeNull();
+      expect(listedSelectors(providerCalls).at(-1)).toBe("feature/idle");
     }),
   );
 
