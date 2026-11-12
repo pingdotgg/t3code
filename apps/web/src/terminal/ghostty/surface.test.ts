@@ -507,6 +507,18 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelectionPosition()).toBeNull();
   });
 
+  it("keeps the prompt on a read-only surface, whose resize never makes the shell redraw", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.input.readOnly = true;
+    // 20 columns here; the PTY stays 40 wide because a read-only viewer never resizes it.
+    surface.setSharedGrid({ cols: 40, rows: 4 });
+    surface.resetAndWrite("done\r\n\x1b]133;A;redraw=1\x07~/a-rather-long-folder $ \x1b]133;I\x07");
+    harness.flushFrame();
+    const text = harness.renderedSnapshot.rowData.map((row) => row.text.trimEnd()).join("");
+    expect(text).toContain("~/a-rather-long-folder $");
+  });
+
   it("replays history at the PTY's grid so a narrower surface clears the redrawn prompt", async () => {
     const harness = createHarness();
     const surface = await harness.create();
