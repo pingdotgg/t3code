@@ -28,12 +28,16 @@ export const shouldUseEnvProxy = (env: NodeJS.ProcessEnv): boolean =>
 export function installHttp1FetchDispatcher(env: NodeJS.ProcessEnv = process.env): void {
   const undici = requireUndici("undici") as typeof Undici;
   // Node's agent comes from its internal undici copy, so `instanceof` against the npm class is false.
-  const usesEnvProxy =
-    undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent" || shouldUseEnvProxy(env);
+  const nodeUsesEnvProxy = undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent";
+  const autoEnvProxy = !nodeUsesEnvProxy && shouldUseEnvProxy(env);
   undici.setGlobalDispatcher(
-    usesEnvProxy
+    nodeUsesEnvProxy || autoEnvProxy
       ? new undici.EnvHttpProxyAgent({
           allowH2: false,
+          // A proxy the user never opted Node into must not swallow local server and preview probes.
+          ...(autoEnvProxy && {
+            noProxy: env.no_proxy ?? env.NO_PROXY ?? "localhost,127.0.0.1,::1",
+          }),
           // ProxyAgent's connector forces h2 and ignores allowH2; replace it for HTTPS proxies.
           clientFactory: (origin) => new undici.Pool(origin, { allowH2: false }),
         })

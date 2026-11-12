@@ -10,7 +10,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import * as Undici from "undici";
-import { afterAll, afterEach, beforeAll, describe, expect } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, describe, expect, vi } from "vite-plus/test";
 
 import {
   builtinFetchUsesHttp2,
@@ -57,6 +57,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   Undici.setGlobalDispatcher(defaultDispatcher);
   NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(defaultAttemptTimeout);
 });
@@ -106,6 +107,14 @@ describe("installHttp1FetchDispatcher", () => {
     Undici.setGlobalDispatcher(new Undici.Agent());
     keepOutboundFetchOnHttp1({ NODE_USE_ENV_PROXY: "0", HTTPS_PROXY: "http://127.0.0.1:9" });
     expect(Undici.getGlobalDispatcher()).not.toBeInstanceOf(Undici.EnvHttpProxyAgent);
+  });
+
+  it("keeps loopback requests off an automatic env proxy when NO_PROXY is unset", async () => {
+    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:9");
+    vi.stubEnv("NO_PROXY", undefined);
+    vi.stubEnv("no_proxy", undefined);
+    keepOutboundFetchOnHttp1({ HTTPS_PROXY: "http://127.0.0.1:9" });
+    expect(await versionViaGlobalDispatcher()).toBe("1.1");
   });
 
   it("shouldUseEnvProxy requires a proxy variable and no explicit NODE_USE_ENV_PROXY", () => {
