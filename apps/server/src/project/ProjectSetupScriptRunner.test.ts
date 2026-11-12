@@ -41,6 +41,7 @@ const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
+  readonly command?: string;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
@@ -88,7 +89,7 @@ const makeHarness = Effect.fn(function* (options: {
         {
           id: "setup",
           name: "Setup",
-          command: "vp i",
+          command: options.command ?? "vp i",
           icon: "configure",
           runOnWorktreeCreate: true,
         },
@@ -104,6 +105,7 @@ const setup = Effect.fn(function* (
   options: {
     readonly history?: string;
     readonly shell?: string | null;
+    readonly command?: string;
   } = {},
 ) {
   const harness = yield* makeHarness(options);
@@ -120,6 +122,20 @@ describe("ProjectSetupScriptRunner", () => {
         shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       });
       expect(yield* Queue.take(writes)).toContain("$global:LASTEXITCODE");
+    }),
+  );
+
+  it.effect("a fish setup command that fails to parse still reports completion", () =>
+    Effect.gen(function* () {
+      const command = 'node "${HOME:-.}/x.mjs" setup';
+      const { writes } = yield* setup({ shell: "/usr/bin/fish", command });
+      yield* TestClock.adjust("3 seconds");
+      const [check, ...rest] = (yield* Queue.take(writes)).split("\r");
+      expect(check).toContain(
+        `'node "\${HOME:-.}/x.mjs" setup' | '/usr/bin/fish' --no-config --no-execute; or printf`,
+      );
+      // Typed on its own line so the fish line editor still expands abbreviations.
+      expect(rest).toContain(command);
     }),
   );
 
