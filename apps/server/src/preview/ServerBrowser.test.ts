@@ -1336,6 +1336,26 @@ it.live("closing a tab with an unsaved-changes guard still closes it", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a tab whose page crashes stays open for its agent and viewers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      contexts[0]!.page.emit("crash");
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toEqual([tabId]);
+      expect(
+        yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        }),
+      ).toMatchObject({ tabId });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {
