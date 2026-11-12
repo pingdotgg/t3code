@@ -409,6 +409,7 @@ it("keeps the final report of a run that failed after its turn ended", () => {
     ordinal: 1,
     now: childCreatedAt,
   });
+  if (artifacts.turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
   const failure = {
     class: "unknown" as const,
     message: "Connection failed repeatedly",
