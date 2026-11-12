@@ -90,30 +90,34 @@ const SNAPSHOT: OrchestrationV2ShellSnapshot = {
 const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (options?: {
   readonly loadEarlier?: () => Effect.Effect<ThreadHistoryController.ThreadHistoryLoadEarlierResult>;
   readonly reconcilePendingWork?: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly offline?: boolean;
 }) {
   const requests = yield* Queue.unbounded<{
     command: OrchestrationV2Command;
     reply: Deferred.Deferred<{ sequence: number }, Error>;
   }>();
   const reconciled = yield* Queue.unbounded<ThreadId>();
+  const liveSession = {
+    client: {
+      [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+        Effect.gen(function* () {
+          const reply = yield* Deferred.make<{ sequence: number }, Error>();
+          yield* Queue.offer(requests, { command, reply });
+          return yield* Deferred.await(reply);
+        }),
+    },
+  } as unknown as RpcSession;
+  const session = yield* SubscriptionRef.make(
+    options?.offline ? Option.none<RpcSession>() : Option.some(liveSession),
+  );
+  const reconnect = SubscriptionRef.set(session, Option.some(liveSession));
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: new BearerConnectionTarget({
       environmentId: ENVIRONMENT_ID,
       label: "Test",
       connectionId: "test",
     }),
-    session: yield* SubscriptionRef.make(
-      Option.some({
-        client: {
-          [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
-            Effect.gen(function* () {
-              const reply = yield* Deferred.make<{ sequence: number }, Error>();
-              yield* Queue.offer(requests, { command, reply });
-              return yield* Deferred.await(reply);
-            }),
-        },
-      } as unknown as RpcSession),
-    ),
+    session,
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
   const runtime = Atom.runtime(
     Layer.mergeAll(
@@ -143,7 +147,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const visibleAtom = commands.snapshotAtom(ENVIRONMENT_ID);
   registry.mount(visibleAtom);
-  return { registry, commands, snapshotAtom, visibleAtom, requests, reconciled };
+  return { registry, commands, snapshotAtom, visibleAtom, requests, reconciled, reconnect };
 });
 
 describe("history loading", () => {
@@ -310,6 +314,33 @@ describe("remote thread lifecycle commands", () => {
         yield* Deferred.fail(request.reply, new Error("Remote rejected the action"));
         expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
+      }),
+  );
+
+  it.effect.each([
+    ["settle", {}, { settledOverride: "settled" }, "thread.settle"],
+    [
+      "snooze",
+      { snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      { snoozedUntil: FUTURE },
+      "thread.snooze",
+    ],
+  ] as const)(
+    "keeps a %s made while the environment is offline and sends it on reconnect",
+    ([action, input, expected, commandType]) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ offline: true });
+        const result = yield* Effect.promise(() =>
+          h.commands[action].run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: { threadId: THREAD_ID, snoozedUntil: "", ...input },
+          }),
+        );
+        expect(result._tag).not.toBe("Failure");
+        expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
+        yield* h.reconnect;
+        const request = yield* Queue.take(h.requests);
+        expect(request.command).toMatchObject({ type: commandType, threadId: THREAD_ID });
       }),
   );
 
