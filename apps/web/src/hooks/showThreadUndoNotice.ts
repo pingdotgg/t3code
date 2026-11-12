@@ -31,6 +31,7 @@ export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => (
 const UNDONE_ACTION = {
   Settled: "settle",
   Snoozed: "snooze",
+  Rescheduled: "reschedule",
   Unpinned: "unpin",
   Archived: "archive",
   Discarded: "discard",
