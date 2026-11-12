@@ -466,7 +466,10 @@ export function usePendingThreadRequests(input: {
     const key = `${activePendingRequestKey}:${questionId}`;
     const entries = displacedAnswers.current;
     const index = entries.findLastIndex(
-      (entry) => entry.key === key && entry.text.trim() === value.trim(),
+      (entry) =>
+        entry.draft === displacedDraftKey &&
+        entry.key === key &&
+        entry.text.trim() === value.trim(),
     );
     const displaced = entries[index];
     if (displaced === undefined) return;
