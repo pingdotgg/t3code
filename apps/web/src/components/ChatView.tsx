@@ -244,6 +244,7 @@ import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { threadEnvironment } from "../state/threads";
 import {
   resolveProviderSkillsForCwd,
+  resolveThreadAgentCwd,
   resolveProvidersForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { chatGitStatusAtom, NO_CHAT_GIT_STATUS_ATOM, vcsEnvironment } from "../state/vcs";
@@ -1242,11 +1243,16 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const agentCwd = resolveThreadAgentCwd({
+    cwd: gitCwd,
+    worktreePath: activeThread?.worktreePath,
+    providerSessions: serverProjection?.providerSessions,
+  });
   const providerStatuses = resolveProvidersForCwd(
     (providerEnvironmentId === undefined
       ? undefined
       : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS,
-    gitCwd,
+    agentCwd,
   );
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
@@ -2702,7 +2708,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const getShortcutContextStable = useStableCallback(getShortcutContext);
   const timelineSkills = activeProviderStatus
-    ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+    ? resolveProviderSkillsForCwd(activeProviderStatus, agentCwd)
     : EMPTY_PROVIDER_SKILLS;
   const threadFindEnabled = isServerThread && serverConfig?.threadFind === true;
   const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
@@ -3692,6 +3698,7 @@ export default function ChatView(props: ChatViewProps) {
                                 keybindings={keybindings}
                                 terminalOpen={Boolean(terminalUiState.terminalOpen)}
                                 gitCwd={gitCwd}
+                                agentCwd={agentCwd}
                                 pullRequestProjectId={
                                   supportsPullRequests ? (activeProject?.id ?? null) : null
                                 }

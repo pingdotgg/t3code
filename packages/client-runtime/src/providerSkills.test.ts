@@ -16,6 +16,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProvidersForCwd,
+  resolveThreadAgentCwd,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -93,6 +94,21 @@ describe("workspace provider snapshots", () => {
     expect(resolveProviderSlashCommandsForCwd(provider, "/workspace/project-a")).toEqual([
       { name: "project" },
     ]);
+  });
+
+  it("looks up a worktree thread's skills where its agent runs", () => {
+    const worktreePath = "/worktrees/repo/feature";
+    const resolve = (sessionCwds: ReadonlyArray<string>) =>
+      resolveThreadAgentCwd({
+        cwd: worktreePath,
+        worktreePath,
+        providerSessions: sessionCwds.map((cwd) => ({ cwd })),
+      });
+    expect(resolve([`${worktreePath}/ios`])).toBe(`${worktreePath}/ios`);
+    expect(resolve([])).toBe(worktreePath);
+    // A session from the thread's previous worktree no longer says where the agent runs.
+    expect(resolve(["/worktrees/repo/old/ios"])).toBe(worktreePath);
+    expect(resolve([`${worktreePath}-2/ios`])).toBe(worktreePath);
   });
 
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {

@@ -92,6 +92,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
+import { resolveThreadAgentCwd } from "@t3tools/client-runtime/providerSkills";
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
@@ -1053,6 +1054,11 @@ function ThreadRouteContent(
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
+          agentCwd={resolveThreadAgentCwd({
+            cwd: selectedThreadCwd,
+            worktreePath: selectedThread.worktreePath,
+            providerSessions: selectedThreadDetail?.providerSessions,
+          })}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           queuedMessages={
             selectedThreadCreation && selectedThreadCreation.outcome?.kind !== "delivered"

@@ -282,6 +282,7 @@ export interface ThreadDetailScreenProps {
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
+  readonly agentCwd?: string | null;
   readonly selectedThreadQueueCount: number;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
@@ -1252,7 +1253,10 @@ function ThreadDetailBody(
       (candidate) => candidate.instanceId === selectedInstanceId,
     );
     return provider
-      ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
+      ? resolveProviderSkillsForCwd(
+          provider,
+          props.agentCwd ?? props.threadCwd ?? props.projectWorkspaceRoot,
+        )
       : [];
   })();
 
@@ -1899,6 +1903,7 @@ function ThreadDetailBody(
                         canStopThread={props.canStopThread}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
+                        agentCwd={props.agentCwd ?? null}
                         // Keep follow-ups in the draft until server creation succeeds, or rejection strands them in the outbox.
                         sendBlockedReason={
                           props.draftMode

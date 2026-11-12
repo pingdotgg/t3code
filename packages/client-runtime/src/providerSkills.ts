@@ -8,6 +8,7 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { Atom } from "effect/reactivity";
 
 import { deadlineStore } from "./clock.ts";
@@ -116,6 +117,24 @@ function hasCurrentProviderWorkspaceSnapshot(
     snapshot &&
     !isProviderWorkspaceSnapshotPending(snapshot) &&
     isProviderWorkspaceSnapshotCurrent(snapshot, nowMs),
+  );
+}
+
+/**
+ * The cwd whose skills the thread's agent sees. The server can start a worktree thread's agent
+ * in a subdirectory of the worktree; a session recorded inside the current worktree says where.
+ */
+export function resolveThreadAgentCwd(input: {
+  readonly cwd: string | null;
+  readonly worktreePath: string | null | undefined;
+  readonly providerSessions: ReadonlyArray<{ readonly cwd: string }> | undefined;
+}): string | null {
+  const { worktreePath } = input;
+  if (!worktreePath) return input.cwd;
+  return (
+    input.providerSessions?.findLast(
+      (session) => workspaceRelativeFilePath(session.cwd, worktreePath) !== null,
+    )?.cwd ?? input.cwd
   );
 }
 

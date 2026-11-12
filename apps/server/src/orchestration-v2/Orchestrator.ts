@@ -2532,7 +2532,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 runId: queuedRun.id,
                 rootNodeId: rootNode.id,
                 providerThreadId: queuedProviderThread.id,
-                cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                cwd: projection.thread.worktreePath ?? resolvedRuntimePolicy.cwd ?? process.cwd(),
                 createdAt: now,
               }),
             ),
@@ -5970,8 +5970,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId: nextRootNodeId,
         providerThreadId: restartProviderThread.id,
         cwd:
-          resolvedRuntimePolicy.cwd ??
           input.projection.thread.worktreePath ??
+          resolvedRuntimePolicy.cwd ??
           session.providerSession.cwd,
         createdAt: now,
       })
@@ -6945,9 +6945,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   rootNodeId,
                   providerThreadId: queuedProviderThread.id,
                   cwd:
+                    projection.thread.worktreePath ??
                     resolvedRuntimePolicy.cwd ??
                     selectedProviderSession?.cwd ??
-                    projection.thread.worktreePath ??
                     process.cwd(),
                   createdAt: now,
                 }),
@@ -7421,7 +7421,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     rootNodeId,
                     providerThreadId,
                     cwd:
-                      resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                      projection.thread.worktreePath ?? resolvedRuntimePolicy.cwd ?? process.cwd(),
                     createdAt: now,
                   }),
                 ),
@@ -8198,9 +8198,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         providerThreadId: providerThread.id,
         cwd:
+          projection.thread.worktreePath ??
           resolvedRuntimePolicy.cwd ??
           existingProviderSession?.cwd ??
-          projection.thread.worktreePath ??
           process.cwd(),
         createdAt: now,
       })
@@ -11159,7 +11159,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           runId: state.run.id,
           rootNodeId: state.rootNode.id,
           providerThreadId: state.providerThread.id,
-          cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+          cwd: projection.thread.worktreePath ?? resolvedRuntimePolicy.cwd ?? process.cwd(),
           createdAt: now,
         })
         .pipe(mapDispatchError(command));
