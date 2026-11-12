@@ -7,6 +7,7 @@ import {
   refineUnknownRemoteProvider,
 } from "@t3tools/source-control-core/server/discovery";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
+import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -156,6 +157,35 @@ self-hosted.example.test
       },
     });
     assert.deepStrictEqual(asked, [["glab", "auth", "status", "--hostname", scenario.host]]);
+    assert.strictEqual(verdict.provider?.kind, "gitlab");
+    assert.strictEqual(verdict.settled, true);
+  }),
+);
+
+// glab answers `auth status` over the network, but its config knows the login offline.
+it.effect("claims a self-hosted remote glab is signed in to while the host is offline", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "https://git.example.test/group/project.git";
+    const remote = parseGitRemoteHost(remoteUrl);
+    assert.ok(remote);
+    const verdict = yield* refineUnknownRemoteProvider({
+      specs: [GitLabSourceControlProvider.discovery],
+      cwd: "/repo",
+      context: { provider: unknownRemoteProvider(remote), remoteName: "origin", remoteUrl },
+      process: {
+        run: ({ operation, command, args, cwd }) => {
+          if (args[0] === "config" && args[1] === "get") {
+            const host = args[args.indexOf("--host") + 1];
+            const value =
+              host === "git.example.test" ? (args[2] === "user" ? "gitlab-user" : host) : "";
+            return Effect.succeed(processOutput(value === "" ? "" : `${value}\n`));
+          }
+          return Effect.fail(
+            new VcsProcessTimeoutError({ operation, command, cwd, timeoutMs: 5_000 }),
+          );
+        },
+      },
+    });
     assert.strictEqual(verdict.provider?.kind, "gitlab");
     assert.strictEqual(verdict.settled, true);
   }),
