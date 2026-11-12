@@ -386,6 +386,13 @@ export const layer = Layer.effect(
       }
       fallbackByInstance.set(source.instanceId, provider);
     }
+    // Read after the snapshots: a snapshot read as awaiting is the pre-check placeholder.
+    const awaitingBootInstances = new Set<ProviderInstance>();
+    for (const instance of bootInstances) {
+      if (yield* instance.snapshot.isAwaitingFirstCheck ?? Effect.succeed(false)) {
+        awaitingBootInstances.add(instance);
+      }
+    }
 
     const bootProviders = yield* Effect.forEach(
       bootSources,
@@ -864,8 +871,11 @@ export const layer = Layer.effect(
             Effect.gen(function* () {
               const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;
-              // Boot already merged this unprobed snapshot under the cached status; re-merging would overwrite and persist it.
-              if (provider === fallbackByInstance.get(source.instanceId)) {
+              // Boot shows the cached status until this instance's first check publishes a result.
+              if (
+                awaitingBootInstances.has(instance) &&
+                (yield* instance.snapshot.isAwaitingFirstCheck ?? Effect.succeed(false))
+              ) {
                 return yield* refreshCompatibility;
               }
               yield* correlateSnapshotWithSource(source, provider).pipe(
@@ -925,6 +935,10 @@ export const layer = Layer.effect(
       Scope.provide(serviceScope),
     );
 
+    yield* upsertProviders(
+      fallbackProviders.filter((_, index) => !awaitingBootInstances.has(bootInstances[index]!)),
+      { publish: false },
+    );
     const instanceChanges = yield* instanceRegistry.subscribeChanges;
     yield* syncLiveSources;
     yield* Stream.runForEach(

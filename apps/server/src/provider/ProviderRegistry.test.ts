@@ -1270,6 +1270,9 @@ it.layer(
                   }),
                 ),
               getSnapshot: Ref.get(currentProvider),
+              isAwaitingFirstCheck: Ref.get(currentProvider).pipe(
+                Effect.map((provider) => provider === pendingProvider),
+              ),
               refresh: Ref.get(nextProvider).pipe(
                 Effect.tap((provider) => Ref.set(currentProvider, provider)),
               ),
@@ -1348,6 +1351,79 @@ it.layer(
           Effect.provide(
             ServerConfig.layerTest(process.cwd(), {
               prefix: "t3-codex-retired-model-cache-",
+            }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+          ),
+        ),
+      );
+      it.effect("keeps a check that finished before boot over the cached status", () =>
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const filePath = yield* resolveProviderStatusCachePath({
+            cacheDir: config.providerStatusCacheDir,
+            instanceId: cachedProvider.instanceId,
+          });
+          yield* writeProviderStatusCache({
+            filePath,
+            provider: { ...cachedProvider, status: "ready" },
+          });
+          const instance = {
+            instanceId: cachedProvider.instanceId,
+            driverKind: cachedProvider.driver,
+            continuationIdentity: {
+              driverKind: cachedProvider.driver,
+              continuationKey: "codex:instance:codex-personal",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: cachedProvider.driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(failedProvider),
+              isAwaitingFirstCheck: Effect.succeed(false),
+              refresh: Effect.succeed(failedProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const layerInstanceRegistry = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (id) =>
+                Effect.succeed(id === instance.instanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            assert.strictEqual((yield* registry.getProviders)[0]?.status, failedProvider.status);
+            assert.strictEqual(
+              (yield* readProviderStatusCache(filePath))?.status,
+              failedProvider.status,
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(layerInstanceRegistry),
+                Layer.provide(layerUnusedMutator),
+              ),
+            ),
+            Effect.scoped,
+          );
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-codex-probed-before-boot-",
             }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
           ),
         ),
