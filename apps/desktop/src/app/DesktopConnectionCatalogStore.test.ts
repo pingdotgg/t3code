@@ -242,7 +242,7 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("surfaces malformed catalog documents without deleting them", () =>
+  it.effect("sets malformed catalog documents aside without deleting them", () =>
     withStore(
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -253,14 +253,16 @@ describe("DesktopConnectionCatalogStore", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(catalogPath, "{not-json");
 
-        const error = yield* store.get.pipe(Effect.flip);
-        assert.instanceOf(
-          error,
-          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isFalse(yield* fileSystem.exists(catalogPath));
+        const [quarantined] = (yield* fileSystem.readDirectory(environment.stateDir)).filter(
+          (entry) => entry.startsWith("connection-catalog.json.corrupt-"),
         );
-        assert.equal(error.catalogPath, catalogPath);
-        assert.exists(error.cause);
-        assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
+        assert.exists(quarantined);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(environment.stateDir, quarantined!)),
+          "{not-json",
+        );
       }),
     ),
   );
