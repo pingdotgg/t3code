@@ -83,10 +83,10 @@ function isSavedCursorPreset(
   const config = settings.providerInstances[entry.instanceId]?.config;
   if (!Predicate.isObject(config)) return false;
   const cursor =
-    config?.source === "local"
+    config.source === "local"
       ? typeof config.commandPath === "string" &&
         /^cursor-agent(\.exe|\.cmd)?$/i.test(config.commandPath.split(/[\\/]/).pop() ?? "")
-      : config?.agentId === "cursor";
+      : config.agentId === "cursor";
   const preset = /^(.*)\[[^\]]*\]$/.exec(selectedModel ?? "");
   return cursor && preset !== null && entry.models.some((model) => model.slug === preset[1]);
 }

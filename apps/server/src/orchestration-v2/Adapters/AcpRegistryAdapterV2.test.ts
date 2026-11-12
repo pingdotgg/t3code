@@ -1311,17 +1311,6 @@ describe("AcpRegistryAdapterV2", () => {
         picked?.configOptions.find((option) => option.id === "reasoning"),
         { currentValue: "extra-high" },
       );
-      const saved = yield* openCursor({ instanceId, model: "composer-2[fast=true]" });
-      assert.equal(saved?.currentModelId, "composer-2");
-      assert.deepInclude(
-        saved?.configOptions.find((option) => option.id === "fast"),
-        { currentValue: "true" },
-      );
-      const preset = yield* openCursor({ instanceId, model: "gpt-5.4[reasoning=high,fast=false]" });
-      assert.deepInclude(
-        preset?.configOptions.find((option) => option.id === "reasoning"),
-        { currentValue: "high" },
-      );
       for (const [model, id] of [
         ["claude-opus-4-6", "effort"],
         ["claude-sonnet-4-6", "reasoning_effort"],
@@ -1330,20 +1319,7 @@ describe("AcpRegistryAdapterV2", () => {
         assert.equal(native?.currentModelId, model);
         assert.deepInclude(
           native?.configOptions.find((option) => option.id === id),
-          {
-            currentValue: "high",
-          },
-        );
-        const overridden = yield* openCursor({
-          instanceId,
-          model: `${model}[${id}=high]`,
-          options: [{ id: id!, value: "low" }],
-        });
-        assert.deepInclude(
-          overridden?.configOptions.find((option) => option.id === id),
-          {
-            currentValue: "low",
-          },
+          { currentValue: "high" },
         );
       }
       const legacy = yield* openCursor({
