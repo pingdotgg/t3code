@@ -7617,6 +7617,83 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("never records a thinking-only assistant uuid that Claude Code drops on load", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeRollbackHarness;
+      const now = yield* DateTime.now;
+      const toolResultUuid = "00000000-0000-4000-8000-000000000652";
+      const assistantFrame = (uuid: string, content: ReadonlyArray<unknown>) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: { id: `msg_${uuid}`, model: "claude-sonnet-4-6", content },
+        });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-cursor-thinking-only"),
+          text: "Read the docs.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        assistantFrame("00000000-0000-4000-8000-000000000651", [
+          { type: "tool_use", id: "toolu_docs", name: "Bash", input: { command: "cat docs.md" } },
+        ]),
+        claudeSdkFrame({
+          type: "user",
+          uuid: toolResultUuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_docs", content: "docs" }],
+          },
+        }),
+        // A stop before the reply's next block leaves this thinking-only entry in the transcript.
+        assistantFrame("00000000-0000-4000-8000-000000000653", [
+          { type: "thinking", thinking: "Writing the extension.", signature: "signature" },
+        ]),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000654", result: "" }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+
+      const providerTurn = lastProviderTurn(harness.events);
+      assert.equal(providerTurn.nativeTurnRef?.nativeId, toolResultUuid);
+      const rolledBack = yield* harness.runtime.rollbackThread({
+        providerThread: harness.providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-claude-cursor-thinking-only"),
+          appRunOrdinal: 1,
+          providerTurn,
+        },
+        providerThreadTurns: [
+          providerTurn,
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-cursor-thinking-only-next"),
+            ordinal: 2,
+          },
+        ],
+      });
+      assert.equal(rolledBack.providerThread.nativeConversationHeadRef?.nativeId, toolResultUuid);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("an interrupted turn after a rollback stops resuming at the rolled-back head", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
