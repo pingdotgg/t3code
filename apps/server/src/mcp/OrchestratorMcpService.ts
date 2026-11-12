@@ -910,6 +910,8 @@ function threadDetail(
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
+    lastErrorClass: shell.lastErrorClass ?? null,
+    usageLimitResetAt: shell.usageLimitResetAt ?? null,
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
@@ -1062,6 +1064,7 @@ function timelineItem(input: {
     text: text === null ? null : text.slice(offset, end),
     textTruncated,
     nextTextOffset: textTruncated ? end : null,
+    ...(input.row.item.type === "error" ? { failure: input.row.item.failure } : {}),
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
 }
