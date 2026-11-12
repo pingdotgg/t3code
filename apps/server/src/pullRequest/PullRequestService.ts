@@ -196,6 +196,10 @@ export class PullRequestService extends Context.Service<
       input: PullRequestRef,
       operation: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | PullRequestError, R>;
+    /** The checkout every read of this change request goes through, found without reading it. */
+    readonly canonicalRef: <I extends PullRequestRef>(
+      input: I,
+    ) => Effect.Effect<I & PullRequestRef, PullRequestError>;
     readonly summary: (
       input: PullRequestRef,
       options?: { readonly recoverTransientFailure?: boolean },
@@ -3836,6 +3840,7 @@ export const make = Effect.gen(function* () {
     routing,
     routingIdentity,
     withRoutingCredential,
+    canonicalRef,
     list,
     filterOptions,
     // The local operation owns the span; this wrapper only canonicalizes refs.

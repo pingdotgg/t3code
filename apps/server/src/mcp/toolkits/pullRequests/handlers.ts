@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import {
@@ -198,6 +199,7 @@ function projectForPullRequest(
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+  const pullRequests = yield* PullRequestService.PullRequestService;
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
@@ -277,6 +279,17 @@ const make = Effect.gen(function* () {
     const before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
+    }
+    if (watching && before?.watch === undefined) {
+      // A watch the sync can never read would leave the agent waiting for a wake that never comes.
+      yield* pullRequests
+        .canonicalRef({
+          projectId: thread.projectId,
+          host: target.host,
+          repository: target.repository,
+          number: target.number,
+        })
+        .pipe(Effect.catchTags({ PullRequestOperationError: () => Effect.void }), Effect.asVoid);
     }
     yield* engine
       .dispatch({
