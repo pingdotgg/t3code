@@ -5,6 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
@@ -21,6 +22,8 @@ vi.mock("../state/entities", async (original) => ({
 
 function setup(state: { projects?: ReadonlyArray<Project>; threads?: ReadonlyArray<Thread> } = {}) {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
+  // Earlier test files leave a last-used project in storage, which hides the default project's row.
+  window.localStorage.removeItem(LAST_USED_PROJECT_STORAGE_KEY);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
 }
