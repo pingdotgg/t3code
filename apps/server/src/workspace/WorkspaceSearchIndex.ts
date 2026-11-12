@@ -296,8 +296,6 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
         // Content indexing costs CPU/memory; path-only consumers use the lightweight index.
         disableContentIndexing: variant !== "content",
         aiMode: false,
-        enableFsRootScanning: true,
-        enableHomeDirScanning: true,
       }),
     catch: (cause) =>
       new WorkspaceSearchIndexCreateFailed({
@@ -401,12 +399,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
-    const result = yield* Effect.try({
-      try: () => finder.scanFiles(),
+    // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
+    const result = yield* Effect.tryPromise({
+      try: () => finder.scanFilesAsync(),
       catch: (cause) =>
         new WorkspaceSearchIndexRefreshFailed({
           cwd,
-          reason: "FileFinder.scanFiles threw unexpectedly.",
+          reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
           cause,
         }),
     });
@@ -449,29 +448,43 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     },
   );
 
-  const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
-    "WorkspaceSearchIndex.search",
-  )(function* (query, limit, kind, imageOnly) {
+  const searchNames = Effect.fn("WorkspaceSearchIndex.searchNames")(function* (
+    query: string,
+    limit: number,
+    kind: ProjectEntryKind | undefined,
+    imageOnly: boolean | undefined,
+  ) {
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
-    const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+      return mapFileSearchResult(result, limit, imageOnly);
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      const mapped = mapDirectorySearchResult(result, limit);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+      return mapDirectorySearchResult(result, limit);
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    const mapped = mapMixedSearchResult(result, limit);
+    return mapMixedSearchResult(result, limit);
+  });
+
+  const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
+    "WorkspaceSearchIndex.search",
+  )(function* (rawQuery, limit, kind, imageOnly) {
+    // fff parses any word containing "[" or "{" as a glob and has no escape for them; fuzzy
+    // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
+    // "{" is dropped only when the query finds nothing as a glob, so "*.{ts,tsx}" keeps working.
+    const query = rawQuery.replaceAll("[", "");
+    const incompleteBeforeQuery = hasIncompleteInitialScan();
+    let mapped = yield* searchNames(query, limit, kind, imageOnly);
+    if (mapped.entries.length === 0 && query.includes("{")) {
+      mapped = yield* searchNames(query.replaceAll("{", ""), limit, kind, imageOnly);
+    }
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
   });
 
