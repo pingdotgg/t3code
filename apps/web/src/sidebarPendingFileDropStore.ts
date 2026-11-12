@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ChatItemDrop } from "./components/chat/chatItemDrag";
 
 /** Compare both ids; scopedThreadKey can collide when ids contain colons. */
 export function isSameSidebarThreadRef(a: ScopedThreadRef, b: ScopedThreadRef): boolean {
@@ -11,6 +12,7 @@ export interface SidebarPendingFileDrop {
   id: string;
   threadRef: ScopedThreadRef;
   files: File[];
+  chatItem?: ChatItemDrop;
 }
 
 interface SidebarPendingFileDropStoreState {
@@ -18,7 +20,9 @@ interface SidebarPendingFileDropStoreState {
   queuePendingFileDrop: (entry: Omit<SidebarPendingFileDrop, "id">) => string;
   clearPendingFileDrop: (id: string) => void;
   clearPendingFileDropsForThread: (threadRef: ScopedThreadRef) => void;
-  consumePendingFileDrop: (threadRef: ScopedThreadRef) => File[] | null;
+  consumePendingFileDrop: (
+    threadRef: ScopedThreadRef,
+  ) => { files: File[]; chatItems: ChatItemDrop[] } | null;
 }
 
 let nextPendingFileDropId = 0;
@@ -48,7 +52,10 @@ export const useSidebarPendingFileDropStore = create<SidebarPendingFileDropStore
       }
       const matchedIds = new Set(matches.map((drop) => drop.id));
       set((state) => ({ pending: state.pending.filter((drop) => !matchedIds.has(drop.id)) }));
-      return matches.flatMap((drop) => drop.files);
+      return {
+        files: matches.flatMap((drop) => drop.files),
+        chatItems: matches.flatMap((drop) => (drop.chatItem ? [drop.chatItem] : [])),
+      };
     },
   }),
 );

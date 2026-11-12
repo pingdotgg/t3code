@@ -1,6 +1,9 @@
+import { CHAT_ITEM_DRAG_TYPE, readChatItemDrop, type ChatItemDrop } from "./chatItemDrag";
+
 interface WorkspaceFileDragEvent {
   readonly dataTransfer: {
     readonly types: ReadonlyArray<string>;
+    getData?(format: string): string;
     readonly files: Iterable<File>;
     readonly items?: Iterable<{
       readonly kind: string;
@@ -14,12 +17,14 @@ interface WorkspaceFileDragEvent {
     contains(target: Node | null): boolean;
   };
   preventDefault(): void;
+  stopPropagation?(): void;
 }
 
 interface WorkspaceFileDropHost {
   setDragActive(active: boolean): void;
   addFiles(files: File[]): void;
   addFolders(folders: File[]): void;
+  addChatItem?(item: ChatItemDrop): void;
 }
 
 function isFileDrag(event: WorkspaceFileDragEvent): boolean {
@@ -55,29 +60,44 @@ export function splitTransferredFiles(
 }
 
 export function makeWorkspaceFileDropHandlers(host: WorkspaceFileDropHost) {
+  const isChatItem = (event: WorkspaceFileDragEvent) =>
+    host.addChatItem !== undefined && event.dataTransfer.types.includes(CHAT_ITEM_DRAG_TYPE);
+  const accepts = (event: WorkspaceFileDragEvent) => isChatItem(event) || isFileDrag(event);
+  const claim = (event: WorkspaceFileDragEvent) => {
+    event.preventDefault();
+    if (isChatItem(event)) event.stopPropagation?.();
+  };
   return {
     onDragEnter(event: WorkspaceFileDragEvent) {
-      if (!isFileDrag(event)) return;
-      event.preventDefault();
+      if (!accepts(event)) return;
+      claim(event);
       if (movedWithinDropTarget(event)) return;
       host.setDragActive(true);
     },
     onDragOver(event: WorkspaceFileDragEvent) {
-      if (!isFileDrag(event)) return;
-      event.preventDefault();
+      if (!accepts(event)) return;
+      claim(event);
       event.dataTransfer.dropEffect = "copy";
       host.setDragActive(true);
     },
     onDragLeave(event: WorkspaceFileDragEvent) {
-      if (!isFileDrag(event)) return;
-      event.preventDefault();
+      if (!accepts(event)) return;
+      claim(event);
       if (movedWithinDropTarget(event)) return;
       host.setDragActive(false);
     },
     onDrop(event: WorkspaceFileDragEvent) {
-      if (!isFileDrag(event)) return;
-      event.preventDefault();
+      if (!accepts(event)) return;
+      claim(event);
       host.setDragActive(false);
+      if (isChatItem(event)) {
+        const item = readChatItemDrop({
+          getData: (format) => event.dataTransfer.getData?.(format) ?? "",
+          files: event.dataTransfer.files,
+        });
+        if (item) host.addChatItem?.(item);
+        return;
+      }
       const { files, folders } = splitTransferredFiles(event.dataTransfer);
       if (files.length > 0) host.addFiles(files);
       if (folders.length > 0) host.addFolders(folders);

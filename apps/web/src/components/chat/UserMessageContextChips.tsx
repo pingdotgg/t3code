@@ -62,6 +62,7 @@ import {
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
+import { fileReferenceDragProps } from "./chatItemDrag";
 
 function UserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
@@ -77,6 +78,11 @@ function UserMessageMentionChip(props: {
             render={<button type="button" />}
             aria-label={`Preview ${props.record.path}`}
             data-markdown-copy={props.copyMarkdown}
+            {...fileReferenceDragProps(
+              ctx.activeThreadEnvironmentId,
+              props.record.path,
+              ctx.workspaceRoot,
+            )}
             onClick={() => {
               if (ctx.threadRef)
                 useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);

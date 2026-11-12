@@ -111,6 +111,7 @@ import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
+import type { ChatItemDrop } from "../chat/chatItemDrag";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
@@ -595,7 +596,9 @@ type SidebarThreadRowProps = {
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
-  onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
+  onFileDropThreads?:
+    | ((threadRef: ScopedThreadRef, files: File[], chatItem?: ChatItemDrop) => void)
+    | undefined;
 };
 
 // Mounted only while renaming, so each rename starts uncommitted.
@@ -897,6 +900,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           onFileDropThreads(threadRef, files);
         },
         addFolders: () => {},
+        addChatItem: (item) => onFileDropThreads(threadRef, [], item),
       })
     : null;
   const handleSettleClick = (event: ReactMouseEvent) => {
@@ -1647,7 +1651,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   searchMatchQuery?: string;
   onHighlight: () => void;
   onSelect: () => void;
-  onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
+  onFileDropThreads: (threadRef: ScopedThreadRef, files: File[], chatItem?: ChatItemDrop) => void;
 }) {
   const thread =
     useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
@@ -1718,6 +1722,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
       onFileDropThreads(threadRef, files);
     },
     addFolders: () => {},
+    addChatItem: (item) => onFileDropThreads(threadRef, [], item),
   });
   return (
     <li

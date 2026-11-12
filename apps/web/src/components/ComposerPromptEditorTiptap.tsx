@@ -118,6 +118,7 @@ import { hasCommandForKeyDown } from "~/shortcuts/dispatcher";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
+import { attachmentDragProps, fileReferenceDragProps } from "./chat/chatItemDrag";
 import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { ModelMentionChip, modelMentionKey, modelMentionKeysAtom } from "./chat/ModelMentionChip";
@@ -283,6 +284,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
+      {...fileReferenceDragProps(actions.environmentId, path, actions.cwd)}
     >
       <FileTagChipContent
         path={path}
@@ -573,8 +575,20 @@ const ComposerContextReferenceExtension = Node.create({
 });
 
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
+  const actions = use(ComposerContextActionsContext);
+  const entry = use(ComposerContextRecordsContext).get(String(node.attrs.contextId));
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper
+      as="span"
+      className={CHIP_NODE_SELECTION_CLASS_NAME}
+      {...(entry?.kind === "image" || entry?.kind === "file"
+        ? attachmentDragProps(
+            actions.environmentId,
+            entry.record,
+            entry.upload?.status === "ready" ? entry.upload.attachmentId : undefined,
+          )
+        : {})}
+    >
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}

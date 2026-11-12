@@ -42,6 +42,10 @@ function deferred<T>() {
 it.each([
   { kind: "file", edit: "delete" },
   { kind: "image", edit: "delete" },
+  { kind: "image", edit: "retain" },
+  { kind: "image", edit: "drop" },
+  { kind: "image", edit: "drop-switch" },
+  { kind: "image", edit: "drop-failure" },
   { kind: "file", edit: "undo" },
   { kind: "file", edit: "retain" },
   { kind: "file", edit: "switch" },
@@ -134,8 +138,28 @@ it.each([
     screenshotContextId: contextId,
   } satisfies ComposerContextRecord;
   const annotated = edit === "annotation" || edit === "delete-annotation";
+  const dropped = edit === "drop" || edit === "drop-switch" || edit === "drop-failure";
   let pastedPrompt = "";
   await act(async () => {
+    if (dropped) {
+      if (attachment.kind !== "image") throw new Error("Expected an image drop");
+      void importer.importDroppedImage(attachment, sourceEnvironmentId, async (file) => {
+        store.addImages(target, [
+          {
+            type: "image",
+            id: "dropped-image",
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+          },
+        ]);
+        return true;
+      });
+      await requested.promise;
+      return;
+    }
     const remapped = importer.importContextRecords(
       annotated ? [attachment, annotation] : [attachment],
       sourceEnvironmentId,
@@ -157,7 +181,8 @@ it.each([
       edit !== "retain" &&
       edit !== "cached" &&
       edit !== "question" &&
-      edit !== "switch"
+      edit !== "switch" &&
+      !dropped
     ) {
       promptRef.current = "Keep this edit";
       store.setPrompt(target, promptRef.current);
@@ -166,22 +191,29 @@ it.each([
       promptRef.current = pastedPrompt;
       store.setPrompt(target, pastedPrompt);
     }
-    if (edit === "switch") input.attachmentTargetKeyRef.current = DraftId.make("other-draft");
+    if (edit === "switch" || edit === "drop-switch")
+      input.attachmentTargetKeyRef.current = DraftId.make("other-draft");
   });
   await act(async () => {
-    downloaded.resolve(new Response("notes", { headers: { "Content-Type": attachment.mimeType } }));
+    downloaded.resolve(
+      new Response("notes", {
+        status: edit === "drop-failure" ? 500 : 200,
+        headers: { "Content-Type": attachment.mimeType },
+      }),
+    );
     await settled.promise;
   });
   expect(pendingDraftWork.has(target)).toBe(false);
-  const draft = store.getComposerDraft(target)!;
-  expect(draft.prompt).toBe(promptRef.current);
-  const attachments = kind === "file" ? draft.files : draft.images;
+  const draft = store.getComposerDraft(target);
+  expect(draft?.prompt ?? "").toBe(promptRef.current);
+  const attachments = (kind === "file" ? draft?.files : draft?.images) ?? [];
   expect(attachments.map((file) => file.name)).toEqual(
     edit === "undo" ||
       edit === "retain" ||
       edit === "annotation" ||
       edit === "cached" ||
-      edit === "question"
+      edit === "question" ||
+      edit === "drop"
       ? ["notes.txt"]
       : [],
   );

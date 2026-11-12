@@ -1,5 +1,30 @@
 import { describe, expect, it } from "@effect/vitest";
-import { splitTransferredFiles } from "./workspaceFileDrop";
+import { makeWorkspaceFileDropHandlers, splitTransferredFiles } from "./workspaceFileDrop";
+
+it("copies chat references without treating them as uploads or losing their source workspace", () => {
+  const dropped: unknown[] = [];
+  const handlers = makeWorkspaceFileDropHandlers({
+    setDragActive: () => {},
+    addFiles: (files) => dropped.push(files),
+    addFolders: () => {},
+    addChatItem: (item) => dropped.push(item),
+  });
+  handlers.onDrop({
+    dataTransfer: {
+      types: ["application/x-t3code-chat-item", "text/plain"],
+      getData: () =>
+        JSON.stringify({ kind: "mention", environmentId: "source", path: "/repo/docs/file.md" }),
+      files: [],
+      dropEffect: "none",
+    },
+    currentTarget: { contains: () => false },
+    relatedTarget: null,
+    preventDefault: () => {},
+  });
+  expect(dropped).toEqual([
+    { kind: "mention", environmentId: "source", path: "/repo/docs/file.md" },
+  ]);
+});
 
 describe("splitTransferredFiles", () => {
   it("separates copied folders from files before attachment validation", () => {

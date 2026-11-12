@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
   useSidebarPendingFileDropStore,
@@ -40,14 +40,18 @@ describe("sidebarPendingFileDropStore", () => {
     const store = useSidebarPendingFileDropStore.getState();
     store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
     store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
+    const chatItem = {
+      kind: "mention" as const,
+      environmentId: EnvironmentId.make("env-1"),
+      path: "/source/file.md",
+    };
+    store.queuePendingFileDrop({ ...makeEntry("env-1", "thread-1", []), chatItem });
 
-    expect(
-      fileNames(
-        useSidebarPendingFileDropStore
-          .getState()
-          .consumePendingFileDrop(refOf("env-1", "thread-1")) ?? [],
-      ),
-    ).toEqual(["a.png", "b.png"]);
+    const consumed = useSidebarPendingFileDropStore
+      .getState()
+      .consumePendingFileDrop(refOf("env-1", "thread-1"));
+    expect(fileNames(consumed?.files ?? [])).toEqual(["a.png", "b.png"]);
+    expect(consumed?.chatItems).toEqual([chatItem]);
     expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
@@ -64,9 +68,8 @@ describe("sidebarPendingFileDropStore", () => {
 
     expect(
       fileNames(
-        useSidebarPendingFileDropStore
-          .getState()
-          .consumePendingFileDrop(refOf("env-1", "thread-1")) ?? [],
+        useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-1"))
+          ?.files ?? [],
       ),
     ).toEqual(["b.png"]);
     expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);

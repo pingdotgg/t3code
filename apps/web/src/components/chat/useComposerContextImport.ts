@@ -152,17 +152,15 @@ export function useComposerContextImport(input: {
     );
   };
   const countReservedAttachmentsStable = useStableCallback(countReservedAttachments);
-  const runAttachmentImport = async (
+  const loadAttachmentFile = async (
     record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
-    localId: string,
     sourceEnvironmentId: EnvironmentId,
-    importTargetKey: string,
   ) => {
     const fail = (reason: string) => {
       toastManager.add({
         type: "error",
         title: `Couldn't bring ${record.name} into this message`,
-        description: `${reason} Remove the chip or attach the file again.`,
+        description: `${reason} Try attaching the file again.`,
       });
     };
     let file = copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId);
@@ -170,7 +168,7 @@ export function useComposerContextImport(input: {
       const sourceConnection = readPreparedConnection(sourceEnvironmentId);
       if (!sourceConnection) {
         fail("The environment it came from is not connected.");
-        return;
+        return null;
       }
       const result = await createAssetUrl({
         environmentId: sourceEnvironmentId,
@@ -187,29 +185,68 @@ export function useComposerContextImport(input: {
             ? "The environment it came from is not reachable right now."
             : "The original attachment is no longer available.",
         );
-        return;
+        return null;
       }
       const blob = await downloadAttachmentBlob(url);
       if (!blob) {
         fail("Downloading it from the source failed.");
-        return;
+        return null;
       }
-      // Question attachments have no inline reference; annotations can own their screenshots.
-      const references = new Set(collectInlineContextIds(promptRef.current));
-      if (
-        !questionAttachmentTarget &&
-        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
-        !(
-          record.kind === "image" &&
-          references.has(previewAnnotationContextId(localId)) &&
-          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
-            (annotation) => annotation.id === localId,
-          )
-        )
-      )
-        return;
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
     }
+    return file;
+  };
+  const importDroppedImage = async (
+    record: Extract<ComposerContextRecord, { kind: "image" }>,
+    sourceEnvironmentId: EnvironmentId,
+    addImage: (file: File) => Promise<boolean>,
+  ) => {
+    const targetKey = attachmentTargetKey;
+    pendingDraftWork.begin(targetKey);
+    const loadingToast = toastManager.add({
+      type: "loading",
+      title: `Loading ${record.name}…`,
+      timeout: 0,
+    });
+    await loadAttachmentFile(record, sourceEnvironmentId)
+      .then((file) => {
+        if (file && attachmentTargetKeyRef.current === targetKey) return addImage(file);
+        return false;
+      })
+      .finally(() => {
+        toastManager.close(loadingToast);
+        pendingDraftWork.end(targetKey);
+      });
+  };
+  const runAttachmentImport = async (
+    record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
+    localId: string,
+    sourceEnvironmentId: EnvironmentId,
+    importTargetKey: string,
+  ) => {
+    const fail = (reason: string) => {
+      toastManager.add({
+        type: "error",
+        title: `Couldn't bring ${record.name} into this message`,
+        description: `${reason} Remove the chip or attach the file again.`,
+      });
+    };
+    const file = await loadAttachmentFile(record, sourceEnvironmentId);
+    if (!file) return;
+    // Question attachments have no inline reference; annotations can own their screenshots.
+    const references = new Set(collectInlineContextIds(promptRef.current));
+    if (
+      !questionAttachmentTarget &&
+      !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+      !(
+        record.kind === "image" &&
+        references.has(previewAnnotationContextId(localId)) &&
+        getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
+          (annotation) => annotation.id === localId,
+        )
+      )
+    )
+      return;
     // The draft these bytes belong to may have been sent or switched away from while they
     // downloaded. Dropping them here keeps them out of whatever draft is open now.
     if (attachmentTargetKeyRef.current !== importTargetKey) return;
@@ -446,5 +483,6 @@ export function useComposerContextImport(input: {
     importContextRecords,
     importContextFragment,
     importContextFragmentStable,
+    importDroppedImage,
   };
 }

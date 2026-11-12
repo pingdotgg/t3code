@@ -89,6 +89,7 @@ import {
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
+import { attachmentDragProps } from "./chatItemDrag";
 import {
   resolvePreviewAnnotationImage,
   userMessageFileLabel,
@@ -137,6 +138,7 @@ function UserFileCard({
   return (
     <div
       data-markdown-copy={copyMarkdown}
+      {...attachmentDragProps(ctx.activeThreadEnvironmentId, file)}
       className="flex w-64 max-w-full items-center gap-1 rounded-2xl bg-message py-2 ps-2 pe-1 text-message-foreground"
     >
       {file.downloadable === false ? (
@@ -650,7 +652,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           ? (userFiles.find((file) => file.id === record.attachmentId) ?? null)
           : null;
     return (
-      <span data-thread-find-ignore>
+      <span
+        data-thread-find-ignore
+        {...(attachment ? attachmentDragProps(ctx.activeThreadEnvironmentId, attachment) : {})}
+      >
         <UserMessageContextReferenceChip
           reference={reference}
           record={record}
@@ -698,6 +703,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {regularImages.map((image, index) => (
           <div
             key={image.id}
+            {...attachmentDragProps(ctx.activeThreadEnvironmentId, image)}
             className={cn(
               "bg-background/70",
               image.source?.kind === "snap-shot" && image.previewUrl
@@ -773,14 +779,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ))}
         {userVideos.map((file) => (
-          <UserVideoAttachment
-            key={file.id}
-            file={file}
-            standalone={standaloneMedia}
-            cornerClassName={
-              regularImages.length + userVideos.length === 1 ? mediaCornerClassName : undefined
-            }
-          />
+          <div key={file.id} {...attachmentDragProps(ctx.activeThreadEnvironmentId, file)}>
+            <UserVideoAttachment
+              file={file}
+              standalone={standaloneMedia}
+              cornerClassName={
+                regularImages.length + userVideos.length === 1 ? mediaCornerClassName : undefined
+              }
+            />
+          </div>
         ))}
       </div>
     ) : null;

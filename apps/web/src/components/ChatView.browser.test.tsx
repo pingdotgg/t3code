@@ -23,6 +23,10 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, render } from "../../test/render";
+import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
+import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import { snapshotComposerSend } from "./ChatView.logic";
+import { CHAT_ITEM_DRAG_TYPE } from "./chat/chatItemDrag";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -191,3 +195,70 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   expect(editor.element().textContent).not.toContain("[package.json](package.json)");
   await expect.element(chip).toBeVisible();
 });
+it.each(["", "Describe this image."])(
+  "gives an uploaded image drop the paste presentation for prompt %j",
+  async (prompt) => {
+    const thread = threadWithHistory("image-drop", 1);
+    using _environment = installFakeEnvironment([thread]);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(target, prompt);
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    const bytes = Uint8Array.from(
+      atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZYkAAAAASUVORK5CYII=",
+      ),
+      (char) => char.charCodeAt(0),
+    );
+    const file = new File([bytes], "picture.png", { type: "image/png" });
+    rememberCopiedComposerAttachments(ENVIRONMENT_ID, new Map([["source-image", file]]));
+    using _copy = {
+      [Symbol.dispose]: () => rememberCopiedComposerAttachments(ENVIRONMENT_ID, new Map()),
+    };
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+    await act(() => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData(
+        CHAT_ITEM_DRAG_TYPE,
+        JSON.stringify({
+          kind: "attachment",
+          environmentId: ENVIRONMENT_ID,
+          record: {
+            version: 1,
+            kind: "image",
+            contextId: "image_source",
+            label: file.name,
+            attachmentId: "source-image",
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+          },
+        }),
+      );
+      document
+        .querySelector('[data-testid="composer-editor"]')!
+        .dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+    });
+    await vi.waitFor(() => expect(store.getComposerDraft(target)?.images).toHaveLength(1));
+    const draft = store.getComposerDraft(target)!;
+    expect(collectInlineContextIds(draft.prompt)).toHaveLength(prompt ? 1 : 0);
+    if (prompt) expect(draft.prompt).toContain(prompt);
+    else expect(draft.prompt).toBe("");
+    expect(
+      snapshotComposerSend({ ...draft, sendableTerminalContexts: draft.terminalContexts })
+        .attachments,
+    ).toHaveLength(1);
+  },
+);

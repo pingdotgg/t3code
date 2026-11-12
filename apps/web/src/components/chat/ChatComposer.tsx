@@ -53,7 +53,14 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
-import { splitTransferredFiles } from "./workspaceFileDrop";
+import { makeWorkspaceFileDropHandlers, splitTransferredFiles } from "./workspaceFileDrop";
+import {
+  CHAT_ITEM_DRAG_TYPE,
+  chatItemClipboardData,
+  chatItemDropError,
+  chatItemText,
+  type ChatItemDrop,
+} from "./chatItemDrag";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -292,6 +299,7 @@ export interface ChatComposerHandle {
   focusAt: (cursor: number) => void;
   addDroppedFiles: (files: File[]) => void;
   addDroppedFolders: (folders: File[]) => void;
+  addDroppedChatItem: (item: ChatItemDrop) => void;
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
@@ -1340,6 +1348,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     importContextRecords,
     importContextFragment,
     importContextFragmentStable,
+    importDroppedImage,
   } = useComposerContextImport({
     environmentId,
     linkedEnvironments,
@@ -2385,6 +2394,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const collapsedComposerImagePreviews =
     standaloneComposerImages.length > 0 ? (
       <ComposerRestingImagePreviews
+        environmentId={environmentId}
         images={standaloneComposerImages}
         allImages={composerImages}
         resolvedTheme={resolvedTheme}
@@ -2531,7 +2541,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     options?: {
       ensureLeadingBoundary?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
-      clipboardData?: DataTransfer;
+      clipboardData?: Pick<DataTransfer, "getData">;
     },
   ): boolean => {
     if (
@@ -2752,6 +2762,67 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
+  const addDroppedChatItem = (item: ChatItemDrop) => {
+    const error = chatItemDropError(item, environmentId);
+    if (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add file reference",
+        description: error,
+      });
+      return;
+    }
+    if (
+      !canOperateThread ||
+      activePendingIsResponding ||
+      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
+      projectSelectionRequired
+    ) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add to chat",
+        description: "The composer is busy; try again once it is ready.",
+      });
+      return;
+    }
+    if (item.kind === "attachment" && item.file) {
+      void addComposerAttachments([item.file]);
+      return;
+    }
+    if (item.kind === "attachment" && item.record.kind === "image") {
+      void importDroppedImage(item.record, item.environmentId, (file) =>
+        addComposerAttachments([file]),
+      );
+      return;
+    }
+    if (item.kind === "attachment" && questionAttachmentTarget) {
+      importContextFragment({
+        version: 1,
+        source: { environmentId: item.environmentId },
+        records: [item.record],
+      });
+      return;
+    }
+    const inserted = insertComposerText(`${chatItemText(item)} `, "end", {
+      ensureLeadingBoundary: true,
+      ...(item.kind === "attachment" ? { clipboardData: chatItemClipboardData(item) } : {}),
+    });
+    if (inserted) focusComposer();
+    else
+      toastManager.add({
+        type: "error",
+        title: "Unable to add to chat",
+        description: "The composer is busy; try again once it is ready.",
+      });
+  };
+  const addDroppedChatItemStable = useStableCallback(addDroppedChatItem);
+  const chatItemDropHandlers = makeWorkspaceFileDropHandlers({
+    setDragActive: setIsDragOverComposer,
+    addFiles: () => {},
+    addFolders: () => {},
+    addChatItem: addDroppedChatItemStable,
+  });
+
   const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
   const importDroppedThread = useEffectEvent(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {
@@ -2959,6 +3030,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       },
       addDroppedFolders: addComposerFoldersStable,
+      addDroppedChatItem: addDroppedChatItemStable,
       hasPendingAttachments: () =>
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
@@ -3170,6 +3242,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread,
       addComposerAttachments,
       addComposerFoldersStable,
+      addDroppedChatItemStable,
       foldPastedText,
       composerDraftTarget,
       composerModelOptions,
@@ -3302,18 +3375,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         scheduleComposerCollapseCheck();
       }}
       onDragEnterCapture={(event) => {
+        if (event.dataTransfer.types.includes(CHAT_ITEM_DRAG_TYPE)) {
+          chatItemDropHandlers.onDragEnter(event);
+          return;
+        }
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDragEnter(event);
       }}
       onDragOverCapture={(event) => {
+        if (event.dataTransfer.types.includes(CHAT_ITEM_DRAG_TYPE)) {
+          chatItemDropHandlers.onDragOver(event);
+          return;
+        }
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDragOver(event);
       }}
       onDragLeaveCapture={(event) => {
+        if (event.dataTransfer.types.includes(CHAT_ITEM_DRAG_TYPE)) {
+          chatItemDropHandlers.onDragLeave(event);
+          return;
+        }
         if (isInsideRestingComposerControlScope(event.target)) return;
         onComposerMentionDragLeaveCapture(event);
       }}
       onDropCapture={(event) => {
+        if (event.dataTransfer.types.includes(CHAT_ITEM_DRAG_TYPE)) {
+          chatItemDropHandlers.onDrop(event);
+          return;
+        }
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDrop(event);
       }}

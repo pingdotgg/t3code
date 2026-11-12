@@ -359,8 +359,9 @@ Type `@` and part of a model or provider name, such as `@opus`, to name that mod
 agent, for example when delegating. It does not change the thread's model. Join words with
 `:`, `/` or `-`, as in `@opus:opencode`.
 
-Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
-say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
+Images appear on the thumbnail shelf above the text. Adding an image alongside text also inserts
+a chip, so you can say exactly which image you mean; adding one on its own keeps the text empty.
+Deleting an image chip leaves the image on the shelf; removing
 the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
 exist only as chips: deleting a file's last chip removes the file from the message.
 
@@ -369,6 +370,11 @@ and the chips come along with what they point to. Images and files are fetched a
 environment they came from; while that happens the chip shows a dashed outline, and if it cannot
 complete T3 Code tells you and leaves the chip for you to remove or replace. A chip whose
 context is no longer available shows the same dashed outline; hover it for what to do.
+
+On web and desktop, drag a file reference, image, or file attachment from a draft or message
+onto another composer or a thread in the sidebar to copy it into that thread's draft. Nothing
+is sent automatically. File references keep their original location and work between threads
+on the same server; attachments copy their contents.
 
 Copying a message with the copy button, or copying text out of it, gives other apps readable
 Markdown with a link in place of each chip. Older messages that were sent before chips still

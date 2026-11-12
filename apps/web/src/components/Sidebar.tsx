@@ -101,6 +101,7 @@ import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
+import { chatItemDropError, type ChatItemDrop } from "./chat/chatItemDrag";
 import {
   pickableProjectGroups,
   selectProjectGroupingSettings,
@@ -1458,8 +1459,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
-  const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
-    const dropId = queuePendingFileDrop({ threadRef, files });
+  const handleThreadFileDrop = async (
+    threadRef: ScopedThreadRef,
+    files: File[],
+    chatItem?: ChatItemDrop,
+  ) => {
+    const error = chatItem && chatItemDropError(chatItem, threadRef.environmentId);
+    if (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add file reference",
+        description: error,
+      });
+      return;
+    }
+    const dropId = queuePendingFileDrop({ threadRef, files, ...(chatItem ? { chatItem } : {}) });
     const landedBefore =
       router.buildLocation({
         to: "/$environmentId/$threadId",

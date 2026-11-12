@@ -3160,16 +3160,16 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (!activeThread) return;
-    if (!composerRef.current) {
-      const raf = window.requestAnimationFrame(() => {
-        if (!composerRef.current || typeof composerDraftTarget === "string") return;
-        const files = consumePendingFileDrop(composerDraftTarget);
-        if (files !== null) composerRef.current?.addDroppedFiles(files);
-      });
-      return () => window.cancelAnimationFrame(raf);
-    }
-    const files = consumePendingFileDrop(composerDraftTarget);
-    if (files !== null) composerRef.current.addDroppedFiles(files);
+    const deliver = () => {
+      const composer = composerRef.current;
+      if (!composer || typeof composerDraftTarget === "string") return;
+      const drop = consumePendingFileDrop(composerDraftTarget);
+      if (!drop) return;
+      if (drop.files.length > 0) composer.addDroppedFiles(drop.files);
+      for (const item of drop.chatItems) composer.addDroppedChatItem(item);
+    };
+    const raf = window.requestAnimationFrame(deliver);
+    return () => window.cancelAnimationFrame(raf);
   }, [
     activeThread,
     composerDraftTarget,
@@ -3181,6 +3181,10 @@ export default function ChatView(props: ChatViewProps) {
   const addDroppedFilesToComposer = useStableCallback(
     (files: Parameters<ChatComposerHandle["addDroppedFiles"]>[0]) =>
       composerRef.current?.addDroppedFiles(files),
+  );
+  const addDroppedChatItemToComposer = useStableCallback(
+    (item: Parameters<ChatComposerHandle["addDroppedChatItem"]>[0]) =>
+      composerRef.current?.addDroppedChatItem(item),
   );
   const addDroppedFoldersToComposer = useStableCallback(
     (folders: Parameters<ChatComposerHandle["addDroppedFolders"]>[0]) =>
@@ -3285,6 +3289,7 @@ export default function ChatView(props: ChatViewProps) {
     setDragActive: setIsWorkspaceFileDragActive,
     addFiles: addDroppedFilesToComposer,
     addFolders: addDroppedFoldersToComposer,
+    addChatItem: addDroppedChatItemToComposer,
   });
 
   const content = (

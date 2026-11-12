@@ -47,6 +47,7 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+import { attachmentDragProps } from "./chatItemDrag";
 
 function ComposerAttachmentUploadProgress({
   id,
@@ -203,6 +204,13 @@ export function ComposerAttachmentMediaRow({
             <SnapShotAttachmentFrame
               key={image.id}
               data-chat-composer-expanded-image="true"
+              {...(ready
+                ? attachmentDragProps(
+                    environmentId,
+                    ready,
+                    upload?.status === "ready" ? upload.attachmentId : undefined,
+                  )
+                : {})}
               aria-hidden={snapShotAnimationPending || undefined}
               inert={snapShotAnimationPending || undefined}
               arrival={snapShotArrival}
@@ -357,6 +365,7 @@ export function ComposerAttachmentMediaRow({
           <div
             key={file.id}
             className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            {...attachmentDragProps(environmentId, file)}
           >
             <button
               type="button"
@@ -465,6 +474,7 @@ export function ComposerAttachmentFileList({
           <div
             key={file.id}
             className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            {...attachmentDragProps(environmentId, file)}
           >
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
             <button
@@ -584,12 +594,14 @@ export function ComposerFilePreviewDialog({
 export function ComposerRestingImagePreviews({
   images,
   allImages,
+  environmentId,
   resolvedTheme,
   onExpandImage,
   onShowMore,
 }: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly allImages: ReadonlyArray<ComposerImageAttachment>;
+  readonly environmentId: EnvironmentId;
   readonly resolvedTheme: "light" | "dark";
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onShowMore: () => void;
@@ -604,7 +616,7 @@ export function ComposerRestingImagePreviews({
           type="button"
           className="relative size-7 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/70 bg-muted/60"
           aria-label={`Preview ${image.name}`}
-          onPointerDown={(event) => event.preventDefault()}
+          {...attachmentDragProps(environmentId, image)}
           onClick={() => {
             const preview = buildExpandedImagePreview(allImages, image.id);
             if (preview) onExpandImage(preview);

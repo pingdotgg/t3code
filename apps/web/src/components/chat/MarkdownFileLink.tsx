@@ -24,11 +24,13 @@ import {
 } from "./MarkdownFileLink.logic";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
+import { fileReferenceDragProps } from "./chatItemDrag";
 
 interface MarkdownFileLinkProps {
   environmentId: EnvironmentId | null;
   href: string;
   targetPath: string;
+  dragPath?: string | undefined;
   iconPath: string;
   isAppBundle?: boolean;
   workspaceRelativePath: string | null;
@@ -54,6 +56,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   environmentId,
   href,
   targetPath,
+  dragPath,
   iconPath,
   isAppBundle = false,
   workspaceRelativePath,
@@ -337,6 +340,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               render={<a href={href} />}
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
+              {...fileReferenceDragProps(environmentId, dragPath ?? targetPath)}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -373,6 +377,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}
+              {...fileReferenceDragProps(environmentId, dragPath ?? targetPath)}
               onClick={handleContextMenu}
               onContextMenu={handleContextMenu}
             >
@@ -405,6 +410,7 @@ function areMarkdownFileLinkPropsEqual(
   return (
     previous.href === next.href &&
     previous.targetPath === next.targetPath &&
+    previous.dragPath === next.dragPath &&
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
     previous.workspaceRelativePath === next.workspaceRelativePath &&

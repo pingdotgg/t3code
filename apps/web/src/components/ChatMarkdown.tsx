@@ -852,6 +852,9 @@ function useChatMarkdownState({
         environmentId={environmentId}
         href={fileLinkMeta.targetPath}
         targetPath={fileLinkMeta.targetPath}
+        dragPath={
+          cwd ? resolveWorkspaceFilePath(fileLinkMeta.filePath, cwd) : fileLinkMeta.filePath
+        }
         iconPath={
           isAppBundle && cwd
             ? resolveWorkspaceFilePath(fileLinkMeta.filePath, cwd)
