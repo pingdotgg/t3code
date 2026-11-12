@@ -79,6 +79,25 @@ it.layer(NodeServices.layer)("service preflight database", (it) => {
         BUILD_MIGRATION_HEAD,
       );
 
+      // Startup reconciles this V2 preview history, so it must not block an update.
+      const preview = path.join(path.dirname(databasePath), "preview.sqlite");
+      const previewDb = new NodeSqlite.DatabaseSync(preview);
+      previewDb.exec(
+        "CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, name TEXT)",
+      );
+      const insertPreview = previewDb.prepare("INSERT INTO effect_sql_migrations VALUES (?, ?)");
+      for (const [id, name] of migrationManifest.filter(([id]) => id < 53)) {
+        insertPreview.run(id, name);
+      }
+      insertPreview.run(53, "PullRequestFilesViewed");
+      insertPreview.run(54, "OrchestrationV2");
+      insertPreview.run(55, "RemoveRedundantProjectionIndexes");
+      previewDb.close();
+      expect(
+        runServicePreflight({ databasePath: preview, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL })
+          .status,
+      ).toBe("ready");
+
       const newerId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
       insert.run(newerId, "FromNightly");
       db.close();
