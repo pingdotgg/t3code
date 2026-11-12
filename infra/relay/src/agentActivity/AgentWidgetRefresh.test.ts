@@ -61,6 +61,8 @@ function fixture(
   database?: RelayDb.RelayDb["Service"],
 ) {
   let present = true;
+  let revokedBeforeClaim = false;
+  const currentDevice = { ...device };
   let revocationsAllowed = true;
   const revocations = new Set<string>();
   let activity = state;
@@ -81,11 +83,16 @@ function fixture(
       present &&
       (params.includes(tokenHash) ||
         (params.includes(device.userId) &&
-          (!params.includes(device.deviceId) || params.includes(device.widgetPushToken))));
-    const result = Effect.succeed(authorized ? [device] : []);
-    return Object.assign(result, { limit: () => result });
+          (!params.includes(device.deviceId) ||
+            params.includes(currentDevice.widgetPushToken ?? ""))));
+    const result = Effect.succeed(authorized ? [{ ...currentDevice }] : []);
+    return Object.assign(result, {
+      limit: () =>
+        Object.assign(result, { for: () => (revokedBeforeClaim ? Effect.succeed([]) : result) }),
+    });
   };
   const db = {
+    $client: { withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect },
     select: () => ({
       from: (table: unknown) => ({
         where:
@@ -114,14 +121,26 @@ function fixture(
     }),
     update: () => ({
       set: (values: Record<string, unknown>) => ({
-        where: (condition: SQL) =>
-          Effect.sync(() => {
+        where: (condition: SQL) => {
+          const result = Effect.sync(() => {
             updates.push(values);
             const params = dialect.sqlToQuery(condition).params;
             queries.push(params);
             if (params.includes(tokenHash) && values.widgetAccessTokenHash === null)
               present = false;
-          }),
+            if (
+              params.includes(tokenHash) ||
+              params.includes(currentDevice.widgetPushToken ?? "")
+            ) {
+              Object.assign(currentDevice, values);
+            }
+            return { rowCount: present ? 1 : 0 };
+          });
+          return Object.assign(result, {
+            returning: () =>
+              result.pipe(Effect.map(() => (present ? [{ deviceId: device.deviceId }] : []))),
+          });
+        },
       }),
     }),
   } as unknown as RelayDb.RelayDb["Service"];
@@ -136,6 +155,7 @@ function fixture(
           upsert: () => Effect.succeed(true),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
+          acknowledgeDelivery: () => Effect.void,
           getForUserThread: () => Effect.succeed(null),
           listForUser: ({ userId }) =>
             Effect.sync(() => {
@@ -203,6 +223,9 @@ function fixture(
     queued,
     revoke: () => {
       present = false;
+    },
+    expireBeforeClaim: () => {
+      revokedBeforeClaim = true;
     },
     allowRevocations: (allowed: boolean) => {
       revocationsAllowed = allowed;
@@ -301,7 +324,7 @@ describe("AgentWidgetRefresh", () => {
       return Effect.gen(function* () {
         const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
         test.allowRevocations(false);
-        expect((yield* Effect.flip(widgets.revoke({ token })))._tag).toBe(
+        expect((yield* Effect.flip(widgets.revoke({ token: "b".repeat(64) })))._tag).toBe(
           "WidgetRefreshRateLimited",
         );
         expect(test.updates).toEqual([]);
@@ -309,6 +332,8 @@ describe("AgentWidgetRefresh", () => {
         test.allowRevocations(true);
         yield* widgets.revoke({ token: "b".repeat(64) });
         expect((yield* widgets.refresh({ token })).aggregate?.activeCount).toBe(1);
+        test.allowRevocations(false);
+        yield* widgets.revoke({ token });
         yield* widgets.revoke({ token });
         expect((yield* Effect.flip(widgets.refresh({ token })))._tag).toBe(
           "WidgetRefreshUnauthorized",
@@ -358,6 +383,18 @@ describe("AgentWidgetRefresh", () => {
     }).pipe(Effect.provide(test.layer));
   });
 
+  it.effect("rejects a stale claim before clearing another owner's token", () => {
+    const test = fixture();
+    test.expireBeforeClaim();
+    return Effect.gen(function* () {
+      const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+      expect((yield* Effect.flip(widgets.refresh({ token, pushToken: "abc456" })))._tag).toBe(
+        "WidgetRefreshUnauthorized",
+      );
+      expect(test.updates).toEqual([]);
+    }).pipe(Effect.provide(test.layer));
+  });
+
   it.effect("claims rotated WidgetKit tokens and queues change requests without stale data", () => {
     const test = fixture();
     return Effect.gen(function* () {
@@ -370,7 +407,7 @@ describe("AgentWidgetRefresh", () => {
           kind: "widget_refresh",
           userId: device.userId,
           deviceId: device.deviceId,
-          token: device.widgetPushToken,
+          token: "abc456",
           bundleId: device.bundleId,
           apsEnvironment: "sandbox",
           aggregate: null,

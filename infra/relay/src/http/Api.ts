@@ -1558,6 +1558,7 @@ const RelayCommonPersistenceError = Schema.Union([
   DpopProofs.DpopProofReplayPersistenceError,
   LiveActivities.LiveActivityTargetListPersistenceError,
   AgentActivityRows.AgentActivityRowUpsertPersistenceError,
+  AgentWidgetRefresh.WidgetRefreshPersistenceError,
   AgentActivityRows.AgentActivityRowDeletePersistenceError,
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,

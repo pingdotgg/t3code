@@ -34,6 +34,7 @@ import {
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import { normalizeDpopHtu } from "@t3tools/shared/dpopCommon";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -351,7 +352,7 @@ function relayRequestError(action: ManagedRelayRequestAction) {
 function proofCreationErrorFields(error: ManagedRelayDpopProofCreationError) {
   return {
     method: error.method,
-    url: error.url,
+    url: normalizeDpopHtu(error.url) ?? "invalid URL",
     cause: error,
   };
 }
@@ -650,7 +651,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       "relay.client_id": options.clientId,
       "relay.scopes": input.scopes.join(" "),
       "http.request.method": input.target.method,
-      "url.full": input.target.url,
+      "url.full": normalizeDpopHtu(input.target.url) ?? "invalid URL",
     });
     const thumbprint = yield* signer.thumbprint;
     const token = yield* obtainAccessToken({

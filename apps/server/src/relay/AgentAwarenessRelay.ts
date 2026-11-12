@@ -619,13 +619,15 @@ export const make = Effect.gen(function* () {
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     const completedAt = threadShell?.latestRunCompletedAt?.epochMilliseconds;
     const previousTerminal = publishedTerminalWork.get(threadId);
+    const snoozedUntil = threadShell?.snoozedUntil?.epochMilliseconds;
     const snoozeExpired =
-      threadShell?.snoozedUntil !== null &&
-      threadShell?.snoozedUntil !== undefined &&
-      threadShell.snoozedUntil.epochMilliseconds <= (yield* DateTime.now).epochMilliseconds;
+      snoozedUntil !== undefined && snoozedUntil <= (yield* DateTime.now).epochMilliseconds;
     const replay =
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
-      ((snoozeExpired && !hasLivePublishedState(publishedStateByThread, threadId)) ||
+      ((snoozeExpired &&
+        (completedAt === undefined ||
+          (snoozedUntil !== undefined && completedAt <= snoozedUntil)) &&
+        !hasLivePublishedState(publishedStateByThread, threadId)) ||
         (completedAt !== undefined &&
           previousTerminal?.completedAt === completedAt &&
           previousTerminal.phase === snapshot.state.phase) ||

@@ -13,22 +13,34 @@ enum AgentWidgetState {
     base["isExpired"] = false
     base["isStale"] = false
     base["expiresAt"] = freshnessDeadline.timeIntervalSince1970 * 1000
-    let covered = Set(environmentIds)
     let relayRows = base["activities"] as? [[String: Any]] ?? []
     let allLocalRows = localObservation?["activities"] as? [[String: Any]] ?? []
-    let localCount = localObservation?["activeCount"] as? Int
-    let localRows = allLocalRows.filter {
-      guard let environmentId = $0["environmentId"] as? String else { return false }
-      return !covered.contains(environmentId)
-    }
-    let localActiveCount = allLocalRows.filter { isUnfinished($0) }.count
-    let observedScope = Set(localObservation?["observedEnvironmentIds"] as? [String] ?? [])
-    let hasUncoveredScope = !observedScope.isSubset(of: covered)
-    let hasUncoveredObservations = !localRows.isEmpty || hasUncoveredScope
     let localTotal = localObservation?["totalCount"] as? Int
-    let incompleteScope = hasUncoveredScope && (localTotal.map { $0 > allLocalRows.count } ?? true)
-    let countUnavailable = incompleteScope || (hasUncoveredObservations && localObservation != nil &&
-      (localCount.map { $0 < 0 || $0 > localActiveCount } ?? true))
+    let localCount = localObservation?["activeCount"] as? Int
+    let localComplete = localTotal == allLocalRows.count && localCount == allLocalRows.filter { isUnfinished($0) }.count
+    let relayComplete = aggregate == nil || (base["totalCount"] as? Int == relayRows.count)
+    let observedScope = Set(localObservation?["observedEnvironmentIds"] as? [String] ?? [])
+      .union(allLocalRows.compactMap { $0["environmentId"] as? String })
+    let retainedScope = observedScope.filter { environmentId in
+      let rows = allLocalRows.filter { $0["environmentId"] as? String == environmentId }
+      guard localComplete else { return true }
+      if rows.isEmpty { return !relayComplete }
+      return !rows.allSatisfy { row in
+        relayRows.contains { remote in
+          guard remote["environmentId"] as? String == environmentId,
+                let threadId = row["threadId"] as? String, remote["threadId"] as? String == threadId,
+                let updatedAt = row["updatedAt"] as? String, let remoteTime = remote["updatedAt"] as? String else { return false }
+          return remoteTime > updatedAt || (remoteTime == updatedAt && remote["phase"] as? String == row["phase"] as? String)
+        } || (relayComplete && !isUnfinished(row) && !relayRows.contains {
+          $0["environmentId"] as? String == environmentId && $0["threadId"] as? String == row["threadId"] as? String
+        })
+      }
+    }
+    let localRows = allLocalRows.filter { retainedScope.contains($0["environmentId"] as? String ?? "") }
+    let remoteRows = relayRows.filter { !retainedScope.contains($0["environmentId"] as? String ?? "") }
+    let countUnavailable = !retainedScope.isEmpty && !localComplete
+    let overlappingScope = !retainedScope.isDisjoint(with: Set(environmentIds).union(relayRows.compactMap { $0["environmentId"] as? String }))
+    let remoteCountComplete = !overlappingScope || aggregate == nil || base["activeCount"] as? Int == relayRows.filter { isUnfinished($0) }.count
     let localDeadline = (localObservation?["expiresAt"] as? NSNumber).map {
       Date(timeIntervalSince1970: $0.doubleValue / 1000)
     }
@@ -37,21 +49,20 @@ enum AgentWidgetState {
       let directRows = localRows.map { row in
         localDeadline.map { $0 > date } == true ? row : stale(row)
       }
-      props["activities"] = relayRows + directRows
+      props["activities"] = remoteRows + directRows
       let unavailable = directRows.contains { $0["phase"] as? String == "stale" }
       let directCount = directRows.filter { isUnfinished($0) }.count
-      props["activeCount"] = unavailable || countUnavailable ? -1 : (base["activeCount"] as? Int ?? 0) + directCount
+      props["activeCount"] = unavailable || countUnavailable || !remoteCountComplete ? -1 : (!overlappingScope ? (base["activeCount"] as? Int ?? 0) : remoteRows.filter { isUnfinished($0) }.count) + directCount
       for key in ["workingCount", "attentionCount", "totalCount"] {
         let total = base[key] as? Int
-        let allLocalRowsPresent = localTotal == allLocalRows.count
-        let direct = directRows.filter { row in
+        let matches: ([String: Any]) -> Bool = { row in
           let phase = row["phase"] as? String
           if key == "workingCount" { return phase == "running" || phase == "starting" }
           if key == "attentionCount" { return phase == "waiting_for_input" || phase == "waiting_for_approval" }
           return true
-        }.count
-        if let total, total >= 0, !unavailable, !countUnavailable, localRows.isEmpty || allLocalRowsPresent {
-          props[key] = total + direct
+        }
+        if !unavailable, !countUnavailable, let total, total >= 0, !overlappingScope || relayComplete {
+          props[key] = (!overlappingScope ? total : remoteRows.filter(matches).count) + directRows.filter(matches).count
         } else {
           props.removeValue(forKey: key)
         }

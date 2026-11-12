@@ -13,11 +13,11 @@ if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--stale-refres
 
 let now = Date(timeIntervalSince1970: 1000)
 func row(_ environmentId: String, _ phase: String) -> [String: Any] {
-  ["environmentId": environmentId, "phase": phase, "status": phase, "threadTitle": "Test agent"]
+  ["environmentId": environmentId, "threadId": environmentId + "-" + phase, "updatedAt": "2026-01-01T00:00:00Z", "phase": phase, "status": phase, "threadTitle": "Test agent"]
 }
 func props(_ entry: [String: Any]) -> [String: Any] { entry["props"] as! [String: Any] }
-let running: [String: Any] = ["activeCount": 1, "updatedAt": "old unchanged observation", "activities": [row("relay", "running")]]
-let local: [String: Any] = ["activeCount": 2, "expiresAt": now.addingTimeInterval(600).timeIntervalSince1970 * 1000,
+let running: [String: Any] = ["activeCount": 1, "totalCount": 1, "updatedAt": "old unchanged observation", "activities": [row("relay", "running")]]
+let local: [String: Any] = ["activeCount": 2, "totalCount": 3, "expiresAt": now.addingTimeInterval(600).timeIntervalSince1970 * 1000,
   "activities": [row("relay", "running"), row("direct", "waiting_for_input"), row("direct", "failed")]]
 let entries = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: local, now: now)
 assert(entries.count == 3)
@@ -36,10 +36,10 @@ let renewed = AgentWidgetState.timeline(aggregate: running, environmentIds: ["re
 assert(renewed.last?["timestamp"] as? Int == 4_900_000)
 assert(props(renewed[0])["updatedAt"] as? String == "old unchanged observation")
 
-// An authoritative empty relay clears its own rows and retains direct observations.
+// An empty relay cannot confirm that observed unfinished work ended.
 let empty = AgentWidgetState.timeline(aggregate: nil, environmentIds: ["relay"], localObservation: local, now: now)
-assert((props(empty[0])["activities"] as! [[String: Any]]).count == 2)
-assert(props(empty[0])["activeCount"] as? Int == 1)
+assert((props(empty[0])["activities"] as! [[String: Any]]).count == 3)
+assert(props(empty[0])["activeCount"] as? Int == 2)
 let terminals: [String: Any] = ["activeCount": 0, "optional": NSNull(), "activities": [row("relay", "completed"), row("relay", "failed")]]
 let final = AgentWidgetState.timeline(aggregate: terminals, environmentIds: ["relay"], localObservation: nil, now: now)
 assert((props(final.last!)["activities"] as! [[String: Any]]).map { $0["phase"] as! String } == ["completed", "failed"])
@@ -59,7 +59,7 @@ defaults.set(entries, forKey: "__expo_widgets_AgentActivity_timeline")
 defaults.set("install-push-token", forKey: "t3_agent_widget_push_token")
 var pendingRevocations = [URLRequest]()
 defaults.set("previous-generation", forKey: "t3_agent_widget_generation")
-let revocation = T3AgentWidgetConfiguration.clearStoredState(in: defaults) { request in
+let revocation = AgentWidgetStorage.clearStoredState(in: defaults) { request in
   // Persist before active authority is removed, so interruption cannot lose it.
   assert(defaults.string(forKey: "t3_agent_widget_url") != nil)
   pendingRevocations.append(request)
@@ -76,7 +76,7 @@ for key in ["t3_agent_widget_identity", "t3_agent_widget_token", "t3_agent_widge
   assert(defaults.object(forKey: key) == nil)
 }
 assert(defaults.string(forKey: "t3_agent_widget_push_token") == "install-push-token")
-assert(T3AgentWidgetConfiguration.clearStoredState(in: defaults) == nil)
+assert(AgentWidgetStorage.clearStoredState(in: defaults) == nil)
 print("Agent widget sign-out: cached rows removed and previous capability revocation prepared")
 
 let saved = AgentWidgetCredential.Revocation(request: pendingRevocations[0])!
@@ -89,11 +89,14 @@ assert(!restored.account.contains("test-capability"))
 defaults.set("next-account", forKey: "t3_agent_widget_identity")
 defaults.set("test-capability", forKey: "t3_agent_widget_token")
 defaults.set("https://relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
-assert(T3AgentWidgetConfiguration.clearStoredState(in: defaults, storeRevocation: { _ in false }) == nil)
+assert(AgentWidgetStorage.clearStoredState(in: defaults, storeRevocation: { _ in false }) == nil)
 assert(defaults.string(forKey: "t3_agent_widget_identity") == nil)
 assert(defaults.string(forKey: "t3_agent_widget_url") != nil)
 assert(defaults.string(forKey: "t3_agent_widget_token") == "test-capability")
-assert(T3AgentWidgetConfiguration.clearStoredState(in: defaults, storeRevocation: { _ in true }) != nil)
+var retriedPreparation = false
+AgentWidgetStorage.prepareRevocations(in: defaults) { _ in retriedPreparation = true; return true }
+assert(retriedPreparation)
+assert(defaults.string(forKey: "t3_agent_widget_url") == nil)
 print("Agent widget revocation: secure-write failure retained for retry; durable record round-trip passed")
 
 // The extension has captured its old owner before the app takes the shared lock.
@@ -112,7 +115,7 @@ let transitioned = AgentWidgetStorage.withLock(at: lock, defaults: defaults) { d
   child.arguments = ["--stale-refresh", suite, lock.path, generation]
   try! child.run()
   assert(try! ready.fileHandleForReading.read(upToCount: 6) == Data("ready\n".utf8))
-  T3AgentWidgetConfiguration.clearStoredState(in: defaults)
+  AgentWidgetStorage.clearStoredState(in: defaults)
   defaults.set("new-account", forKey: "t3_agent_widget_identity")
   return true
 }
@@ -155,10 +158,10 @@ let cappedTerminalTimeline = AgentWidgetState.timeline(aggregate: completedRelay
 assert(props(cappedTerminalTimeline[0])["activeCount"] as? Int == -1)
 assert(props(cappedTerminalTimeline[0])["totalCount"] == nil)
 let coveredCappedTimeline = AgentWidgetState.timeline(aggregate: completedRelay, environmentIds: ["relay", "direct"], localObservation: cappedObservation, now: now)
-assert(props(coveredCappedTimeline[0])["activeCount"] as? Int == 0)
+assert(props(coveredCappedTimeline[0])["activeCount"] as? Int == -1)
 
 // Fully relay-covered rows must not invalidate an authoritative relay count.
-let coveredUnknown: [String: Any] = ["activities": [row("relay", "running")]]
+let coveredUnknown: [String: Any] = ["activeCount": 1, "totalCount": 1, "activities": [row("relay", "running")]]
 let coveredTimeline = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: coveredUnknown, now: now)
 assert(props(coveredTimeline[0])["activeCount"] as? Int == 1)
 
@@ -190,3 +193,31 @@ assert(storedProps["activeCount"] as? Int == -1)
 assert((storedProps["activities"] as? [[String: Any]])?.count == 1)
 assert(AgentWidgetStorage.owns(storedProps, in: defaults))
 print("Unknown direct-only counts persist without invalid property-list nulls")
+
+// Links cannot acknowledge a newer direct approval or running observation.
+for phase in ["running", "waiting_for_approval"] {
+  var direct = row("relay", phase)
+  direct["threadId"] = "same-thread"
+  direct["updatedAt"] = "2026-01-02T00:00:00Z"
+  var old = row("relay", "completed")
+  old["threadId"] = "same-thread"
+  let observed: [String: Any] = ["activeCount": 1, "totalCount": 1, "observedEnvironmentIds": ["relay"], "expiresAt": 1_600_000, "activities": [direct]]
+  let remote: [String: Any] = ["activeCount": 0, "totalCount": 1, "activities": [old]]
+  let result = AgentWidgetState.timeline(aggregate: remote, environmentIds: ["relay"], localObservation: observed, now: now)
+  assert((props(result[0])["activities"] as! [[String: Any]]).map { $0["phase"] as! String } == [phase])
+  assert(props(result[0])["activeCount"] as? Int == 1)
+  assert(result[1]["timestamp"] as? Int == 1_600_000)
+}
+print("Unconfirmed linked observations survive older terminal and capped reads")
+
+let revocations = [saved]
+assert(AgentWidgetStorage.claimRevocations(revocations, in: defaults, now: now).count == 1)
+assert(AgentWidgetStorage.claimRevocations(revocations, in: defaults, now: now).isEmpty)
+AgentWidgetStorage.finishRevocation(account: saved.account, in: defaults)
+assert(AgentWidgetStorage.claimRevocations(revocations, in: defaults, now: now).count == 1)
+assert(AgentWidgetStorage.claimRevocations(revocations, in: defaults, now: now.addingTimeInterval(31)).count == 1)
+let firstRequest = AgentWidgetStorage.beginRefresh(in: defaults)
+let newerRequest = AgentWidgetStorage.beginRefresh(in: defaults)
+assert(AgentWidgetStorage.commit(entries, generation: storageGeneration, requestId: newerRequest, in: defaults))
+assert(!AgentWidgetStorage.commit(entries, generation: storageGeneration, requestId: firstRequest, in: defaults))
+print("Revocation retries deduplicate across shared storage; superseded reads cannot commit")

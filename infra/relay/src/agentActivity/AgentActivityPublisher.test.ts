@@ -89,6 +89,7 @@ function makeAgentActivityRows(
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
     upsert: () => Effect.succeed(true),
+    acknowledgeDelivery: () => Effect.void,
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
@@ -161,6 +162,8 @@ describe("AgentActivityPublisher", () => {
     const replays: boolean[] = [];
     const widgetUsers: string[] = [];
     let changed = true;
+    let failWidget = true;
+    let failFcm = true;
     return Effect.gen(function* () {
       const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
       const publish = publisher.publish({
@@ -170,14 +173,19 @@ describe("AgentActivityPublisher", () => {
         state: { ...state, phase: "completed", retained: true },
         replay: true,
       });
-      yield* publish;
-      expect(widgetUsers).toEqual(["dev:julius"]);
-      changed = false;
-      yield* publish;
-      expect(widgetUsers).toEqual(["dev:julius"]);
-      changed = true;
+      expect((yield* Effect.flip(publish))._tag).toBe("WidgetRefreshPersistenceError");
+      failWidget = false;
+      expect((yield* Effect.flip(publish))._tag).toBe("FcmDeliveryError");
+      expect(changed).toBe(true);
+      failFcm = false;
       yield* publish;
       expect(widgetUsers).toEqual(["dev:julius", "dev:julius"]);
+      changed = false;
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius", "dev:julius"]);
+      changed = true;
+      yield* publish;
+      expect(widgetUsers).toEqual(["dev:julius", "dev:julius", "dev:julius"]);
       expect(replays).toEqual([true, true, true]);
     }).pipe(
       Effect.provide(
@@ -188,15 +196,35 @@ describe("AgentActivityPublisher", () => {
               refresh: () => Effect.succeed({ aggregate: null }),
               process: () => Effect.die("unused widget job"),
               notify: ({ userId }) =>
-                Effect.sync(() => {
-                  widgetUsers.push(userId);
-                  return [];
-                }),
+                Effect.suspend(() =>
+                  failWidget
+                    ? Effect.fail(
+                        new AgentWidgetRefresh.WidgetRefreshPersistenceError({
+                          stage: "test",
+                          cause: "queue unavailable",
+                        }),
+                      )
+                    : Effect.sync(() => {
+                        widgetUsers.push(userId);
+                        return [];
+                      }),
+                ),
             }),
           ),
           Layer.provide(
             Layer.succeed(FcmDeliveries.FcmDeliveries, {
-              enqueue: () => Effect.succeed(null),
+              enqueue: (input) =>
+                Effect.suspend(() => {
+                  replays.push(input.replay === true);
+                  return failFcm
+                    ? Effect.fail(
+                        new FcmDeliveries.FcmDeliveryError({
+                          operation: "enqueue",
+                          cause: "queue unavailable",
+                        }),
+                      )
+                    : Effect.succeed(null);
+                }),
               process: () => Effect.void,
             }),
           ),
@@ -204,12 +232,21 @@ describe("AgentActivityPublisher", () => {
             Layer.mergeAll(
               Layer.succeed(
                 AgentActivityRows.AgentActivityRows,
-                makeAgentActivityRows({ upsert: () => Effect.sync(() => changed) }),
+                makeAgentActivityRows({
+                  upsert: () => Effect.sync(() => changed),
+                  acknowledgeDelivery: () =>
+                    Effect.sync(() => {
+                      changed = false;
+                    }),
+                }),
               ),
               Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
               Layer.succeed(
                 LiveActivities.LiveActivities,
-                makeLiveActivities({ listTargets: () => Effect.succeed([target("ios")]) }),
+                makeLiveActivities({
+                  listTargets: () =>
+                    Effect.succeed([{ ...target("android"), platform: "android" }]),
+                }),
               ),
               Layer.succeed(
                 ApnsDeliveries.ApnsDeliveries,

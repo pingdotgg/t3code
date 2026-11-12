@@ -899,6 +899,49 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("alerts for a new completion while the snooze wakeup is awaiting its read", () =>
+    Effect.gen(function* () {
+      const readStarted = yield* Deferred.make<void>();
+      const finishRead = yield* Deferred.make<void>();
+      let holdRead = false;
+      const current = yield* Ref.make(
+        shell({
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe(0),
+          snoozedUntil: DateTime.makeUnsafe(60_000),
+        }),
+      );
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: () =>
+          Effect.gen(function* () {
+            if (holdRead) {
+              yield* Deferred.succeed(readStarted, undefined);
+              yield* Deferred.await(finishRead);
+            }
+            return yield* Ref.get(current);
+          }),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      holdRead = true;
+      yield* TestClock.adjust("55 seconds");
+      yield* Deferred.await(readStarted);
+      yield* TestClock.adjust("1 second");
+      yield* Ref.update(current, (thread) => ({
+        ...thread,
+        latestRunCompletedAt: DateTime.makeUnsafe(61_000),
+        updatedAt: DateTime.makeUnsafe(61_000),
+      }));
+      yield* Deferred.succeed(finishRead, undefined);
+      yield* relay.drain;
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state?.phase, "completed");
+      assert.equal(publications.at(-1)?.replay, false);
+    }),
+  );
+
   it.effect("restores a snoozed result at expiry without another domain event or alert", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
@@ -935,6 +978,7 @@ describe("AgentAwarenessRelay", () => {
         updatedAt: DateTime.makeUnsafe(70_000),
       });
       yield* relay.publishThread(THREAD_ID);
+      yield* relay.drain;
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.at(-1)?.replay, false);

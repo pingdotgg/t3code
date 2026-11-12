@@ -67,11 +67,8 @@ enum AgentWidgetNetwork {
     let token: String
     let generation: String
     let pushToken: String?
-  }
-
-  static var defaults: UserDefaults? {
-    guard let group = Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String else { return nil }
-    return UserDefaults(suiteName: group)
+    let requestId: String
+    let startedAt: Date
   }
 
   static func refresh(completion: @escaping @Sendable (Bool) -> Void) {
@@ -80,7 +77,7 @@ enum AgentWidgetNetwork {
       guard defaults.string(forKey: "t3_agent_widget_identity") != nil,
             let rawURL = defaults.string(forKey: "t3_agent_widget_url"),
             let token = AgentWidgetCredential.read() else { return nil }
-      return Configuration(url: rawURL, token: token, generation: AgentWidgetStorage.generation(in: defaults), pushToken: defaults.string(forKey: "t3_agent_widget_push_token"))
+      return Configuration(url: rawURL, token: token, generation: AgentWidgetStorage.generation(in: defaults), pushToken: defaults.string(forKey: "t3_agent_widget_push_token"), requestId: AgentWidgetStorage.beginRefresh(in: defaults), startedAt: Date())
     }.flatMap { $0 }
     guard let configuration,
           var components = URLComponents(string: configuration.url) else { completion(false); return }
@@ -109,8 +106,8 @@ enum AgentWidgetNetwork {
         let environmentIds = body["environmentIds"] as? [String] ?? (aggregate?["activities"] as? [[String: Any]] ?? []).compactMap { $0["environmentId"] as? String }
         return AgentWidgetStorage.commit(AgentWidgetState.timeline(
           aggregate: aggregate, environmentIds: environmentIds,
-          localObservation: localObservation, now: Date()
-        ), generation: generation, in: defaults)
+          localObservation: localObservation, now: configuration.startedAt
+        ), generation: generation, requestId: configuration.requestId, in: defaults)
       } ?? false
       completion(stored)
     }.resume()
@@ -121,7 +118,7 @@ enum AgentWidgetNetwork {
 struct AgentWidgetPushHandler: WidgetPushHandler {
   func pushTokenDidChange(_ pushInfo: WidgetPushInfo, widgets: [WidgetInfo]) {
     let token = widgets.isEmpty ? "" : pushInfo.token.map { String(format: "%02x", $0) }.joined()
-    AgentWidgetNetwork.defaults?.set(token, forKey: "t3_agent_widget_push_token")
+    _ = AgentWidgetStorage.withLock { $0.set(token, forKey: "t3_agent_widget_push_token") }
     AgentWidgetNetwork.refresh { _ in WidgetCenter.shared.reloadTimelines(ofKind: "AgentActivity") }
   }
 }

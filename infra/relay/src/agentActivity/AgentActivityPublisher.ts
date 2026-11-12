@@ -21,9 +21,12 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
+import type * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 
 export type AgentActivityPublishError =
+  | AgentWidgetRefresh.WidgetRefreshPersistenceError
+  | ApnsDeliveryQueue.ApnsDeliveryQueueError
   | FcmDeliveries.FcmDeliveryError
   | AgentActivityRows.AgentActivityRowUpsertPersistenceError
   | AgentActivityRows.AgentActivityRowDeletePersistenceError
@@ -66,16 +69,9 @@ const make = Effect.gen(function* () {
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
     readonly replay?: boolean;
-    readonly refreshWidget: boolean;
   }) {
-    const widgetDeliveries = input.refreshWidget
-      ? yield* widgets.notify({ userId: input.deliveryUser.userId }).pipe(
-          Effect.tapError((cause) => Effect.logWarning("Widget refresh enqueue failed", { cause })),
-          Effect.orElseSucceed(() => []),
-        )
-      : [];
     if (!input.deliveryUser.notificationsEnabled && !input.deliveryUser.liveActivitiesEnabled)
-      return widgetDeliveries;
+      return [];
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
       : [];
@@ -130,7 +126,7 @@ const make = Effect.gen(function* () {
       }),
       { concurrency: 4 },
     );
-    return [...deliveriesByTarget.flat(), ...widgetDeliveries];
+    return deliveriesByTarget.flat();
   });
 
   return AgentActivityPublisher.of({
@@ -242,11 +238,18 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (input.replay && !changed) return { ok: true, deliveries: [] };
+
       const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
         environmentId: input.environmentId,
         environmentPublicKey: input.environmentPublicKey,
         includeDisabled: true,
       });
+      const widgetDeliveries = yield* Effect.forEach(
+        deliveryUsers,
+        (user) => widgets.notify({ userId: user.userId }),
+        { concurrency: 4 },
+      );
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
@@ -256,11 +259,15 @@ const make = Effect.gen(function* () {
             state: input.state,
             replay: input.replay ?? false,
             nowMs: now.epochMilliseconds,
-            refreshWidget: !input.replay || changed,
           }),
         { concurrency: 4 },
       );
-      const deliveries = deliveriesByUser.flat();
+      if (input.state)
+        yield* rows.acknowledgeDelivery({
+          environmentPublicKey: input.environmentPublicKey,
+          state: input.state,
+        });
+      const deliveries = [...deliveriesByUser.flat(), ...widgetDeliveries.flat()];
       return {
         ok: true,
         deliveries: deliveries.filter(
