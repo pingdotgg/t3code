@@ -24,6 +24,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
 import * as ModelManifest from "./ModelManifest.ts";
+import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
@@ -314,6 +316,12 @@ function makeUpdateState(input: {
 
 /** @public */
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  const audit = (attempt: Parameters<typeof auditDownload>[1]) =>
+    Option.match(config, {
+      onNone: () => Effect.void,
+      onSome: (value) => Effect.promise(() => auditDownload({ stateDir: value.stateDir }, attempt)),
+    });
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const manifestService = yield* ModelManifest.ModelManifest;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -548,9 +556,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             }
 
             yield* setRunningMessage(`Running ${describeCommand(command)}`);
-            const result = yield* runMaintenanceCommand(command, setRunningMessage);
+            const commandDescription = describeCommand(command);
+            const auditUrl = `exec:${commandDescription}`;
+            const result = yield* runMaintenanceCommand(command, setRunningMessage).pipe(
+              Effect.tapCause((cause) => audit({ url: auditUrl, error: Cause.pretty(cause) })),
+            );
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
+              const error = failureMessage(result);
+              yield* audit({ url: auditUrl, error });
               yield* Effect.logWarning("Provider update command failed", {
                 provider,
                 command: describeCommand(command),
@@ -563,7 +577,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   status: "failed",
                   startedAt,
                   finishedAt,
-                  message: failureMessage(result),
+                  message: error,
                   output: commandOutput(result),
                 }),
               );
@@ -605,9 +619,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            const status = couldNotVerify || stillOutdated ? "unchanged" : "succeeded";
+            if (status === "succeeded") {
+              yield* audit({ url: auditUrl });
+            } else {
+              yield* audit({
+                url: auditUrl,
+                error: couldNotVerify
+                  ? "Update command completed, but T3 Code could not verify the provider version."
+                  : "Update command completed, but T3 Code still detects an outdated provider version.",
+              });
+            }
             return yield* finish(
               makeUpdateState({
-                status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
+                status,
                 startedAt,
                 finishedAt,
                 message: couldNotVerify

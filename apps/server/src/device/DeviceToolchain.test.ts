@@ -29,7 +29,7 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
       stdoutInvalidUtf8: false,
       stderrInvalidUtf8: false,
     };
-    const error = yield* ensureDeviceHub(baseDir).pipe(
+    const error = yield* ensureDeviceHub(baseDir, baseDir).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, {
         run: () => Effect.succeed(result),
       }),
@@ -41,6 +41,80 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
     expect(error.cause).toBe(result);
     expect(yield* isDeviceHubInstalled(baseDir)).toBe(false);
     expect(yield* fs.readDirectory(path.join(baseDir, "tools", "expo-device-hub"))).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("audits device tool installs", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-audit-base-" });
+    const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-audit-state-" });
+    const success = {
+      code: ChildProcessSpawner.ExitCode(0),
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    };
+    const runner = {
+      run: ({ args }: ProcessRunner.ProcessRunInput) =>
+        fs
+          .makeDirectory(
+            path.dirname(
+              path.join(args[2]!, "node_modules", "expo-device-hub", "dist", "server", "cli.mjs"),
+            ),
+            { recursive: true },
+          )
+          .pipe(
+            Effect.andThen(
+              fs.writeFileString(
+                path.join(args[2]!, "node_modules", "expo-device-hub", "dist", "server", "cli.mjs"),
+                "",
+              ),
+            ),
+            Effect.orDie,
+            Effect.as(success),
+          ),
+    };
+    yield* ensureDeviceHub(baseDir, stateDir).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    );
+    const auditDirectory = path.join(stateDir, "audit");
+    const auditFiles = yield* fs.readDirectory(auditDirectory);
+    const first = JSON.parse(
+      yield* fs.readFileString(path.join(auditDirectory, auditFiles[0]!)),
+    ) as { url: string; error?: string };
+    expect(first.url).toBe(`npm:expo-device-hub@${DEVICE_HUB_VERSION}`);
+    expect(first.error).toBeUndefined();
+    yield* ensureDeviceHub(baseDir, stateDir).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    );
+    expect((yield* fs.readDirectory(auditDirectory)).length).toBe(1);
+
+    const failedStateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-audit-fail-" });
+    const failed = {
+      ...success,
+      code: ChildProcessSpawner.ExitCode(1),
+      stderr: "registry rejected",
+    };
+    const error = yield* ensureDeviceHub(
+      yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-audit-fail-base-" }),
+      failedStateDir,
+    ).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.succeed(failed) }),
+      Effect.flip,
+    );
+    expect(error._tag).toBe("DeviceToolchainInstallError");
+    const failedFiles = yield* fs.readDirectory(path.join(failedStateDir, "audit"));
+    const failure = JSON.parse(
+      yield* fs.readFileString(path.join(failedStateDir, "audit", failedFiles[0]!)),
+    ) as { url: string; error?: string };
+    expect(failure.url).toBe(`npm:expo-device-hub@${DEVICE_HUB_VERSION}`);
+    expect(failure.error).toContain("exit code 1");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

@@ -9,9 +9,11 @@ import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -21,6 +23,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
 
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -277,9 +281,15 @@ function layerFailingLatestLookupAfterFirst() {
 }
 
 describe("providerMaintenanceRunner", () => {
-  it.effect("runs the allowlisted provider update command and records success", () => {
+  it.effect("audits provider update commands", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    let invocation = 0;
+    const configLayer = ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-provider-audit-",
+    }).pipe(Layer.provide(NodeServices.layer)) as unknown as Layer.Layer<ServerConfig.ServerConfig>;
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const { registry, updateStatesRef } = yield* makeRegistry(baseNativeCliProvider);
       const updater = yield* makeTestRunner(registry);
 
@@ -291,6 +301,24 @@ describe("providerMaintenanceRunner", () => {
         },
       ]);
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      const config = yield* ServerConfig.ServerConfig;
+      const auditDirectory = path.join(config.stateDir, "audit");
+      const auditFiles = yield* fs.readDirectory(auditDirectory);
+      const lines = yield* fs.readFileString(path.join(auditDirectory, auditFiles[0]!));
+      const audit = JSON.parse(lines.trim()) as { url: string; error?: string };
+      assert.strictEqual(audit.url, "exec:native-agent update");
+      assert.strictEqual(audit.error, undefined);
+      const { registry: failingRegistry } = yield* makeRegistry(baseNativeCliProvider);
+      const failingUpdater = yield* makeTestRunner(failingRegistry);
+      const failed = yield* failingUpdater.updateProvider(NATIVE_CLI_DRIVER);
+      assert.strictEqual(failed.providers[0]?.updateState?.status, "failed");
+      const allLines = (yield* fs.readFileString(path.join(auditDirectory, auditFiles[0]!)))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { url: string; error?: string });
+      assert.strictEqual(allLines.length, 2);
+      assert.strictEqual(allLines[1]?.url, "exec:native-agent update");
+      assert.include(allLines[1]?.error ?? "", "code 1");
       assert.deepStrictEqual(
         (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
         [
@@ -305,10 +333,13 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
+          configLayer,
+          NodeServices.layer,
           layerLatestVersionHttpClient("1.0.0"),
           layerMockSpawner((command, args) => {
             calls.push({ command, args });
-            return { stdout: "updated" };
+            invocation += 1;
+            return invocation === 1 ? { stdout: "updated" } : { code: 1, stderr: "nope\n" };
           }),
         ),
       ),

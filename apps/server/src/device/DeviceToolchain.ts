@@ -10,6 +10,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as Cause from "effect/Cause";
+import { auditDownload } from "../course/downloadAudit.ts";
 import DEVICE_TOOL_VERSIONS from "./deviceToolVersions.json" with { type: "json" };
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
@@ -96,6 +98,7 @@ const isInstalled = Effect.fn("DeviceToolchain.isInstalled")(function* (
 const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
   spec: ToolSpec,
   paths: DeviceToolPaths,
+  stateDir: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -170,27 +173,39 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
           ),
         ),
       );
+    yield* Effect.promise(() =>
+      auditDownload({ stateDir }, { url: `npm:${spec.name}@${spec.version}` }),
+    );
     return paths;
   }).pipe(
     Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
+    Effect.tapCause((cause) =>
+      Effect.promise(() =>
+        auditDownload(
+          { stateDir },
+          { url: `npm:${spec.name}@${spec.version}`, error: Cause.pretty(cause) },
+        ),
+      ),
+    ),
   );
 });
 
 const ensureTool = Effect.fn("DeviceToolchain.ensureTool")(function* (
   baseDir: string,
+  stateDir: string,
   spec: ToolSpec,
   select: (paths: DeviceToolchainPaths) => DeviceToolPaths,
 ) {
   const path = yield* Path.Path;
   const paths = deviceToolchainPaths(path, baseDir);
-  return yield* installLock.withPermit(installTool(spec, select(paths)));
+  return yield* installLock.withPermit(installTool(spec, select(paths), stateDir));
 });
 
-export const ensureDeviceHub = (baseDir: string) =>
-  ensureTool(baseDir, HUB_SPEC, (paths) => paths.hub);
+export const ensureDeviceHub = (baseDir: string, stateDir: string) =>
+  ensureTool(baseDir, stateDir, HUB_SPEC, (paths) => paths.hub);
 
-export const ensureAgentDevice = (baseDir: string) =>
-  ensureTool(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+export const ensureAgentDevice = (baseDir: string, stateDir: string) =>
+  ensureTool(baseDir, stateDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
 const isToolInstalled = Effect.fn("DeviceToolchain.isToolInstalled")(function* (
   baseDir: string,

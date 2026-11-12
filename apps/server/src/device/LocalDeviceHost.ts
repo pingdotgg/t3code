@@ -688,7 +688,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       const inventory = yield* summary;
       yield* onPhase("installing", deviceToolInstallMessage("device hub", inventory.tools?.hub));
     }
-    const hubTool = yield* ensureDeviceHub(config.baseDir).pipe(
+    const hubTool = yield* ensureDeviceHub(config.baseDir, config.stateDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -765,7 +765,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             deviceToolInstallMessage("agent tools", inventory.tools?.agent),
           );
         }
-        const agentTool = yield* ensureAgentDevice(config.baseDir).pipe(
+        const agentTool = yield* ensureAgentDevice(config.baseDir, config.stateDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
           Effect.provideService(ProcessRunner.ProcessRunner, runner),

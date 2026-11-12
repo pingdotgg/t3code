@@ -1288,7 +1288,7 @@ export const make = Effect.gen(function* () {
     ),
   );
   const agentCli = resolveNodeExecutable("Device automation").pipe(
-    Effect.andThen(ensureAgentDevice(config.baseDir)),
+    Effect.andThen(ensureAgentDevice(config.baseDir, config.stateDir)),
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -1405,7 +1405,10 @@ export const make = Effect.gen(function* () {
       ),
     configureAgent,
     (tool) =>
-      (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
+      (tool === "hub"
+        ? ensureDeviceHub(config.baseDir, config.stateDir)
+        : ensureAgentDevice(config.baseDir, config.stateDir)
+      ).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -1431,7 +1434,7 @@ export const make = Effect.gen(function* () {
   const simlockAgentCli = Effect.fn("DeviceService.simlockAgentCli")(
     function* (hostId: string) {
       const nodePath = yield* resolveNodeExecutable("Device automation");
-      const tool = yield* ensureAgentDevice(config.baseDir).pipe(
+      const tool = yield* ensureAgentDevice(config.baseDir, config.stateDir).pipe(
         Effect.mapError(
           (cause) =>
             new DeviceHost.DeviceHostError({ hostId, step: "installing agent tools", cause }),
