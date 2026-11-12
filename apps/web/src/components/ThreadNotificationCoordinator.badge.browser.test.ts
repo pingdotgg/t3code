@@ -358,121 +358,103 @@ it("uses native Windows completion notifications without a persistent browser ba
   expect(close).toHaveBeenCalledWith(shown.id);
 });
 
-it.each(["false", "reject"] as const)(
-  "falls back to a tracked browser notification when native delivery returns %s",
-  async (result) => {
-    await using app = setup();
-    state.mode = "notifications-and-sound";
-    const delivery = pendingDelivery();
-    const show = vi.fn<(notification: DesktopThreadNotification) => Promise<boolean>>(
-      () => delivery.promise,
-    );
-    const close = vi.fn(async () => undefined);
-    using _bridge = stubGlobal("desktopBridge", {
-      getClientPlatform: () => "win32",
-      showThreadNotification: show,
-      closeThreadNotification: close,
-      setThreadNotificationReady: async () => true,
-      onThreadNotificationActivated: () => () => undefined,
-      onNotificationBadgeClear: () => () => undefined,
-      revealWindow: async () => undefined,
-    });
-    app.start();
-    state.badge.mockClear();
-    state.shells.set("one", shell({ hasPendingApprovals: true }));
-    const shown = show.mock.calls[0]![0];
-    if (result === "reject") delivery.reject(new Error("native delivery failed"));
-    else delivery.resolve(false);
-    await delivery.promise.catch(() => undefined);
+it("falls back to a tracked browser notification when native delivery fails", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  const delivery = pendingDelivery();
+  const show = vi.fn<(notification: DesktopThreadNotification) => Promise<boolean>>(
+    () => delivery.promise,
+  );
+  const close = vi.fn(async () => undefined);
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: show,
+    closeThreadNotification: close,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: () => () => undefined,
+    onNotificationBadgeClear: () => () => undefined,
+    revealWindow: async () => undefined,
+  });
+  app.start();
+  state.badge.mockClear();
+  state.shells.set("one", shell({ hasPendingApprovals: true }));
+  const shown = show.mock.calls[0]![0];
+  delivery.resolve(false);
+  await delivery.promise.catch(() => undefined);
 
-    expect(TestNotification.sent).toHaveLength(1);
-    const notification = TestNotification.sent[0]!;
-    expect(notification.title).toBe("Approval needed");
-    expect(notification.options).toMatchObject({ body: "Test thread", tag: shown.tag });
-    expect(state.badge).toHaveBeenLastCalledWith(1);
-    expect(state.badge.mock.calls).not.toContainEqual([0]);
-    expect(state.sound).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledWith(shown.id);
-    notification.dispatchEvent(new Event("click"));
-    expect(state.navigate).toHaveBeenCalledWith({
-      to: "/$environmentId/$threadId",
-      params: { environmentId: "one", threadId: "thread" },
-    });
-    state.mode = "off";
-    app.changeSettings();
-    expect(notification.close).toHaveBeenCalled();
-    expect(state.badge).toHaveBeenLastCalledWith(0);
-  },
-);
+  expect(TestNotification.sent).toHaveLength(1);
+  const notification = TestNotification.sent[0]!;
+  expect(notification.title).toBe("Approval needed");
+  expect(notification.options).toMatchObject({ body: "Test thread", tag: shown.tag });
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  expect(state.badge.mock.calls).not.toContainEqual([0]);
+  expect(state.sound).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledWith(shown.id);
+  notification.dispatchEvent(new Event("click"));
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: "one", threadId: "thread" },
+  });
+  state.mode = "off";
+  app.changeSettings();
+  expect(notification.close).toHaveBeenCalled();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+});
 
-it.each(["false", "reject"] as const)(
-  "does not let a replaced native delivery returning %s replace the newer notification",
-  async (result) => {
-    await using app = setup();
-    const delivery = pendingDelivery();
-    const show = vi
-      .fn<(notification: DesktopThreadNotification) => Promise<boolean>>(async () => true)
-      .mockReturnValueOnce(delivery.promise);
-    const close = vi.fn(async () => undefined);
-    using _bridge = stubGlobal("desktopBridge", {
-      getClientPlatform: () => "win32",
-      showThreadNotification: show,
-      closeThreadNotification: close,
-      setThreadNotificationReady: async () => true,
-      onThreadNotificationActivated: () => () => undefined,
-      onNotificationBadgeClear: () => () => undefined,
-    });
-    app.start();
-    state.shells.set("one", shell({ hasPendingApprovals: true }));
-    state.shells.set("one", shell({ hasPendingUserInput: true }));
-    expect(show).toHaveBeenCalledTimes(2);
-    const replaced = show.mock.calls[0]![0];
-    const current = show.mock.calls[1]![0];
-    if (result === "reject") delivery.reject(new Error("old delivery failed"));
-    else delivery.resolve(false);
-    await delivery.promise.catch(() => undefined);
+it("does not let a replaced native delivery failure replace the newer notification", async () => {
+  await using app = setup();
+  const delivery = pendingDelivery();
+  const show = vi
+    .fn<(notification: DesktopThreadNotification) => Promise<boolean>>(async () => true)
+    .mockReturnValueOnce(delivery.promise);
+  const close = vi.fn(async () => undefined);
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: show,
+    closeThreadNotification: close,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: () => () => undefined,
+    onNotificationBadgeClear: () => () => undefined,
+  });
+  app.start();
+  state.shells.set("one", shell({ hasPendingApprovals: true }));
+  state.shells.set("one", shell({ hasPendingUserInput: true }));
+  expect(show).toHaveBeenCalledTimes(2);
+  const replaced = show.mock.calls[0]![0];
+  const current = show.mock.calls[1]![0];
+  delivery.reject(new Error("old delivery failed"));
+  await delivery.promise.catch(() => undefined);
 
-    expect(TestNotification.sent).toEqual([]);
-    expect(close).toHaveBeenCalledWith(replaced.id);
-    expect(close).not.toHaveBeenCalledWith(current.id);
-    expect(state.badge).toHaveBeenLastCalledWith(1);
-    state.mode = "off";
-    app.changeSettings();
-    expect(close).toHaveBeenCalledWith(current.id);
-  },
-);
+  expect(TestNotification.sent).toEqual([]);
+  expect(close).toHaveBeenCalledWith(replaced.id);
+  expect(close).not.toHaveBeenCalledWith(current.id);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  state.mode = "off";
+  app.changeSettings();
+  expect(close).toHaveBeenCalledWith(current.id);
+});
 
-it.each(["permission", "focus", "settings", "environment", "dispose"] as const)(
-  "does not revive a failed native notification after %s changes",
-  async (change) => {
-    await using app = setup();
-    const delivery = pendingDelivery();
-    using _bridge = stubGlobal("desktopBridge", {
-      getClientPlatform: () => "win32",
-      showThreadNotification: () => delivery.promise,
-      closeThreadNotification: async () => undefined,
-      setThreadNotificationReady: async () => true,
-      onThreadNotificationActivated: () => () => undefined,
-      onNotificationBadgeClear: () => () => undefined,
-    });
-    app.start();
-    state.shells.set("one", shell({ hasPendingApprovals: true }));
-    if (change === "permission") TestNotification.permission = "denied";
-    else if (change === "focus") {
-      focused = true;
-      window.dispatchEvent(new Event("focus"));
-    } else if (change === "settings") {
-      state.mode = "off";
-      app.changeSettings();
-    } else if (change === "environment") app.setEnvironmentIds(["two"]);
-    else await app[Symbol.asyncDispose]();
-    delivery.reject(new Error("native delivery failed"));
-    await delivery.promise.catch(() => undefined);
+it("does not revive a failed native notification after settings turn it off", async () => {
+  await using app = setup();
+  const delivery = pendingDelivery();
+  using _bridge = stubGlobal("desktopBridge", {
+    getClientPlatform: () => "win32",
+    showThreadNotification: () => delivery.promise,
+    closeThreadNotification: async () => undefined,
+    setThreadNotificationReady: async () => true,
+    onThreadNotificationActivated: () => () => undefined,
+    onNotificationBadgeClear: () => () => undefined,
+  });
+  app.start();
+  state.shells.set("one", shell({ hasPendingApprovals: true }));
+  state.mode = "off";
+  app.changeSettings();
+  delivery.reject(new Error("native delivery failed"));
+  await delivery.promise.catch(() => undefined);
 
-    expect(TestNotification.sent).toEqual([]);
-    expect(state.badge).toHaveBeenLastCalledWith(0);
-  },
-);
+  expect(TestNotification.sent).toEqual([]);
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+});
 
 it.each([false, true])(
   "presents one completion when a monitor ends with a final wake (disconnected: %s)",

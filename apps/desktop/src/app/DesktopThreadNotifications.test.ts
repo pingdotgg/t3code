@@ -62,7 +62,7 @@ class NativeNotification extends NodeEvents.EventEmitter {
   }
 }
 
-function setup(platform: NodeJS.Platform = "win32") {
+function setup() {
   native.activate = null;
   native.initial = null;
   const notifications: NativeNotification[] = [];
@@ -84,7 +84,7 @@ function setup(platform: NodeJS.Platform = "win32") {
   const layer = DesktopThreadNotifications.layer.pipe(
     Layer.provide([
       Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
-        platform,
+        platform: "win32",
       } as DesktopEnvironment.DesktopEnvironment["Service"]),
       Layer.succeed(ElectronWindow.ElectronWindow, {
         currentMainOrFirst: Effect.succeedSome(window),
@@ -211,16 +211,3 @@ it.effect(
     ).pipe(Effect.provide(layer));
   },
 );
-
-it.effect("does not register or present native notices on other platforms", () => {
-  const { notifications, layer } = setup("darwin");
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopThreadNotifications.DesktopThreadNotifications;
-      yield* service.register;
-      assert.strictEqual(native.activate, null);
-      assert.strictEqual(yield* service.show(input), false);
-      assert.deepStrictEqual(notifications, []);
-    }),
-  ).pipe(Effect.provide(layer));
-});

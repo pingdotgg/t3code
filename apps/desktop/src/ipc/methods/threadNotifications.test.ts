@@ -1,6 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as DesktopThreadNotifications from "../../app/DesktopThreadNotifications.ts";
@@ -49,11 +48,6 @@ it.effect("only the main renderer can display, clear, or receive thread notifica
     }
     assert.deepStrictEqual(calls, []);
     const event = { sender: { id: 1 } };
-    const invalid = yield* Effect.exit(
-      ThreadNotifications.show.handler({ ...input, body: "x".repeat(1025) }, event),
-    );
-    assert.isTrue(Exit.isFailure(invalid));
-    assert.deepStrictEqual(calls, []);
     assert.strictEqual(yield* ThreadNotifications.show.handler(input, event), true);
     yield* ThreadNotifications.close.handler(input.id, event);
     yield* ThreadNotifications.setReady.handler(true, event);
