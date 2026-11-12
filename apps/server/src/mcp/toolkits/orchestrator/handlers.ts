@@ -179,6 +179,7 @@ const handlers = {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.sendToThread(scope, input);
         }),
+      { ownChildren: "at-their-runtime-mode" },
     ),
     // There the thread's parent is here, so only this side can make a follow-up a task.
     (input, environmentId, sent) =>
@@ -187,7 +188,6 @@ const handlers = {
         const remote = yield* RemoteDelegation.RemoteDelegation;
         return yield* remote.followUp(scope, environmentId, input, sent);
       }),
-    { ownChildren: "at-their-runtime-mode" },
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
