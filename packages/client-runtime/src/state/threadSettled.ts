@@ -2,7 +2,11 @@
 import * as DateTime from "effect/DateTime";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
-import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
+import {
+  threadGoalAwaitsUser,
+  type EnvironmentThreadShell,
+  type PendingSubagentRequest,
+} from "./models.ts";
 
 interface SettlementRunLike {
   readonly turnId?: unknown;
@@ -108,7 +112,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   if (shell.pendingSubagentRequest != null) return true;
-  if (shell.goal?.status === "blocked") return true;
+  if (threadGoalAwaitsUser(shell)) return true;
   if ((shell.pendingGuestMessageCount ?? 0) > 0) return true;
   const failedAt = failureEdgeAt(shell);
   return (
@@ -151,7 +155,7 @@ export function canSnooze(
   const request = shell.source?.pendingRuntimeRequest;
   if (request != null && request.kind !== "user_input") return false;
   if (shell.pendingSubagentRequest != null) return false;
-  if (shell.goal?.status === "blocked") return false;
+  if (threadGoalAwaitsUser(shell)) return false;
   // A waiting guest message would wake it at once.
   if ((shell.pendingGuestMessageCount ?? 0) > 0) return false;
   if (hasQueuedTurnStart(shell, options)) return false;

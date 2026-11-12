@@ -258,6 +258,12 @@ describe("projectThreadAwarenessV2", () => {
         }),
       }),
     ).toMatchObject({ phase: "waiting_for_input" });
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: v2Thread({ goal: { objective: "Publish release notes", status: "blocked" } }),
+      }),
+    ).toMatchObject({ phase: "running" });
   });
 
   it("does not present authentication refreshes as user approvals", () => {

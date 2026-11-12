@@ -1,6 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadGoalAwaitsUser,
+} from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -960,7 +963,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest === "user_input" ||
-    thread.goal?.status === "blocked"
+    threadGoalAwaitsUser(thread)
   ) {
     return "input";
   }
@@ -1204,7 +1207,7 @@ export function resolveThreadStatusPill(input: {
   if (
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest === "user_input" ||
-    thread.goal?.status === "blocked"
+    threadGoalAwaitsUser(thread)
   ) {
     return {
       label: "Awaiting Input",

@@ -124,7 +124,20 @@ export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | u
   );
 }
 
-function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolean {
+/**
+ * A goal stays blocked through ordinary replies, so it waits on the user only while no run is active.
+ */
+export function threadGoalAwaitsUser(thread: {
+  readonly goal?: { readonly status: string } | null | undefined;
+  readonly runtime?: { readonly status: string } | null | undefined;
+}): boolean {
+  return (
+    thread.goal?.status === "blocked" &&
+    (thread.runtime == null || !threadRunStatusIsActive(thread.runtime.status))
+  );
+}
+
+function threadRunStatusIsActive(status: string): boolean {
   return (
     status === "preparing" ||
     status === "queued" ||

@@ -173,6 +173,9 @@ describe("isAutoSettlementCandidate", () => {
       goal,
     });
     expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.isSnoozed({ ...snoozed, activityRunStatus: "running" }, NOW_MS),
+    ).toBe(true);
   });
 
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {

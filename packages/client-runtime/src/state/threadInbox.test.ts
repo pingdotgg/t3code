@@ -225,6 +225,8 @@ describe("isThreadWorking", () => {
       goal: { objective: "Publish release notes", status: "blocked" as const },
     };
     expect(isThreadWorking(parked)).toBe(false);
+    // A reply that is not /goal resume runs while the goal still reads blocked.
+    expect(isThreadWorking({ ...parked, runtime: thread("a", true).runtime })).toBe(true);
   });
 });
 

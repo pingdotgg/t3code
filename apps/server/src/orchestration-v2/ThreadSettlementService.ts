@@ -172,6 +172,7 @@ export function isSnoozed(
     | "pendingRuntimeRequest"
     | "pendingGuestMessageCount"
     | "goal"
+    | "activityRunStatus"
   >,
   nowMs: number,
 ): boolean {
@@ -179,7 +180,8 @@ export function isSnoozed(
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
   // Same as the client: a waiting guest message wakes the thread, and the snooze stays stored.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
-  if (thread.goal?.status === "blocked") return false;
+  // A goal stays blocked through ordinary replies, so it wakes the thread only once no run is active.
+  if (thread.goal?.status === "blocked" && thread.activityRunStatus == null) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
   if (
     thread.pendingRuntimeRequest !== null &&

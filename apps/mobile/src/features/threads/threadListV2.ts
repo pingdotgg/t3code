@@ -10,7 +10,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadProviderStack,
+  threadGoalAwaitsUser,
+} from "@t3tools/client-runtime/state/models";
 import {
   threadSearchMatchKey,
   threadSearchSubject,
@@ -275,7 +278,7 @@ export function resolveThreadListV2Status(
   if (
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest === "user_input" ||
-    thread.goal?.status === "blocked"
+    threadGoalAwaitsUser(thread)
   ) {
     return "input";
   }

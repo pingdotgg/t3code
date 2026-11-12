@@ -1,5 +1,9 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
-import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
+import {
+  threadGoalAwaitsUser,
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
@@ -18,8 +22,7 @@ type WorkingThreadInput = Pick<
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
-  // A blocked goal waits on the user even while background work parks the runtime.
-  if (thread.goal?.status === "blocked") return false;
+  if (threadGoalAwaitsUser(thread)) return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   const run = thread.latestRun;
   const runSettled =
@@ -225,7 +228,7 @@ export function createInboxReturnTracker() {
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
           thread.pendingSubagentRequest != null ||
-          thread.goal?.status === "blocked" ||
+          threadGoalAwaitsUser(thread) ||
           (thread.pendingGuestMessageCount ?? 0) > 0 ||
           (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
           thread.runtime?.lastError != null ||

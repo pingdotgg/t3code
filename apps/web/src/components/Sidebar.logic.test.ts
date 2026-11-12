@@ -251,6 +251,13 @@ describe("resolveSidebarThreadStatus", () => {
         goal: { objective: "Publish release notes", status: "blocked" },
       }),
     ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime,
+        goal: { objective: "Publish release notes", status: "blocked" },
+      }),
+    ).toBe("working");
   });
 
   it("shows a waiting guest message as a Request, below the agent's own requests", () => {
