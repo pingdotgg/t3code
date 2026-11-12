@@ -143,9 +143,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     nextSettings: Settings,
     options?: { readonly forceRefresh?: boolean },
   ) {
-    const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
-    if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
+    const settingsChanged =
+      options?.forceRefresh === true || input.haveSettingsChanged(previousSettings, nextSettings);
+    // Nothing watches credential files, so any settings apply rechecks a failed sign-in.
+    const { snapshot: currentSnapshot } = yield* Ref.get(snapshotStateRef);
+    const forceRefresh =
+      options?.forceRefresh === true ||
+      (currentSnapshot.enabled && currentSnapshot.auth.status === "unauthenticated");
+    if (!forceRefresh && !settingsChanged) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
