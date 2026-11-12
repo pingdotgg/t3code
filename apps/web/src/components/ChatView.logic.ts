@@ -199,13 +199,6 @@ export function shouldRetargetThreadPullRequestPanel(
   );
 }
 
-export function shouldApplyProactiveChangesScope(input: {
-  readonly openedDiff: boolean;
-  readonly alreadyReviewingDiff: boolean;
-}): boolean {
-  return input.openedDiff && !input.alreadyReviewingDiff;
-}
-
 export function shouldOpenProactiveTurnDiff(input: {
   previousRunningTurnId: RunId | null | undefined;
   runningTurnId: RunId | null;
