@@ -375,6 +375,8 @@ export interface AcpAdapterV2Flavor {
   >;
   readonly customModels?: ReadonlyArray<string>;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
+  /** Rewrites a stored selection before it is validated and applied to a session. */
+  readonly normalizeModelSelection?: (selection: ModelSelection) => ModelSelection;
   /**
    * The agent advertises its model option only after `session/new` returns
    * (Kiro sends it in a `config_option_update`), so in-session model switching
@@ -7222,8 +7224,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const validateModelSelection = Effect.fn("AcpAdapterV2.validateModelSelection")(function* (
-          modelSelection: ModelSelection,
+          storedSelection: ModelSelection,
         ) {
+          const modelSelection =
+            flavor.normalizeModelSelection?.(storedSelection) ?? storedSelection;
           const model = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           if (
             flavor.applyModelSelection !== undefined ||
@@ -7251,9 +7255,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const configureSession = Effect.fnUntraced(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
-          modelSelection: ModelSelection,
+          storedSelection: ModelSelection,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
+          const modelSelection =
+            flavor.normalizeModelSelection?.(storedSelection) ?? storedSelection;
           yield* Ref.set(activeSelection, null);
           yield* validateModelSelection(modelSelection);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;

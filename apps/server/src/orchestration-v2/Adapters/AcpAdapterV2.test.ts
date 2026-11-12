@@ -102,6 +102,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const CURSOR_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "cursor" });
 
 const layerHost = TestProviderHost.layer().pipe(
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -1754,6 +1755,53 @@ describe("AcpAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(Option.getOrThrow(terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("opens a Cursor registry session from a saved preset model id", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-cursor-preset-" });
+      const requestLogPath = path.join(directory, "requests.ndjson");
+      const instanceId = ProviderInstanceId.make("acpRegistry_cursor");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        settings: CURSOR_SETTINGS,
+        environment: {},
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          mockAgentPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+          ),
+          environment: { T3_ACP_REQUEST_LOG_PATH: requestLogPath },
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+        ),
+      );
+      yield* adapter.openSession({
+        threadId: ThreadId.make("cursor-preset-thread"),
+        modelSelection: { instanceId, model: "composer-2[fast=true]" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: directory,
+        }),
+        providerSessionId: ProviderSessionId.make("cursor-preset-session"),
+      });
+      const configWrites = (yield* fileSystem.readFileString(requestLogPath))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line))
+        .filter((request) => request.method === "session/set_config_option")
+        .map((request) => [request.params.configId, request.params.value]);
+      assert.deepEqual(configWrites, [
+        ["model", "composer-2"],
+        ["fast", "true"],
+      ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
