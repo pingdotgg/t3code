@@ -740,7 +740,12 @@ it.layer(layerTest)("CodexDriver", (it) => {
         displayName: "Codex auth watch",
         enabled: true,
         environment: [],
-        config: { ...CodexDriver.defaultConfig(), homePath: codexHome },
+        // Use an explicit fixture executable so host npm shims cannot hide app-server in shell arguments.
+        config: {
+          ...CodexDriver.defaultConfig(),
+          homePath: codexHome,
+          binaryPath: NodePath.join(codexHome, "codex.exe"),
+        },
       }).pipe(
         // OS watchers can miss events written right after they start, so the test supplies them.
         Effect.provideService(FileSystem.FileSystem, {
