@@ -391,6 +391,7 @@ Editorial rules:
 - 3-8 words, fewer than 40 characters.
 - Use a compact noun phrase or clear action phrase.
 - Capture the umbrella goal when the request lists several symptoms or steps.
+- When asked about thread behavior, never include the referenced titles' topics. "[Fix login] why didn't this thread start?" means "Thread Startup Failure". Use linked topics only for requests about that work.
 - Name the product change, not the mock, plan, report, branch, or PR used to produce it.
 - Models, subagents, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
 - For reviews, name what is being reviewed and the relevant concern. Avoid generic titles such as "Review PR 123" when linked or attached context reveals the subject.
@@ -422,6 +423,7 @@ Editorial rules:
 - 3-8 words, fewer than 40 characters.
 - Use a compact noun phrase or clear action phrase.
 - Preserve the umbrella subject when later messages focus on one finding, provider, platform, or implementation detail.
+- When asked about thread behavior, never include the referenced titles' topics. "[Fix login] why didn't this thread start?" means "Thread Startup Failure". Use linked topics only for requests about that work.
 - A thread progressing through research, planning, implementation, review, CI, merge, and monitoring has usually not changed subjects.
 - Ignore deliverables and operations such as mocks, plans, HTML, branches, PRs, tests, CI, commits, merging, and monitoring unless they are the actual topic.
 - Models, subagents, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
