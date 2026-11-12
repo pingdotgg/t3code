@@ -1039,6 +1039,36 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("resolves parent-relative resources of a nested workspace HTML page", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-nested-" });
+      yield* fileSystem.makeDirectory(path.join(root, "site"));
+      const htmlPath = path.join(root, "site", "index.html");
+      yield* fileSystem.writeFileString(htmlPath, '<img src="../logo.png">');
+      yield* fileSystem.writeFileString(path.join(root, "logo.png"), "png bytes");
+      const canonicalLogoPath = yield* fileSystem.realPath(path.join(root, "logo.png"));
+
+      const { relativeUrl } = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: htmlPath },
+        workspaceRoot: root,
+      });
+      // The browser normalizes `../` against the page URL before it sends the request.
+      const requested = new URL("../logo.png", `http://host${relativeUrl}`).pathname;
+      const suffix = requested.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const resolved =
+        separatorIndex < 0
+          ? null
+          : yield* resolveAsset(
+              suffix.slice(0, separatorIndex),
+              decodeURIComponent(suffix.slice(separatorIndex + 1)),
+            );
+      expect(resolved).toEqual({ kind: "file", path: canonicalLogoPath });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
