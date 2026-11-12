@@ -1,5 +1,12 @@
 [
   {
+    "text": "😀 foo",
+    "start": [0, 5],
+    "keys": "bdgep",
+    "value": "😀 foo",
+    "cursor": [0, 0]
+  },
+  {
     "text": "one two\nthree four",
     "start": [0, 0],
     "keys": "d3w",
