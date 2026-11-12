@@ -54,6 +54,11 @@ export class PreviewPasskeys extends Context.Service<
 >()("@t3tools/desktop/preview/Passkeys/PreviewPasskeys") {}
 
 const notAllowed: PasskeyCeremonyResult = { success: false, error: "NotAllowedError" };
+const fallbackToNative: PasskeyCeremonyResult = {
+  success: false,
+  error: "NotSupportedError",
+  fallbackToNative: true,
+};
 
 const accountLabel = (account: Electron.WebAuthnAccount) =>
   account.displayName && account.name && account.displayName !== account.name
@@ -194,6 +199,10 @@ const make = Effect.gen(function* () {
         if (!frame || frame !== guest.mainFrame) return notAllowed;
         // The page shares the preload's JS world; read the frame's committed origin before any await/navigation.
         const origin = frame.origin;
+        // Chromium's own WebAuthn makes the secure-context call on Linux, including *.localhost.
+        if (!isTrustworthyOrigin(origin) && environment.platform === "linux") {
+          return fallbackToNative;
+        }
         if (
           !isTrustworthyOrigin(origin) ||
           active !== undefined ||

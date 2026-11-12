@@ -338,6 +338,12 @@ describe("PreviewPasskeys", () => {
         Effect.provide(layerFor({}, false, "linux")),
       );
       assert.isTrue(linux.bridgeEnabled);
+      const localhostPage = makeGuest("http://app.localhost:3000");
+      linux.attachGuest(localhostPage.guest);
+      assert.deepStrictEqual(
+        yield* localhostPage.call(PASSKEY_GET_CHANNEL, { challenge: new Uint8Array([1]) }),
+        { success: false, error: "NotSupportedError", fallbackToNative: true },
+      );
       const noLinuxHelper = yield* PreviewPasskeys.PreviewPasskeys.pipe(
         Effect.provide(layerFor({}, false, "linux", false)),
       );
