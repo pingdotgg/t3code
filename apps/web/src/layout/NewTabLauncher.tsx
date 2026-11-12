@@ -15,6 +15,7 @@ import {
 } from "../components/chat/DraftHeroHeadline";
 import { PANE_BODY_UNDER_HEADER_CLASS, PANE_TAB_CLASS, PaneNotch } from "../components/PaneNotch";
 import {
+  SURFACE_LAUNCHER_ENTRIES,
   SurfaceLauncherRows,
   useLauncherElement,
   useSurfaceLauncherKeys,
@@ -64,18 +65,6 @@ import {
   showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
 } from "./PaneTabs";
-
-const SURFACE_SHORTCUTS: Record<LauncherSurfaceKind, string> = {
-  browser: "B",
-  terminal: "T",
-  files: "F",
-  diff: "D",
-  "pull-request": "P",
-  "pull-requests": "L",
-  device: "M",
-  "side-chat": "S",
-};
-const SURFACE_KINDS = Object.keys(SURFACE_SHORTCUTS) as LauncherSurfaceKind[];
 
 /**
  * The thread a launcher's surfaces open for: a server thread, or a draft's own
@@ -257,9 +246,9 @@ function NewTabLauncherBody({
   };
   // A thread's linked pull requests need the thread.
   const threadless = contextThreadRef === null;
-  const actions: SurfaceLauncherAction[] = SURFACE_KINDS.map((kind) => ({
+  const actions: SurfaceLauncherAction[] = SURFACE_LAUNCHER_ENTRIES.map(({ kind, shortcut }) => ({
     kind,
-    shortcut: SURFACE_SHORTCUTS[kind],
+    shortcut,
     available: openers.available[kind],
     ...(kind === "browser" && openers.browserUnavailableReason !== null
       ? { disabledReason: openers.browserUnavailableReason }
