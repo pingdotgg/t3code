@@ -2878,7 +2878,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const lookup = async () => {
       const own = await searchRoot(workspaceRoot);
       let match = pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries);
-      if (match === null) {
+      const otherProject = match === null;
+      if (otherProject) {
         const threadProjectId = appAtomRegistry.get(
           environmentThreadShells.threadShellAtom(
             scopeThreadRef(props.environmentId, props.threadId),
@@ -2907,8 +2908,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         }),
         queryOptions,
       );
+      // Another project's file never replaces a thread-local file the search missed.
       return metadata._tag === "Success" &&
-        (needsWorkspaceBasenameLookup(relativePath)
+        (needsWorkspaceBasenameLookup(relativePath) && !otherProject
           ? metadata.value?.kind !== "directory"
           : metadata.value === null)
         ? match

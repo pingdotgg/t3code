@@ -819,6 +819,14 @@ function useChatMarkdownState({
         : [],
     );
     if (otherRoots.length === 0) return null;
+    // Another project's file never replaces a thread-local file the search missed.
+    if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+      });
+      if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
+    }
     return pickProjectLinkMatch(
       workspaceRelativePath,
       await Promise.all(otherRoots.map(searchRoot)),
