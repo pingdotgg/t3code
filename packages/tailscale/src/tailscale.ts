@@ -1,6 +1,6 @@
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { normalizeHostname } from "@t3tools/shared/hostClassification";
+import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -653,6 +653,60 @@ export const readTailscaleServeRoutesTo = (target: {
       return routes === undefined
         ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
         : Effect.succeed(routes);
+    }),
+  );
+
+/** A handler at the root of a Serve port: this server's, or another with the loopback port it dials. */
+export type TailscaleServeRootHolder =
+  | { readonly ours: true }
+  | { readonly ours: false; readonly loopback?: { readonly host: string; readonly port: number } };
+
+/**
+ * What answers at the root of `servePort` outside any Tailscale Service, where
+ * `ensureTailscaleServe` publishes, or undefined when the status cannot be read.
+ */
+export const parseTailscaleServeRootHolders = (
+  rawServeStatusJson: string,
+  servePort: number,
+  target: { readonly host: string; readonly port: number },
+): ReadonlyArray<TailscaleServeRootHolder> | undefined => {
+  const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
+  if (Option.isNone(status)) return undefined;
+  const config = status.value ?? undefined;
+  const tcp: ReadonlyArray<TailscaleServeRootHolder> =
+    config?.TCP?.[String(servePort)]?.TCPForward === undefined ? [] : [{ ours: false }];
+  const web = Object.entries(config?.Web ?? {}).flatMap(
+    ([hostPort, site]): ReadonlyArray<TailscaleServeRootHolder> => {
+      const root = site.Handlers?.["/"];
+      if (Number(hostPort.slice(hostPort.lastIndexOf(":") + 1)) !== servePort || root === undefined)
+        return [];
+      if (root.Proxy === undefined) return [{ ours: false }];
+      const url = expandProxy(root.Proxy);
+      if (reachesTarget(url, target) !== undefined) return [{ ours: true }];
+      const dialed = dialedHostPort(url);
+      return [
+        dialed !== undefined && isLocalLoopbackHost(dialed.host)
+          ? {
+              ours: false,
+              loopback: { host: normalizeHostname(dialed.host), port: Number(dialed.port) },
+            }
+          : { ours: false },
+      ];
+    },
+  );
+  return [...tcp, ...web];
+};
+
+export const readTailscaleServeRootHolders = (
+  servePort: number,
+  target: { readonly host: string; readonly port: number },
+) =>
+  readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
+    Effect.flatMap((status) => {
+      const holders = parseTailscaleServeRootHolders(status, servePort, target);
+      return holders === undefined
+        ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
+        : Effect.succeed(holders);
     }),
   );
 
