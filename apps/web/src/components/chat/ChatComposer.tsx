@@ -2080,6 +2080,206 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   };
 
+  const blurMobileComposerAfterSend = () => {
+    if (!isSoftwareKeyboardOpen) return;
+    if (composerBlurFrameRef.current !== null) {
+      window.cancelAnimationFrame(composerBlurFrameRef.current);
+      composerBlurFrameRef.current = null;
+    }
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement) {
+      activeElement.blur();
+    }
+    setIsComposerFocused(false);
+  };
+
+  const shouldBlurMobileComposerOnSubmit = () => {
+    if (!isSoftwareKeyboardOpen) return false;
+    if (isSendBusy || submissionBlocked || environmentUnavailable !== null || phase === "running") {
+      return false;
+    }
+    if (activePendingProgress) {
+      return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
+    }
+    return hasMessageToSend;
+  };
+
+  const submitComposerRef = useRef<
+    (
+      dispatchMode?: ComposerDispatchMode,
+      submissionIntent?: ComposerSubmissionIntent,
+      options?: { readonly afterDictation?: boolean },
+    ) => void
+  >(() => {});
+  const submitComposer = (
+    event?: { preventDefault: () => void },
+    dispatchMode?: ComposerDispatchMode,
+    submissionIntent?: ComposerSubmissionIntent,
+    options?: { readonly afterDictation?: boolean },
+  ) => {
+    if (voiceInputActive && !options?.afterDictation) {
+      event?.preventDefault();
+      const queuedOwnerKey = attachmentTargetKey;
+      const capturedDraftTarget = composerDraftTarget;
+      const resolvedDispatchMode =
+        dispatchMode ??
+        resolveComposerDispatchMode({
+          running: phase === "running" || phase === "connecting",
+          alternateModifier: false,
+          activeTurnDefault: followUpBehavior,
+          canSteer,
+        });
+      const capturedDetachedSend =
+        questionAttachmentTarget === null ? (captureDetachedSend?.() ?? null) : null;
+      const capturedSendContext =
+        capturedDetachedSend !== null ? (composerRef.current?.getSendContext() ?? null) : null;
+      const capturedSubmissionTarget = submissionTarget;
+      submitAfterDictation((transcribedText) => {
+        const stillLive =
+          composerMountedRef.current && attachmentTargetKeyRef.current === queuedOwnerKey;
+        if (stillLive) {
+          submitComposerRef.current(dispatchMode, submissionIntent, { afterDictation: true });
+          return;
+        }
+        if (
+          !capturedDetachedSend ||
+          !capturedSendContext ||
+          pendingDraftWork.has(queuedOwnerKey) ||
+          countPreparingComposerImages(queuedOwnerKey) > 0
+        ) {
+          return;
+        }
+        const liveTarget = resolveLiveComposerDraftTarget(capturedDraftTarget);
+        const latestDraft =
+          liveTarget !== null
+            ? useComposerDraftStore.getState().getComposerDraft(liveTarget)
+            : null;
+        submitComposerDraft({
+          prompt: transcribedText,
+          submissionTarget: capturedSubmissionTarget,
+          event: undefined,
+          onSend: (sendEvent) => {
+            capturedDetachedSend(sendEvent, resolvedDispatchMode, submissionIntent, undefined, {
+              prompt: transcribedText,
+              sendContext: {
+                ...capturedSendContext,
+                ...(latestDraft
+                  ? {
+                      images: latestDraft.images,
+                      files: latestDraft.files,
+                      terminalContexts: latestDraft.terminalContexts,
+                      previewAnnotations: latestDraft.previewAnnotations,
+                      reviewComments: latestDraft.reviewComments,
+                      threadContexts: latestDraft.threadContexts,
+                      environmentContexts: latestDraft.environmentContexts,
+                    }
+                  : {}),
+                prompt: transcribedText,
+              },
+            });
+            return true;
+          },
+        });
+      });
+      return false;
+    }
+    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      event?.preventDefault();
+      return false;
+    }
+    if (composerSendHeld) {
+      event?.preventDefault();
+      return false;
+    }
+    // Sending now would leave a still-compressing image out of the answer, so wait for it.
+    if (
+      activeThreadId &&
+      questionAttachmentTarget &&
+      submitAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent))
+    ) {
+      event?.preventDefault();
+      return false;
+    }
+    if (pendingDraftWork.has(attachmentTargetKey)) {
+      event?.preventDefault();
+      toastManager.add({
+        type: "info",
+        title: gt("Still bringing attached context into this message."),
+        description: gt("Send again once its chip resolves."),
+      });
+      return false;
+    }
+    // An empty draft has nothing to send; Enter does what the Resume thread button does.
+    if (showResumeAction && !activePendingProgress && promptRef.current.trim().length === 0) {
+      event?.preventDefault();
+      if (isSendBusy || environmentUnavailable !== null) return false;
+      onResume();
+      return true;
+    }
+    const submission = submitComposerDraft({
+      prompt: promptRef.current,
+      submissionTarget,
+      event,
+      onSend: (sendEvent) => {
+        providerInputRejectedRef.current = false;
+        onSend(
+          sendEvent,
+          dispatchMode ??
+            resolveComposerDispatchMode({
+              running: phase === "running" || phase === "connecting",
+              alternateModifier: false,
+              activeTurnDefault: followUpBehavior,
+              canSteer,
+            }),
+          submissionIntent,
+        );
+        return !providerInputRejectedRef.current;
+      },
+    });
+    setComposerSubmissionError(submission.validationMessage);
+    if (!submission.didDispatch) return false;
+    onTypingGuardSend();
+    if (shouldBlurMobileComposerOnSubmit()) {
+      blurMobileComposerAfterSend();
+    }
+    return true;
+  };
+  const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
+  useLayoutEffect(() => {
+    submitComposerRef.current = (mode, intent, options) =>
+      submitComposerStable(undefined, mode, intent, options);
+  }, [submitComposerStable]);
+  useDictationSubmissionShortcut({
+    enabled: voiceInputActive && !speechInput.preparing,
+    formRef: composerFormRef,
+    onKeyDown: (event) => {
+      const intent = composerSubmissionIntentForKey({
+        event,
+        keybindings,
+        context: getShortcutContext(event.target),
+        isSoftwareKeyboardOpen,
+        isDraftThread: routeKind === "draft",
+        isRunning: phase === "running" || phase === "connecting",
+        sendShortcut: settings.sendShortcut,
+        prompt: promptRef.current,
+      });
+      if (!intent) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      submitComposer(
+        undefined,
+        resolveComposerDispatchMode({
+          running: phase === "running" || phase === "connecting",
+          alternateModifier: intent === "alternate",
+          canSteer,
+          activeTurnDefault: followUpBehavior,
+        }),
+        intent,
+      );
+    },
+  });
+
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
@@ -2303,206 +2503,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const nextItem = composerMenuItems[nextIndex];
     setComposerHighlightedItemId(nextItem?.id ?? null);
   };
-
-  const blurMobileComposerAfterSend = () => {
-    if (!isSoftwareKeyboardOpen) return;
-    if (composerBlurFrameRef.current !== null) {
-      window.cancelAnimationFrame(composerBlurFrameRef.current);
-      composerBlurFrameRef.current = null;
-    }
-    const activeElement = document.activeElement;
-    if (activeElement instanceof HTMLElement) {
-      activeElement.blur();
-    }
-    setIsComposerFocused(false);
-  };
-
-  const shouldBlurMobileComposerOnSubmit = () => {
-    if (!isSoftwareKeyboardOpen) return false;
-    if (isSendBusy || submissionBlocked || environmentUnavailable !== null || phase === "running") {
-      return false;
-    }
-    if (activePendingProgress) {
-      return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
-    }
-    return hasMessageToSend;
-  };
-
-  const submitComposerRef = useRef<
-    (
-      dispatchMode?: ComposerDispatchMode,
-      submissionIntent?: ComposerSubmissionIntent,
-      options?: { readonly afterDictation?: boolean },
-    ) => void
-  >(() => {});
-  const submitComposer = (
-    event?: { preventDefault: () => void },
-    dispatchMode?: ComposerDispatchMode,
-    submissionIntent?: ComposerSubmissionIntent,
-    options?: { readonly afterDictation?: boolean },
-  ) => {
-    if (voiceInputActive && !options?.afterDictation) {
-      event?.preventDefault();
-      const queuedOwnerKey = attachmentTargetKey;
-      const capturedDraftTarget = composerDraftTarget;
-      const resolvedDispatchMode =
-        dispatchMode ??
-        resolveComposerDispatchMode({
-          running: phase === "running" || phase === "connecting",
-          alternateModifier: false,
-          activeTurnDefault: followUpBehavior,
-          canSteer,
-        });
-      const capturedDetachedSend =
-        questionAttachmentTarget === null ? (captureDetachedSend?.() ?? null) : null;
-      const capturedSendContext =
-        capturedDetachedSend !== null ? (composerRef.current?.getSendContext() ?? null) : null;
-      const capturedSubmissionTarget = submissionTarget;
-      submitAfterDictation((transcribedText) => {
-        const stillLive =
-          composerMountedRef.current && attachmentTargetKeyRef.current === queuedOwnerKey;
-        if (stillLive) {
-          submitComposerRef.current(dispatchMode, submissionIntent, { afterDictation: true });
-          return;
-        }
-        if (
-          !capturedDetachedSend ||
-          !capturedSendContext ||
-          pendingDraftWork.has(queuedOwnerKey) ||
-          countPreparingComposerImages(queuedOwnerKey) > 0
-        ) {
-          return;
-        }
-        const liveTarget = resolveLiveComposerDraftTarget(capturedDraftTarget);
-        const latestDraft =
-          liveTarget !== null
-            ? useComposerDraftStore.getState().getComposerDraft(liveTarget)
-            : null;
-        submitComposerDraft({
-          prompt: transcribedText,
-          submissionTarget: capturedSubmissionTarget,
-          event: undefined,
-          onSend: (sendEvent) => {
-            capturedDetachedSend(sendEvent, resolvedDispatchMode, submissionIntent, undefined, {
-              prompt: transcribedText,
-              sendContext: {
-                ...capturedSendContext,
-                ...(latestDraft
-                  ? {
-                      images: latestDraft.images,
-                      files: latestDraft.files,
-                      terminalContexts: latestDraft.terminalContexts,
-                      previewAnnotations: latestDraft.previewAnnotations,
-                      reviewComments: latestDraft.reviewComments,
-                      threadContexts: latestDraft.threadContexts,
-                      environmentContexts: latestDraft.environmentContexts,
-                    }
-                  : {}),
-                prompt: transcribedText,
-              },
-            });
-            return true;
-          },
-        });
-      });
-      return false;
-    }
-    if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      event?.preventDefault();
-      return false;
-    }
-    if (composerSendHeld) {
-      event?.preventDefault();
-      return false;
-    }
-    // Sending now would leave a still-compressing image out of the answer, so wait for it.
-    if (
-      activeThreadId &&
-      questionAttachmentTarget &&
-      submitAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent))
-    ) {
-      event?.preventDefault();
-      return false;
-    }
-    if (pendingDraftWork.has(attachmentTargetKey)) {
-      event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: gt("Still bringing attached context into this message."),
-        description: gt("Send again once its chip resolves."),
-      });
-      return false;
-    }
-    // An empty draft has nothing to send; Enter does what the Resume thread button does.
-    if (showResumeAction && !activePendingProgress && promptRef.current.trim().length === 0) {
-      event?.preventDefault();
-      if (isSendBusy || environmentUnavailable !== null) return false;
-      onResume();
-      return true;
-    }
-    const submission = submitComposerDraft({
-      prompt: promptRef.current,
-      submissionTarget,
-      event,
-      onSend: (sendEvent) => {
-        providerInputRejectedRef.current = false;
-        onSend(
-          sendEvent,
-          dispatchMode ??
-            resolveComposerDispatchMode({
-              running: phase === "running" || phase === "connecting",
-              alternateModifier: false,
-              activeTurnDefault: followUpBehavior,
-              canSteer,
-            }),
-          submissionIntent,
-        );
-        return !providerInputRejectedRef.current;
-      },
-    });
-    setComposerSubmissionError(submission.validationMessage);
-    if (!submission.didDispatch) return false;
-    onTypingGuardSend();
-    if (shouldBlurMobileComposerOnSubmit()) {
-      blurMobileComposerAfterSend();
-    }
-    return true;
-  };
-  const submitComposerStable = useStableCallback(submitComposer);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
-  useLayoutEffect(() => {
-    submitComposerRef.current = (mode, intent, options) =>
-      submitComposerStable(undefined, mode, intent, options);
-  }, [submitComposerStable]);
-  useDictationSubmissionShortcut({
-    enabled: voiceInputActive && !speechInput.preparing,
-    formRef: composerFormRef,
-    onKeyDown: (event) => {
-      const intent = composerSubmissionIntentForKey({
-        event,
-        keybindings,
-        context: getShortcutContext(event.target),
-        isSoftwareKeyboardOpen,
-        isDraftThread: routeKind === "draft",
-        isRunning: phase === "running" || phase === "connecting",
-        sendShortcut: settings.sendShortcut,
-        prompt: promptRef.current,
-      });
-      if (!intent) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      submitComposer(
-        undefined,
-        resolveComposerDispatchMode({
-          running: phase === "running" || phase === "connecting",
-          alternateModifier: intent === "alternate",
-          canSteer,
-          activeTurnDefault: followUpBehavior,
-        }),
-        intent,
-      );
-    },
-  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     const running = phase === "running" || phase === "connecting";
