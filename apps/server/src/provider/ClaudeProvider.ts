@@ -47,7 +47,8 @@ import {
 } from "./Drivers/ClaudeHome.ts";
 import {
   customClaudeApiEndpointHost,
-  discoverClaudeSkills,
+  discoverClaudeSkillCatalog,
+  nameClaudeSkillCommandsByFolder,
   readClaudeSettingsEnv,
 } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
@@ -587,7 +588,11 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
+  const { skills, commandAliases } = yield* discoverClaudeSkillCatalog(
+    claudeSettings,
+    cwd,
+    environment,
+  );
   const fileSystem = yield* FileSystem.FileSystem;
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
@@ -601,7 +606,7 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
     skills,
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
-      ...(capabilities?.slashCommands ?? []),
+      ...nameClaudeSkillCommandsByFolder(capabilities?.slashCommands ?? [], commandAliases),
     ]),
     slashCommandsPending: cwdExists && !capabilities,
   };
@@ -736,8 +741,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ),
     capabilities?.effortCapSources ?? [],
   );
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
+  const { skills, commandAliases } = yield* discoverClaudeSkillCatalog(
+    claudeSettings,
+    cwd,
+    resolvedEnvironment,
+  );
+  const slashCommands = [
+    COMPACT_SLASH_COMMAND,
+    ...nameClaudeSkillCommandsByFolder(capabilities?.slashCommands ?? [], commandAliases),
+  ];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {

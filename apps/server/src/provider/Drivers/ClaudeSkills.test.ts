@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import {
+  discoverClaudeSkillCatalog,
+  discoverClaudeSkills,
+  nameClaudeSkillCommandsByFolder,
+} from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
 const writeSkill = Effect.fn(function* (
@@ -1083,11 +1087,21 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         '{ "skillOverrides": { "probe-alias-frontmatter": "off" } }',
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+      const { skills, commandAliases } = yield* discoverClaudeSkillCatalog({
+        homePath: configDir,
+      });
 
       assert.deepEqual(
         skills.map((skill) => [skill.name, skill.enabled]),
         [["probe-alias", true]],
+      );
+      // Claude's own command list names this skill by its frontmatter.
+      assert.deepEqual(
+        nameClaudeSkillCommandsByFolder(
+          [{ name: "probe-alias-frontmatter" }, { name: "review" }],
+          commandAliases,
+        ),
+        [{ name: "probe-alias" }, { name: "review" }],
       );
     }),
   );

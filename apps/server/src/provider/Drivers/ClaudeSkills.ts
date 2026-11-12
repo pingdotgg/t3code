@@ -627,12 +627,18 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
+export interface ClaudeSkillCatalog {
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /** Claude lists a folder skill under its frontmatter `name`; lowercased name to folder name. */
+  readonly commandAliases: ReadonlyMap<string, string>;
+}
+
 /** First name wins, matching Claude Code's precedence of user skills over project skills. */
-export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
+export const discoverClaudeSkillCatalog = Effect.fn("discoverClaudeSkillCatalog")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
-): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<ClaudeSkillCatalog, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = environment ?? process.env;
@@ -665,6 +671,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
+  const commandAliases = new Map<string, string>();
   for (const root of roots) {
     const singleSkill =
       root.prefix !== undefined &&
@@ -711,6 +718,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       if (skillsByName.has(name)) {
         continue;
       }
+      const alias = !root.prefix && frontmatter.kind === "parsed" ? frontmatter.name : undefined;
+      if (alias && !commandAliases.has(alias.toLowerCase())) {
+        commandAliases.set(alias.toLowerCase(), name);
+      }
 
       const override = root.prefix ? undefined : skillOverrides.get(name);
       const userInvocationOnly =
@@ -732,5 +743,28 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  const skillNames = new Set([...skillsByName.keys()].map((name) => name.toLowerCase()));
+  for (const alias of commandAliases.keys()) {
+    if (skillNames.has(alias)) commandAliases.delete(alias);
+  }
+  return {
+    skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    commandAliases,
+  };
 });
+
+export const discoverClaudeSkills = (
+  ...args: Parameters<typeof discoverClaudeSkillCatalog>
+): Effect.Effect<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> =>
+  discoverClaudeSkillCatalog(...args).pipe(Effect.map((catalog) => catalog.skills));
+
+/** Names Claude's command for a folder skill after the folder, so it dedupes against the skill. */
+export function nameClaudeSkillCommandsByFolder<C extends { readonly name: string }>(
+  commands: ReadonlyArray<C>,
+  commandAliases: ReadonlyMap<string, string>,
+): ReadonlyArray<C> {
+  return commands.map((command) => {
+    const folderName = commandAliases.get(command.name.trim().toLowerCase());
+    return folderName === undefined ? command : { ...command, name: folderName };
+  });
+}
