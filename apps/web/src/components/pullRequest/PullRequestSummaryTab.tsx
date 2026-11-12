@@ -290,7 +290,7 @@ function CollapsedComment({
   count?: string | null;
   replies?: ReactNode;
   moreReplies?: ReactNode;
-  replyForm?: ReactNode;
+  replyForm?: ((collapsed: boolean) => ReactNode) | null;
   onAddToChat?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -349,7 +349,7 @@ function CollapsedComment({
         {/* Stays mounted while collapsed so an unsent reply survives. */}
         {replyForm ? (
           <div hidden={!open} className="px-3 pb-3">
-            {replyForm}
+            {replyForm(!open)}
           </div>
         ) : null}
         {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
@@ -704,7 +704,11 @@ export function PullRequestSummaryTab({
     onRefresh();
     return true;
   };
-  const threadReplyForm = (thread: PullRequestConversationThread, className?: string) =>
+  const threadReplyForm = (
+    thread: PullRequestConversationThread,
+    className?: string,
+    collapsed = false,
+  ) =>
     canReplyToThreads ? (
       <PullRequestThreadReplyForm
         // Host thread ids can collide across pull requests.
@@ -714,6 +718,7 @@ export function PullRequestSummaryTab({
         threadId={thread.id}
         completionScope={completionScope}
         pending={threadReplyPending}
+        collapsed={collapsed}
         {...(className === undefined ? {} : { className })}
         onReply={(body) => sendThreadReply(thread.id, body)}
       />
@@ -945,7 +950,7 @@ export function PullRequestSummaryTab({
             <PullRequestMoreReplies {...item} />
           ) : null
         }
-        replyForm={thread ? threadReplyForm(thread, "mt-0") : null}
+        replyForm={thread ? (collapsed) => threadReplyForm(thread, "mt-0", collapsed) : null}
         onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
         reactionBar={reactionBarFor(comment)}
         resolveButton={resolveButtonFor(thread)}
