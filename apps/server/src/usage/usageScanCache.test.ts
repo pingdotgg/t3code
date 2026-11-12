@@ -169,7 +169,7 @@ describe("scan cache round trip", () => {
     expect(restored).toEqual(original);
   });
 
-  it.each([5, 6, 7, 8, 10])(
+  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -231,16 +231,24 @@ describe("scan cache round trip", () => {
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
-      expect(restored.get("/gone-codex.jsonl")).toEqual({
-        ...original.get("/gone-codex.jsonl"),
-        size: -1,
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-      });
-      expect(restored.get("/clean-codex.jsonl")).toEqual({
-        ...cleanCodex,
-        size: version >= 8 ? cleanCodex.size : -1,
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-      });
+      expect(restored.get("/gone-codex.jsonl")).toEqual(
+        version >= 14
+          ? original.get("/gone-codex.jsonl")
+          : {
+              ...original.get("/gone-codex.jsonl"),
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
+      expect(restored.get("/clean-codex.jsonl")).toEqual(
+        version >= 14
+          ? cleanCodex
+          : {
+              ...cleanCodex,
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -253,7 +261,7 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it.each([11, 12, 13])(
+  it.each([11, 12, 13, 14])(
     "re-parses v%s Claude transcripts for corrected attempt usage",
     (version) => {
       const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
