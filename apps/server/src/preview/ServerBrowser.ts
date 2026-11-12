@@ -67,7 +67,6 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   BrowserContext,
   CDPSession,
-  Dialog,
   Download,
   FileChooser,
   Frame,
@@ -304,6 +303,14 @@ interface Recording {
   readonly framesInFlight: Set<Promise<void>>;
 }
 
+interface PendingDialog {
+  readonly type: string;
+  readonly message: string;
+  readonly defaultValue: string;
+  readonly accept: (input: PreviewAutomationDialogInput) => Promise<void>;
+  readonly dismiss: () => Promise<void>;
+}
+
 interface ServerTab {
   readonly threadId: ThreadId;
   readonly tabId: string;
@@ -339,7 +346,9 @@ interface ServerTab {
     readonly accept: string;
     readonly offeredTo: string | null;
   } | null;
-  dialog: Dialog | null;
+  dialog: PendingDialog | null;
+  /** Released when an HTTP auth challenge holds a navigation until it is answered. */
+  readonly authWaiters: Set<() => void>;
   setting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
@@ -560,9 +569,9 @@ const make = Effect.gen(function* () {
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
-          type: tab.dialog.type(),
-          message: tab.dialog.message().slice(0, 4000),
-          defaultValue: tab.dialog.defaultValue().slice(0, 4000),
+          type: tab.dialog.type,
+          message: tab.dialog.message.slice(0, 4000),
+          defaultValue: tab.dialog.defaultValue.slice(0, 4000),
         }
       : null;
 
@@ -597,11 +606,66 @@ const make = Effect.gen(function* () {
   const resolveDialog = async (tab: ServerTab, input: PreviewAutomationDialogInput) => {
     const dialog = tab.dialog;
     if (!dialog) throw new Error("No dialog is pending.");
-    if (input.accept) await dialog.accept(input.promptText);
-    else await dialog.dismiss();
-    if (tab.dialog === dialog) tab.dialog = null;
-    ServerBrowserPage.invalidateRefs(tab.page);
+    // A wrong password is challenged again at once, and an abandoned request cannot be answered.
+    if (dialog.type === "auth") tab.dialog = null;
+    try {
+      if (input.accept) await dialog.accept(input);
+      else await dialog.dismiss();
+      if (tab.dialog === dialog) tab.dialog = null;
+    } finally {
+      if (tab.dialog !== dialog) {
+        ServerBrowserPage.invalidateRefs(tab.page);
+        broadcastControl(tab);
+      }
+    }
+  };
+
+  /** Credentials go straight to Chromium; they are never stored or reported in status. */
+  const requestAuth = (
+    tab: ServerTab,
+    requestId: string,
+    challenge: { readonly source?: string; readonly origin: string; readonly realm: string },
+  ) => {
+    const respond = (
+      authChallengeResponse:
+        | { response: "CancelAuth" }
+        | { response: "ProvideCredentials"; username: string; password: string },
+    ) =>
+      tab.cdp.send("Fetch.continueWithAuth", { requestId, authChallengeResponse }).then(constVoid);
+    // Only one dialog can be answered at a time.
+    if (tab.closing || tab.dialog) {
+      void respond({ response: "CancelAuth" }).catch(constVoid);
+      return;
+    }
+    tab.dialog = {
+      type: "auth",
+      message: `${challenge.source === "Proxy" ? "The proxy " : ""}${challenge.origin} asks you to sign in.${challenge.realm ? ` It says: ${challenge.realm}` : ""}`,
+      defaultValue: "",
+      accept: (input) =>
+        respond({
+          response: "ProvideCredentials",
+          username: input.username ?? "",
+          password: input.password ?? "",
+        }),
+      dismiss: () => respond({ response: "CancelAuth" }),
+    };
     broadcastControl(tab);
+    for (const release of tab.authWaiters) release();
+  };
+
+  /** A sign-in prompt holds its navigation, so waiting for one ends when the prompt shows. */
+  const settleOnAuth = (tab: ServerTab, start: () => Promise<unknown>): Promise<void> => {
+    let release = constVoid;
+    const challenged = new Promise<void>((resolve) => {
+      release = resolve;
+      tab.authWaiters.add(resolve);
+    });
+    return Promise.race([
+      start()
+        .then(constVoid)
+        .finally(() => tab.authWaiters.delete(release)),
+      challenged,
+    ]);
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
@@ -911,7 +975,8 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    await installPdfDocumentNavigation(cdp);
+    // Desktop tabs keep the desktop shell's own handling of HTTP auth.
+    await installPdfDocumentNavigation(cdp, { handleAuthRequests: !desktop });
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -952,6 +1017,7 @@ const make = Effect.gen(function* () {
       downloads: [],
       fileChooser: null,
       dialog: null,
+      authWaiters: new Set(),
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
@@ -995,6 +1061,12 @@ const make = Effect.gen(function* () {
       if (!isMainNavigation(request)) return;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
+      // A new navigation abandons a pending sign-in; release its paused request.
+      if (tab.dialog?.type === "auth") {
+        void tab.dialog.dismiss().catch(constVoid);
+        tab.dialog = null;
+        broadcastControl(tab);
+      }
       tab.loading = true;
       tab.loadError = undefined;
       report(tab, {
@@ -1078,9 +1150,20 @@ const make = Effect.gen(function* () {
         void dialog.accept().catch(constVoid);
         return;
       }
-      tab.dialog = dialog;
+      if (tab.dialog?.type === "auth") void tab.dialog.dismiss().catch(constVoid);
+      tab.dialog = {
+        type: dialog.type(),
+        message: dialog.message(),
+        defaultValue: dialog.defaultValue(),
+        accept: (input) => dialog.accept(input.promptText),
+        dismiss: () => dialog.dismiss(),
+      };
       broadcastControl(tab);
     });
+    if (!desktop)
+      cdp.on("Fetch.authRequired", (event) =>
+        requestAuth(tab, event.requestId, event.authChallenge),
+      );
     page.on("download", (download) => void saveDownload(tab, download));
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
@@ -1103,13 +1186,15 @@ const make = Effect.gen(function* () {
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
     ) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
-      tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+      const url = snapshot.navStatus.url;
+      tab.initialNavigation = settleOnAuth(tab, () =>
+        ((desktop || adopted) && page.url() === url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
-      ).then(constVoid, (cause: unknown) => {
-        throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
-      });
+          : page.goto(url, options)
+        ).catch((cause: unknown) => {
+          throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
+        }),
+      );
 
       if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
       else void tab.initialNavigation.catch(constVoid);
@@ -1784,15 +1869,17 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const navigation = tab.page.goto(url, {
-      timeout,
-      waitUntil:
-        readiness === "domContentLoaded"
-          ? "domcontentloaded"
-          : readiness === "none"
-            ? "commit"
-            : "load",
-    });
+    const navigation = settleOnAuth(tab, () =>
+      tab.page.goto(url, {
+        timeout,
+        waitUntil:
+          readiness === "domContentLoaded"
+            ? "domcontentloaded"
+            : readiness === "none"
+              ? "commit"
+              : "load",
+      }),
+    );
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
@@ -2183,7 +2270,8 @@ const make = Effect.gen(function* () {
         return tab.control.agent(
           request.agentSessionId,
           async () => {
-            if (tab.dialog)
+            // A new tab's first page may already be asking for sign-in; report it.
+            if (tab.dialog && (existing || tab.dialog.type !== "auth"))
               throw new BrowserControlInterrupted({
                 message:
                   "A browser dialog is pending. Read preview_status and use preview_dialog first.",
@@ -2195,10 +2283,10 @@ const make = Effect.gen(function* () {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await Promise.resolve(tab.initialNavigation)
                 .then(async () => {
-                  if (url) {
-                    await tab.page
-                      .waitForLoadState("load", { timeout: navigationTimeout })
-                      .catch(constVoid);
+                  if (url && tab.dialog?.type !== "auth") {
+                    await settleOnAuth(tab, () =>
+                      tab.page.waitForLoadState("load", { timeout: navigationTimeout }),
+                    ).catch(constVoid);
                   }
                   assertNavigationSucceeded(tab);
                 })
@@ -2866,6 +2954,8 @@ const make = Effect.gen(function* () {
                 ...(typeof message.promptText === "string"
                   ? { promptText: message.promptText }
                   : {}),
+                ...(typeof message.username === "string" ? { username: message.username } : {}),
+                ...(typeof message.password === "string" ? { password: message.password } : {}),
               });
             } else {
               const dispatch = async (input: Record<string, unknown>) => {
