@@ -18,12 +18,17 @@ vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importO
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadProjection: (() => state.projection) as never,
+  // The linked environment is connected, but its thread is not in the loaded shell.
   useQuietThreadShell: ((target: { readonly environmentId: string } | null) =>
-    target === null
+    target === null || target.environmentId === "environment:linked"
       ? null
-      : {
-          title: target.environmentId === "environment:linked" ? "Linked lead" : "Release lead",
-        }) as never,
+      : { title: "Release lead" }) as never,
+}));
+
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: ((environmentId: string | null) =>
+    environmentId === "environment:linked" ? { environmentId } : null) as never,
 }));
 
 vi.mock(import("../../state/query"), async (importOriginal) => ({
@@ -188,8 +193,8 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
   await expect.element(page.getByRole("button", { name: /Release lead/ })).toBeVisible();
   await page.getByRole("button", { name: "Open thread" }).nth(0).click({ force: true });
   expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead", "environment:test");
-  // A sender in a linked environment is looked up and opened there.
-  await expect.element(page.getByRole("button", { name: /Linked lead/ })).toBeVisible();
+  // A sender in a connected linked environment keeps the title it sent and opens there.
+  await expect.element(page.getByRole("button", { name: /Title when sent/ })).toBeVisible();
   await page.getByRole("button", { name: "Open thread" }).nth(1).click({ force: true });
   expect(onOpenThread).toHaveBeenLastCalledWith("thread:linked-lead", "environment:linked");
 

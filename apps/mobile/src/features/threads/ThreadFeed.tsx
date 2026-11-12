@@ -246,6 +246,7 @@ import {
   useQuietThreadShell,
   useThreadChipIcons,
 } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -1386,14 +1387,12 @@ function AgentMessageFoldHeader(props: {
 function OpenSenderThreadButton(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId: ThreadId;
-  /** In a linked environment, shown only once this client can reach the thread. */
+  /** In a linked environment, shown only when this client is connected to it. */
   readonly linked?: boolean;
 }) {
   const openLinkedThread = useOpenLinkedThread();
-  const linkedShell = useQuietThreadShell(
-    props.linked ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
-  );
-  if (props.linked && linkedShell === null) return null;
+  const linkedEnvironment = useEnvironmentPresentation(props.linked ? props.environmentId : null);
+  if (props.linked && linkedEnvironment.presentation === null) return null;
   return (
     <Pressable
       accessibilityRole="link"

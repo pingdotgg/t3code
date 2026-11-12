@@ -29,6 +29,7 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
+import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
@@ -425,6 +426,9 @@ function QueuedMessage(props: {
   const [expanded, setExpanded] = useState(false);
   const taskTitle = useScheduledTaskTitle(props.environmentId, scheduledTaskId);
   const senderShell = useQuietThreadShell(attribution === "agent" ? senderRef : null);
+  const linkedSenderEnvironment = useEnvironment(
+    props.message?.linkedSender?.environmentId ?? null,
+  );
   const fold =
     attribution === "automation"
       ? {
@@ -511,8 +515,8 @@ function QueuedMessage(props: {
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
             {attribution === "agent" &&
             senderRef &&
-            // Only a linked environment this client reaches can open the sender's thread.
-            (props.message?.linkedSender === undefined || senderShell !== null) ? (
+            // Only an environment this client is connected to can open the sender's thread there.
+            (props.message?.linkedSender === undefined || linkedSenderEnvironment !== null) ? (
               <InlineButton
                 tone="muted"
                 onClick={() => props.onOpenThread(senderRef.threadId, senderRef.environmentId)}
