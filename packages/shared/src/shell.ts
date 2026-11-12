@@ -216,6 +216,11 @@ export function buildEnvironmentCaptureCommand(
 ): string {
   const executableName = NodePath.basename(shell).toLowerCase();
   const isNushell = executableName.startsWith("nu");
+  // This capture uses POSIX commands; resolve before a login profile can replace PATH.
+  const printenv = isNushell
+    ? undefined
+    : resolveSpawnExecutableWithNode("printenv", "linux", process.env);
+  const fallbackPrintenv = `'${NodePath.resolve(printenv ?? "/usr/bin/printenv").replaceAll("'", "'\\''")}'`;
 
   const capture = names
     .map((name) => {
@@ -246,7 +251,7 @@ export function buildEnvironmentCaptureCommand(
 
       return [
         `printf '%s\\n' '${envCaptureStart(name)}'`,
-        `printenv ${name} || true`,
+        `printenv ${name} || ${fallbackPrintenv} ${name} || true`,
         `printf '%s\\n' '${envCaptureEnd(name)}'`,
       ].join("; ");
     })
