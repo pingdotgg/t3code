@@ -9,7 +9,7 @@ function ThreadProbe(props: { threadId: string }) {
   useFocusComposerOnThreadOpen(props.threadId, true, () => composerRef.current?.focus());
   return (
     <>
-      <div data-sidebar-row="thread:beta">
+      <div data-sidebar-action-for="thread:beta">
         <input aria-label="Thread title" />
       </div>
       <textarea aria-label="Message" ref={composerRef} />

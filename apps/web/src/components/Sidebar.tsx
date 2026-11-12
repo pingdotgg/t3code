@@ -3347,9 +3347,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     ref={attachTreeRef}
-                    // Presentation flattens VoiceOver's list interaction boundary while preserving descendant
-                    // controls.
-                    role="presentation"
+                    // Safari drops list semantics from lists styled without markers.
+                    role="list"
                     className={cn(
                       "relative flex flex-col gap-px",
                       sidebarListItems.length > 0 && "flex-1",

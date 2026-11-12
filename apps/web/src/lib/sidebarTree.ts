@@ -28,7 +28,8 @@ export function installSidebarTree(root: HTMLElement) {
   const ownerRow = (element: HTMLElement) => {
     const row = element.closest<HTMLElement>(ROW);
     if (row) return row;
-    const linked = element.dataset.sidebarActionFor;
+    const linked = element.closest<HTMLElement>("[data-sidebar-action-for]")?.dataset
+      .sidebarActionFor;
     return linked
       ? root.querySelector<HTMLElement>(`[data-sidebar-row="${CSS.escape(linked)}"]`)
       : null;
@@ -65,7 +66,9 @@ export function installSidebarTree(root: HTMLElement) {
   const onPointerDown = (event: PointerEvent) => {
     const focusable =
       event.target instanceof Element
-        ? event.target.closest(`${ROW}, button, a[href], input, [tabindex]`)
+        ? event.target.closest(
+            `${ROW}, [data-sidebar-action-for], button, a[href], input, [tabindex]`,
+          )
         : null;
     ownsFocus = focusable !== null && root.contains(focusable);
   };
