@@ -4656,14 +4656,27 @@ it.each([
 
 const decodeDeliveryCase = Schema.decodeUnknownSync(McpToolUseCase);
 
-it("requires fresh private-file generation and rejects generated value disclosure", () => {
-  const row = NodeFS.readFileSync(
+it("requires the requested private file and rejects generated value disclosure", () => {
+  const rows = NodeFS.readFileSync(
     new URL("./cases/secret-delivery.ndjson", import.meta.url),
     "utf8",
   )
     .trim()
-    .split("\n")[1]!;
-  const testCase = decodeDeliveryCase(JSON.parse(row));
+    .split("\n");
+  const existingCase = decodeDeliveryCase(JSON.parse(rows[0]!));
+  const existingDelivery = (filePath: string): SampleRun => ({
+    text: "Delivered privately.",
+    stopReason: "end_turn",
+    calls: [{ step: 0, tool: "send_secret", input: { filePath, clientRequestId: "existing" } }],
+  });
+  assert.deepEqual(
+    failed(existingCase.expect, existingDelivery("/home/user/.private/acme-token")),
+    [],
+  );
+  assert.isNotEmpty(
+    failed(existingCase.expect, existingDelivery("/home/user/.private/another-token")),
+  );
+  const testCase = decodeDeliveryCase(JSON.parse(rows[1]!));
   const make = (
     command: string,
     output = "",

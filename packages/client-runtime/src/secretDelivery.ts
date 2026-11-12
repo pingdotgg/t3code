@@ -102,10 +102,8 @@ const failureMessage = (result: AtomCommandResult<unknown, unknown>, fallback: s
 const READ_FALLBACK = "Could not read the secret. Try again.";
 
 /**
- * One card's transient reveal state, owned by that card and dropped with it.
- * Hide, navigation, backgrounding and unmount all start a new generation, so a
- * read or copy that settles afterwards is ignored and never shows or copies the value.
- * Subscribe with `useSyncExternalStore`.
+ * Card-owned reveal state. Hide, navigation, backgrounding and unmount invalidate pending reads.
+ * Clipboard writes already submitted to the platform cannot be revoked.
  */
 export function createSecretDeliveryReveal(operations: {
   readonly read: () => Promise<AtomCommandResult<{ readonly value: string }, unknown>>;

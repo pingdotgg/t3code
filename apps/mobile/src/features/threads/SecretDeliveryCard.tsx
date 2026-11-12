@@ -226,9 +226,5 @@ function ProtectedSecretDeliveryValue(props: { readonly value: string }) {
       </Text>
     );
   }
-  return (
-    <Text className="font-mono text-sm leading-5 text-foreground" selectable>
-      {props.value}
-    </Text>
-  );
+  return <Text className="font-mono text-sm leading-5 text-foreground">{props.value}</Text>;
 }
