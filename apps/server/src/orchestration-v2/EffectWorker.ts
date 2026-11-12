@@ -954,7 +954,10 @@ export const layerWithOptions = (
 
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
-        runOnce: (input) => Effect.flatMap(Effect.scope, (scope) => runOnce(input, scope)),
+        // Empty worker probes must stay untraced.
+        runOnce: Effect.fnUntraced(function* (input) {
+          return yield* runOnce(input, yield* Effect.scope);
+        }),
         runRecoveryOnce: runOnce({ excludeRestartContinuations: true }),
         // Idle workers poll this; a span per poll would bury useful traces.
         nextClaimableAt: Effect.fnUntraced(
