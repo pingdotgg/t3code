@@ -723,7 +723,7 @@ export default defineConfig({
         "apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx": 1,
         "apps/web/src/components/settings/AddProviderInstanceDialog.tsx": 2,
         "apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx": 2,
-        "apps/web/src/components/ThreadTerminalDrawer.tsx": 2,
+        "apps/web/src/components/ThreadTerminalDrawer.tsx": 1,
         "apps/web/src/components/chat/AssistantCitationCommentEditor.tsx": 1,
         "apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx": 1,
         "apps/web/src/components/chat/ComposerStashMenu.tsx": 1,

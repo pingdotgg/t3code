@@ -249,7 +249,8 @@ export interface ThreadDetailScreenProps {
   /** Set while the next send compacts the thread first. */
   readonly compactBeforeSend?: {
     readonly tokens: number;
-    readonly keepFullHistory: () => void;
+    readonly keepFullHistory: boolean;
+    readonly toggleKeepFullHistory: () => void;
   } | null;
   readonly creationState:
     | {
@@ -1691,11 +1692,19 @@ function ThreadDetailBody(
                     {props.compactBeforeSend ? (
                       <View className="px-4 pb-3">
                         <Notice
-                          message={`Your next message compacts ${formatTokens(props.compactBeforeSend.tokens)} tokens of history first.`}
+                          message={
+                            props.compactBeforeSend.keepFullHistory
+                              ? `Your next message keeps all ${formatTokens(props.compactBeforeSend.tokens)} tokens of history.`
+                              : `Your next message compacts ${formatTokens(props.compactBeforeSend.tokens)} tokens of history first.`
+                          }
                           icon="arrow.down.right.and.arrow.up.left"
                           floating
-                          onDismiss={props.compactBeforeSend.keepFullHistory}
-                          dismissLabel="Keep the full history"
+                          onDismiss={props.compactBeforeSend.toggleKeepFullHistory}
+                          dismissLabel={
+                            props.compactBeforeSend.keepFullHistory
+                              ? "Compact first"
+                              : "Keep the full history"
+                          }
                         />
                       </View>
                     ) : null}
