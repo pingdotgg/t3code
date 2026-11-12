@@ -143,6 +143,7 @@ import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
+import { makeCheckpointHandlers } from "./handlers/checkpointHandlers.ts";
 import { makeEventEmitter, mapDispatchError } from "./orchestrationEmitters.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
@@ -11622,224 +11623,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return undefined;
   });
 
-  const dispatchCheckpointRollback = Effect.fn("Orchestrator.dispatchCheckpointRollback")(
-    function* (
-      command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
-      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    ) {
-      const projection = yield* loadProjectionForCommand(
-        command,
-        ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
-        { turnItemTypes: [], messageRoles: ["user"] },
-      );
-      const providerThread = projection.providerThreads.find(
-        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-      );
-      if (providerThread === undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "No active provider thread exists for rollback.",
-        });
-      }
-      if (providerThread.providerSessionId === null) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Provider thread ${providerThread.id} has no provider session.`,
-        });
-      }
-
-      const modelSelection = projection.thread.modelSelection;
-      const capabilities = yield* providerAdapters.get(modelSelection.instanceId).pipe(
-        Effect.flatMap((adapter) => adapter.getCapabilities()),
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProviderAdapterError({
-              commandId: command.commandId,
-              providerInstanceId: modelSelection.instanceId,
-              cause,
-            }),
-        ),
-      );
-      yield* mapDispatchError(command)(
-        commandPolicy.ensureRollback({
-          commandId: command.commandId,
-          threadId: command.threadId,
-          providerInstanceId: modelSelection.instanceId,
-          capabilities,
-        }),
-      );
-
-      const targetCheckpoint = projection.checkpoints.find(
-        (candidate) => candidate.id === command.checkpointId,
-      );
-      if (targetCheckpoint === undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Checkpoint ${command.checkpointId} was not found.`,
-        });
-      }
-      if (targetCheckpoint.status !== "ready") {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Checkpoint ${command.checkpointId} is ${targetCheckpoint.status} and cannot be restored.`,
-        });
-      }
-      const targetScope = projection.checkpointScopes.find(
-        (candidate) => candidate.id === targetCheckpoint.scopeId,
-      );
-      if (targetScope === undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Checkpoint scope ${targetCheckpoint.scopeId} was not found.`,
-        });
-      }
-      if (targetScope.id !== command.scopeId) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Checkpoint ${command.checkpointId} belongs to scope ${targetScope.id}, not ${command.scopeId}.`,
-        });
-      }
-      if (command.restoreFiles !== false) {
-        const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
-          projects,
-          path,
-          fileSystem,
-          projections: projectionStore,
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause,
-              }),
-          ),
-        );
-        if (!isolated)
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: SHARED_WORKSPACE_RESTORE_MESSAGE,
-          });
-      }
-
-      const targetOrdinal = targetCheckpoint.appRunOrdinal ?? 0;
-      if (targetOrdinal > 0) {
-        const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
-        const targetProviderTurn =
-          targetRun === undefined ? undefined : providerTurnForRun(projection, targetRun);
-        if (targetRun === undefined || targetProviderTurn === undefined) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its provider turn is unavailable.`,
-          });
-        }
-        if (targetProviderTurn.providerThreadId !== providerThread.id) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Cannot roll back provider thread ${providerThread.id} to checkpoint ${targetCheckpoint.id}: target provider turn ${targetProviderTurn.id} belongs to provider thread ${targetProviderTurn.providerThreadId}.`,
-          });
-        }
-      }
-
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        providerInstanceId: projection.thread.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...projection.thread,
-          rollbackRequestId: command.commandId,
-          rollbackFailure: null,
-          updatedAt: now,
-        },
-      });
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "checkpoint.rollback-requested",
-        threadId: command.threadId,
-        providerInstanceId: modelSelection.instanceId,
-        occurredAt: now,
-        payload: {
-          scopeId: targetScope.id,
-          checkpointId: targetCheckpoint.id,
-          requestedAt: now,
-        },
-      });
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${command.commandId}:provider-thread.rollback:${providerThread.id}:${targetCheckpoint.id}`,
-          commandId: command.commandId,
-          threadId: command.threadId,
-          request: {
-            type: "provider-thread.rollback",
-            ...(command.restoreFiles === undefined ? {} : { restoreFiles: command.restoreFiles }),
-            providerThreadId: providerThread.id,
-            checkpointId: targetCheckpoint.id,
-            scopeId: targetScope.id,
-          },
-        } satisfies PendingOrchestrationEffectV2,
-      ]);
-    },
-  );
-
-  const dispatchCheckpointRollbackFail = Effect.fn("Orchestrator.dispatchCheckpointRollbackFail")(
-    function* (
-      command: Extract<
-        OrchestrationV2InternalCommand,
-        { readonly type: "checkpoint.rollback.fail" }
-      >,
-      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    ) {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(mapDispatchError(command));
-      if (thread.deletedAt !== null) return;
-      if (thread.rollbackRequestId !== command.requestId) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Rollback ${command.requestId} is no longer the thread's current rollback.`,
-        });
-      }
-      const now = yield* DateTime.now;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...thread,
-          rollbackFailure: { requestId: command.requestId, message: command.message },
-          updatedAt: now,
-        },
-      });
-    },
-  );
-
-  /**
-   * Thread lineage and fork origin are immutable, so this
-   * is safe to read without holding either thread's dispatch lock.
-   */
+  const { dispatchCheckpointRollback, dispatchCheckpointRollbackFail } = makeCheckpointHandlers({
+    projectionStore,
+    providerAdapters,
+    loadProjectionForCommand: (command, fields, filter) =>
+      loadProjectionForCommand(command, fields, filter),
+    emit,
+    mapDispatchError,
+    commandPolicy,
+    projects,
+    fileSystem,
+    path,
+  });
   const appOwnedSubagentParentThreadId = Effect.fn("Orchestrator.appOwnedSubagentParentThreadId")(
     function* (childThreadId: ThreadId) {
       const childThread = yield* projectionStore.getThread(childThreadId);
