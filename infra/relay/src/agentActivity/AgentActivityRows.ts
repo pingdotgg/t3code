@@ -7,7 +7,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -71,6 +71,7 @@ export class AgentActivityRows extends Context.Service<
     }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
+      readonly retainedBefore: string;
     }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
     readonly remove: (input: {
       readonly environmentId: string;
@@ -189,7 +190,13 @@ const make = Effect.gen(function* () {
         .where(
           and(
             sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
-            lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
+            or(
+              and(
+                sql`COALESCE(${relayAgentActivityRows.stateJson} ->> 'retained', 'false') != 'true'`,
+                lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
+              ),
+              lt(relayAgentActivityRows.updatedAt, input.retainedBefore),
+            ),
           ),
         )
         .pipe(
