@@ -108,7 +108,6 @@ function QuestionText(props: {
     <SelectableMarkdownText
       markdown={markdown}
       textStyle={styles.nativeTextStyle}
-      preserveSoftBreaks
       writingDirection={markdownProseDirection(markdown)}
       // Android's renderer aligns relative to each paragraph's direction.
       textAlign={
@@ -274,6 +273,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 threadId={props.threadId}
                 workspaceRoot={props.workspaceRoot}
                 setDirection={setDirection}
+                preserveSoftBreaks
               />
               <View className="gap-2">
                 {question.options.map((option) => {
