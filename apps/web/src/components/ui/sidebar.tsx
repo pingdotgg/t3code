@@ -853,7 +853,7 @@ function SidebarMenuSubButton({
       "data-[active=true]:bg-sidebar-row-selected data-[active=true]:text-sidebar-foreground",
       size === "sm" && "text-xs",
       size === "md" && "text-sm",
-      "group-data-[collapsible=icon]:hidden",
+      "in-data-[typography=absolutely]:text-sm in-data-[typography=absolutely]:leading-normal group-data-[collapsible=icon]:hidden",
       className,
     ),
     "data-active": isActive,

@@ -9,7 +9,7 @@ import { createBrowserHistory, createHashHistory } from "@tanstack/react-router"
 import * as Schema from "effect/Schema";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
-import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
+import { startAppearanceFontSync, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
@@ -69,6 +69,7 @@ import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "./threadR
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
   const root = document.documentElement;
+  const fonts = startAppearanceFontSync(root);
   let applied: ClientSettings | null = null;
   let appliedSeparateFonts: boolean | null = null;
   let appliedTypography: ReturnType<typeof getRenderedTypography>;
@@ -114,7 +115,7 @@ function startClientAppearance(): void {
       previousSeparateFonts !== separateFonts
     ) {
       appliedTypography = typography;
-      applyAppearanceFontVariables(root, {
+      fonts.apply({
         typography,
         reply: settings.fontFamilyReply,
         sans: settings.fontFamilySans,

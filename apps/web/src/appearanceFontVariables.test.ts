@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { applyAppearanceFontVariables, type AppearanceFontPreferences } from "./appearanceFonts";
 
@@ -14,9 +14,32 @@ const preferences: AppearanceFontPreferences = {
   separate: true,
 };
 
+function fontRoot() {
+  const properties = new Map<string, string>();
+  const root = {
+    dataset: {},
+    style: {
+      fontSize: "",
+      setProperty: (name: string, value: string) => properties.set(name, value),
+      removeProperty: (name: string) => {
+        const previous = properties.get(name) ?? "";
+        properties.delete(name);
+        return previous;
+      },
+      getPropertyValue: (name: string) => properties.get(name) ?? "",
+    },
+  };
+  vi.stubGlobal("document", { createElement: () => ({ getContext: () => null }) });
+  return {
+    root: root as unknown as HTMLElement,
+    [Symbol.dispose]: () => vi.unstubAllGlobals(),
+  };
+}
+
 describe("reply font appearance", () => {
   it("applies all theme fonts, preserves explicit choices, and clears theme defaults when leaving", () => {
-    const root = document.createElement("div");
+    using fixture = fontRoot();
+    const { root } = fixture;
     const defaults = { ...preferences, sans: "", code: "", reply: "" };
     applyAppearanceFontVariables(root, { ...defaults, typography: "absolutely", separate: false });
     expect(root.style.getPropertyValue("--font-sans")).toContain('"DM Sans"');
@@ -24,7 +47,7 @@ describe("reply font appearance", () => {
     expect(root.style.getPropertyValue("--font-reply")).toContain('"Source Serif 4"');
     expect(root.style.getPropertyValue("--font-composer")).toBe("");
     expect(root.style.getPropertyValue("--font-size-reply")).toBe("0.9375rem");
-    expect(root.style.getPropertyValue("--font-size-prompt")).toBe("15px");
+    expect(root.style.getPropertyValue("--font-size-prompt")).toBe("0.9375rem");
     expect(root.style.getPropertyValue("--font-size-code")).toBe("13px");
     expect(root.dataset.typography).toBe("absolutely");
 
@@ -65,7 +88,8 @@ describe("reply font appearance", () => {
   });
 
   it("follows serif themes, honors an explicit override, and returns to the interface with other themes", () => {
-    const root = document.createElement("div");
+    using fixture = fontRoot();
+    const { root } = fixture;
     applyAppearanceFontVariables(root, { ...preferences, reply: "", typography: "absolutely" });
     expect(root.style.getPropertyValue("--font-reply")).toContain("Georgia, serif");
 
@@ -81,7 +105,8 @@ describe("reply font appearance", () => {
   });
 
   it("changes the reply font independently of interface, prompt, and code fonts", () => {
-    const root = document.createElement("div");
+    using fixture = fontRoot();
+    const { root } = fixture;
     applyAppearanceFontVariables(root, preferences);
 
     const sans = root.style.getPropertyValue("--font-sans");
@@ -96,7 +121,8 @@ describe("reply font appearance", () => {
   });
 
   it("removes a previous reply override when reset so the interface font can take over", () => {
-    const root = document.createElement("div");
+    using fixture = fontRoot();
+    const { root } = fixture;
     applyAppearanceFontVariables(root, preferences);
     expect(root.style.getPropertyValue("--font-reply")).toContain('"Source Serif 4"');
 

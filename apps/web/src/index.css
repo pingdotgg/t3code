@@ -465,6 +465,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   border: 1px solid color-mix(in srgb, var(--contrast-foreground) 10%, transparent);
 
+  @variant in-data-[theme-id=absolutely] {
+    background: var(--popover);
+    border-color: var(--border);
+  }
+
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     background: var(--popover) !important;
   }
@@ -2654,31 +2659,4 @@ code {
 :root[data-typography="absolutely"] .font-reply :not(pre) > code {
   font-size: 0.9em;
   line-height: 1;
-}
-
-:root[data-typography="absolutely"] [data-sidebar="menu-sub-button"] {
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
-html[data-theme-id="absolutely"] .dropdown-glass {
-  background: var(--popover);
-  border-color: var(--border);
-}
-
-html[data-theme-id="absolutely"] [data-slot="menu-popup"] {
-  border-radius: 0.75rem;
-}
-
-html[data-theme-id="absolutely"]
-  :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]) {
-  border-radius: 0.5rem;
-  font-weight: 400;
-  line-height: 1.25rem;
-}
-
-:root[data-typography="absolutely"] [data-composer-command-drawer] .text-xs {
-  font-size: 0.875rem;
-  font-weight: 400;
-  line-height: 1.25rem;
 }
