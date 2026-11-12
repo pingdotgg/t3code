@@ -2139,6 +2139,15 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "event") {
+      const eventItem = timelineEntry.projectedItem.item;
+      if (
+        input.isWorking &&
+        isLiveSubagentTurnItem(eventItem) &&
+        eventItem.runId != null &&
+        eventItem.runId === unsettledRunId
+      ) {
+        hasActivityRow = true;
+      }
       const previous = nextRows.at(-1);
       if (
         timelineEntry.projectedItem.item.type === "subagent" &&
