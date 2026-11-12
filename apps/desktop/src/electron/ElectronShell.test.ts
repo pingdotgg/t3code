@@ -54,18 +54,26 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
-  it.effect("opens only the bare Grok Bot launch link", () =>
+  it.effect("opens only the Grok Bot prompt link", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);
 
+      const prompt = "grokbot://app/v1/prompt?text=Add%20the%20MCP%20server";
       const electronShell = yield* ElectronShell.ElectronShell;
       const results = yield* Effect.forEach(
-        ["grokbot://app", "grokbot://app/v1/prompt?id=bot&text=hi", "grokbot://"],
+        [
+          prompt,
+          "grokbot://app",
+          "grokbot://app/v1/prompt?id=bot&text=hi",
+          "grokbot://app/v1/prompt?text=a&text=b",
+          "grokbot://app/v1/other?text=hi",
+          "grokbot://app/v1/prompt?text=hi#x",
+        ],
         (url) => electronShell.openExternal(url),
       );
 
-      assert.deepEqual(results, [true, false, false]);
-      assert.deepEqual(openExternalMock.mock.calls, [["grokbot://app"]]);
+      assert.deepEqual(results, [true, false, false, false, false, false]);
+      assert.deepEqual(openExternalMock.mock.calls, [[prompt]]);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
