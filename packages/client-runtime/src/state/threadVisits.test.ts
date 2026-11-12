@@ -111,6 +111,25 @@ it("keeps a mark-unread on the open thread until new activity lands", () => {
   expect(t.visits.slice(1)).toEqual([{ threadId: t.ref.threadId, visitedAt: at(30) }]);
 });
 
+it("keeps a mark-unread on a read thread reopened within the open dedupe window", () => {
+  using t = setup("thread-unread-reopened", {
+    updatedAt: at(10),
+    lastVisitedAt: at(10),
+    latestRun: { completedAt: at(9) },
+  });
+  claimThreadOpen(environmentId, t.ref.threadId, Date.UTC(2026, 0, 1));
+  t.mount();
+  t.update({ lastVisitedAt: at(8) });
+  vi.advanceTimersByTime(VISIT_DISPATCH_THROTTLE_MS);
+  expect(t.visits).toEqual([]);
+
+  // An authoritative snapshot can briefly replace the row with an older one.
+  t.update({ updatedAt: at(5), lastVisitedAt: at(5), latestRun: { completedAt: at(4) } });
+  t.update({ updatedAt: at(10), lastVisitedAt: at(8), latestRun: { completedAt: at(9) } });
+  vi.advanceTimersByTime(VISIT_DISPATCH_THROTTLE_MS);
+  expect(t.visits).toEqual([]);
+});
+
 it("keeps mark unread sticky after an expired wake is retired", () => {
   using t = setup("thread-unread-retired-wake", {
     updatedAt: at(10),

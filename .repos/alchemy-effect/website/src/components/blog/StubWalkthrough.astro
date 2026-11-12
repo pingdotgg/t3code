@@ -1,0 +1,1528 @@
+---
+/**
+ * `<StubWalkthrough />` — how distilled's lazy service stubs load an
+ * operation. Left: what is in memory, starting from the stub. Right: the
+ * full module on disk, scrolled to whatever the loader reads. Byte counts
+ * come from a traced run of fly-io's `machines` service on Node 24
+ * (distilled 6ff867b87). The code is simplified.
+ *
+ * One instance per page: element ids are prefixed `lz-`.
+ */
+---
+
+<figure class="lz not-content" id="lz" tabindex="0" aria-label="Step-through of a lazy service stub loading fly-io's machines service">
+  <div class="lz-narr" id="lz-narr" aria-live="polite"></div>
+  <div class="lz-grid" id="lz-grid">
+    <section class="lz-pane">
+      <div class="lz-hd"><b>Your program</b></div>
+      <div class="lz-view lz-progview"><div class="lz-code" id="lz-prog"></div></div>
+      <div class="lz-status" id="lz-status"></div>
+      <div class="lz-hd"><b>In memory</b> · what it has loaded</div>
+      <div class="lz-view lz-memview"><div class="lz-code" id="lz-left"></div></div>
+    </section>
+    <div class="lz-meters" aria-hidden="true">
+      <div class="lz-meter">
+        <div class="lz-track" id="lz-memtrack"><div class="lz-fill lz-mem" id="lz-memfill"></div></div>
+        <span class="lz-mlabel">in memory</span>
+        <span class="lz-mval" id="lz-memval">0 B</span>
+      </div>
+      <div class="lz-meter">
+        <div class="lz-track" id="lz-disktrack"><div class="lz-fill lz-disk"></div></div>
+        <span class="lz-mlabel">on disk</span>
+        <span class="lz-mval">63.2<br />KB</span>
+      </div>
+    </div>
+    <section class="lz-pane">
+      <div class="lz-hd"><b>On disk</b> · the full module, by byte offset</div>
+      <div class="lz-view lz-file" id="lz-fileview"><div class="lz-code" id="lz-right"></div></div>
+    </section>
+  </div>
+  <div class="lz-bar">
+    <button type="button" id="lz-prev">◀ Back</button>
+    <div class="lz-dots" id="lz-dots"></div>
+    <label class="lz-truth" title="Show the stub, the slices and the index exactly as they ship, minified">
+      <input type="checkbox" id="lz-real" />
+      <span><b>I can handle the truth</b></span>
+    </label>
+    <button type="button" class="lz-primary" id="lz-next">Next ▶</button>
+  </div>
+</figure>
+
+<style is:global>
+  .lz {
+    --lz-op: var(--alc-info);
+    --lz-sh: var(--alc-terracotta);
+    --lz-ix: var(--alc-warn);
+    --lz-st: var(--alc-accent);
+    --lz-fg: var(--alc-fg-1);
+    --lz-mut: var(--alc-fg-4);
+    --lz-bg: var(--alc-bg-elev-1);
+    --lz-panel: var(--alc-bg-elev-2);
+    --lz-bd: var(--alc-hairline-2);
+    --lz-bd2: var(--alc-hairline-3);
+    --lz-lh: 17px;
+    position: relative;
+    margin: 2rem 0;
+    overflow: hidden;
+    font: 14px/1.5 var(--alc-font-sans);
+    color: var(--lz-fg);
+    background: var(--lz-bg);
+    border: 1px solid var(--lz-bd);
+    border-radius: 12px;
+  }
+  .lz:focus-visible {
+    outline: 2px solid var(--alc-accent);
+    outline-offset: 2px;
+  }
+  .lz * {
+    box-sizing: border-box;
+  }
+  .lz code {
+    font-family: var(--alc-font-mono);
+    font-size: 0.9em;
+  }
+  .lz-hd {
+    margin-bottom: 5px;
+    font-size: 11.5px;
+    color: var(--lz-mut);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lz-hd b {
+    color: var(--lz-fg);
+  }
+
+  .lz-narr {
+    min-height: 5.4rem;
+    padding: 13px 16px 10px;
+    background: var(--lz-panel);
+    border-bottom: 1px solid var(--lz-bd);
+  }
+  .lz-step {
+    font: 600 11px var(--alc-font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--lz-mut);
+  }
+  .lz-ttl {
+    display: block;
+    margin: 1px 0 3px;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .lz-narr p {
+    margin: 0;
+    color: var(--alc-fg-2);
+  }
+  .lz-in {
+    animation: lzin 0.35s ease both;
+  }
+  @keyframes lzin {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+  }
+
+
+  /* code lines */
+  .lz-code {
+    font: 11px/var(--lz-lh) var(--alc-font-mono);
+    font-variant-ligatures: none;
+  }
+  .lz-ln {
+    display: flex;
+    height: var(--lz-lh);
+    padding-right: 6px;
+    white-space: pre;
+    overflow: hidden;
+    color: var(--lz-mut);
+    border-left: 3px solid transparent;
+    transition:
+      background 0.4s,
+      color 0.4s,
+      border-color 0.4s,
+      opacity 0.4s;
+  }
+  .lz-bytes .lz-ln .no {
+    width: 3.6em;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+  .lz-ln .no.hit,
+  .lz mark.lz-off {
+    padding: 0 2px;
+    color: var(--lz-bg);
+    background: var(--lz-ix);
+    border-radius: 2px;
+    opacity: 1;
+  }
+  .lz-ln .no {
+    flex: none;
+    width: 2.1em;
+    padding-right: 0.5em;
+    text-align: right;
+    opacity: 0.5;
+  }
+  .lz-ln .tx {
+    padding-left: 5px;
+  }
+  .lz-ln.c {
+    font-style: italic;
+  }
+  .lz-ln .tag {
+    margin-left: auto;
+    padding: 0 8px;
+    font-weight: 600;
+    font-style: normal;
+    color: var(--alc-accent-text);
+  }
+  .lz-ln .tag.wait {
+    color: var(--lz-ix);
+  }
+  .lz-ln.phase {
+    color: var(--lz-fg);
+    font-weight: 600;
+  }
+  .lz-ln.now {
+    color: var(--lz-fg);
+    background: color-mix(in srgb, var(--alc-accent) 18%, transparent);
+    border-left-color: var(--alc-accent);
+  }
+  .lz-ln.read {
+    color: var(--lz-fg);
+    background: color-mix(in srgb, var(--c) 28%, transparent);
+    border-left-color: var(--c);
+  }
+  .lz-ln.mem {
+    color: var(--lz-fg);
+    background: color-mix(in srgb, var(--c) 9%, transparent);
+    border-left-color: color-mix(in srgb, var(--c) 55%, transparent);
+  }
+  .lz-ln.never {
+    opacity: 0.4;
+  }
+  .lz-ln.pending {
+    opacity: 0;
+    transition: none;
+  }
+  .lz-slice {
+    position: absolute;
+    z-index: 1;
+    left: -2px;
+    right: -2px;
+    min-height: 3px;
+    background: var(--c);
+    border-radius: 1px;
+    opacity: 0.55;
+    transition: opacity 0.4s;
+  }
+  .lz-slice.hot {
+    opacity: 1;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 45%, transparent);
+  }
+  .lz-segfly {
+    position: absolute;
+    z-index: 4;
+    top: 0;
+    left: 0;
+    background: var(--c);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 40%, transparent);
+    pointer-events: none;
+  }
+  .lz-ln.fresh {
+    animation: lzfresh 1.2s ease both;
+  }
+  @keyframes lzfresh {
+    from {
+      background: color-mix(in srgb, var(--c) 45%, transparent);
+    }
+  }
+  .lz-ln.look {
+    color: var(--lz-fg);
+    background: color-mix(in srgb, var(--lz-ix) 18%, transparent);
+    border-left-color: var(--lz-ix);
+  }
+  .lz mark.lz-tok {
+    padding: 0 1px;
+    font-weight: 700;
+    color: var(--lz-bg);
+    background: var(--lz-ix);
+    border-radius: 2px;
+    animation: lzin 0.3s ease both;
+  }
+  .lz-ln.off {
+    opacity: 0.45;
+  }
+
+  .lz-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 60px minmax(0, 1fr);
+    gap: 8px;
+    padding: 12px 12px 12px 10px;
+  }
+  .lz-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .lz-status {
+    height: 22px;
+    margin: 3px 0 6px;
+    padding-left: 4px;
+    font: 600 11px/22px var(--alc-font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--alc-accent-text);
+  }
+  .lz-status.wait {
+    color: var(--lz-ix);
+  }
+  .lz-progview {
+    height: auto !important;
+  }
+  .lz-view {
+    position: relative;
+    height: calc(15 * var(--lz-lh) + 8px);
+    padding: 4px 0;
+    overflow: hidden;
+    background: var(--lz-panel);
+    border: 1px solid var(--lz-bd);
+    border-radius: 8px;
+  }
+  .lz-file .lz-code {
+    transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .lz-file {
+    flex: 1;
+    height: auto;
+    min-height: 200px;
+  }
+  /* out of flow, so the right pane matches the left column's height */
+  .lz-file .lz-code {
+    position: absolute;
+    top: 4px;
+    right: 0;
+    left: 0;
+  }
+  .lz-memview {
+    height: calc(13 * var(--lz-lh) + 8px);
+  }
+  .lz-file::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 18px;
+    content: "";
+    background: linear-gradient(transparent, var(--lz-panel));
+  }
+
+  /* meters */
+  .lz-meters {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding-top: 22px;
+  }
+  .lz-meter .lz-track {
+    flex: 1;
+  }
+  .lz-meter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 28px;
+  }
+  .lz-track {
+    position: relative;
+    width: 14px;
+    background: color-mix(in srgb, var(--lz-mut) 14%, transparent);
+    border-radius: 3px;
+  }
+  .lz-fill {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: var(--pct, 0%);
+    border-radius: 3px;
+    transition: height 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .lz-disk {
+    --pct: 100%;
+    background: var(--lz-bd2);
+  }
+  /* No growth animation: the slice that flies over from the disk bar fills it. */
+  .lz-mem {
+    transition: none !important;
+    display: flex;
+    flex-direction: column-reverse;
+    overflow: hidden;
+  }
+  .lz-mem i {
+    flex: var(--b) 0 0;
+    background: var(--c);
+    border-top: 1px solid var(--lz-bg);
+  }
+  .lz-mem i.new {
+    animation: lzseg 1s ease;
+  }
+  @keyframes lzseg {
+    from {
+      filter: brightness(1.6);
+    }
+  }
+  .lz-mlabel {
+    font-size: 10px;
+    line-height: 1.15;
+    text-align: center;
+    color: var(--lz-mut);
+  }
+  .lz-mval {
+    font: 600 10px var(--alc-font-mono);
+    white-space: nowrap;
+  }
+  .lz-plus {
+    position: absolute;
+    left: 10px;
+    z-index: 4;
+    font: 700 11px var(--alc-font-mono);
+    white-space: nowrap;
+    color: var(--lz-st);
+    pointer-events: none;
+    animation: lzplus 1.4s ease forwards;
+  }
+  @keyframes lzplus {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-16px);
+    }
+  }
+
+  /* the bytes travelling from disk to memory */
+  .lz-chip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 5;
+    padding: 1px 8px;
+    font: 700 11px var(--alc-font-mono);
+    white-space: nowrap;
+    color: var(--lz-bg);
+    background: var(--c);
+    border-radius: 999px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+  }
+
+  .lz-truth {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 12.5px;
+    white-space: nowrap;
+    color: var(--lz-mut);
+    cursor: pointer;
+  }
+  .lz-truth input {
+    accent-color: var(--alc-accent);
+    transform: translateY(1px);
+  }
+  .lz-truth b {
+    color: var(--lz-fg);
+  }
+  .lz-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    border-top: 1px solid var(--lz-bd);
+  }
+  .lz button {
+    all: unset;
+    cursor: pointer;
+    padding: 4px 13px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--lz-fg);
+    background: var(--lz-bg);
+    border: 1px solid var(--lz-bd2);
+    border-radius: 7px;
+  }
+  .lz button:focus-visible {
+    outline: 2px solid var(--alc-accent);
+  }
+  .lz button.lz-primary {
+    color: var(--lz-bg);
+    background: var(--lz-fg);
+    border-color: var(--lz-fg);
+  }
+  .lz button:disabled {
+    cursor: default;
+    opacity: 0.4;
+  }
+  .lz-bar {
+    flex-wrap: wrap;
+  }
+  @media (max-width: 620px) {
+    .lz-truth {
+      order: 5;
+      flex-basis: 100%;
+      justify-content: center;
+    }
+  }
+  .lz-dots {
+    display: flex;
+    flex: 1;
+    justify-content: center;
+    gap: 5px;
+  }
+  .lz-dot {
+    width: 18px;
+    height: 5px;
+    cursor: pointer;
+    background: var(--lz-bd);
+    border-radius: 3px;
+  }
+  .lz-dot.past {
+    background: var(--lz-bd2);
+  }
+  .lz-dot.now {
+    background: var(--lz-fg);
+  }
+
+  /* Narrow screens: stack memory, meters, disk. */
+  @media (max-width: 620px) {
+    .lz-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .lz-meters {
+      flex-direction: column;
+      gap: 4px;
+      padding-top: 0;
+    }
+    .lz-meter {
+      flex-direction: row;
+      width: auto;
+      gap: 8px;
+    }
+    .lz-track {
+      order: 2;
+      flex: 1;
+      width: auto;
+      height: 12px;
+    }
+    .lz-mem {
+      flex-direction: row;
+    }
+    .lz-mem i {
+      border-top: 0;
+      border-right: 1px solid var(--lz-bg);
+    }
+    .lz-slice {
+      top: -2px !important;
+      bottom: -2px;
+      left: auto;
+      right: auto;
+      min-width: 3px;
+    }
+    .lz-fill {
+      top: 0;
+      right: auto;
+      width: var(--pct, 0%);
+      height: auto;
+      transition-property: width;
+    }
+    .lz-mlabel {
+      order: 1;
+      width: 5em;
+      text-align: left;
+    }
+    .lz-mval {
+      order: 3;
+      width: 4.5em;
+      text-align: right;
+    }
+    .lz-mval br {
+      display: none;
+    }
+    .lz-plus {
+      top: -14px !important;
+      left: auto !important;
+      right: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lz * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+
+<script>
+  const FILE = 63178;
+  const STUB = 2564;
+  const kb = (n: number) => (n < 1000 ? `${n} B` : `${(n / 1000).toFixed(1)} KB`);
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  const OP = "var(--lz-op)";
+  const SH = "var(--lz-sh)";
+  const IX = "var(--lz-ix)";
+  const ST = "var(--lz-st)";
+
+  /** What the reader's program does. */
+  const PROG = [
+    "// at startup",
+    "import * as fly from",
+    '  "@distilled.cloud/fly-io/machines"',
+    "",
+    "// at runtime",
+    "Effect.gen(function* () {",
+    "  yield* fly.getMachine({ id })",
+    "  yield* fly.listMachines({ app })",
+    "  yield* fly.getMachine({ id })",
+    "})",
+  ]
+
+  // Chunks the loader can read. Sizes are the real byte counts from the trace.
+  const CHUNK: Record<string, { c: string; at: number; bytes: number; label: string }> = {
+    index: { c: IX, at: 55605, bytes: 7533, label: "index" },
+    getMachine: { c: OP, at: 19123, bytes: 284, label: "getMachine" },
+    listMachines: { c: OP, at: 25842, bytes: 483, label: "listMachines" },
+    Machine: { c: SH, at: 48375, bytes: 607, label: "Machine" },
+    MachineConfig: { c: SH, at: 43941, bytes: 4591, label: "MachineConfig" },
+    MachineEvent: { c: SH, at: 43780, bytes: 131, label: "MachineEvent" },
+  };
+
+  /** The full module on disk, simplified. `[id]` tags the lines of a chunk; `~` marks never-read filler. */
+  const FULL: [string, string][] = [
+    ["", "// services.full/machines.js"],
+    ["", 'import { op, struct } from "./sdk"'],
+    ["", ""],
+    ["~", "export const createApp = op({"],
+    ["~", '  method: "POST",'],
+    ["~", '  path: "/apps",'],
+    ["~", "  output: App,"],
+    ["~", "})"],
+    ["~", "// …43 more operations"],
+    ["getMachine", "export const getMachine = op({"],
+    ["getMachine", '  method: "GET",'],
+    ["getMachine", '  path: "/machines/{id}",'],
+    ["getMachine", "  input: GetMachineInput,"],
+    ["getMachine", "  output: Machine,"],
+    ["getMachine", "  errors: [NotFound],"],
+    ["getMachine", "})"],
+    ["~", "// …15 more operations"],
+    ["listMachines", "export const listMachines = op({"],
+    ["listMachines", '  method: "GET",'],
+    ["listMachines", '  path: "/machines",'],
+    ["listMachines", "  input: ListMachinesInput,"],
+    ["listMachines", "  output: array(Machine),"],
+    ["listMachines", "  errors: [NotFound],"],
+    ["listMachines", "})"],
+    ["~", "// …38 more operations"],
+    ["", ""],
+    ["MachineEvent", "const MachineEvent = struct({"],
+    ["MachineEvent", "  type: string,"],
+    ["MachineEvent", "  status: string,"],
+    ["MachineEvent", "})"],
+    ["MachineConfig", "const MachineGuest = struct({"],
+    ["MachineConfig", "  cpus: number,"],
+    ["MachineConfig", "  memory_mb: number,"],
+    ["MachineConfig", "})"],
+    ["MachineConfig", "const MachineConfig = struct({"],
+    ["MachineConfig", "  image: string,"],
+    ["MachineConfig", "  env: record(string),"],
+    ["MachineConfig", "  guest: MachineGuest,"],
+    ["MachineConfig", "  // …30 more fields"],
+    ["MachineConfig", "})"],
+    ["Machine", "const Machine = struct({"],
+    ["Machine", "  id: string,"],
+    ["Machine", "  state: string,"],
+    ["Machine", "  config: MachineConfig,"],
+    ["Machine", "  events: array(MachineEvent),"],
+    ["Machine", "})"],
+    ["~", "// …21 more schemas"],
+    ["", ""],
+    ["index", "/* index: where, needs"],
+    ["index", " getMachine: 19123, Machine"],
+    ["index", " listMachines: 25842, Machine"],
+    ["index", " Machine: 48375, MachineConfig,"],
+    ["index", "                 MachineEvent"],
+    ["index", " MachineConfig: 43941"],
+    ["index", " MachineEvent: 43780"],
+    ["index", " …126 more rows */"],
+  ];
+
+  // ---- "I can handle the truth" mode: real excerpts from the traced build ----
+  /** The real full module, hard-wrapped. `~` lines stand in for bytes not shown. */
+  const REAL_FULL: [string, string][] = [
+ [
+  "",
+  "import{_ as e,a as t,c as n,d as r"
+ ],
+ [
+  "",
+  ",errors$BadRequest as i,errors$Con"
+ ],
+ [
+  "",
+  "…"
+ ],
+ [
+  "~",
+  "…18.9 KB of other operations…"
+ ],
+ [
+  "getMachine",
+  "{input:#1,output:#9:4,errors:[$10,"
+ ],
+ [
+  "getMachine",
+  "$11],protocol:$12,retry:$13};$8(>2"
+ ],
+ [
+  "getMachine",
+  ")@\"GetMachineRequest\";$7({app_name"
+ ],
+ [
+  "getMachine",
+  ":$3.pipe($2()),machine_id:$3.pipe("
+ ],
+ [
+  "getMachine",
+  "$2()),version:$5($3.pipe($4())),in"
+ ],
+ [
+  "getMachine",
+  "clude_leases:$5($6.pipe($4()))}).p"
+ ],
+ [
+  "getMachine",
+  "ipe($1({method:\"GET\",uri:\"/v1/apps"
+ ],
+ [
+  "getMachine",
+  "/{app_name}/machines/{machine_id}\""
+ ],
+ [
+  "getMachine",
+  ",code:200}))"
+ ],
+ [
+  "~",
+  "…6.4 KB of other operations…"
+ ],
+ [
+  "listMachines",
+  "{input:#1,output:#3,errors:[$13,$1"
+ ],
+ [
+  "listMachines",
+  "4],protocol:$15,retry:$16};$9(>4)@"
+ ],
+ [
+  "listMachines",
+  "\"ListMachinesRequest\";$11(#10:4);$"
+ ],
+ [
+  "listMachines",
+  "9(>5)@\"ListMachinesResponse\";$8({a"
+ ],
+ [
+  "listMachines",
+  "pp_name:$3.pipe($2()),include_dele"
+ ],
+ [
+  "listMachines",
+  "ted:$6($5.pipe($4())),include_leas"
+ ],
+ [
+  "listMachines",
+  "es:$6($5.pipe($4())),region:$6($3."
+ ],
+ [
+  "listMachines",
+  "pipe($4())),state:$6($3.pipe($4())"
+ ],
+ [
+  "listMachines",
+  "…"
+ ],
+ [
+  "~",
+  "…17 KB of other operations…"
+ ],
+ [
+  "MachineConfig",
+  "$6(>1)@\"FlyMachineGuest\";$5({cpu_k"
+ ],
+ [
+  "MachineConfig",
+  "ind:$2($1),cpus:$2($3),gpu_kind:$2"
+ ],
+ [
+  "MachineConfig",
+  "($1),gpus:$2($3),host_dedication_i"
+ ],
+ [
+  "MachineConfig",
+  "d:$2($1),kernel_args:$2(#4:0),max_"
+ ],
+ [
+  "MachineConfig",
+  "…"
+ ],
+ [
+  "MachineEvent",
+  "$2($1,$1)"
+ ],
+ [
+  "MachineEvent",
+  "$6(>2)@\"MachineEvent\";$7(#0);$5({i"
+ ],
+ [
+  "MachineEvent",
+  "d:$2($1),request:$2($3),source:$2("
+ ],
+ [
+  "MachineEvent",
+  "$1),status:$2($1),timestamp:$2($4)"
+ ],
+ [
+  "MachineEvent",
+  ",type:$2($1)})"
+ ],
+ [
+  "MachineConfig",
+  "$4(>53)@\"FlyMachineCacheDrive\";$4("
+ ],
+ [
+  "MachineConfig",
+  ">54)@\"FlyMachineHTTPHeader\";$7(#1)"
+ ],
+ [
+  "MachineConfig",
+  ";$4(>55)@\"FlyMachineCheck\";$9($5,#"
+ ],
+ [
+  "MachineConfig",
+  "3);$4(>56)@\"FlyContainerDependency"
+ ],
+ [
+  "MachineConfig",
+  "\";$7(#5);$4(>57)@\"FlyEnvFrom\";$7(#"
+ ],
+ [
+  "MachineConfig",
+  "…4.1 KB more of __d5…"
+ ],
+ [
+  "Machine",
+  "$4(>5)@\"CheckStatus\";$5(#0);$4(>6)"
+ ],
+ [
+  "Machine",
+  "@\"ImageRef\";$4(>7)@\"StrippedLease\""
+ ],
+ [
+  "Machine",
+  ";$4(>8)@\"Machine\";$3({name:$2($1),"
+ ],
+ [
+  "Machine",
+  "output:$2($1),status:$2($1),update"
+ ],
+ [
+  "Machine",
+  "d_at:$2($1)});$3({digest:$2($1),la"
+ ],
+ [
+  "Machine",
+  "bels:$2(#6:0),registry:$2($1),repo"
+ ],
+ [
+  "Machine",
+  "sitory:$2($1),tag:$2($1)});$3({des"
+ ],
+ [
+  "Machine",
+  "…"
+ ],
+ [
+  "~",
+  "…3 KB of other schemas…"
+ ],
+ [
+  "MachineEvent",
+  "$2($1)"
+ ],
+ [
+  "~",
+  "…3.5 KB of other schemas…"
+ ],
+ [
+  "index",
+  "/*34 131"
+ ],
+ [
+  "index",
+  "e:0:_ t:0:a n:0:c r:0:d i:0:errors"
+ ],
+ [
+  "index",
+  "$BadRequest a:0:errors$Con…"
+ ],
+ [
+  "index",
+  "…"
+ ],
+ [
+  "index",
+  "2 eqw f0a Ae|=;er7 ez3;3,p,q,h,r,a"
+ ],
+ [
+  "index",
+  ",g,m,i,40,6,8,j,l"
+ ],
+ [
+  "index",
+  "…126 more rows */"
+ ]
+];
+  /** Real index rows (row numbers added), tagged with the chunk they point at. */
+  const REAL_IX: [string, string][] = [
+ [
+  "getMachine",
+  "#44 2 eqw f0a Ae|=;er7 ez3;3,p,q,h"
+ ],
+ [
+  "getMachine",
+  "    ,r,a,g,m,i,40,6,8,j,l"
+ ],
+ [
+  "listMachines",
+  "#60 2 jxj kcm Ke|=;jxu kb9;3,p,q,h"
+ ],
+ [
+  "listMachines",
+  "    ,r,g,a,d,m,i,40,n,s,6,8,j,l"
+ ],
+ [
+  "MachineConfig",
+  "#106 1 xio xq8 __d2|=;xjc xpl;3,h,"
+ ],
+ [
+  "MachineConfig",
+  "    a,d,4g,m,i"
+ ],
+ [
+  "MachineEvent",
+  "#107 1 xq8 xrg __d3|=;xqw xr5;3,h,"
+ ],
+ [
+  "MachineEvent",
+  "    1"
+ ],
+ [
+  "MachineEvent",
+  "#108 1 xrg xvx __d4|=;xs4 xvc;3,h,"
+ ],
+ [
+  "MachineEvent",
+  "    a,v,d,m,i,n"
+ ],
+ [
+  "MachineConfig",
+  "#109 1 xvx 11b3 __d5|=;xwl 119v;3,"
+ ],
+ [
+  "MachineConfig",
+  "    d,a,m,i,h,4g,n,g,1,3x,e,v,3w"
+ ],
+ [
+  "Machine",
+  "#110 1 11b3 11ts __d6|=;11br 11sm;"
+ ],
+ [
+  "Machine",
+  "    3,h,a,m,i,n,3x,d,3z,g,3y,4g"
+ ],
+ [
+  "MachineEvent",
+  "#126 1 145n 146t __d22|=;146c 146i"
+ ],
+ [
+  "MachineEvent",
+  "    ;3,h,n"
+ ]
+];
+  const REAL_OP: Record<string, string[]> = {
+ "getMachine": [
+  "{input:#1,output:#9:4,errors:[$10,",
+  "$11],protocol:$12,retry:$13}"
+ ],
+ "listMachines": [
+  "{input:#1,output:#3,errors:[$13,$1",
+  "4],protocol:$15,retry:$16}"
+ ]
+};
+  const REAL_LABEL: Record<string, string> = {
+    index: "index",
+    getMachine: "getMachine",
+    listMachines: "listMachines",
+    Machine: "__d6",
+    MachineConfig: "__d5 + __d2",
+    MachineEvent: "__d4 + __d3 + __d22",
+  };
+  /** Index row each chunk is found by, in the real index. */
+  const REAL_ROW: Record<string, string> = {
+    getMachine: "#44",
+    listMachines: "#60",
+    Machine: "#110",
+    MachineConfig: "#109",
+    MachineEvent: "#108",
+  };
+  let real = false;
+  const label = (id: string) => (real ? REAL_LABEL[id]! : CHUNK[id]!.label);
+
+  function realLeftLines(loaded: Set<string>, stub: boolean): [string, string][] {
+    if (!stub) return [["c", "// nothing loaded yet"]];
+    const L: [string, string][] = [
+      ["", 'import{$L}from"../_bundle/lazy.js";'],
+      ["", "const{o:$o,e:$e,E:$E}=$L("],
+      ["", ' "../services.full/machines.js",'],
+      ["", ' "ooooo…99 o\'s…ooooo",55605,7533);'],
+      ["", "export const …,"],
+    ];
+    for (const op of ["getMachine", "listMachines"]) {
+      if (loaded.has(op)) {
+        L.push([op, ` ${op}= // slot filled:`]);
+        for (const t of REAL_OP[op]!) L.push([op, `  ${t}`]);
+      } else L.push(["", ` ${op}=$o(),`]);
+    }
+    L.push(["c", " …97 more =$o();"]);
+    if (loaded.has("index")) {
+      L.push(["", ""], ["index", "/*34 131 …34 imports…"]);
+      for (const [id, t] of REAL_IX) if (!loaded.has(id)) L.push([`ix:${id}`, t]);
+      L.push(["ixc", " …123 more rows */"]);
+    }
+    if (loaded.has("Machine")) L.push(["Machine", "__d6: $4(>5)@\"CheckStatus\";…"]);
+    if (loaded.has("MachineConfig")) L.push(["MachineConfig", "__d5: $4(>53)@\"FlyMachineCa…"]);
+    if (loaded.has("MachineEvent")) L.push(["MachineEvent", '__d4: $6(>2)@"MachineEvent";…']);
+    return L;
+  }
+
+  /** Index rows shown in memory: [entry, line text]. Continuation lines repeat the entry. */
+  const IXROWS: [string, string][] = [
+    ["getMachine", "  getMachine: 19123, Machine"],
+    ["listMachines", "  listMachines: 25842, Machine"],
+    ["Machine", "  Machine: 48375, MachineConfig,"],
+    ["Machine", "                  MachineEvent"],
+    ["MachineConfig", "  MachineConfig: 43941"],
+    ["MachineEvent", "  MachineEvent: 43780"],
+  ];
+
+  /** In-memory view: the stub, plus whatever has loaded. */
+  function leftLines(loaded: Set<string>, stub: boolean): [string, string][] {
+    if (real) return realLeftLines(loaded, stub);
+    if (!stub) return [["c", "// nothing loaded yet"]];
+    const L: [string, string][] = [
+      ["", 'import { stub } from "./lazy.js"'],
+      ["", ""],
+    ];
+    const op = (name: string, path: string, out: string) =>
+      loaded.has(name)
+        ? ([
+            [name, `export const ${name} = op({`],
+            [name, '  method: "GET",'],
+            [name, `  path: "${path}",`],
+            [name, `  output: ${out}, … })`],
+          ] as [string, string][])
+        : ([
+            ["", `export const ${name} =`],
+            ["", `  stub("${name}")`],
+          ] as [string, string][]);
+    L.push(...op("getMachine", "/machines/{id}", "Machine"));
+    L.push(...op("listMachines", "/machines", "array(Machine)"));
+    L.push(["c", "// …97 more stubs"]);
+    if (loaded.has("index")) {
+      L.push(["", ""], ["index", "const index = { // where, needs"]);
+      for (const [name, text] of IXROWS) if (!loaded.has(name)) L.push([`ix:${name}`, text]);
+      L.push(["ixc", "  // …126 more rows"], ["index", "}"]);
+    }
+    if (loaded.has("Machine"))
+      L.push(
+        ["Machine", "const Machine = struct({ …,"],
+        ["Machine", "  config: MachineConfig,"],
+        ["Machine", "  events: MachineEvent[] })"],
+      );
+    for (const n of ["MachineConfig", "MachineEvent"]) if (loaded.has(n)) L.push([n, `const ${n} = struct(…)`]);
+    return L;
+  }
+
+  interface Step {
+    t: string;
+    p: string;
+    /** Line of PROG running in this step; -1 = before the program starts. */
+    at: number;
+    /** Note on the running line once the step is done. */
+    done?: string;
+    stub?: boolean;
+    reads?: string[];
+    reuse?: string;
+    end?: boolean;
+  }
+
+  const STEPS: Step[] = [
+    {
+      t: "Before your program runs",
+      p: "Two files ship in the package. The stub has an empty placeholder for each operation. The full module has the real code and, at the end, an index. Nothing is in memory.",
+      at: -1,
+    },
+    {
+      t: "import loads only the stub",
+      p: "At startup, your <code>import</code> loads the 2.5 KB stub. Each export is a <code>stub(\"name\")</code> placeholder with no code behind it. The full module stays on disk.",
+      at: 1,
+      stub: true,
+    },
+    {
+      t: "Right after import: read the index",
+      p: "Still at startup, the loader reads one part of the full module: the index at the end. Each row says where an entry sits in the file and what else it needs. A row disappears once its entry is in memory.",
+      at: 1,
+      done: "index read",
+      reads: ["index"],
+    },
+    {
+      t: "First call to getMachine()",
+      p: "Your program reaches its first <code>yield*</code>, and only now does loading start. The placeholder looks up getMachine's row in the index: byte 19123. The loader reads only those 284 bytes, and the real operation replaces the placeholder.",
+      at: 6,
+      done: "paused: needs Machine",
+      reads: ["getMachine"],
+    },
+    {
+      t: "Still in that call: load what it needs",
+      p: "getMachine's code names <code>Machine</code>, and Machine's code names MachineConfig and MachineEvent. The loader finds each name's row in the index and reads its bytes the same way. Then your program resumes and the request goes out.",
+      at: 6,
+      done: "request sent",
+      reads: ["Machine", "MachineConfig", "MachineEvent"],
+    },
+    {
+      t: "First call to listMachines()",
+      p: "Same lookup for listMachines: 483 bytes. Its row says it needs <code>Machine</code>, which is already in memory, so nothing more is read.",
+      at: 7,
+      done: "request sent",
+      reads: ["listMachines"],
+      reuse: "Machine",
+    },
+    {
+      t: "getMachine() again",
+      p: "getMachine is already loaded, so this call reads nothing. Of the 63 KB file, the faded parts were never read: 96 operations and 21 schemas.",
+      at: 8,
+      done: "request sent, nothing loaded",
+      end: true,
+    },
+  ];
+
+  const root = document.getElementById("lz");
+  if (root) {
+    const $ = (id: string) => document.getElementById(`lz-${id}`)!;
+    const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, reduced() ? 0 : ms));
+
+    const line = (cls: string, text: string, no?: number, c?: string) =>
+      `<div class="lz-ln ${cls}"${c ? ` style="--c:${c}"` : ""}>${no !== undefined ? `<span class="no">${no}</span>` : ""}<span class="tx">${esc(text) || " "}</span></div>`;
+
+    // Right: the full file.
+    let fileLines: HTMLElement[] = [];
+    /** The offset each chunk's index row points at (index: where it starts). */
+    const OFFSET: Record<string, number> = {
+      getMachine: 19123,
+      listMachines: 25842,
+      MachineEvent: 43780,
+      MachineConfig: 43941,
+      Machine: 48375,
+      index: 55605,
+    };
+    function renderRight() {
+      let prev = "";
+      $("right").classList.toggle("lz-bytes", !real);
+      $("right").innerHTML = (real ? REAL_FULL : FULL)
+        .map(([id, t], i) => {
+          const cls = [id === "~" ? "filler" : "", t.trim().startsWith("//") || (real && id === "~") ? "c" : ""].join(" ");
+          let html = line(cls, t, i + 1, CHUNK[id]?.c).replace('class="lz-ln', `data-id="${id}" class="lz-ln`);
+          if (!real) {
+            const start = OFFSET[id] !== undefined && id !== prev;
+            html = html.replace(/<span class="no">\d+<\/span>/, `<span class="no">${start ? OFFSET[id] : ""}</span>`);
+          }
+          prev = id;
+          return html;
+        })
+        .join("");
+      fileLines = [...$("right").children] as HTMLElement[];
+    }
+    renderRight();
+
+    function scrollTo(id: string | undefined) {
+      const view = $("fileview");
+      const code = $("right");
+      let y = 0;
+      if (id) {
+        const ls = fileLines.filter((l) => l.dataset.id === id);
+        const top = ls[0]!.offsetTop;
+        const last = ls[ls.length - 1]!;
+        const h = Math.min(last.offsetTop + last.offsetHeight - top, view.clientHeight - 20);
+        y = top - (view.clientHeight - h) / 2;
+      }
+      code.style.transform = `translateY(${-y}px)`;
+    }
+
+    function paintRight(loaded: Set<string>, reading: string | undefined, end: boolean) {
+      for (const l of fileLines) {
+        const id = l.dataset.id!;
+        l.classList.toggle("read", id === reading);
+        l.classList.toggle("mem", id !== reading && loaded.has(id));
+        l.classList.toggle("never", end && id === "~");
+      }
+    }
+
+    /** Where the loader finds each name it needs: the in-memory line that mentions it. */
+    const FOUND_IN: Record<string, string> = {
+      getMachine: "stub",
+      listMachines: "stub",
+      Machine: "getMachine",
+      MachineConfig: "Machine",
+      MachineEvent: "Machine",
+    };
+    const word = (name: string) => new RegExp(`(?<![\\w#])${name.replace(/[$]/g, "\\$&")}(?![\\w])`);
+    const mark = (html: string, name: string) =>
+      html.replace(/(<span class="tx">)(.*?)(<\/span>)/, (_m, a, b, c) => a + b.replace(word(name), '<mark class="lz-tok">$&</mark>') + c);
+
+    function paintLeft(loaded: Set<string>, stub: boolean, fresh?: string, look?: string, from = look && FOUND_IN[look]) {
+      let markedFrom = false;
+      $("left").innerHTML = leftLines(loaded, stub)
+        .map(([id, t]) => {
+          let cls = "";
+          let c: string | undefined;
+          if (id === "c") cls = "c";
+          else if (id === "ixc") ((cls = "mem c"), (c = IX));
+          else if (id.startsWith("ix:")) ((cls = id.slice(3) === look ? "look" : "mem"), (c = IX));
+          else if (CHUNK[id]) ((cls = `mem${id === fresh ? " fresh" : ""}`), (c = CHUNK[id]!.c));
+          let html = line(cls, t, undefined, c).replace('class="lz-ln', `data-id="${id}" class="lz-ln`);
+          if (look) {
+            if (!real && id === `ix:${look}` && t.trimStart().startsWith(`${look}:`)) {
+              const off = t.match(/: (\d+)/)?.[1];
+              if (off) html = html.replace(off, `<mark class="lz-off">${off}</mark>`);
+            }
+            if (real) {
+              // Real code has no names to follow: mark the placeholder, or the index row it is found by.
+              const tok = from === "stub" ? look : REAL_ROW[look];
+              const hit = !markedFrom && !!tok && (from === "stub" ? t.includes(`${look}=$o()`) : id === `ix:${look}` && t.startsWith(tok));
+              if (hit) ((markedFrom = true), (html = mark(html, tok!)));
+            } else {
+              const isFrom = !markedFrom && (from === "stub" ? t.includes(`stub("${look}")`) : id === from && word(look).test(t));
+              if (isFrom) markedFrom = true;
+              if (isFrom) html = mark(html, look);
+            }
+          }
+          return html;
+        })
+        .join("");
+    }
+
+    function paintProg(at: number, tag = "", waiting = false, markName?: string) {
+      // the import is two lines; the active phase comment lights up too
+      const now = at === 1 ? [1, 2] : at >= 0 ? [at] : [];
+      const phase = at < 0 ? -1 : at <= 2 ? 0 : 4;
+      $("prog").innerHTML = PROG.map((t, i) => {
+        let html = line(now.includes(i) ? "now" : i === phase ? "c phase" : t.startsWith("//") ? "c" : "", t);
+        if (markName && i === at) html = mark(html, markName);
+        return html;
+      }).join("");
+      const st = $("status");
+      const wait = waiting || tag.startsWith("paused");
+      st.textContent = tag ? `${wait ? "⏸" : "✓"} ${tag}` : "";
+      st.classList.toggle("wait", wait);
+    }
+
+    /** Stack one colored segment per thing in memory, in load order. */
+    function setMem(stub: boolean, loaded: Set<string>, fresh?: string) {
+      const parts: [string, string, number][] = [];
+      if (stub) parts.push(["stub", ST, STUB]);
+      for (const id of loaded) parts.push([id, CHUNK[id]!.c, CHUNK[id]!.bytes]);
+      const bytes = parts.reduce((a, p) => a + p[2], 0);
+      const fill = $("memfill");
+      fill.innerHTML = parts
+        .map(([id, c, b]) => `<i class="${id === fresh ? "new" : ""}" style="--c:${c};--b:${b}" title="${id} · ${kb(b)}"></i>`)
+        .join("");
+      fill.style.setProperty("--pct", `${(100 * bytes) / FILE}%`);
+      $("memval").innerHTML = kb(bytes).replace(" ", "<br />");
+    }
+
+    function plus(bytes: number) {
+      const track = $("memtrack");
+      const tag = document.createElement("span");
+      tag.className = "lz-plus";
+      tag.textContent = `+${kb(bytes)}`;
+      const fill = $("memfill");
+      tag.style.top = `${track.clientHeight - fill.offsetHeight - 16}px`;
+      track.appendChild(tag);
+      setTimeout(() => tag.remove(), 1500);
+    }
+
+    /** Scroll the in-memory pane so `el` sits in its middle; resolves once it's there. */
+    async function showInMemory(el: Element | null | undefined) {
+      const view = root!.querySelector<HTMLElement>(".lz-memview")!;
+      if (!el) return;
+      const e = el as HTMLElement;
+      const top = Math.max(0, e.offsetTop - view.clientHeight / 2 + e.offsetHeight / 2);
+      if (Math.abs(view.scrollTop - top) < 4) return;
+      view.scrollTo({ top, behavior: reduced() ? "auto" : "smooth" });
+      await wait(380);
+    }
+
+    /** Mark the parts of the file that have been read on the disk bar. */
+    function slice(id: string, hot = false) {
+      const track = $("disktrack");
+      const ch = CHUNK[id]!;
+      const horiz = track.clientWidth > track.clientHeight;
+      const el = document.createElement("i");
+      el.className = `lz-slice${hot ? " hot" : ""}`;
+      el.dataset.id = id;
+      el.style.setProperty("--c", ch.c);
+      if (horiz) ((el.style.left = `${(100 * ch.at) / FILE}%`), (el.style.width = `${(100 * ch.bytes) / FILE}%`));
+      else ((el.style.top = `${(100 * ch.at) / FILE}%`), (el.style.height = `${(100 * ch.bytes) / FILE}%`));
+      track.appendChild(el);
+      return el;
+    }
+    function paintDisk(loaded: Set<string>) {
+      $("disktrack").querySelectorAll(".lz-slice").forEach((e) => e.remove());
+      for (const id of loaded) slice(id);
+    }
+
+    /**
+     * One read. Two things move together: the pill goes straight from the
+     * chunk on disk to the line it becomes in memory, and the matching slice
+     * of the disk bar slides across into the top of the memory bar.
+     */
+    async function fly(id: string, loaded: Set<string>, me: number) {
+      const chunk = CHUNK[id]!;
+      const box = root!.getBoundingClientRect();
+      const src = fileLines.find((l) => l.dataset.id === id)!.getBoundingClientRect();
+      // Measure where the new entry will land by laying out the next state
+      // and putting the old one back in the same tick, so it never paints.
+      const next = new Set(loaded).add(id);
+      const view = root!.querySelector<HTMLElement>(".lz-memview")!;
+      const prevScroll = view.scrollTop;
+      paintLeft(next, true, id);
+      const landing = $("left").querySelector<HTMLElement>(`[data-id="${id}"]`) ?? ($("left") as HTMLElement);
+      const land = { top: landing.offsetTop, left: landing.offsetLeft, w: landing.offsetWidth, h: landing.offsetHeight };
+      const keep = Math.max(0, land.top - view.clientHeight / 2 + land.h / 2);
+      paintLeft(loaded, true);
+      view.scrollTop = prevScroll;
+      // Bring the landing spot into view (old content still showing), then aim at it.
+      if (Math.abs(view.scrollTop - keep) >= 4) {
+        view.scrollTo({ top: keep, behavior: reduced() ? "auto" : "smooth" });
+        await wait(380);
+        if (me !== run) return;
+      }
+      const vr = view.getBoundingClientRect();
+      const dst = {
+        left: vr.left + view.clientLeft + land.left,
+        top: vr.top + view.clientTop + land.top - view.scrollTop,
+        width: land.w,
+        height: land.h,
+      };
+
+      // Where the slice starts (on the disk bar) and ends (top of the memory bar).
+      const hot = slice(id, true);
+      const sl = hot.getBoundingClientRect();
+      const mt = $("memtrack").getBoundingClientRect();
+      const before = STUB + [...loaded].reduce((a, x) => a + CHUNK[x]!.bytes, 0);
+      const horiz = mt.width > mt.height;
+      const to = horiz
+        ? { x: mt.left + (mt.width * before) / FILE, y: mt.top, w: (mt.width * chunk.bytes) / FILE, h: mt.height }
+        : { x: mt.left, y: mt.bottom - (mt.height * (before + chunk.bytes)) / FILE, w: mt.width, h: (mt.height * chunk.bytes) / FILE };
+
+      const done = () => {
+        chip.remove();
+        seg.remove();
+        hot.classList.remove("hot");
+        paintLeft(next, true, id);
+        view.scrollTop = keep;
+        setMem(true, next, id);
+        plus(chunk.bytes);
+      };
+
+      const chip = document.createElement("span");
+      chip.className = "lz-chip";
+      chip.style.setProperty("--c", chunk.c);
+      chip.textContent = `${label(id)} · ${kb(chunk.bytes)}`;
+      root!.appendChild(chip);
+      const seg = document.createElement("i");
+      seg.className = "lz-segfly";
+      seg.style.setProperty("--c", chunk.c);
+      root!.appendChild(seg);
+      if (reduced()) return done();
+
+      const w = chip.offsetWidth;
+      const h = chip.offsetHeight;
+      const at = (x: number, y: number) => `translate(${x - box.left - w / 2}px, ${y - box.top - h / 2}px)`;
+      const p0 = at(src.left + 60, src.top + src.height / 2);
+      const p1 = at(dst.left + Math.min(dst.width / 2, 110), dst.top + dst.height / 2);
+      const rect = (x: number, y: number, ww: number, hh: number) => ({
+        transform: `translate(${x - box.left}px, ${y - box.top}px)`,
+        width: `${Math.max(3, ww)}px`,
+        height: `${Math.max(3, hh)}px`,
+      });
+      const opts = { duration: 1300, easing: "cubic-bezier(.45,0,.25,1)", fill: "forwards" as const };
+      await Promise.all([
+        chip.animate(
+          [
+            { transform: p0, opacity: 0 },
+            { transform: p0, opacity: 1, offset: 0.1 },
+            { transform: p1, opacity: 1 },
+          ],
+          opts,
+        ).finished,
+        seg.animate(
+          [
+            { ...rect(sl.left, sl.top, sl.width, sl.height), offset: 0 },
+            { ...rect(sl.left, sl.top, sl.width, sl.height), offset: 0.1 },
+            rect(to.x, to.y, to.w, to.h),
+          ],
+          opts,
+        ).finished,
+      ]);
+      done();
+    }
+
+    let cur = 0;
+    let run = 0;
+
+    function stateBefore(n: number) {
+      const loaded = new Set<string>();
+      let stub = false;
+      let mem = 0;
+      for (let i = 0; i < n; i++) {
+        const st = STEPS[i]!;
+        if (st.stub && !stub) ((stub = true), (mem += STUB));
+        for (const r of st.reads ?? []) if (!loaded.has(r)) (loaded.add(r), (mem += CHUNK[r]!.bytes));
+      }
+      return { loaded, stub, mem };
+    }
+
+    async function go(n: number) {
+      const me = ++run;
+      const forward = n === cur + 1;
+      cur = Math.max(0, Math.min(STEPS.length - 1, n));
+      const st = STEPS[cur]!;
+      root!.querySelectorAll(".lz-chip").forEach((c) => c.remove());
+
+      $("narr").innerHTML =
+        `<div class="lz-in">` +
+        `<strong class="lz-ttl">${st.t}</strong><p>${st.p}</p></div>`;
+      $("dots")
+        .querySelectorAll(".lz-dot")
+        .forEach((d, i) => {
+          d.classList.toggle("now", i === cur);
+          d.classList.toggle("past", i < cur);
+        });
+      ($("prev") as HTMLButtonElement).disabled = cur === 0;
+      ($("next") as HTMLButtonElement).disabled = cur === STEPS.length - 1;
+      paintProg(st.at, forward ? "" : (st.done ?? ""));
+
+      // Jumping (back, or by dot): show the finished state of this step.
+      const s = forward ? stateBefore(cur) : stateBefore(cur + 1);
+      const stub = forward ? s.stub || !!st.stub : s.stub;
+      paintLeft(s.loaded, forward ? s.stub : stub);
+      paintRight(s.loaded, undefined, !!st.end);
+      setMem(forward ? s.stub : stub, s.loaded);
+      paintDisk(s.loaded);
+      const lastRead = [...(st.reads ?? [])].pop();
+      scrollTo(lastRead);
+      if (!forward) {
+        return;
+      }
+
+      if (st.stub) {
+        await wait(400);
+        if (me !== run) return;
+        paintLeft(s.loaded, true);
+        setMem(true, s.loaded, "stub");
+        plus(STUB);
+        s.mem += STUB;
+      }
+      for (const id of st.reads ?? []) {
+        paintProg(st.at, `paused: loading ${label(id)}`, true);
+        if (id !== "index") {
+          // The loader finds the entry's row in the index first…
+          paintLeft(s.loaded, true, undefined, id);
+          void showInMemory($("left").querySelector(".lz-ln.look") ?? $("left").querySelector("mark"));
+          await wait(900);
+          if (me !== run) return;
+        }
+        // …which says where its bytes are in the file on disk.
+        scrollTo(id);
+        paintRight(s.loaded, id, false);
+        const gutter = real ? undefined : fileLines.find((l) => l.dataset.id === id)?.querySelector(".no");
+        gutter?.classList.add("hit");
+        await wait(1000);
+        gutter?.classList.remove("hit");
+        if (me !== run) return;
+        await fly(id, s.loaded, me);
+        if (me !== run) return;
+        s.loaded.add(id);
+        s.mem += CHUNK[id]!.bytes;
+        paintRight(s.loaded, undefined, false);
+        await wait(500);
+        if (me !== run) return;
+      }
+      if (st.reuse) {
+        // Already in memory: point at the copy we have, and leave the disk alone.
+        await wait(600);
+        if (me !== run) return;
+        paintLeft(s.loaded, true, undefined, st.reuse, "listMachines");
+        const el = $("left").querySelector<HTMLElement>(`[data-id="${st.reuse}"]`);
+        el?.classList.add("fresh");
+        void showInMemory(el);
+        paintProg(st.at, `${label(st.reuse)}: already in memory, 0 B read`, false);
+        await wait(1600);
+        if (me !== run) return;
+      }
+      if (st.done || (st.reads && !st.done)) paintProg(st.at, st.done ?? "", false);
+      if (st.end) scrollTo(undefined);
+    }
+
+    $("dots").innerHTML = STEPS.map((s, i) => `<i class="lz-dot" data-i="${i}" title="${s.t}"></i>`).join("");
+    $("dots")
+      .querySelectorAll<HTMLElement>(".lz-dot")
+      .forEach((d) => (d.onclick = () => void go(Number(d.dataset.i))));
+    ($("real") as HTMLInputElement).onchange = (e) => {
+      real = (e.target as HTMLInputElement).checked;
+      renderRight();
+      // Replay the current step in the new view.
+      const at = cur;
+      cur = at - 1;
+      void go(at);
+    };
+    $("next").onclick = () => void go(cur + 1);
+    $("prev").onclick = () => void go(cur - 1);
+    root.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") void go(cur + 1);
+      if (e.key === "ArrowLeft") void go(cur - 1);
+    });
+    void go(0);
+  }
+</script>

@@ -31,6 +31,7 @@ type Layout = (event: { nativeEvent: { layout: { height: number } } }) => void;
 const native = vi.hoisted(() => ({
   atoms: {
     threads: Symbol(),
+    holding: Symbol(),
     environments: Symbol(),
     configs: Symbol(),
     queued: Symbol(),
@@ -71,7 +72,6 @@ vi.mock("react-native", () => ({
   useWindowDimensions: () => ({ fontScale: 1 }),
   Modal: Children,
   Pressable: Children,
-  FlatList: NativeList,
   Animated: {
     View: Children,
     Value: class {
@@ -79,6 +79,7 @@ vi.mock("react-native", () => ({
     },
   },
 }));
+vi.mock("@legendapp/list/react-native", () => ({ LegendList: NativeList }));
 vi.mock("react-native-reanimated", () => ({
   default: { View: Children },
   ReduceMotion: { System: "system" },
@@ -155,7 +156,8 @@ vi.mock("@effect/atom-react", () => ({
     ),
 }));
 vi.mock("../../state/threads", () => ({
-  environmentThreadShells: { navigationThreadShellsAtom: native.atoms.threads },
+  steadyNavigationThreadShellsAtom: native.atoms.threads,
+  steadyShellsHoldingAtom: native.atoms.holding,
 }));
 vi.mock("../../state/presentation", () => ({
   threadListEnvironmentsAtom: native.atoms.environments,
@@ -211,6 +213,7 @@ function setup(count = 30) {
     }),
   );
   native.values.set(native.atoms.threads, threads);
+  native.values.set(native.atoms.holding, false);
   native.values.set(
     native.atoms.configs,
     new Map([
