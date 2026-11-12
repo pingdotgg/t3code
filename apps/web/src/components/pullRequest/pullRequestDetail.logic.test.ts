@@ -216,6 +216,7 @@ describe("pull request primary control", () => {
       { mergeability: "unknown" as const },
       { checksState: "pending" as const },
       { checksState: "failing" as const },
+      { reviewDecision: undefined },
       { reviewDecision: "review-required" as const },
       { reviewDecision: "changes-requested" as const },
       { autoMergeEnabled: true },

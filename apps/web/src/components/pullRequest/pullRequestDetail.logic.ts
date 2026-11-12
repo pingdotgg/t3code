@@ -119,7 +119,10 @@ export function resolvePullRequestPrimaryControl(input: {
   return input.canMerge ? "merge" : null;
 }
 
-/** Open, conflict-free, checks green, no blocking review, and auto-merge not armed. */
+/**
+ * Open, conflict-free, checks green, no blocking review, and auto-merge not armed.
+ * A `null` review decision means the host requires none; `undefined` means it did not say.
+ */
 export function isPullRequestReadyToMerge(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -134,6 +137,7 @@ export function isPullRequestReadyToMerge(input: {
     input.mergeability === "mergeable" &&
     input.checksState !== "pending" &&
     input.checksState !== "failing" &&
+    input.reviewDecision !== undefined &&
     input.reviewDecision !== "changes-requested" &&
     input.reviewDecision !== "review-required" &&
     input.autoMergeEnabled !== true
