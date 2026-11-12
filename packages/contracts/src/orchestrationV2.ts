@@ -1094,6 +1094,27 @@ export const OrchestrationV2ProviderGoal = Schema.Struct({
 });
 export type OrchestrationV2ProviderGoal = typeof OrchestrationV2ProviderGoal.Type;
 
+/** A native goal stays with the provider thread that set it, so a provider switch leaves it behind. */
+export function previousProviderGoal(
+  providerThreads: ReadonlyArray<{
+    readonly id: string;
+    readonly lastRunOrdinal: number | null;
+    readonly goal?: OrchestrationV2ProviderGoal | null | undefined;
+  }>,
+  activeProviderThreadId: string | null,
+): OrchestrationV2ProviderGoal | null {
+  if (providerThreads.some((thread) => thread.id === activeProviderThreadId && thread.goal != null))
+    return null;
+  return (
+    providerThreads
+      .filter(
+        (thread) => thread.id !== activeProviderThreadId && thread.goal?.status !== "complete",
+      )
+      .sort((left, right) => (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0))
+      .find((thread) => thread.goal != null)?.goal ?? null
+  );
+}
+
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
   driver: ProviderDriverKind,
@@ -2168,6 +2189,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)),
+  /** An unfinished goal an earlier provider thread still owns while the active one has none. Absent from older servers. */
+  previousProviderGoal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)),
   itemCount: NonNegativeInt,
   visibleItemCount: NonNegativeInt,
   createdAt: Schema.DateTimeUtc,

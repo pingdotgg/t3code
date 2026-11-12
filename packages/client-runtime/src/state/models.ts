@@ -168,6 +168,8 @@ export interface EnvironmentThreadShell {
   >;
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
   readonly goal: OrchestrationV2ProviderGoal | null;
+  /** Shown when `goal` is null; only the provider that owns it can resume or clear it. */
+  readonly previousProviderGoal: OrchestrationV2ProviderGoal | null;
   readonly itemCount: number;
   readonly visibleItemCount: number;
   readonly createdAt: string;
@@ -323,6 +325,7 @@ export function presentThreadShell(
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     goal: thread.goal ?? null,
+    previousProviderGoal: thread.previousProviderGoal ?? null,
     itemCount: thread.itemCount,
     visibleItemCount: thread.visibleItemCount,
     createdAt: iso(thread.createdAt),

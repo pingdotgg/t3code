@@ -1,4 +1,8 @@
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ProviderTurn,
+  previousProviderGoal,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -1445,6 +1449,10 @@ export function presentThreadShellFromProjection(
         projection.providerThreads.find(
           (thread) => thread.id === projection.thread.activeProviderThreadId,
         )?.goal ?? null,
+      previousProviderGoal: previousProviderGoal(
+        projection.providerThreads,
+        projection.thread.activeProviderThreadId,
+      ),
       itemCount: projection.turnItems.length,
       visibleItemCount: projection.visibleTurnItems.length,
       updatedAt,

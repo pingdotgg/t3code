@@ -1459,6 +1459,13 @@ describe("orchestration v2 provider switching", () => {
           // The goal was set natively, so no history message names it.
           assert.include(target.text, "Finish the ZEBRA-42 migration");
           assert.include(target.text, "paused");
+          const shell = yield* orchestrator.getThreadShell(threadId);
+          assert.equal(shell?.goal ?? null, null);
+          assert.deepEqual(shell?.previousProviderGoal, {
+            objective: "Finish the ZEBRA-42 migration",
+            status: "paused",
+            tokensUsed: 25909,
+          });
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
