@@ -2841,6 +2841,7 @@ export type ServerSettings = {
       }
     | undefined;
   readonly sourceControlHosts?: { readonly [x: string]: Wire155 } | undefined;
+  readonly offeredSourceControlProviders?: { readonly [x: string]: boolean } | undefined;
   readonly usageLimitSources?: { readonly [x: string]: Wire156 } | undefined;
   readonly textGenerators?: { readonly [x: string]: Wire157 } | undefined;
   readonly secretProviders?:
@@ -3030,6 +3031,7 @@ export type ServerSettingsPatch = {
     readonly otlpLogsUrl?: string;
   };
   readonly sourceControlHosts?: { readonly [x: string]: Wire155 };
+  readonly offeredSourceControlProviders?: { readonly [x: string]: boolean };
   readonly providerInstances?: { readonly [x: string]: Wire154 };
   readonly usageLimitSources?: { readonly [x: string]: Wire156 | null };
   readonly textGenerators?: { readonly [x: string]: Wire157 | null };
