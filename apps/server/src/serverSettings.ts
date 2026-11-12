@@ -250,6 +250,16 @@ function ensureProviderInstanceMutationAllowed(
   return Effect.void;
 }
 
+/** A function is computed from the current settings under the write lock. */
+export type ServerSettingsUpdate =
+  | ServerSettingsPatch
+  | ((current: ServerSettings) => ServerSettingsPatch);
+
+export const resolveServerSettingsPatch = (
+  current: ServerSettings,
+  update: ServerSettingsUpdate,
+): ServerSettingsPatch => (typeof update === "function" ? update(current) : update);
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -262,9 +272,8 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
-    /** A function patch is computed from the current settings under the write lock. */
     readonly updateSettings: (
-      patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
+      patch: ServerSettingsUpdate,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateProviderInstance: (
@@ -330,7 +339,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
         Effect.succeed(
           applyServerSettingsPatch(
             currentSettings,
-            typeof patch === "function" ? patch(currentSettings) : patch,
+            resolveServerSettingsPatch(currentSettings, patch),
           ),
         ),
       ),
@@ -1190,7 +1199,7 @@ const make = Effect.gen(function* () {
   };
 
   const updateAndPersistSettings = (
-    patchInput: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
+    patchInput: ServerSettingsUpdate,
     update: (
       current: ServerSettings,
       patch: ServerSettingsPatch,
@@ -1206,7 +1215,7 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const patch = typeof patchInput === "function" ? patchInput(current) : patchInput;
+        const patch = resolveServerSettingsPatch(current, patchInput);
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
         const updated = withEchoedSecretReferences(current, yield* update(current, patch));
