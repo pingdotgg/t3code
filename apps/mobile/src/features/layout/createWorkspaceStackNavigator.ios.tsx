@@ -44,6 +44,7 @@ import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { setNativelyPoppingWorkspaceRoute } from "./workspace/workspace-detail-selection";
+import { recordDiagnostic } from "../diagnostics/diagnostic-log";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "./AdaptiveWorkspaceLayout";
@@ -311,6 +312,13 @@ function WorkspaceColumns(
     key: string,
   ) => {
     if (!collapsed.current || layout.usesSplitView) return;
+    const route = props.navigation.getState().routes.find((candidate) => candidate.key === key);
+    recordDiagnostic({
+      type: "navigation.native",
+      phase: type,
+      name: route?.name ?? "unknown",
+      key,
+    });
     const transition = collapsedSplitTransition(
       collapsedColumn.current,
       { type, key },

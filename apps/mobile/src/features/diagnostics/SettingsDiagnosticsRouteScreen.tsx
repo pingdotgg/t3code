@@ -11,6 +11,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Dialog from "../../components/ui/Dialog";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -26,6 +27,11 @@ import {
   parseStartupCrashRecords,
   type StartupCrashRecord,
 } from "./crash-log-model";
+import {
+  diagnosticAppIdentity,
+  savedDiagnostics,
+  shareSavedDiagnostics,
+} from "./saved-diagnostics";
 
 // expo-updates retains only seven days of logs.
 const LOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -103,6 +109,8 @@ export function SettingsDiagnosticsRouteScreen() {
       >
         {crashReportingAvailable ? <CrashReportsSetting /> : null}
 
+        <SavedDiagnosticsSection />
+
         <SettingsSection title="Startup crashes">
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
@@ -145,6 +153,78 @@ export function SettingsDiagnosticsRouteScreen() {
         </View>
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+function SavedDiagnosticsSection() {
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const run = async (action: () => void | Promise<void>) => {
+    setBusy(true);
+    try {
+      await action();
+    } catch {
+      Dialog.alert(
+        "Diagnostics unavailable",
+        "The saved diagnostics action could not be completed. Try again.",
+      );
+    }
+    setBusy(false);
+  };
+  const clear = () =>
+    Dialog.confirm({
+      title: "Clear saved diagnostics?",
+      message:
+        "This removes the saved activity log from this device. New activity will still be recorded.",
+      confirmText: "Clear",
+      destructive: true,
+      onConfirm: () =>
+        void run(() => {
+          savedDiagnostics.clear();
+          savedDiagnostics.record({ type: "logs.cleared", app: diagnosticAppIdentity() });
+          setCopied(false);
+        }),
+    });
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Saved diagnostics">
+        <SettingsActionRow
+          icon="square.and.arrow.up"
+          label="Share diagnostics"
+          disabled={busy}
+          onPress={() => void run(shareSavedDiagnostics)}
+        />
+        <SettingsActionRow
+          icon={copied ? "checkmark" : "doc.on.doc"}
+          label={copied ? "Diagnostics copied" : "Copy diagnostics"}
+          disabled={busy}
+          onPress={() =>
+            void run(async () => {
+              const ok = await tryCopyTextWithHaptic(
+                savedDiagnostics.report(diagnosticAppIdentity()),
+                {
+                  target: "diagnostics",
+                },
+              );
+              if (ok) setCopied(true);
+            })
+          }
+        />
+        <SettingsActionRow
+          icon="trash"
+          label="Clear saved diagnostics"
+          tone="danger"
+          disabled={busy}
+          onPress={clear}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm leading-normal text-foreground-muted">
+        Recent navigation and connection activity is saved on this device, including after an app
+        restart. Older entries are removed automatically. Nothing is sent unless you share it. The
+        report includes app and OS versions and thread and environment IDs, without conversation
+        text, credentials, server addresses, or file paths.
+      </Text>
+    </View>
   );
 }
 

@@ -26,6 +26,7 @@ import { StyleSheet, View } from "react-native";
 import { Stack } from "react-native-screens";
 import { NativeScrollEdgeEffectsContext } from "./NativeScrollViewMarker";
 import { V5StackHeader } from "./V5StackHeader.ios";
+import { recordDiagnostic } from "../features/diagnostics/diagnostic-log";
 import type { AppNativeStackNavigationOptions } from "./StackHeader";
 import { NativeColumnContent } from "./NativeColumnContent.ios";
 import {
@@ -175,6 +176,12 @@ export function V5CardStackView(
                 if (preventedRoutes[route.key]?.preventRemove) descriptor.navigation.goBack();
               }}
               onWillAppear={() => {
+                recordDiagnostic({
+                  type: "navigation.native",
+                  phase: "willAppear",
+                  name: route.name,
+                  key: route.key,
+                });
                 if (index === 0) props.onRootVisibilityChange?.(true);
                 props.navigation.emit({
                   type: "transitionStart",
@@ -183,6 +190,12 @@ export function V5CardStackView(
                 });
               }}
               onDidAppear={() => {
+                recordDiagnostic({
+                  type: "navigation.native",
+                  phase: "didAppear",
+                  name: route.name,
+                  key: route.key,
+                });
                 const source = nativePopSource.current;
                 if (source === route.key) {
                   setNativePopSource(null);
@@ -213,6 +226,12 @@ export function V5CardStackView(
                 });
               }}
               onWillDisappear={() => {
+                recordDiagnostic({
+                  type: "navigation.native",
+                  phase: "willDisappear",
+                  name: route.name,
+                  key: route.key,
+                });
                 if (index === 0) props.onRootVisibilityChange?.(false);
                 const state = props.navigation.getState();
                 // Only native Back leaves the disappearing card active; JS navigation already changed history.
@@ -225,13 +244,19 @@ export function V5CardStackView(
                   data: { closing: true },
                 });
               }}
-              onDidDisappear={() =>
+              onDidDisappear={() => {
+                recordDiagnostic({
+                  type: "navigation.native",
+                  phase: "didDisappear",
+                  name: route.name,
+                  key: route.key,
+                });
                 props.navigation.emit({
                   type: "transitionEnd",
                   target: route.key,
                   data: { closing: true },
-                })
-              }
+                });
+              }}
             >
               <NavigationContext value={descriptor.navigation}>
                 <NavigationRouteContext value={descriptor.route}>

@@ -7,6 +7,7 @@ import type {
   StackNavigationState,
 } from "@react-navigation/native";
 import { workspaceRoutesOf } from "../workspace-overlay-routes";
+import { recordDiagnostic } from "../../diagnostics/diagnostic-log";
 
 type RootParams = ReactNavigation.RootParamList;
 
@@ -36,6 +37,13 @@ export function selectWorkspaceDetail(
   detail: WorkspaceDetail,
   sheet?: WorkspaceDetailSheet,
 ): SelectWorkspaceDetailAction {
+  const params = detail.params as { environmentId?: unknown; threadId?: unknown } | undefined;
+  recordDiagnostic({
+    type: "navigation.requested",
+    name: detail.name,
+    ...(typeof params?.environmentId === "string" ? { environmentId: params.environmentId } : {}),
+    ...(typeof params?.threadId === "string" ? { threadId: params.threadId } : {}),
+  });
   return { type: SELECT_WORKSPACE_DETAIL, payload: sheet ? { detail, sheet } : { detail } };
 }
 

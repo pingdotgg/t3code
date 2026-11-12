@@ -116,6 +116,8 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsAbout: [
     "version",
     "diagnostics",
+    "logs",
+    "share diagnostics",
     "client storage",
     "cache",
     "legal",

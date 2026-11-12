@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { recordDiagnostic } from "../diagnostics/diagnostic-log";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -733,7 +734,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
 
-  const selectThread = () => onSelectThread(thread);
+  const selectThread = (close: () => void) => {
+    recordDiagnostic({
+      type: "thread.selected",
+      environmentId: String(thread.environmentId),
+      threadId: String(thread.id),
+    });
+    close();
+    onSelectThread(thread);
+  };
   const { providerDrivers, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
@@ -1437,8 +1446,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
         }}
         onPress={() => {
-          close();
-          selectThread();
+          selectThread(close);
         }}
         style={rowAppearance.cardStyle}
       >
@@ -1464,8 +1472,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityState={{ selected }}
         className={rowAppearance.className}
         onPress={() => {
-          close();
-          selectThread();
+          selectThread(close);
         }}
         style={rowAppearance.style}
       >

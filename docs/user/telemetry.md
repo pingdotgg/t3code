@@ -44,6 +44,13 @@ but an error message can quote a value the app was handling.
 
 To stop sending them, turn off **Send crash reports** in **Settings > About T3 Code > Diagnostics**.
 
+The same screen has **Share diagnostics** and **Copy diagnostics** for reporting problems that do
+not crash the app, such as a thread that will not open. A small activity log stays on the device
+across app restarts, with older entries removed automatically. It records navigation and connection
+state, app and OS versions, and thread and environment IDs. It does not record conversation text,
+credentials, server addresses, or file paths. This log is shared only when you export it; **Send
+crash reports** does not control it. Use **Clear saved diagnostics** to remove the saved history.
+
 The mobile app also sends relay connection traces when its build has tracing configured. These
 carry an identifier for the current app session. **Send crash reports** does not control these
 traces, and the mobile app has no separate relay tracing toggle. Server environment variables and

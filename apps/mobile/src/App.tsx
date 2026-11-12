@@ -1,4 +1,6 @@
 import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
+import { installMobileDiagnostics } from "./features/diagnostics/install-diagnostics";
+import { recordDiagnostic } from "./features/diagnostics/diagnostic-log";
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
@@ -161,6 +163,23 @@ function linkToAppPath(href: string): void {
 const Navigation = createStaticNavigation(RootStack);
 
 function handleNavigationStateChange(state: NavigationState | undefined): void {
+  if (state) {
+    recordDiagnostic({
+      type: "navigation.changed",
+      index: state.index,
+      routes: state.routes.map((route) => {
+        const params = route.params as { environmentId?: unknown; threadId?: unknown } | undefined;
+        return {
+          name: route.name,
+          key: route.key,
+          ...(typeof params?.environmentId === "string"
+            ? { environmentId: params.environmentId }
+            : {}),
+          ...(typeof params?.threadId === "string" ? { threadId: params.threadId } : {}),
+        };
+      }),
+    });
+  }
   recordWorkspaceSelections(state);
   presentPendingIncomingShare();
   resolvePendingNewTaskPromptLink(state);
@@ -181,6 +200,7 @@ function handleNavigationReady(): void {
 declare const module: { readonly hot?: FoundationHotModule } | undefined;
 
 const appServiceDisposers = [
+  installMobileDiagnostics(),
   installUiRuntimeMemoryWarningGc(),
   subscribeComposerDraftModelReconciliation({
     registry: appAtomRegistry,
