@@ -421,11 +421,12 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
-  afterPosition: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))).annotate({
-    description: "Read forward from here. -1 reads from the start.",
-  }),
+  afterPosition: Schema.optional(NonNegativeInt),
   beforePosition: Schema.optional(NonNegativeInt).annotate({
     description: "Read backward from here.",
+  }),
+  latest: Schema.optional(Schema.Boolean).annotate({
+    description: "Without a cursor, read the newest items instead of the oldest.",
   }),
   limit: Schema.optional(clampedPositiveInt(100)).annotate({
     description: "Max items, 1 to 100.",

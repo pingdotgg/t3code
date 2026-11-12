@@ -3042,8 +3042,10 @@ const make = Effect.gen(function* () {
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-      // Without a cursor, a read returns the newest items, which is what callers usually want.
-      const newestFirst = input.afterPosition === undefined || input.beforePosition !== undefined;
+      // Cursorless reads stay oldest-first: older linked environments page forward from them.
+      const newestFirst =
+        input.beforePosition !== undefined ||
+        (input.latest === true && input.afterPosition === undefined);
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
