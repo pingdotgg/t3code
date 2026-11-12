@@ -51,6 +51,20 @@ describe("resolveRemoteOpenState", () => {
     });
   });
 
+  it("links to the host of the route in use instead of the advertised Tailscale name", () => {
+    const state = resolveRemoteOpenState({
+      target: primaryTarget("http://192.168.1.20:3773"),
+      sshTarget: null,
+      isDesktopRenderer: false,
+      remoteOpenTargets: TAILSCALE_TARGETS,
+      hostEnvironmentId: null,
+    });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("vscode://vscode-remote/ssh-remote+192.168.1.20/work/project");
+  });
+
   it("keeps exec behavior for the desktop app's own primary even on a NAT URL", () => {
     // wsl-only binds the desktop-owned primary to its WSL2 NAT address.
     expect(
