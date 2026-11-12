@@ -109,6 +109,16 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         }),
       ).toBe("sudo /opt/t3/t3 browser setup");
 
+      // A standalone executable started directly (systemd, no launcher) is still this install.
+      expect(
+        yield* rootCommand({
+          node: "/opt/t3/t3",
+          entry: "/opt/t3/t3",
+          executable: true,
+          path: yield* pathWithT3,
+        }),
+      ).toBe("sudo /opt/t3/t3 browser setup");
+
       expect(
         yield* rootCommand({ ...desktop, env: { T3CODE_CLI_PATH: path.join(home, "gone") } }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');
