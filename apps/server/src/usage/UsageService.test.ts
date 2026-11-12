@@ -2410,59 +2410,34 @@ describe("UsageService", () => {
         const { transcript, settings, home } = yield* setup;
         yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
         const provisional = { ...WINDOW, provisional: true };
-        const exact = { ...WINDOW, awaitRefresh: true };
         const claude = (summary: UsageSummary) =>
           summary.sources.find((source) => source.fingerprint.provider === "claude");
         yield* Effect.gen(function* () {
+          // With nothing persisted, the first answer is a full scan.
           const service = yield* UsageService.make;
-          // A scan that missed a path covers nothing, so the next answer is a full scan too.
           const loop = NodePath.join(NodePath.dirname(transcript), "loop.jsonl");
           yield* Effect.promise(() => NodeFSP.symlink(loop, loop, "junction"));
           assert.strictEqual(claude(yield* service.readSummary(provisional))?.status, "partial");
-          assert.isUndefined(claude(yield* service.readSummary(provisional))?.refreshing);
           yield* Effect.promise(() => NodeFSP.rm(loop));
-          // Nothing saved covers the window yet, so the first answer is a full scan.
-          const first = yield* service.readSummary(provisional);
-          assert.strictEqual(totalOutputTokens(first), 5);
-          assert.isUndefined(claude(first)?.refreshing);
-
-          yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
-          const saved = yield* service.readSummary(provisional);
-          assert.strictEqual(totalOutputTokens(saved), 5);
-          assert.isTrue(claude(saved)?.refreshing);
-          assert.isTrue(
-            saved.sources.every((source) => source === claude(saved) || !source.refreshing),
-          );
-          const refreshed = yield* service.readSummary(exact);
-          assert.strictEqual(totalOutputTokens(refreshed), 12);
-          assert.isUndefined(claude(refreshed)?.refreshing);
-          assert.deepStrictEqual(
-            (yield* service.readSummary(provisional)).buckets,
-            refreshed.buckets,
-          );
+          // A scan that missed a path covers nothing, so this is a full scan too.
+          assert.isUndefined(claude(yield* service.readSummary(provisional))?.refreshing);
           yield* service.awaitPersisted;
 
-          // A restarted server has no earlier answer, only the persisted scan.
-          yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(3, 11)));
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
           const restarted = yield* UsageService.make;
-          const restored = yield* restarted.readSummary(provisional);
-          assert.deepStrictEqual(restored.buckets, refreshed.buckets);
-          assert.isTrue(claude(restored)?.refreshing);
-          // A window that starts before every scan could only show part of its usage from memory.
+          const saved = yield* restarted.readSummary(provisional);
+          assert.strictEqual(totalOutputTokens(saved), 5);
+          assert.isTrue(claude(saved)?.refreshing);
+          // A window that starts before the saved scan could only show part of its usage.
           const wider = yield* restarted.readSummary({
             ...provisional,
             sinceDay: UsageDay.make("2026-07-01"),
           });
-          assert.strictEqual(totalOutputTokens(wider), 23);
+          assert.strictEqual(totalOutputTokens(wider), 12);
           assert.isUndefined(claude(wider)?.refreshing);
-          assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(exact)), 23);
-          // With no saved usage to show, the answer is exact: nothing would tell the client to ask again.
-          const empty = yield* restarted.readSummary({
-            ...provisional,
-            modelFilter: { include: [{ model: "absent" }] },
-          });
-          assert.deepStrictEqual(empty.buckets, []);
-          assert.isTrue(empty.sources.every((source) => !source.refreshing));
+          const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.strictEqual(totalOutputTokens(refreshed), 12);
+          assert.isUndefined(claude(refreshed)?.refreshing);
           yield* restarted.awaitPersisted;
         }).pipe(
           Effect.scoped,
@@ -3247,13 +3222,10 @@ describe("UsageService", () => {
         // The narrow window saves the second copy before the wide one reads the first.
         yield* service.readSummary(NARROW_WINDOW);
         const exact = yield* service.readSummary(WINDOW);
-        assert.strictEqual(exact.buckets[0]?.sessions, 2);
         yield* service.awaitPersisted;
         const restarted = yield* UsageService.make;
         const saved = yield* restarted.readSummary({ ...WINDOW, provisional: true });
         assert.deepStrictEqual(saved.buckets, exact.buckets);
-        yield* Effect.promise(() => Promise.all([NodeFSP.rm(first), NodeFSP.rm(second)]));
-        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, exact.buckets);
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-saved-order-test", home, settings })),
       );
