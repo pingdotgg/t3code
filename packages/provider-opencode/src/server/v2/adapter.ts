@@ -4095,7 +4095,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
         mcpAvailable
-          ? "Before ending your turn to wait for a background shell (tests, a build), call `t3_background_wait` with its shell ID. Do not mark processes you leave running, such as dev servers or watchers. `waiting: false` clears a wait without stopping the shell. Completion wakes you automatically; do not poll."
+          ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
           : undefined,
       ]
         .filter((part) => part !== undefined && part.length > 0)
@@ -4869,22 +4869,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       awaitBackgroundTasks: Effect.fn("OpenCode2Adapter.awaitBackgroundTasks")(
         function* ({ providerThread, taskIds, awaited }) {
-          const nativeId = providerThread.nativeThreadRef?.nativeId;
-          const state = nativeId == null ? undefined : threads.get(nativeId);
-          const matched: string[] = [];
-          if (
-            state === undefined ||
-            state.providerThread.id !== providerThread.id ||
-            state.providerThread.appThreadId !== providerThread.appThreadId
-          ) {
-            return { matched };
-          }
-          for (const taskId of taskIds) {
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+          const state = nativeThreadId == null ? undefined : threads.get(nativeThreadId);
+          if (state === undefined) return { matched: [] };
+          const sessions = sessionsOf(state);
+          const matched = [...new Set(taskIds)].filter((taskId) => {
             const shell = shells.get(taskId);
-            if (shell === undefined || !shell.running || !sessionsOf(state).includes(shell.state))
-              continue;
+            return shell !== undefined && shell.running && sessions.includes(shell.state);
+          });
+          if (matched.length === 0) return { matched };
+          for (const taskId of matched) {
+            const shell = shells.get(taskId)!;
             shell.awaited = awaited;
-            matched.push(taskId);
             yield* syncRosterAncestors(shell.state);
           }
           return { matched };

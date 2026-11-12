@@ -1030,7 +1030,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           assert.deepEqual(
             yield* runtime.awaitBackgroundTasks!({
               providerThread: thread,
-              taskIds: [shellID, "sh_unknown"],
+              taskIds: [shellID, shellID, "sh_unknown"],
               awaited,
             }),
             { matched: [shellID] },
@@ -1047,14 +1047,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 strength: "strong",
               },
             },
-            taskIds: [shellID],
-            awaited: false,
-          }),
-          { matched: [] },
-        );
-        assert.deepEqual(
-          yield* runtime.awaitBackgroundTasks!({
-            providerThread: { ...thread, appThreadId: ThreadId.make("thread:foreign") },
             taskIds: [shellID],
             awaited: false,
           }),
