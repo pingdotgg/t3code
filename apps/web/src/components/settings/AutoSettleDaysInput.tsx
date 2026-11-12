@@ -10,7 +10,7 @@ export function AutoSettleDaysInput({
   onCommit,
 }: {
   value: number;
-  onCommit: (days: number) => Promise<boolean>;
+  onCommit: (days: number, options: { onFailed: () => void }) => void;
 }) {
   const [draft, setDraft] = useState({ source: value, text: String(value) });
   if (draft.source !== value) {
@@ -26,7 +26,7 @@ export function AutoSettleDaysInput({
         max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         value={draft.text}
         onChange={(event) => setDraft({ source: value, text: event.target.value })}
-        onBlur={async (event) => {
+        onBlur={(event) => {
           const parsed = Number(event.target.value);
           if (
             Number.isInteger(parsed) &&
@@ -35,12 +35,14 @@ export function AutoSettleDaysInput({
           ) {
             const submitted = { source: value, text: String(parsed) };
             setDraft(submitted);
-            if (parsed !== value && !(await onCommit(parsed))) {
+            if (parsed === value) return;
+            onCommit(parsed, {
               // A late failure must not overwrite another edit or an external settings update.
-              setDraft((current) =>
-                current === submitted ? { source: value, text: String(value) } : current,
-              );
-            }
+              onFailed: () =>
+                setDraft((current) =>
+                  current === submitted ? { source: value, text: String(value) } : current,
+                ),
+            });
           } else {
             setDraft({ source: value, text: String(value) });
           }

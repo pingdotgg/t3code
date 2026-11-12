@@ -49,7 +49,7 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return async (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
+  return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
@@ -57,29 +57,28 @@ function useRunScopedPlan() {
         description: plan.unavailableReason,
       });
       onFailed?.();
-      return false;
+      return;
     }
-    const { failedEnvironments, savedEnvironments, savedEnvironmentCount } =
-      await persistScopedSettingsPatch(
-        plan,
-        async (request) => {
-          const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
-            (scope) => !readEnvironmentScope(request.environmentId, scope),
+    void persistScopedSettingsPatch(
+      plan,
+      async (request) => {
+        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+          (scope) => !readEnvironmentScope(request.environmentId, scope),
+        );
+        if (missing)
+          return AsyncResult.failure(
+            Cause.fail(
+              new EnvironmentAuthorizationError({
+                requiredScope: missing,
+                message: "This connection lacks permission to change these settings.",
+              }),
+            ),
           );
-          if (missing)
-            return AsyncResult.failure(
-              Cause.fail(
-                new EnvironmentAuthorizationError({
-                  requiredScope: missing,
-                  message: "This connection lacks permission to change these settings.",
-                }),
-              ),
-            );
-          return persistServer(request);
-        },
-        persistClientSettingsPatch,
-      );
-    if (failedEnvironments.length > 0) {
+        return persistServer(request);
+      },
+      persistClientSettingsPatch,
+    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+      if (failedEnvironments.length === 0) return;
       onFailed?.();
       toastManager.add({
         type: "error",
@@ -94,8 +93,7 @@ function useRunScopedPlan() {
             : []),
         ].join("\n"),
       });
-    }
-    return plan.hasClientWrite || savedEnvironmentCount > 0 || failedEnvironments.length === 0;
+    });
   };
 }
 
