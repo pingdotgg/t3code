@@ -746,8 +746,8 @@ describe("fix findings handoff", () => {
     expect(resolve(false)).toContain("checkout prepared");
     expect(fix(true)).not.toMatch(/prepared/u);
     expect(resolve(true)).not.toMatch(/prepared/u);
-    expect(fix(true)).toContain("checking it out first");
-    expect(resolve(true)).toContain("check it out first");
+    expect(fix(true)).toContain("switching to it or checking it out first");
+    expect(resolve(true)).toContain("switch to it or check it out first");
   });
 
   it("bounds a hostile review body instead of attaching it whole", () => {

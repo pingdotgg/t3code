@@ -941,7 +941,7 @@ function reviewThreadContext(
 // A task added to an existing thread's composer has no checkout prepared for it.
 function checkoutInstruction(inThisThread: boolean | undefined): string {
   return inThisThread
-    ? "Work in a checkout of its branch, checking it out first if this workspace has none"
+    ? "Work on its branch, switching to it or checking it out first if this workspace is not on it"
     : "Work in the prepared checkout";
 }
 
@@ -1175,7 +1175,7 @@ export function buildResolveConflictsPrompt(input: {
   return [
     `${terminologyForUrl(input.url).shortLabel} #${input.number} (${boundedField(input.url)}) conflicts with its base branch \`${baseBranch}\`. ${
       input.inThisThread
-        ? `Its branch is \`${headBranch}\`; check it out first if this workspace has none.`
+        ? `Its branch is \`${headBranch}\`; switch to it or check it out first if this workspace is not on it.`
         : `Its branch \`${headBranch}\` is the checkout prepared for this thread.`
     }`,
     `Bring the checked-out branch up to date with \`${baseBranch}\` using this repository's convention, resolve every conflict while preserving the intent of both sides, and verify the project still builds before pushing.`,
