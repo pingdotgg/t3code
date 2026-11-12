@@ -242,6 +242,14 @@ describe("scoped settings writes", () => {
     expect(persistClient).not.toHaveBeenCalled();
   });
 
+  // regression: #35115 one machine's folder was copied to every machine's Add Project setting
+  it("never copies an Add Project folder from the All environments scope to every machine", () => {
+    const targets = planScopedSettingsPatch(all, environments, {
+      addProjectBaseDirectory: "/Users/me/code/",
+    }).serverWrites.filter((write) => write.patch.addProjectBaseDirectory !== undefined);
+    expect(targets.length).toBeLessThanOrEqual(1);
+  });
+
   describe("an environment that saves but drops keys it does not know", () => {
     const upgradedLaptop = (saved: Partial<ServerSettings>) =>
       vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
