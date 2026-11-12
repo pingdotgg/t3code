@@ -156,13 +156,13 @@ function BackgroundActivityAdvancedDialog({
                   <SelectValue>{BACKGROUND_ACTIVITY_PROFILE_LABELS[activeProfile]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="balanced">
+                  <SelectItem value="balanced">
                     {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
                   </SelectItem>
-                  <SelectItem hideIndicator value="performance">
+                  <SelectItem value="performance">
                     {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
                   </SelectItem>
-                  <SelectItem hideIndicator value="battery-saver">
+                  <SelectItem value="battery-saver">
                     {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
                   </SelectItem>
                 </SelectPopup>
@@ -398,16 +398,16 @@ export function BackgroundActivitySettingsRow() {
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem hideIndicator value="balanced">
+              <SelectItem value="balanced">
                 {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
               </SelectItem>
-              <SelectItem hideIndicator value="performance">
+              <SelectItem value="performance">
                 {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
               </SelectItem>
-              <SelectItem hideIndicator value="battery-saver">
+              <SelectItem value="battery-saver">
                 {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
               </SelectItem>
-              <SelectItem hideIndicator value="advanced" disabled={!isEnvironmentScope}>
+              <SelectItem value="advanced" disabled={!isEnvironmentScope}>
                 {isEnvironmentScope
                   ? BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced
                   : `${BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced} (one environment)`}

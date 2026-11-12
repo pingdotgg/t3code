@@ -109,7 +109,7 @@ export function NewProjectPublishHostPicker(props: {
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
           {props.targets.map((target) => (
-            <SelectItem key={target.definition.kind} hideIndicator value={target.definition.kind}>
+            <SelectItem key={target.definition.kind} value={target.definition.kind}>
               <span className="inline-flex items-center gap-1.5">
                 {sourceControlHostIcon(target.definition, "size-3.5")}
                 {target.definition.label}
