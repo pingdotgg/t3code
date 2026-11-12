@@ -487,6 +487,46 @@ it.layer(
     }),
   );
 
+  it.effect("writes an initial command after the ready limit when a busy shell never signals", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      const written = yield* Deferred.make<string>();
+      ptyAdapter.onWrite = (data) => Deferred.doneUnsafe(written, Effect.succeed(data));
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        processKillGraceMs: 0,
+        subprocessPollIntervalMs: 1_000,
+        subprocessInspector: () =>
+          Effect.succeed({ hasRunningSubprocess: true, childCommand: null, processIds: [] }),
+      });
+
+      yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+      ptyAdapter.processes[0]?.emitData("$ ");
+      yield* TestClock.adjust("6 seconds");
+
+      expect(yield* Deferred.await(written)).toBe(" npm run dev\r");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("drops a pending initial command when open replaces the shell before it is ready", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, { processKillGraceMs: 0 });
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const originalCwd = path.join(baseDir, "original");
+      const differentCwd = path.join(baseDir, "different");
+      yield* fs.makeDirectory(originalCwd, { recursive: true });
+      yield* fs.makeDirectory(differentCwd, { recursive: true });
+
+      yield* manager.open(openInput({ cwd: originalCwd, initialCommand: "echo OLD" }));
+      yield* manager.open(openInput({ cwd: differentCwd }));
+      ptyAdapter.processes[1]?.emitData("\x1b[?2004h$ ");
+      yield* TestClock.adjust("6 seconds");
+
+      expect(ptyAdapter.processes.map((process) => process.writes)).toEqual([[], []]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("writes an initial command to PowerShell without waiting for a line editor", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();

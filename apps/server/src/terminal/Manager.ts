@@ -599,6 +599,8 @@ function formatShellCandidate(candidate: ShellCandidate): string {
   return `${candidate.shell} ${candidate.args.join(" ")}`;
 }
 
+const INITIAL_COMMAND_READY_LIMIT = "6 seconds";
+
 // PowerShell and cmd have no line-editor signal, so their input is written right away.
 function shellSignalsLineEditor(shell: string): boolean {
   const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
@@ -3001,15 +3003,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.status === "running" ? Effect.void : Effect.sync(readiness.unsubscribe),
       ),
     );
-    if (session.status !== "running" || session.shell === null) return snapshot(session);
+    const spawned = session.process;
+    if (session.status !== "running" || session.shell === null || spawned === null) {
+      return snapshot(session);
+    }
     const target = { threadId: session.threadId, terminalId: session.terminalId };
     const data =
       input.initialCommandShellHistory === "preserve"
         ? `${initialCommand}\r`
         : projectScriptTerminalInput(initialCommand);
-    yield* (shellSignalsLineEditor(session.shell) ? readiness.wait : Effect.succeed("ready")).pipe(
+    // A shell without bracketed paste that keeps a child (rc-file `cmd &`, gitstatusd) never
+    // looks idle, so stop waiting after two quiet windows rather than withholding the command.
+    const ready = shellSignalsLineEditor(session.shell)
+      ? readiness.wait.pipe(
+          Effect.timeoutOption(INITIAL_COMMAND_READY_LIMIT),
+          Effect.map(Option.getOrElse(() => "ready" as const)),
+        )
+      : Effect.succeed("ready" as const);
+    yield* ready.pipe(
+      // A restart during startup replaces the process; the command belongs to the shell it was opened for.
       Effect.flatMap((outcome) =>
-        outcome === "exited" ? Effect.void : write({ ...target, data }),
+        outcome === "exited" || session.process !== spawned
+          ? Effect.void
+          : write({ ...target, data }),
       ),
       Effect.catchCause((cause) =>
         Effect.logWarning("terminal initial command was not written", { ...target, cause }),
