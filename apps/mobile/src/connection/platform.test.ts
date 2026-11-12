@@ -64,7 +64,7 @@ vi.mock("../state/thread-composer-error", () => ({ clearThreadComposerErrorsForE
 
 import { layer } from "./platform";
 
-it.effect("wakes connections when the network path changes without changing its type", () =>
+it.effect("wakes connections when a VPN starts over Wi-Fi, not on same-type updates", () =>
   Effect.gen(function* () {
     const wakeups = yield* Wakeups.ConnectionWakeups;
     const subscribed = yield* Deferred.make<void>();
@@ -81,9 +81,12 @@ it.effect("wakes connections when the network path changes without changing its 
 
     emit("WIFI");
     vi.mocked(Queue.offerUnsafe).mockClear();
-    // Android reports a VPN over Wi-Fi as WIFI, so a VPN toggle repeats the type.
+    // Android repeats WIFI for signal-strength and bandwidth updates on the same network.
     emit("WIFI");
+    expect(networkChangedOffers()).toHaveLength(0);
 
+    // The patched expo-network reports a VPN network as VPN before its underlying Wi-Fi.
+    emit("VPN");
     expect(networkChangedOffers()).toHaveLength(1);
   }).pipe(Effect.provide(layer)),
 );

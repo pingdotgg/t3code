@@ -88,18 +88,20 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   Effect.acquireRelease(
     Effect.sync(() => {
       let active = true;
-      let seeded = false;
-      // A path change can keep its type (Android reports a VPN over Wi-Fi as WIFI), so every
-      // connected update after the first one wakes.
+      let previous: Network.NetworkStateType | undefined;
       const record = (state: Network.NetworkState) => {
-        if (state.isConnected !== true) return;
-        if (seeded) Queue.offerUnsafe(queue, "network-changed");
-        seeded = true;
+        const type = state.isConnected === true ? state.type : undefined;
+        if (previous !== undefined && type !== undefined && type !== previous) {
+          Queue.offerUnsafe(queue, "network-changed");
+        }
+        previous = type ?? previous;
       };
-      // Seed from the current state: the listener reports only changes and would miss the first move.
+      // Seed the current type: the listener reports only changes and would miss the first move.
       void Network.getNetworkStateAsync()
         .then((state) => {
-          if (active && state.isConnected === true) seeded = true;
+          if (active && previous === undefined && state.isConnected === true) {
+            previous = state.type;
+          }
         })
         .catch(() => undefined);
       const subscription = Network.addNetworkStateListener(record);

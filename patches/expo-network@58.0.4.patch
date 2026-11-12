@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/expo/modules/network/NetworkModule.kt b/android/src/main/java/expo/modules/network/NetworkModule.kt
-index 5e513271533a6c99bcfe8fff245e84c80ac55621..f7353c3d2eb01798b083359e1554556303bf0f0e 100644
+index 5e513271533a6c99bcfe8fff245e84c80ac55621..1c84932fbc8eb8b5667ab2b90e2cd116772cb45e 100644
 --- a/android/src/main/java/expo/modules/network/NetworkModule.kt
 +++ b/android/src/main/java/expo/modules/network/NetworkModule.kt
 @@ -89,6 +89,11 @@ class NetworkModule : Module() {
@@ -14,6 +14,20 @@ index 5e513271533a6c99bcfe8fff245e84c80ac55621..f7353c3d2eb01798b083359e15545563
      override fun onCapabilitiesChanged(network: android.net.Network, networkCapabilities: NetworkCapabilities) {
        asyncEmitNetworkState(DELAY_MS)
      }
+@@ -209,11 +214,12 @@ class NetworkModule : Module() {
+   private fun getConnectionType(netCapabilities: NetworkCapabilities?): NetworkStateType =
+     when {
+       netCapabilities == null -> NetworkStateType.UNKNOWN
++      // A VPN network also carries its underlying transport, so VPN over Wi-Fi would report WIFI.
++      netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> NetworkStateType.VPN
+       netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkStateType.CELLULAR
+       netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI_AWARE) -> NetworkStateType.WIFI
+       netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> NetworkStateType.BLUETOOTH
+       netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkStateType.ETHERNET
+-      netCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> NetworkStateType.VPN
+       else -> NetworkStateType.UNKNOWN
+     }
+ 
 diff --git a/ios/NetworkModule.swift b/ios/NetworkModule.swift
 index ce150f792f0a717696b24d3930d8ea55b1dc12a6..ec1d2cdd11861f8862ba58c20fd7f1c75845efdb 100644
 --- a/ios/NetworkModule.swift
