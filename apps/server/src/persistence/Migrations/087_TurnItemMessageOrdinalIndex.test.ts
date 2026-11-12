@@ -98,7 +98,8 @@ it.effect(
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
-// Without the index a payload that is not JSON fails no write; with it, it must fail none either.
+// The index must fail no write the schema accepts: a message item whose payload is not JSON.
+// (A user message's non-JSON payload is already refused by migration 86's queued-input index.)
 it.effect("migrates over a message whose payload is not JSON, and takes one after it", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -110,7 +111,7 @@ it.effect("migrates over a message whose payload is not JSON, and takes one afte
       (yield* runMigrations()).map(([id]) => id),
       [87],
     );
-    yield* insertTurnItem("bad-2", "thread-a", 3, "user_message", "{not json");
+    yield* insertTurnItem("bad-2", "thread-a", 3, "assistant_message", "{not json");
     yield* insertTurnItem("ok-2", "thread-a", 4, "assistant_message", '{"messageId":"m1"}');
     yield* sql`
       UPDATE orchestration_v2_projection_turn_items SET payload_json = '{still not json'
