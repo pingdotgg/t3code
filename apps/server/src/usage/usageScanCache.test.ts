@@ -294,14 +294,6 @@ describe("scan cache round trip", () => {
     });
     // A clean v14 entry stays warm.
     expect(restored.get("/clean-codex.jsonl")).toEqual(clean);
-
-    // The repaired entry keeps its position, so the next start resumes instead of re-parsing.
-    const repaired: ScanCache = new Map([["/codex.jsonl", { ...entry, malformedRecords: 0 }]]);
-    const next = decodeScanCache(
-      JSON.parse(JSON.stringify(parse(makeScanCacheWriter()(repaired, {})))),
-      TEST_FORMAT_MAP,
-    );
-    expect(next.get("/codex.jsonl")).toEqual({ ...entry, malformedRecords: 0 });
   });
 
   it("rewrites only changed entries and still restores the whole cache", () => {

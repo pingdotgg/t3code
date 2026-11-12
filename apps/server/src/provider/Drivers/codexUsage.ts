@@ -363,6 +363,8 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     // Only the same event is a replay; a later request can restart with identical counters.
     if (restarted && sequenceStart === state.sequenceStartSignature) {
       state.lastCumulativeUsage = previous;
+      if (previousTimestampMs === undefined) delete state.lastCumulativeTimestampMs;
+      else state.lastCumulativeTimestampMs = previousTimestampMs;
       return [];
     }
     // Forks and paginated continuations can inherit totals without copying a counter snapshot.

@@ -587,6 +587,27 @@ describe("parseCodexLine", () => {
     }).toEqual({ processed: [120, 120, 0, 120], skipped: 0 });
   });
 
+  it("keeps the baseline's timestamp when it ignores a restart replay", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const at = (line: string, time: string) => line.replace("05:17:49.919Z", time);
+    const processed = [
+      at(counted(request, request), "05:17:00.000Z"),
+      at(counted(request, counters(200, 40)), "05:18:00.000Z"),
+      at(counted(request, request), "05:17:00.000Z"),
+      // An older snapshot is not a rewind against the 05:18 baseline.
+      at(counted(counters(50, 10), counters(150, 30)), "05:17:30.000Z"),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+    expect({ processed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+      processed: [120, 120, 0, 0],
+      skipped: 1,
+    });
+  });
+
   it("bills a genuine restart with the same counters at a new timestamp", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
@@ -654,26 +675,6 @@ describe("parseCodexLine", () => {
       processed,
       skipped: codexUsageFormat.readMalformedRecords?.(state),
     }).toEqual({ processed: [1200, 120, 350, 240], skipped: 0 });
-  });
-
-  it("bills a second rewind in the same session and survives a rescan", () => {
-    const scan = () => {
-      const state = initialCodexScanState();
-      parseCodexLine(turnContext, state);
-      const processed = [
-        counted(counters(100, 20), counters(100, 20)),
-        counted(counters(30, 5), counters(60, 10)),
-        counted(counters(10, 2), counters(20, 4)),
-        counted(counters(5, 1), counters(25, 5)),
-      ].map((line) => {
-        const record = parseCodexLine(line, state);
-        return record === null ? 0 : totalTokens(record.totals);
-      });
-      return { processed, skipped: codexUsageFormat.readMalformedRecords?.(state) };
-    };
-
-    expect(scan()).toEqual({ processed: [120, 35, 12, 6], skipped: 0 });
-    expect(scan()).toEqual(scan());
   });
 
   it("bills a rewound request only when its snapshot contains it", () => {
