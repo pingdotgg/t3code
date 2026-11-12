@@ -721,6 +721,38 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps painting while the agent's turn is using the tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+      const turn = (active: boolean) =>
+        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+
+      yield* turn(true);
+      yield* command(host, 1, "Runtime.evaluate");
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+
+      // A command can arrive before the server announces the turn; the announcement paints its tab.
+      yield* command(host, 2, "Runtime.evaluate");
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+      yield* turn(true);
+      yield* settle;
+      expect(painting).toEqual([true, false, true]);
+
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true, false, true, false]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
