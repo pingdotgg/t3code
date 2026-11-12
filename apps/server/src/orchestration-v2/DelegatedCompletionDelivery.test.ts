@@ -2979,6 +2979,53 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect("keeps a follow-up running while its child awaits a background command", () =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const followup = yield* startSelfQueuedFollowup("awaited-command-followup");
+        yield* followup.removeSelfQueuedRun;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("awaited-command-followup-command"),
+          events: [
+            {
+              id: EventId.make("event:awaited-command-followup-command"),
+              type: "provider-thread.updated",
+              threadId: followup.childThreadId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: ProviderThreadId.make("provider-thread:awaited-command-followup"),
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                providerSessionId: null,
+                appThreadId: followup.childThreadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: 1,
+                lastRunOrdinal: followup.followupRun.ordinal,
+                handoffIds: [],
+                forkedFrom: null,
+                pendingBackgroundTasks: [{ taskId: "sleep-900", kind: "command", awaited: true }],
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        yield* followup.finishRun("waiting", followup.followupRun, "Waiting on the test run.");
+        const waiting = yield* followup.readFollowup;
+        assert.isNull(
+          waiting.result,
+          "the follow-up task settled while its child still awaited a background command",
+        );
+        assert.notEqual(waiting.status, "completed");
+      }),
+    );
+
     it.effect.each(["removed", "held"] as const)(
       "settles a follow-up on its last turn when the run it queued is %s",
       (ending) =>
