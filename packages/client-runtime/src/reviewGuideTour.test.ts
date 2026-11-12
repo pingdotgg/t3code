@@ -26,7 +26,7 @@ const PATCH = `diff --git a/src/tray.ts b/src/tray.ts
 `;
 
 function parse(patch: string) {
-  const file = parsePatchFiles(patch, `test:${patch.length}`)[0]?.files[0];
+  const file = parsePatchFiles(patch, { cacheKeyPrefix: `test:${patch.length}` })[0]?.files[0];
   if (file === undefined) throw new Error("patch did not parse");
   return file;
 }
