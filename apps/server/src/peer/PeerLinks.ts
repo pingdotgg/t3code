@@ -106,10 +106,13 @@ export class PeerLinks extends Context.Service<
     readonly resolve: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<ResolvedPeerLink, PeerLinkError>;
-    /** Records the outcome of a call, so listing shows whether the peer answered last time. */
+    /**
+     * Records the outcome of a call, so listing shows whether the peer answered last time.
+     * `refused` means the peer no longer accepts the link's token, so only linking again helps.
+     */
     readonly recordOutcome: (
       environmentId: EnvironmentId,
-      outcome: { readonly error: string | null },
+      outcome: { readonly error: string | null; readonly refused?: boolean },
     ) => Effect.Effect<void>;
   }
 >()("t3/peer/PeerLinks") {}
@@ -686,10 +689,16 @@ const make = Effect.gen(function* () {
               SET last_reached_at = ${DateTime.formatIso(now)}, last_error = NULL
               WHERE environment_id = ${environmentId}
             `
-          : sql`
-              UPDATE peer_environment_links SET last_error = ${outcome.error}
-              WHERE environment_id = ${environmentId}
-            `,
+          : outcome.refused === true
+            ? sql`
+                UPDATE peer_environment_links
+                SET last_error = ${outcome.error}, expires_at = ${DateTime.formatIso(now)}
+                WHERE environment_id = ${environmentId}
+              `
+            : sql`
+                UPDATE peer_environment_links SET last_error = ${outcome.error}
+                WHERE environment_id = ${environmentId}
+              `,
       ),
       Effect.asVoid,
       Effect.ignoreCause({ log: true }),
