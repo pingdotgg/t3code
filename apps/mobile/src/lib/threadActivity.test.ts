@@ -882,6 +882,31 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it.each(["Fix the flaky test", null])(
+    "labels a created-thread row titled %s without exposing its target ID",
+    (title) => {
+      const targetThreadId = ThreadId.make("thread:mcp:namespace:request:0");
+      const activity = buildThreadFeed([
+        projected(
+          {
+            ...base("item-created", "2026-06-20T00:00:03.000Z", 2),
+            type: "thread_created",
+            title,
+            targetThreadId,
+            targetRunId: null,
+            targetProviderInstanceId: ProviderInstanceId.make("codex"),
+            targetModel: "example-model",
+          },
+          0,
+        ),
+      ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))[0]!;
+
+      expect(workEntryRowLabel(activity.workEntry)).toBe(title ?? "Thread created");
+      expect(workEntryRowLabel(activity.workEntry, true)).toBe(title ?? "Thread created");
+      expect(activity.getCopyText()).toContain(targetThreadId);
+    },
+  );
+
   it("names the fold that hides a progress message, with or without a run", () => {
     const middle = {
       ...assistantMessage("2026-06-20T00:00:02.500Z"),
