@@ -37,7 +37,7 @@ irm https://t3.codes/install.ps1 | iex
 
 Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
 
-To try it once without installing, run `npx t3@latest` instead.
+To try it once without installing, run `npx t3@latest`. It offers to install the `t3` command for you.
 
 ### Desktop app
 

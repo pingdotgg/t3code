@@ -21,15 +21,20 @@ import android.util.TypedValue
 import android.view.DragEvent
 import android.view.Gravity
 import android.view.GestureDetector
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.TextAttribute
 import android.widget.EditText
+import androidx.annotation.RequiresApi
+import com.facebook.react.common.assets.ReactFontManager
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -54,6 +59,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private val onComposerSelectionChange by EventDispatcher()
   private val onComposerFocus by EventDispatcher()
   private val onComposerBlur by EventDispatcher()
+  private val onComposerSubmit by EventDispatcher()
   private val onComposerPasteImages by EventDispatcher()
   private val onComposerContextPress by EventDispatcher()
   private val onComposerPasteContext by EventDispatcher()
@@ -130,8 +136,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
             val token =
               tokens.firstOrNull {
                 (it.type == "context" || it.type == "mention" || it.type == "skill") &&
-                  offset >= it.start &&
-                  offset < it.end
+                  offset in it.start..it.end &&
+                  it.end <= editor.length() &&
+                  chipContains(it, event.x, event.y)
               }
                 ?: return false
             if (token.end <= editor.length() &&
@@ -163,6 +170,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
           "selection" to currentSelectionPayload(start, end),
         ),
       )
+    }
+    editor.submitListener = { alternate ->
+      onComposerSubmit(mapOf("alternate" to alternate))
     }
     editor.setOnFocusChangeListener { _, hasFocus ->
       if (hasFocus) {
@@ -276,8 +286,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
       Typeface.MONOSPACE
     } else {
-      Typeface.DEFAULT
+      ReactFontManager.getInstance().getTypeface(fontFamily, Typeface.NORMAL, context.assets)
     }
+    applyLineHeight()
     editor.applyPlaceholder()
   }
 
@@ -318,6 +329,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   fun setReadOnly(readOnly: Boolean) {
     editor.readOnly = readOnly
     editor.isCursorVisible = editor.isEnabled && !readOnly
+  }
+
+  fun setEnterBehavior(behavior: String) {
+    editor.returnSends = behavior != "newline"
+  }
+
+  fun setSubmitEnabled(enabled: Boolean) {
+    editor.submitEnabled = enabled
   }
 
   fun setScrollEnabled(scrollEnabled: Boolean) {
@@ -446,6 +465,24 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     onComposerContentSizeChange(
       mapOf("width" to contentWidth / density, "height" to contentHeight / density),
     )
+  }
+
+  // A chip is one replacement span, so a tap on its right half reports the offset at its end,
+  // and a tap below the last line clamps to it; only the chip's drawn bounds count.
+  private fun chipContains(token: ComposerToken, viewX: Float, viewY: Float): Boolean {
+    val layout = editor.layout ?: return false
+    val x = viewX - editor.totalPaddingLeft + editor.scrollX
+    val y = viewY - editor.totalPaddingTop + editor.scrollY
+    val line = layout.getLineForOffset(token.start)
+    val left = layout.getPrimaryHorizontal(token.start)
+    val right =
+      if (layout.getLineForOffset(token.end) == line) {
+        layout.getPrimaryHorizontal(token.end)
+      } else {
+        layout.getLineRight(line)
+      }
+    return y >= layout.getLineTop(line) && y <= layout.getLineBottom(line) &&
+      x >= minOf(left, right) && x <= maxOf(left, right)
   }
 
   private fun applyTokenSpans() {
@@ -593,6 +630,9 @@ internal class SelectionAwareEditText(
   var pasteImagesListener: ((List<String>) -> Unit)? = null
   var pasteContextListener: ((Map<String, String>) -> Unit)? = null
   var pasteTextListener: ((String, Int, Int) -> Unit)? = null
+  var submitListener: ((Boolean) -> Unit)? = null
+  var submitEnabled = false
+  var returnSends = true
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
@@ -650,7 +690,45 @@ internal class SelectionAwareEditText(
     return spans.isNotEmpty()
   }
 
+  // Mirrors the iOS key commands with Ctrl for Command. Returns `alternate`, or null to type Return.
+  // No composing-text guard: some IMEs keep a composing region over the last word while hardware typing.
+  private fun returnSubmission(keyCode: Int, event: KeyEvent): Boolean? {
+    val isReturn = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+    if (!isReturn || !canSubmit() || !isFromPhysicalKeyboard(event)) return null
+    return if (returnSends) {
+      when {
+        event.hasNoModifiers() -> false
+        event.hasModifiers(KeyEvent.META_CTRL_ON) -> true
+        else -> null
+      }
+    } else {
+      when {
+        event.hasModifiers(KeyEvent.META_CTRL_ON) -> false
+        event.hasModifiers(KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON) -> true
+        else -> null
+      }
+    }
+  }
+
+  private fun canSubmit(): Boolean =
+    submitEnabled && submitListener != null && !readOnly && isEnabled
+
+  // IMEs can send Return from device 0 without FLAG_SOFT_KEYBOARD, so only a real alphabetic keyboard counts.
+  private fun isFromPhysicalKeyboard(event: KeyEvent): Boolean {
+    val device = event.device
+    return (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD) == 0 &&
+      device != null &&
+      !device.isVirtual &&
+      device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
+  }
+
   override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    val alternate = returnSubmission(keyCode, event)
+    if (alternate != null) {
+      // A held Return repeats; send once and swallow the repeats instead of typing newlines.
+      if (event.repeatCount == 0) submitListener?.invoke(alternate)
+      return true
+    }
     val handled = when (keyCode) {
       KeyEvent.KEYCODE_DEL -> deleteChip(true)
       KeyEvent.KEYCODE_FORWARD_DEL -> deleteChip(false)
@@ -678,8 +756,57 @@ internal class SelectionAwareEditText(
         afterLength: Int
       ): Boolean = deleteAdjacentChip(beforeLength, afterLength) ||
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
+      override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+        commitUnlessPasted(text) { super.commitText(text, newCursorPosition) }
+
+      // InputConnectionWrapper sends this overload straight to its target, not through the
+      // two-argument commitText.
+      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+      override fun commitText(
+        text: CharSequence,
+        newCursorPosition: Int,
+        textAttribute: TextAttribute?
+      ): Boolean = commitUnlessPasted(text) {
+        super.commitText(text, newCursorPosition, textAttribute)
+      }
+
+      private fun commitUnlessPasted(text: CharSequence?, commit: () -> Boolean): Boolean =
+        if (interceptKeyboardPaste(text)) {
+          // The keyboard now treats its composing text as replaced; a span left behind would
+          // let its next word overwrite text the paste did not remove.
+          finishComposingText()
+          true
+        } else {
+          commit()
+        }
     }
   }
+
+  // IME clipboard inserts replace the composing range, just like native commitText.
+  private fun interceptKeyboardPaste(text: CharSequence?): Boolean {
+    if (readOnly || textPasteThresholdBytes <= 0 || text == null) return false
+    val value = text.toString()
+    val composingStart = BaseInputConnection.getComposingSpanStart(editableText)
+    val composingEnd = BaseInputConnection.getComposingSpanEnd(editableText)
+    return when {
+      Character.codePointCount(text, 0, text.length) < 2 -> false
+      composingStart < 0 -> interceptPaste(value)
+      else -> {
+        val continuesWord = value.startsWith(editableText.subSequence(composingStart, composingEnd))
+        val exceedsInputLimit =
+          length().toLong() - (composingEnd - composingStart) + value.length > maxInputChars
+        val keepTyping = if (continuesWord && exceedsInputLimit && !shouldFoldText(value)) {
+          val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+          // commitText has no paste flag; inspect the clipboard only for ambiguous overflow commits.
+          clipboard?.primaryClip?.plainText() != value
+        } else {
+          false
+        }
+        !keepTyping && interceptPaste(value, start = composingStart, end = composingEnd)
+      }
+    }
+  }
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
@@ -791,13 +918,17 @@ internal class SelectionAwareEditText(
   private fun pasteInterceptedText(clip: ClipData?, foldLargeText: Boolean = true): Boolean {
     val text = if (textPasteThresholdBytes > 0) clip?.plainText() else null
     if (text.isNullOrEmpty()) return false
-    val start = minOf(selectionStart, selectionEnd).coerceIn(0, length())
-    val end = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+    return interceptPaste(text, foldLargeText)
+  }
+
+  private fun interceptPaste(
+    text: String,
+    foldLargeText: Boolean = true,
+    start: Int = minOf(selectionStart, selectionEnd).coerceIn(0, length()),
+    end: Int = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+  ): Boolean {
     val exceedsInputLimit = length().toLong() - (end - start) + text.length > maxInputChars
-    val shouldFold = foldLargeText && (
-      text.length >= textPasteThresholdBytes ||
-        text.toByteArray(Charsets.UTF_8).size >= textPasteThresholdBytes
-      )
+    val shouldFold = foldLargeText && shouldFoldText(text)
     val shouldIntercept = exceedsInputLimit || shouldFold
     if (shouldIntercept) {
       pasteTextListener?.invoke(text, start, end)
@@ -805,6 +936,10 @@ internal class SelectionAwareEditText(
     // Let EditText perform ordinary pastes, retaining its native undo history.
     return shouldIntercept
   }
+
+  private fun shouldFoldText(text: String): Boolean =
+    text.length >= textPasteThresholdBytes ||
+      text.toByteArray(Charsets.UTF_8).size >= textPasteThresholdBytes
 
   // Match native paste's newlines, including empty items.
   // URI-backed clips stay native: coerceToText can read a provider synchronously.

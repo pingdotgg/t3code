@@ -1,23 +1,35 @@
+// @effect-diagnostics nodeBuiltinImport:off - Runs the generated runner in a real shell.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
-import { SshCommandError, SshPasswordPromptError } from "./errors.ts";
+import { remoteStateKey } from "./command.ts";
+import { SshCommandError, SshPasswordPromptError, SshReadinessError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
 const isSshCommandError = Schema.is(SshCommandError);
@@ -74,7 +86,7 @@ const hangingHttpClient = HttpClient.make(() => Effect.never);
 const testNetService = NetService.NetService.of({
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
-  hasListenerOnHost: () => Effect.succeed(false),
+  hasListenerOnHost: () => Effect.succeed(true),
   reserveLoopbackPort: () => Effect.succeed(41_773),
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
@@ -84,6 +96,73 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
+
+// Emulates `t3 serve`: it takes the home owner lock at startup, then binds
+// once a second server has tried the same home (or after 2s), so a concurrent
+// launch always sees the home still unclaimed. Like the real server, it
+// publishes server-runtime.json after it starts answering HTTP, if at all.
+const fakeT3Serve = (publishDelayMs: number | null) => `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const port = Number(args[args.indexOf("--port") + 1]);
+const userdata = path.join(args[args.indexOf("--base-dir") + 1], "userdata");
+const servers = path.join(process.env.HOME, "servers");
+fs.mkdirSync(userdata, { recursive: true });
+fs.appendFileSync(servers, process.pid + "\\n");
+try {
+  fs.writeFileSync(path.join(userdata, "server.lock"), String(process.pid), { flag: "wx" });
+} catch {
+  console.error("ServerAlreadyRunningError: another server owns " + userdata);
+  process.exit(1);
+}
+setTimeout(() => process.exit(0), 60_000);
+const serve = (tries) => {
+  if (tries > 0 && fs.readFileSync(servers, "utf8").trim().split("\\n").length < 2) {
+    setTimeout(() => serve(tries - 1), 50);
+    return;
+  }
+  http.createServer((_, response) => response.end()).listen(port, "127.0.0.1", () => {
+    const origin = "http://127.0.0.1:" + port;
+    ${publishDelayMs === null ? "return;" : ""}
+    setTimeout(() => {
+      fs.writeFileSync(path.join(userdata, "server-runtime.json"), JSON.stringify({ pid: process.pid, port, origin }));
+    }, ${publishDelayMs});
+  });
+};
+serve(40);
+`;
+
+// Runs the remote half of an SSH command (`sh -l -s -- <key>`) as a local shell
+// whose HOME is the given directory. Every launch after the first starts once
+// a server is running (or after 10s), which lines up the race deterministically.
+const localRemoteShellLayer = (home: string) =>
+  Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let launches = 0;
+      return ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return spawner.spawn(command);
+        const gate =
+          launches++ === 0
+            ? ""
+            : 'i=0; while [ ! -s "$HOME/servers" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done; ';
+        return spawner.spawn(
+          ChildProcess.make(
+            "sh",
+            ["-c", `${gate}exec sh -s -- "$1"`, "sh", ...commandArgs(command).slice(-1)],
+            {
+              ...command.options,
+              env: { ...command.options.env, HOME: home },
+              // Like an SSH session ending, the shell's exit leaves its nohup'd server running.
+              detached: false,
+            },
+          ),
+        );
+      });
+    }),
+  );
 
 describe("ssh tunnel scripts", () => {
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -107,6 +186,49 @@ describe("ssh tunnel scripts", () => {
       "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
     );
   });
+
+  it.each([
+    { host: "Darwin x86_64", system: "Darwin", machine: "x86_64", downloads: false },
+    { host: "Darwin arm64", system: "Darwin", machine: "arm64", downloads: true },
+  ])(
+    "only downloads a release archive the host can run: $host",
+    ({ system, machine, downloads }) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+      try {
+        const bin = NodePath.join(root, "bin");
+        NodeFS.mkdirSync(bin);
+        NodeFS.mkdirSync(NodePath.join(root, "home"));
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "uname"),
+          `#!/bin/sh\ncase "$1" in -s) echo ${system} ;; -m) echo ${machine} ;; esac\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "curl"),
+          "#!/bin/sh\necho 'download attempt' >&2\necho 'curl: (6) Could not resolve host: github.com' >&2\nexit 6\n",
+          { mode: 0o755 },
+        );
+        const runner = NodePath.join(root, "run-t3.sh");
+        NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+        const result = NodeChildProcess.spawnSync("sh", [runner, "--version"], {
+          encoding: "utf8",
+          env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+        });
+        assert.notEqual(result.status, 0);
+        if (downloads) {
+          assert.include(result.stderr, "download attempt");
+          // A bare curl error does not tell the user that t3 itself could not be downloaded.
+          assert.include(result.stderr, ARCHIVE.archiveVersion);
+          assert.include(result.stderr, "https://github.com/pingdotgg/t3code/releases/download");
+        } else {
+          assert.notInclude(result.stderr, "download attempt");
+          assert.include(result.stderr, "has no t3 release archive.");
+        }
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
@@ -272,6 +394,135 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
+  it.effect("waits for a tunnel whose ssh connection outlasts the readiness timeout", () =>
+    Effect.gen(function* () {
+      const LOCAL_PORT = 41_773;
+      // ssh spends ConnectTimeout on each unreachable address before the forward listens.
+      const SSH_CONNECT_MS = 25_000;
+      let forwardListensAt = Number.POSITIVE_INFINITY;
+      const tunnelSpawned = yield* Deferred.make<void>();
+      const forwardListening = (port: number) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.map((now) => port === LOCAL_PORT && now >= forwardListensAt),
+        );
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Effect.gen(function* () {
+              forwardListensAt = (yield* Clock.currentTimeMillis) + SSH_CONNECT_MS;
+              yield* Deferred.succeed(tunnelSpawned, undefined);
+              return makeRunningProcess(() => undefined);
+            })
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const httpClient = HttpClient.make((request) =>
+        forwardListening(LOCAL_PORT).pipe(
+          Effect.flatMap((listening) =>
+            listening
+              ? Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response("", { status: 200 })),
+                )
+              : Effect.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.TransportError({
+                      request,
+                      description: `connect ECONNREFUSED 127.0.0.1:${LOCAL_PORT}`,
+                    }),
+                  }),
+                ),
+          ),
+        ),
+      );
+      const net = NetService.NetService.of({
+        ...testNetService,
+        reserveLoopbackPort: () => Effect.succeed(LOCAL_PORT),
+        canListenOnHost: (port) =>
+          forwardListening(port).pipe(Effect.map((listening) => !listening)),
+        isPortAvailableOnLoopback: (port) =>
+          forwardListening(port).pipe(Effect.map((listening) => !listening)),
+        hasListenerOnHost: (port) => forwardListening(port),
+      });
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, net),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          manager.ensureEnvironment({
+            alias: "devbox",
+            hostname: "devbox",
+            username: null,
+            port: null,
+          }),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* TestClock.adjust(Duration.seconds(60));
+        const environment = yield* Fiber.join(ensure);
+        assert.equal(environment.httpBaseUrl, `http://127.0.0.1:${LOCAL_PORT}/`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("fails with a readiness error when ssh never connects", () =>
+    Effect.gen(function* () {
+      const tunnelSpawned = yield* Deferred.make<void>();
+      let tunnelKilled = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Deferred.succeed(tunnelSpawned, undefined).pipe(
+              Effect.as(
+                makeRunningProcess(() => {
+                  tunnelKilled = true;
+                }),
+              ),
+            )
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+        Layer.succeed(
+          NetService.NetService,
+          NetService.NetService.of({
+            ...testNetService,
+            hasListenerOnHost: () => Effect.succeed(false),
+          }),
+        ),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          Effect.result(
+            manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            }),
+          ),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* TestClock.adjust(Duration.minutes(2));
+        const result = yield* Fiber.join(ensure);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, SshReadinessError);
+          assert.include(result.failure.message, "SSH connection to devbox did not come up");
+        }
+        assert.isTrue(tunnelKilled);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect.each([
     {
       name: "does not ask for a password when the agent cannot sign an accepted key",
@@ -286,6 +537,11 @@ describe("ssh tunnel scripts", () => {
         'sign_and_send_pubkey: signing failed for ED25519-CERT "key-cert.pub": agent refused operation\n' +
         "julius@devbox: Permission denied (publickey,password).\n",
       expectedPromptAttempts: [1],
+    },
+    {
+      name: "does not ask for a password when the host key cannot be verified",
+      stderr: "Host key verification failed.\r\n",
+      expectedPromptAttempts: [],
     },
     {
       name: "asks for a password when the server rejects every key",
@@ -453,6 +709,225 @@ describe("ssh tunnel scripts", () => {
           Effect.scoped,
         );
       }),
+  );
+
+  it.live("concurrent launches on one remote home record the server that owns it", () =>
+    // The second row's server never publishes server-runtime.json.
+    Effect.forEach([1_500, null], (publishDelayMs) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-" });
+        const serversFile = path.join(home, "servers");
+        yield* Effect.addFinalizer(() =>
+          fs.readFileString(serversFile).pipe(
+            Effect.map((pids) => {
+              for (const pid of pids.split("\n").filter(Boolean)) {
+                try {
+                  process.kill(Number(pid), "SIGKILL");
+                } catch {}
+              }
+            }),
+            Effect.ignore,
+          ),
+        );
+        const serverScript = path.join(home, "fake-t3.cjs");
+        yield* fs.writeFileString(serverScript, fakeT3Serve(publishDelayMs));
+        // A launch that died holding the lock must not block or double-admit later ones.
+        const launchLock = path.join(home, ".t3", "ssh-launch", ".launch.lock");
+        yield* fs.makeDirectory(path.dirname(launchLock), { recursive: true });
+        yield* fs.writeFileString(launchLock, "999999999\n");
+        const targets = [
+          { alias: "devbox", hostname: "devbox", username: null, port: null },
+          { alias: "devbox-tailnet", hostname: "devbox-tailnet", username: null, port: null },
+        ];
+
+        const launches = yield* Effect.forEach(
+          targets,
+          (target) =>
+            SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+              nodeScriptPath: serverScript,
+            }),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.provide(localRemoteShellLayer(home)));
+
+        const ownerPid = Number(
+          yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
+        );
+        assert.sameMembers(
+          launches.map((launch) => launch.remoteServerKind),
+          ["managed", "external"],
+        );
+        assert.equal(launches[0]!.remotePort, launches[1]!.remotePort);
+        assert.deepEqual((yield* fs.readFileString(serversFile)).trim().split("\n"), [
+          String(ownerPid),
+        ]);
+        for (const [index, launch] of launches.entries()) {
+          if (launch.remoteServerKind !== "managed") continue;
+          const stateKey = yield* remoteStateKey(targets[index]!);
+          const recordedPid = yield* fs.readFileString(
+            path.join(home, ".t3", "ssh-launch", stateKey, "pid"),
+          );
+          assert.equal(
+            Number(recordedPid.trim()),
+            ownerPid,
+            `${targets[index]!.alias} reported a managed server, but its recorded PID is not the server that owns the remote home`,
+          );
+        }
+        assert.isFalse(yield* fs.exists(launchLock));
+      }).pipe(Effect.scoped),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+});
+
+// On Linux kill -0 accepts a thread ID and kill <tid> signals its whole process,
+// but ps lists only thread-group leaders. After a reboot the managed pid file can
+// name a thread or a whole process that is not our server.
+describe.runIf(HostProcess.Platform.defaultValue() === "linux")("stale managed pid file", () => {
+  const FAKE_SERVER = `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const flag = (name) => args[args.indexOf(name) + 1];
+const server = http.createServer((_request, response) => response.end("ok"));
+server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
+  const port = server.address().port;
+  const base = flag("--base-dir");
+  if (base) {
+    fs.mkdirSync(path.join(base, "userdata"), { recursive: true });
+    fs.writeFileSync(
+      path.join(base, "userdata", "server-runtime.json"),
+      JSON.stringify({ version: 1, pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+    );
+  }
+  console.log(port);
+});
+`;
+  const target = { alias: "devbox", hostname: "devbox", username: null, port: null } as const;
+  const staleIds = ["a thread of an unrelated process", "an unrelated process"] as const;
+
+  const isRunning = (pid: number) =>
+    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(`/proc/${pid}/stat`)).pipe(
+      Effect.map((stat) => !/^\d+ \(.*\) Z/u.test(stat)),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const prepare = (staleId: (typeof staleIds)[number]) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-stale-pid-" });
+      const home = `${root}/home`;
+      const fakeServer = `${root}/fake-t3.cjs`;
+      yield* fs.makeDirectory(home, { recursive: true });
+      yield* fs.writeFileString(fakeServer, FAKE_SERVER);
+      // Runs the remote command locally under the temp HOME, without -l so the test
+      // machine's login profile cannot move HOME. setsid keeps a launched server alive
+      // when the command's process group goes away, as sshd would.
+      const sshAsLocalShell = ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand" || command.command !== "ssh") {
+          return realSpawner.spawn(command);
+        }
+        if (command.args.includes("-G")) return Effect.succeed(makeSuccessfulProcess(""));
+        const remoteArgs = command.args.slice(command.args.indexOf("--") + 2);
+        return realSpawner.spawn(
+          ChildProcess.make("setsid", ["-w", ...remoteArgs.filter((arg) => arg !== "-l")], {
+            ...command.options,
+            env: { PATH: process.env.PATH ?? "", HOME: home },
+            extendEnv: false,
+          }),
+        );
+      });
+      const holder = yield* realSpawner.spawn(ChildProcess.make("node", [fakeServer]));
+      const holderPort = Number(
+        Option.getOrThrow(
+          yield* holder.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
+        ),
+      );
+      const tid = Number(
+        (yield* fs.readDirectory(`/proc/${holder.pid}/task`)).find(
+          (task) => task !== `${holder.pid}`,
+        ),
+      );
+      assert.isTrue(Number.isInteger(tid));
+      return {
+        fs,
+        home,
+        fakeServer,
+        holder,
+        holderPort,
+        sshAsLocalShell,
+        staleId: staleId === "an unrelated process" ? holder.pid : tid,
+        stateDir: `${home}/.t3/ssh-launch/${yield* remoteStateKey(target)}`,
+      };
+    });
+
+  it.live.each(staleIds)("launches a fresh server when the managed pid file names %s", (kind) =>
+    Effect.gen(function* () {
+      const { fs, home, fakeServer, holderPort, sshAsLocalShell, staleId, stateDir } =
+        yield* prepare(kind);
+      const launch = SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: fakeServer,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+      const readPid = fs
+        .readFileString(`${stateDir}/pid`)
+        .pipe(Effect.map((pid) => Number(pid.trim())));
+      const launchedPids: Array<number> = [];
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(launchedPids, (pid) =>
+          Effect.sync(() => {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }),
+        ),
+      );
+
+      const first = yield* launch;
+      const firstPid = yield* readPid;
+      launchedPids.push(firstPid);
+      assert.deepEqual(yield* launch, first);
+      assert.equal(yield* readPid, firstPid);
+
+      // Reboot: our server is gone and its recorded PID now names something that
+      // answers on the recorded port.
+      process.kill(firstPid, "SIGKILL");
+      yield* fs.remove(`${home}/.t3/userdata/server-runtime.json`);
+      yield* fs.writeFileString(`${stateDir}/pid`, `${staleId}\n`);
+      yield* fs.writeFileString(`${stateDir}/port`, `${holderPort}\n`);
+
+      const relaunched = yield* launch;
+      const pid = yield* readPid;
+      if (pid !== staleId) launchedPids.push(pid);
+      assert.notEqual(
+        relaunched.remotePort,
+        holderPort,
+        `the launcher kept ${kind} as its running server`,
+      );
+      assert.isTrue(yield* isRunning(pid));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live.each(staleIds)("disconnecting does not signal %s named by the managed pid file", (kind) =>
+    Effect.gen(function* () {
+      const { fs, holder, sshAsLocalShell, staleId, stateDir } = yield* prepare(kind);
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(`${stateDir}/pid`, `${staleId}\n`);
+      yield* fs.writeFileString(`${stateDir}/managed`, "managed\n");
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+
+      yield* Effect.flatMap(SshTunnel.SshEnvironmentManager, (manager) =>
+        manager.disconnectEnvironment(target),
+      ).pipe(Effect.provide(layer));
+      assert.isTrue(yield* isRunning(holder.pid), `disconnecting signalled ${kind}`);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
 

@@ -31,6 +31,7 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  heldActions: new Map<string, Promise<void>>(),
 }));
 
 vi.mock("react", () => ({
@@ -145,6 +146,7 @@ vi.mock("../../state/threads", () => ({
         input: { threadId: string; orderKey?: string };
       }) => {
         state.requests.push({ action, ...request });
+        await state.heldActions.get(action);
         if (!state.scopes.get(request.environmentId)?.has(AuthOrchestrationOperateScope)) {
           return AsyncResult.failure(Cause.fail(new Error("Thread operation denied")));
         }
@@ -200,6 +202,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.heldActions = new Map();
 });
 
 afterEach(() => {
@@ -406,6 +409,23 @@ describe("thread action undo", () => {
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
   });
 
+  it("sends a different action while one is pending for the same thread", async () => {
+    const actions = useThreadListActions();
+    const thread = makeThread();
+    const settleResponse = Promise.withResolvers<void>();
+    state.heldActions.set("settle", settleResponse.promise);
+
+    const pending = [
+      actions.settleThread(thread),
+      actions.unsettleThread(thread),
+      actions.settleThread(thread),
+    ];
+    settleResponse.resolve();
+
+    expect(await Promise.all(pending)).toEqual([true, true, true]);
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "settle"]);
+  });
+
   it("restores pin placement and snooze after settling, only once", async () => {
     const thread = makeThread({
       pinnedAt: "2026-09-02T00:00:00.000Z",
@@ -531,13 +551,6 @@ describe("thread action undo", () => {
     expect(readThreadUndoNotice()).toBeNull();
     await undo();
     expect(state.requests.map(({ action }) => action)).toEqual(["unpin"]);
-  });
-
-  // regression: #21401 restore archive and thread action undo
-  it("refreshes the archive after archiving on a settlement-capable server", async () => {
-    await useThreadListActions().archiveThread(makeThread());
-    expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
-    expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
   });
 });
 
