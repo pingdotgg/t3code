@@ -31,6 +31,33 @@ const FOCUS_IDLE = "5 seconds";
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
 const ERR_ABORTED = -3;
+/**
+ * Infinite animations are skipped, so a spinner never holds a capture. Shadow roots are only
+ * walked for iframes: a document's getAnimations already includes its shadow trees.
+ */
+export const ANIMATIONS_SETTLED = `(async () => {
+  const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await paint();
+  const documents = [document];
+  const roots = [document];
+  for (const root of roots) {
+    for (const element of root.querySelectorAll("*")) {
+      if (element.shadowRoot) roots.push(element.shadowRoot);
+      if (element.localName !== "iframe") continue;
+      try {
+        const frameDocument = element.contentDocument;
+        if (frameDocument) {
+          documents.push(frameDocument);
+          roots.push(frameDocument);
+        }
+      } catch {}
+    }
+  }
+  await Promise.allSettled(documents.flatMap(frameDocument => frameDocument.getAnimations())
+    .filter(animation => animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+    .map(animation => animation.finished));
+})()`;
+const ANIMATIONS_SETTLE_LIMIT = "500 millis";
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -272,6 +299,24 @@ export const make = Effect.gen(function* () {
   };
 
   /**
+   * A painted guest starts its compositor animations only from its first drawn frame, so a
+   * capture sent at once takes them mid-fade.
+   */
+  const animationsSettled = (tab: AttachedTab) =>
+    new Promise<void>((resolve) => {
+      const limit = runFork(
+        Effect.sleep(ANIMATIONS_SETTLE_LIMIT).pipe(Effect.andThen(Effect.sync(resolve))),
+      );
+      void tab.debuggee.debugger
+        .sendCommand("Runtime.evaluate", { expression: ANIMATIONS_SETTLED, awaitPromise: true })
+        .catch(() => undefined)
+        .then(() => {
+          resolve();
+          runFork(Fiber.interrupt(limit));
+        });
+    });
+
+  /**
    * Chromium can leave a command unanswered, so the screenshot guard's release points
    * also end every focus hold: a released relay has no one waiting, and a new document
    * answers nothing pending from the old one. A released relay's screencast has no viewer.
@@ -348,12 +393,15 @@ export const make = Effect.gen(function* () {
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
             const change = tab.focusChange;
-            const run = () =>
-              tab.relay !== relay || (current !== undefined && !current())
+            const moved = () => tab.relay !== relay || (current !== undefined && !current());
+            const sendCurrent = () =>
+              moved()
                 ? Promise.reject(new Error("The page this screenshot was for has moved on."))
-                : current === undefined
-                  ? send(method, params, sessionId)
-                  : paintUntilAnswered(tab, () => send(method, params, sessionId));
+                : send(method, params, sessionId);
+            const run = () =>
+              current === undefined || moved()
+                ? sendCurrent()
+                : paintUntilAnswered(tab, () => animationsSettled(tab).then(sendCurrent));
             return change === null ? run() : change.then(run);
           };
           return method === "Page.captureScreenshot"
