@@ -253,10 +253,13 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           clientCapabilitiesMeta: copilotClientCapabilitiesMeta,
           // Copilot CLI 1.0.105 rejects stdio MCP servers from the client.
           mcpOverHttp: true,
+          deferMcpTools: true,
           registerExtensions: copilotRouting.registerExtensions,
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
           restartRuntimeAfterPromptError: isCopilotLostSessionError,
+          // session/new reports a built-in default, not the model Copilot runs (github/copilot-cli#5363).
+          alwaysSetModel: true,
         }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
     ...(runtimeCoordinator === undefined
@@ -267,6 +270,28 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
             ),
+          // A new Copilot session starts at its own effort, not the one the composer shows.
+          ...(isCopilot
+            ? {
+                unsetOptionDefaults: runtimeCoordinator
+                  .getLiveConfiguration(options.instanceId)
+                  .pipe(
+                    Effect.map(
+                      Option.match({
+                        onNone: () => [],
+                        onSome: ({ configOptions }) =>
+                          configOptions.flatMap((descriptor) =>
+                            descriptor.type === "select" &&
+                            descriptor.role === "reasoning" &&
+                            descriptor.currentValue !== undefined
+                              ? [{ id: descriptor.id, value: descriptor.currentValue }]
+                              : [],
+                          ),
+                      }),
+                    ),
+                  ),
+              }
+            : {}),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,
