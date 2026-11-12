@@ -474,8 +474,8 @@ export function markdownWithBlockImages(markdown: string): string {
     const end = paragraph.position?.end.offset;
     if (paragraph.type !== "paragraph" || paragraph.children.length < 2) continue;
     if (start === undefined || end === undefined || !paragraph.children.some(isImage)) continue;
-    // Spoiler markers are native-only syntax that a split would break apart.
-    if (markdown.slice(start, end).includes("||")) continue;
+    // Spoilers and LaTeX math are native-only syntax remark misreads, so a split would break them.
+    if (/\|\||\$/.test(markdown.slice(start, end))) continue;
     const runs: MarkdownNode[][] = [[]];
     for (const child of paragraph.children) {
       if (isImage(child)) runs.push([child], []);
