@@ -205,25 +205,25 @@ describe("readEnvironmentFromLoginShell", () => {
     });
   });
 
-  it("preserves multiline values and surrounding whitespace", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() =>
-      [
-        "__T3CODE_ENV_CUSTOM_VAR_START__",
-        "  first\nsecond  ",
-        "__T3CODE_ENV_CUSTOM_VAR_END__",
-      ].join("\n"),
-    );
+  it.each(["\n", "\r\n"])(
+    "preserves multiline values and surrounding whitespace with %j framing",
+    (newline) => {
+      const value = "  first\nsecond  \r";
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(() =>
+        ["__T3CODE_ENV_CUSTOM_VAR_START__", value, "__T3CODE_ENV_CUSTOM_VAR_END__"].join(newline),
+      );
 
-    expect(readEnvironmentFromLoginShell("/bin/zsh", ["CUSTOM_VAR"], execFile)).toEqual({
-      CUSTOM_VAR: "  first\nsecond  ",
-    });
-  });
+      expect(readEnvironmentFromLoginShell("/bin/zsh", ["CUSTOM_VAR"], execFile)).toEqual({
+        CUSTOM_VAR: value,
+      });
+    },
+  );
 });
 
 describe("listLoginShellCandidates", () => {

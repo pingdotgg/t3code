@@ -287,10 +287,12 @@ function extractEnvironmentValue(output: string, name: string): string | undefin
   const endIndex = output.indexOf(endMarker, valueStartIndex);
   if (endIndex === -1) return undefined;
 
-  const value = output
-    .slice(valueStartIndex, endIndex)
-    .replace(/^\r?\n/, "")
-    .replace(/\r?\n$/, "");
+  const block = output.slice(valueStartIndex, endIndex);
+  const newline = block.startsWith("\r\n") ? "\r\n" : "\n";
+  const withoutStart = block.startsWith(newline) ? block.slice(newline.length) : block;
+  const value = withoutStart.endsWith(newline)
+    ? withoutStart.slice(0, -newline.length)
+    : withoutStart;
 
   return value.length > 0 ? value : undefined;
 }
@@ -299,8 +301,8 @@ function extractEnvironmentValue(output: string, name: string): string | undefin
 export function extractEnvironmentValues(
   output: string,
   names: ReadonlyArray<string>,
-): Partial<Record<string, string>> {
-  const environment: Partial<Record<string, string>> = {};
+): Record<string, string> {
+  const environment: Record<string, string> = {};
   for (const name of names) {
     const value = extractEnvironmentValue(output, name);
     if (value !== undefined) {

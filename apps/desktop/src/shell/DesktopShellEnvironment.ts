@@ -2,6 +2,7 @@ import { DesktopShellEnvironmentSnapshot, ShellEnvironmentPatch } from "@t3tools
 import {
   applyShellEnvironment,
   buildEnvironmentCaptureCommand,
+  extractEnvironmentValues,
   listLoginShellCandidates,
   readUserLoginShell,
   setWindowsPath,
@@ -233,29 +234,6 @@ const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
     }),
   ].join("; ");
 
-const extractEnvironment = (output: string, names: ReadonlyArray<string>): EnvironmentPatch => {
-  const environment: EnvironmentPatch = {};
-
-  for (const name of names) {
-    const start = output.indexOf(startMarker(name));
-    if (start === -1) continue;
-
-    const valueStart = start + startMarker(name).length;
-    const end = output.indexOf(endMarker(name), valueStart);
-    if (end === -1) continue;
-
-    const value = output
-      .slice(valueStart, end)
-      .replace(/^\r?\n/, "")
-      .replace(/\r?\n$/, "");
-    if (value.length > 0) {
-      environment[name] = value;
-    }
-  }
-
-  return environment;
-};
-
 const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(function* (input: {
   readonly probe: DesktopShellEnvironmentProbe;
   readonly command: string;
@@ -359,7 +337,7 @@ const readLoginShellEnvironment = (
         args: ["-ilc", buildEnvironmentCaptureCommand(shell, names)],
         env,
         timeout,
-      }).pipe(Effect.map((output) => extractEnvironment(output, names)));
+      }).pipe(Effect.map((output) => extractEnvironmentValues(output, names)));
 
 const readLaunchctlPath = (env: NodeJS.ProcessEnv) =>
   runCommandOutput({
@@ -394,7 +372,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
         env,
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(orEmptyOnTimeout);
-      const environment = extractEnvironment(output, names);
+      const environment = extractEnvironmentValues(output, names);
       if (Object.keys(environment).length > 0) {
         return environment;
       }
