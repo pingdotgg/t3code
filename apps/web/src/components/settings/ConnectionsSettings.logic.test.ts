@@ -2,6 +2,7 @@ import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  parseDiscoveredDesktopSshTarget,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
@@ -40,6 +41,22 @@ describe("togglePairingScopeSelection", () => {
     },
   ] as const)("$label", ({ current, scope, checked, expected }) => {
     expect(togglePairingScopeSelection(current, scope, checked)).toEqual(expected);
+  });
+});
+
+describe("parseDiscoveredDesktopSshTarget", () => {
+  it("keeps the ssh config alias literal and applies only the override fields", () => {
+    expect(
+      parseDiscoveredDesktopSshTarget({ alias: "deploy@devbox:2200", username: "", port: "" }),
+    ).toEqual({
+      alias: "deploy@devbox:2200",
+      hostname: "deploy@devbox:2200",
+      username: null,
+      port: null,
+    });
+    expect(
+      parseDiscoveredDesktopSshTarget({ alias: "devbox", username: " dev ", port: "2222" }),
+    ).toEqual({ alias: "devbox", hostname: "devbox", username: "dev", port: 2222 });
   });
 });
 
