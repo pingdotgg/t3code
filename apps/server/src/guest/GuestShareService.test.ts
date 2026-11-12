@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
+  CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   CommandId,
   EventId,
@@ -287,10 +289,13 @@ it.effect("starts a stream with the runs and items already in the thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("never sends the guest the owner's worktree path or branch", () =>
+it.effect("sends the guest no owner paths, branches, checkpoint files or subagent records", () =>
   Effect.gen(function* () {
     const worktreePath = "/Users/owner/code/secret-worktree";
     const branch = "owner/secret-branch";
+    const changedFile = "src/secret-changed-file.ts";
+    const subagentPrompt = "Owner-only subagent prompt";
+    const subagentResult = "Owner-only subagent result";
     const driver = ProviderDriverKind.make("codex");
     const { orchestrator, guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
@@ -400,7 +405,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
           providerThreadId: null,
           childThreadId: null,
           nativeTaskRef: null,
-          prompt: "Review the diff",
+          prompt: subagentPrompt,
           title: "review",
           model: null,
           status: "running",
@@ -413,10 +418,28 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
             phases: [],
             agents: [],
           },
-          result: null,
+          result: subagentResult,
           startedAt: now,
           completedAt: null,
           updatedAt: now,
+        },
+      });
+    const checkpointCaptured = (id: string, ordinalWithinScope: number) =>
+      ownerEvent(`event:${id}`, {
+        type: "checkpoint.captured",
+        payload: {
+          id: CheckpointId.make(id),
+          threadId,
+          scopeId: CheckpointScopeId.make("scope:before"),
+          runId,
+          nodeId: NodeId.make("node:owner"),
+          parentCheckpointId: null,
+          ordinalWithinScope,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make(`refs/t3/${id}`),
+          status: "ready",
+          files: [{ path: changedFile, kind: "modified", additions: 1, deletions: 0 }],
+          capturedAt: now,
         },
       });
 
@@ -441,6 +464,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         preparedRun("run:before", { type: "existing_worktree", worktreePath, branch }),
         linkedPullRequest("pr:before", "Fix the login bug"),
         workflowSubagent("subagent:before"),
+        checkpointCaptured("checkpoint:before", 0),
       ],
     });
     const events = yield* guestShares.stream(session);
@@ -458,6 +482,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         preparedRun("run:live", { type: "worktree", baseRef: branch, branch }),
         linkedPullRequest("pr:live", "Fix the login bug, take two"),
         workflowSubagent("subagent:live"),
+        checkpointCaptured("checkpoint:live", 1),
       ],
     });
     yield* orchestrator.dispatch({
@@ -474,29 +499,29 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
       return assert.fail("Expected a thread snapshot.");
     }
     assert.equal(snapshot.item.projection.providerSessions.length, 1);
-    assert.equal(snapshot.item.projection.checkpointScopes.length, 1);
     assert.equal(snapshot.item.projection.runs[0]?.workspacePreparation?.type, "existing_worktree");
     assert.equal(snapshot.item.projection.thread.pullRequests?.[0]?.snapshot?.state, "open");
-    assert.equal(
-      snapshot.item.projection.subagents[0]?.workflow?.runHandles?.runId,
-      "workflow-run",
+    assert.lengthOf(snapshot.item.projection.subagents, 0);
+    assert.lengthOf(snapshot.item.projection.checkpoints, 0);
+    assert.lengthOf(snapshot.item.projection.checkpointScopes, 0);
+    const liveTypes = received.flatMap((event) =>
+      event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
     );
-    assert.includeMembers(
-      received.flatMap((event) =>
-        event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
-      ),
-      [
-        "thread.metadata-updated",
-        "provider-session.updated",
-        "checkpoint-scope.created",
-        "run.updated",
-        "thread.pull-request-link-updated",
-        "subagent.updated",
-      ],
-    );
+    assert.includeMembers(liveTypes, [
+      "thread.metadata-updated",
+      "provider-session.updated",
+      "run.updated",
+      "thread.pull-request-link-updated",
+    ]);
+    for (const dropped of ["checkpoint-scope.created", "checkpoint.captured", "subagent.updated"]) {
+      assert.notInclude(liveTypes, dropped);
+    }
     const wire = JSON.stringify(received);
     assert.notInclude(wire, worktreePath);
     assert.notInclude(wire, branch);
+    assert.notInclude(wire, changedFile);
+    assert.notInclude(wire, subagentPrompt);
+    assert.notInclude(wire, subagentResult);
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -564,12 +564,11 @@ const make = Effect.gen(function* () {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
           if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
+          const event = projectDomainEventForGuest(item.event);
+          if (event === null) return [];
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
-          const thread: GuestStreamEvent = {
-            type: "thread",
-            item: { ...item, event: projectDomainEventForGuest(item.event) },
-          };
+          const thread: GuestStreamEvent = { type: "thread", item: { ...item, event } };
           return view === null ? [thread] : [thread, { type: "view", view }];
         }),
         Stream.flattenIterable,

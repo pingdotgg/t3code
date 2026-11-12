@@ -2,11 +2,9 @@ import type {
   GuestShareView,
   GuestThreadModel,
   OrchestrationV2AppThread,
-  OrchestrationV2CheckpointScope,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   OrchestrationV2Run,
-  OrchestrationV2Subagent,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadProjection,
   ServerProvider,
@@ -41,9 +39,6 @@ const guestThread = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread
 const guestProviderSession = (
   session: OrchestrationV2ProviderSession,
 ): OrchestrationV2ProviderSession => ({ ...session, cwd: HIDDEN });
-const guestCheckpointScope = (
-  scope: OrchestrationV2CheckpointScope,
-): OrchestrationV2CheckpointScope => ({ ...scope, cwd: HIDDEN });
 // Clients read only the strategy's type.
 const guestWorkspacePreparation = (
   preparation: OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -62,15 +57,10 @@ const guestRun = (run: OrchestrationV2Run): OrchestrationV2Run =>
     ? run
     : { ...run, workspacePreparation: guestWorkspacePreparation(run.workspacePreparation) };
 
-// A workflow's transcript directory and script live on the owner's disk.
-const guestSubagent = (subagent: OrchestrationV2Subagent): OrchestrationV2Subagent => {
-  const runHandles = subagent.workflow?.runHandles;
-  if (subagent.workflow === undefined || runHandles === undefined) return subagent;
-  const { transcriptDir: _transcriptDir, scriptPath: _scriptPath, ...guestRunHandles } = runHandles;
-  return { ...subagent, workflow: { ...subagent.workflow, runHandles: guestRunHandles } };
-};
-
-/** The thread as its guest's stream sends it: without the owner's branches or paths on disk. */
+/**
+ * The thread as its guest's stream sends it: without the owner's branches or paths on disk, and
+ * without the records the guest page never reads (subagents, checkpoints, context transfers).
+ */
 export function projectThreadProjectionForGuest(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
@@ -78,16 +68,22 @@ export function projectThreadProjectionForGuest(
     ...projection,
     thread: guestThread(projection.thread),
     runs: projection.runs.map(guestRun),
-    subagents: projection.subagents.map(guestSubagent),
+    subagents: [],
     providerSessions: projection.providerSessions.map(guestProviderSession),
-    checkpointScopes: projection.checkpointScopes.map(guestCheckpointScope),
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
   };
 }
 
-/** A live event as its guest's stream sends it; see projectThreadProjectionForGuest. */
+/**
+ * A live event as its guest's stream sends it, or null when the guest page has no use for it;
+ * see projectThreadProjectionForGuest. Every event type is listed, so a new one needs a decision.
+ */
 export function projectDomainEventForGuest(
   event: OrchestrationV2DomainEvent,
-): OrchestrationV2DomainEvent {
+): OrchestrationV2DomainEvent | null {
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
@@ -118,15 +114,29 @@ export function projectDomainEventForGuest(
     case "run.created":
     case "run.updated":
       return { ...event, payload: guestRun(event.payload) };
-    case "subagent.updated":
-      return { ...event, payload: guestSubagent(event.payload) };
     case "provider-session.attached":
     case "provider-session.updated":
       return { ...event, payload: guestProviderSession(event.payload) };
-    case "checkpoint-scope.created":
-      return { ...event, payload: guestCheckpointScope(event.payload) };
-    default:
+    case "run.background-work-cancelled":
+    case "run-attempt.created":
+    case "run-attempt.updated":
+    case "node.updated":
+    case "provider-session.detached":
+    case "provider-thread.updated":
+    case "provider-turn.updated":
+    case "runtime-request.updated":
+    case "message.updated":
+    case "plan.updated":
+    case "turn-item.updated":
       return event;
+    case "subagent.updated":
+    case "checkpoint-scope.created":
+    case "checkpoint.captured":
+    case "checkpoint.rollback-requested":
+    case "context-handoff.updated":
+    case "context-transfer.created":
+    case "context-transfer.updated":
+      return null;
   }
 }
 
