@@ -66,8 +66,11 @@ const offeredRelease = async (
 const crowdedFeed = Array.from({ length: 10 }, (_, i) => `v0.1.10-preview.20261112.${4550 + i}`);
 
 describe("GitHubProvider nightly lookup", () => {
-  it("finds the newest nightly at the fixed pointer when other tags fill the feed", async () => {
-    expect(await offeredRelease(crowdedFeed, nightly(4606))).toEqual({
+  it.each([
+    ["other tags fill the feed", crowdedFeed],
+    ["the feed's first nightly is an older one", [nightly(4603)]],
+  ])("finds the newest nightly at the fixed pointer when %s", async (_case, feedTags) => {
+    expect(await offeredRelease(feedTags, nightly(4606))).toEqual({
       tag: nightly(4606),
       releaseNotes: "pointer notes",
       apiScans: 0,

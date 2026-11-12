@@ -1048,7 +1048,7 @@ jobs:
 
   # A nightly install finds updates in releases.atom, which holds the 10 newest git tags of any
   # kind, so a burst of other tags hides every nightly. The `update-feed` release is the fixed URL
-  # newer installs also read. Every scheduled tick and every nightly repairs it, then fails when
+  # newer installs also read. Every unpaused scheduled tick and every nightly repairs it, then fails when
   # the feed's first nightly is not the newest one. See docs/operations/release.md#update-feed.
   update_feed:
     name: Check the update feed
@@ -1091,8 +1091,11 @@ jobs:
               --notes "The desktop updater reads this release to find the newest nightly. Do not delete it. See docs/operations/release.md."
           gh release upload update-feed nightly.json --clobber
           # A draft's files are not public, so a release someone drafted would hide the pointer.
-          gh release edit update-feed --draft=false
+          # It must never become "latest", which is the release stable installs update to.
+          gh release edit update-feed --draft=false --prerelease --latest=false
 
+      # An unreadable feed says nothing about its tags and the next tick reads it again, so only a
+      # feed that was read and names another nightly first fails the run.
       - name: Fail when the feed hides the newest nightly
         if: steps.feed.outputs.tag != '' && steps.feed.outputs.feed != 'ok'
         env:
@@ -1100,10 +1103,10 @@ jobs:
           FEED: ${{ steps.feed.outputs.feed }}
         run: |
           if [[ "$FEED" == "unreadable" ]]; then
-            echo "::error::releases.atom could not be read, so this run could not check it. No tag cleanup is needed unless a later run reports a hidden nightly."
-          else
-            echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
+            echo "::warning::releases.atom could not be read, so this run did not check it."
+            exit 0
           fi
+          echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
           exit 1
 
   # The `t3` npm package is a launcher that downloads this version's CLI

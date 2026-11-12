@@ -278,19 +278,29 @@ for (const [name, { feed, pointer }, expected] of [
   [
     "a malformed pointer as stale and an unreadable feed as naming nothing",
     { feed: new Response("", { status: 503 }), pointer: Response.json(null) },
-    { pointerTag: undefined, feedNightly: undefined },
+    { pointerTag: undefined, feedNightly: undefined, unreadable: true },
+  ],
+  [
+    "an HTML page that links the nightly as an unreadable feed",
+    {
+      feed: new Response(`<html><a href="/example/app/releases/tag/${NEWEST}">x</a></html>`),
+      pointer: Response.json({ tag_name: NEWEST }),
+    },
+    { pointerTag: NEWEST, feedNightly: undefined, unreadable: true },
   ],
   [
     "the pointer when the feed's body fails to arrive",
     { feed: brokenBody(), pointer: Response.json({ tag_name: NEWEST }) },
-    { pointerTag: NEWEST, feedNightly: undefined },
+    { pointerTag: NEWEST, feedNightly: undefined, unreadable: true },
   ],
 ]) {
   test(`update feed check reports ${name}`, async () => {
-    const { tag, pointerTag, feedNightly } = await readNightlyUpdateFeed(
+    const { tag, pointerTag, feedNightly, feedTags } = await readNightlyUpdateFeed(
       updateFeedFixture({ feed, pointer }),
     );
-    assert.deepEqual({ tag, pointerTag, feedNightly }, { tag: NEWEST, ...expected });
+    const { unreadable = false, ...named } = expected;
+    assert.deepEqual({ tag, pointerTag, feedNightly }, { tag: NEWEST, ...named });
+    assert.equal(feedTags === undefined, unreadable);
   });
 }
 

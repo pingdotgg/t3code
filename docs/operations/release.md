@@ -483,10 +483,13 @@ A nightly install finds the newest nightly in up to three places.
 
 The release workflow's `Check the update feed` job runs on every scheduled tick, unless
 `PAUSE_NIGHTLY` is set, and after every nightly. It waits in the same queue as releases and
-previews. It rewrites a missing or outdated pointer. Its last step fails when the feed cannot be
-read, or when the first nightly in the feed is not the newest one.
+previews. It rewrites a missing or outdated pointer. Its last step fails when the first nightly
+in the feed is not the newest one. A feed it could not read is only a warning: that says nothing
+about the tags, and the next tick reads it again.
 
-When that step fails, installs that read only the feed cannot reach the newest nightly. The job
+When that step fails, installs that read only the feed cannot reach the newest nightly. If the
+feed still names an older nightly first, installs from `4603` up to the first build with the
+pointer miss it too, because their API scan runs only when the feed has no nightly at all. The job
 log lists the tags in the feed. The usual cause is a preview dispatched from a branch that was not
 rebased onto `main`. Delete the tags nothing needs with `git push origin :refs/tags/<tag>`.
 Converting a release to a draft keeps its tag, so it does not help. To keep this from happening,

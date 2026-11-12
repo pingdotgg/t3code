@@ -144,14 +144,15 @@ async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch
     } catch {}
   }
 
-  // An unreadable feed leaves `feedTags` unset, so the pointer is still repaired.
+  // An unreadable feed leaves `feedTags` unset, so the pointer is still repaired. An error page
+  // can answer HTTP 200, so only an Atom document counts as read.
   let feedTags;
   try {
     const feed = await fetch(`${base}/releases.atom`);
-    if (feed.ok) {
-      feedTags = Array.from(
-        (await feed.text()).matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g),
-        (match) => decodeURIComponent(match[1]),
+    const body = feed.ok ? await feed.text() : "";
+    if (body.includes("<feed")) {
+      feedTags = Array.from(body.matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
+        decodeURIComponent(match[1]),
       );
     }
   } catch {}
