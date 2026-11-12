@@ -184,7 +184,6 @@ export function NoProjectsComposer({
           workspaceFileDragActive={false}
           runtimeMode={runtimeMode}
           defaultRuntimeMode={defaultRuntimeMode}
-          permissionsShownInStrip={false}
           lockedProvider={null}
           providerStatuses={providerStatuses as ServerProvider[]}
           providerCatalogKnown={serverConfig !== null}
