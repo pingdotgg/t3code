@@ -10,8 +10,9 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const MAX_BYTES = 65536;
 const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = NodeFS.constants;
-// Windows builds of Node export no O_NOFOLLOW. There, libuv's UV_FS_O_EXLOCK (uv/win.h) opens
-// with share mode 0, so no other process can open, write, rename or replace the file meanwhile.
+// Node on Windows exports no O_NOFOLLOW. libuv's UV_FS_O_EXLOCK (uv/win.h) prevents writes,
+// renames and replacement while checking and reading; metadata access and backup-semantics
+// reads can still succeed.
 const WINDOWS_EXCLUSIVE_LOCK = 0x10000000;
 const OPEN_FLAGS =
   O_NOFOLLOW === undefined ? O_RDONLY | WINDOWS_EXCLUSIVE_LOCK : O_RDONLY | O_NOFOLLOW | O_NONBLOCK;
