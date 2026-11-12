@@ -9,7 +9,8 @@ import * as OriginSourceControlProvider from "./OriginSourceControlProvider.ts";
 
 const signedIn: Record<string, unknown> = {
   authenticated: true,
-  tokenValid: true,
+  // An API-key sign-in reports no token check.
+  tokenValid: null,
   account: { email: "dev@example.test" },
 };
 

@@ -57,7 +57,7 @@ export class OriginCliError extends Schema.TaggedError<OriginCliError>()("Origin
 /** What `origin auth status --json` reports. Only the fields this package reads. */
 const OriginAuthStatusSchema = Schema.Struct({
   authenticated: Schema.Boolean,
-  tokenValid: Schema.optional(Schema.Boolean),
+  tokenValid: Schema.optional(Schema.NullOr(Schema.Boolean)),
   account: Schema.optional(
     Schema.NullOr(Schema.Struct({ email: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
