@@ -139,6 +139,31 @@ describe("UsageAggregator", () => {
     }
   });
 
+  it("leaves keyed copies unattributed when their threads disagree in either order", () => {
+    const copies = [
+      { record: record({ dedupeKey: "msg_1:", sessionId: "session-a" }), thread: 0 },
+      { record: record({ dedupeKey: "msg_1:", sessionId: "session-fork" }), thread: 1 },
+    ];
+    const results = [copies, [...copies].reverse()].map((ordered) => {
+      const aggregator = new UsageAggregator({
+        timeZone: "UTC",
+        sinceDay: "2026-08-01",
+        untilDay: "2026-08-31",
+        rates,
+      });
+      for (const copy of ordered) {
+        aggregator.add(copy.record, "/history", { instanceId: "claude-work", thread: copy.thread });
+      }
+      return aggregator.finish();
+    });
+
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0]?.buckets).toEqual([
+      expect.objectContaining({ instanceId: "claude-work", records: 1, sourcePath: "/history" }),
+    ]);
+    expect(results[0]?.buckets[0]).not.toHaveProperty("thread");
+  });
+
   it("does not count a key whose first copy fell outside the window", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),

@@ -172,8 +172,24 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
 
 interface Contribution {
   record: UsageRecord;
-  /** Null when the first copy fell outside the window. */
-  readonly bucket: MutableBucket | null;
+  readonly sourcePath: string;
+  group: UsageBucketGroup;
+  readonly inWindow: boolean;
+}
+
+function resolveGroup(
+  group: UsageBucketGroup | (() => UsageBucketGroup) | undefined,
+): UsageBucketGroup {
+  return (typeof group === "function" ? group() : group) ?? {};
+}
+
+function commonGroup(held: UsageBucketGroup, copy: UsageBucketGroup): UsageBucketGroup {
+  return {
+    ...(held.instanceId !== undefined && held.instanceId === copy.instanceId
+      ? { instanceId: held.instanceId }
+      : {}),
+    ...(held.thread !== undefined && held.thread === copy.thread ? { thread: held.thread } : {}),
+  };
 }
 
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
@@ -223,21 +239,45 @@ export class UsageAggregator {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
         this.#duplicatesDropped += 1;
-        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
+        if (held.inWindow) {
+          held.record = mergeUsageCopies(held.record, record);
+          held.group = commonGroup(held.group, resolveGroup(group));
+        }
         return false;
       }
+      const inWindow = this.#isInWindow(record);
+      this.#seen.set(record.dedupeKey, {
+        record,
+        sourcePath: sourcePath ?? "",
+        group: inWindow ? resolveGroup(group) : {},
+        inWindow,
+      });
+      if (!inWindow) {
+        this.#outOfWindow += 1;
+        return false;
+      }
+      return true;
     }
 
     const bucket = this.#placeInWindow(record, sourcePath ?? "", group);
-    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket });
     if (bucket === null) {
       this.#outOfWindow += 1;
       return false;
     }
-    // Keyed usage is counted in finish(), once all its copies are merged.
-    if (record.dedupeKey === null) this.#accumulate(bucket, record);
+    this.#accumulate(bucket, record);
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     return true;
+  }
+
+  #isInWindow(record: UsageRecord): boolean {
+    if (this.#hourlyWindow !== null) {
+      return (
+        record.timestampMs >= this.#hourlyWindow.sinceTimeMs &&
+        record.timestampMs < this.#hourlyWindow.untilTimeMs
+      );
+    }
+    const day = this.#toDay(record.timestampMs);
+    return day >= this.#options.sinceDay && day <= this.#options.untilDay;
   }
 
   #placeInWindow(
@@ -245,27 +285,13 @@ export class UsageAggregator {
     source: string,
     group?: UsageBucketGroup | (() => UsageBucketGroup),
   ): MutableBucket | null {
-    if (
-      this.#hourlyWindow !== null &&
-      (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
-        record.timestampMs >= this.#hourlyWindow.untilTimeMs)
-    ) {
-      return null;
-    }
-
+    if (!this.#isInWindow(record)) return null;
     const day = this.#toDay(record.timestampMs);
-    if (
-      this.#hourlyWindow === null &&
-      (day < this.#options.sinceDay || day > this.#options.untilDay)
-    ) {
-      return null;
-    }
-
     const hourIndex =
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const resolved = typeof group === "function" ? group() : group;
+    const resolved = resolveGroup(group);
     return this.#bucketFor(
       day,
       hourIndex,
@@ -367,8 +393,12 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
-    for (const { record, bucket } of this.#seen.values()) {
-      if (bucket !== null) this.#accumulate(bucket, record);
+    for (const { record, sourcePath, group, inWindow } of this.#seen.values()) {
+      if (!inWindow) continue;
+      const bucket = this.#placeInWindow(record, sourcePath, group);
+      if (bucket === null) continue;
+      this.#accumulate(bucket, record);
+      if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
     }
     this.#seen.clear();
     const buckets: UsageBucket[] = [];
