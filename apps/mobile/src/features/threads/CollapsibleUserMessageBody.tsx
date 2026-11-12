@@ -34,14 +34,13 @@ export function CollapsibleUserMessageBody(props: {
 
   return (
     <View>
-      <View style={collapsed ? { height: FOLDED_HEIGHT, overflow: "hidden" } : undefined}>
+      <View style={collapsed ? { maxHeight: FOLDED_HEIGHT, overflow: "hidden" } : undefined}>
         <View
           ref={contentRef}
-          // Out of flow while folded: Yoga squeezes in-flow children to the clip, which reads as short and unfolds.
-          style={collapsed ? { position: "absolute", top: 0, left: 0, right: 0 } : undefined}
-          onLayout={(event: LayoutChangeEvent) =>
-            setTallEnough(isTallEnoughToFold(event.nativeEvent.layout.height))
-          }
+          onLayout={(event: LayoutChangeEvent) => {
+            // Folded, Yoga reports the clipped height, which would read as short and unfold it in a loop.
+            if (!collapsed) setTallEnough(isTallEnoughToFold(event.nativeEvent.layout.height));
+          }}
         >
           {props.children}
         </View>
