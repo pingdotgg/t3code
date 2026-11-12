@@ -516,6 +516,36 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("reports a learned direct address that cannot be reached as a direct failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        responses: [
+          Response.json(DESCRIPTOR),
+          () => {
+            throw new TypeError("Failed to fetch");
+          },
+        ],
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpop({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            directEndpoint: {
+              httpBaseUrl: "https://example.tail0000.ts.net/",
+              wsBaseUrl: "wss://example.tail0000.ts.net/",
+            },
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(error).toMatchObject({ reason: "network", hop: "server", via: "direct" });
+    }),
+  );
+
   it.effect("sends no token to a direct address that answers as another machine", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
