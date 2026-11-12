@@ -316,3 +316,27 @@ it("preserves withheld audio on VAD failure while keeping ASR failures distinct"
     await model.dispose();
   }
 });
+
+it("splits and retries a piece that fails with repetition or out of memory", async () => {
+  for (const failure of ["OutputRepetition", "OutOfMemory"]) {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      fixture(`async (pcm) => {
+        class OutputTruncated extends Error {}
+        class OutputRepetition extends OutputTruncated {}
+        class OutOfMemory extends Error {}
+        if (pcm.length > 8000) throw new ({ OutputRepetition, OutOfMemory })[${JSON.stringify(failure)}]("too long");
+        return { text: String(pcm.length) };
+      }`),
+      "cpu",
+    );
+    try {
+      expect(
+        await model.transcribe(new Float32Array(16000), { timestamps: "none" }, false),
+      ).toEqual({ text: "8000 8000" });
+    } finally {
+      await model.dispose();
+    }
+  }
+});
