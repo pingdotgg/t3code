@@ -172,7 +172,7 @@ describe("ssh tunnel scripts", () => {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       for (const missing of [false, true]) {
         const nodeFixture = missing
-          ? 'command() { [ "$*" != "-v node" ] && type "$2"; }; '
+          ? "command() { return 1; }; "
           : 'node() { cat >/dev/null; printf "Remote node 18.20.8 does not satisfy required range >=999.0.0.\\n" >&2; return 1; }; ';
         const remoteShell = ChildProcessSpawner.make((command) => {
           if (command._tag !== "StandardCommand") return spawner.spawn(command);
@@ -180,7 +180,16 @@ describe("ssh tunnel scripts", () => {
             ChildProcess.make(
               "sh",
               ["-c", `${nodeFixture}eval "$(cat)"`, "sh", ...commandArgs(command).slice(-1)],
-              { ...command.options, env: { ...command.options.env, HOME: home } },
+              {
+                ...command.options,
+                env: {
+                  ...command.options.env,
+                  HOME: home,
+                  NVM_DIR: NodePath.join(home, ".nvm"),
+                  FNM_DIR: NodePath.join(home, ".fnm"),
+                  VOLTA_HOME: NodePath.join(home, ".volta"),
+                },
+              },
             ),
           );
         });
