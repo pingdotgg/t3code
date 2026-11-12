@@ -17,15 +17,21 @@ interface OpenDiffFilePrimaryActionInput {
   readonly openInEditor: (targetPath: string) => void;
 }
 
-function normalizedRelativePathSegments(filePath: string): ReadonlyArray<string> | null {
+function normalizedRelativePathSegments(
+  filePath: string,
+  windowsRoot: boolean,
+): ReadonlyArray<string> | null {
   if (filePath.startsWith("/") || isWindowsAbsolutePath(filePath) || /^[a-zA-Z]:/.test(filePath)) {
     return null;
   }
 
-  // Git separates directories with "/" on every platform, so a backslash is part of
-  // a file name. Windows paths still treat it as a separator, so reject ".." either way.
-  if (filePath.split(/[\\/]/).includes("..")) return null;
-  const segments = filePath.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+  // On POSIX a backslash is part of a file name; Windows treats it as a separator
+  // (tool-call patches can name files with either), so reject ".." either way.
+  const parts = filePath.split(/[\\/]/);
+  if (parts.includes("..")) return null;
+  const segments = (windowsRoot ? parts : filePath.split("/")).filter(
+    (segment) => segment.length > 0 && segment !== ".",
+  );
   if (segments.length === 0) return null;
   return segments;
 }
@@ -54,14 +60,18 @@ export function resolveDiffPathForWorkspace(input: {
   readonly workspaceRoot: string | undefined;
   readonly repositoryRoot: string | undefined;
 }): string | null {
+  const windowsRoot = [input.workspaceRoot, input.repositoryRoot].some(
+    (root) => root !== undefined && isWindowsAbsolutePath(root),
+  );
   // Claude and ACP tool-call diffs name files by absolute path.
   if (isAbsolutePath(input.filePath)) {
     const relativePath = workspaceRelativeFilePath(input.filePath, input.workspaceRoot);
-    const segments = relativePath === null ? null : normalizedRelativePathSegments(relativePath);
+    const segments =
+      relativePath === null ? null : normalizedRelativePathSegments(relativePath, windowsRoot);
     return segments ? segments.join("/") : null;
   }
 
-  const fileSegments = normalizedRelativePathSegments(input.filePath);
+  const fileSegments = normalizedRelativePathSegments(input.filePath, windowsRoot);
   if (!fileSegments) return null;
 
   const workspaceSegments = repositoryRelativeWorkspaceSegments(

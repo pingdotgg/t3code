@@ -53,6 +53,18 @@ describe("openDiffFilePrimaryAction", () => {
       expected: "src/index.ts",
     },
     {
+      filePath: "Frontend/src\\index.ts",
+      workspaceRoot: "C:\\repo\\frontend",
+      repositoryRoot: "C:\\repo",
+      expected: "src/index.ts",
+    },
+    {
+      filePath: "Frontend\\src\\index.ts",
+      workspaceRoot: "C:\\repo\\frontend",
+      repositoryRoot: "C:\\repo",
+      expected: "src/index.ts",
+    },
+    {
       filePath: "Frontend/Src/index.ts",
       workspaceRoot: "C:\\repo\\frontend\\src",
       repositoryRoot: "C:\\repo",
