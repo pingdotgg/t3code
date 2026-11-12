@@ -169,6 +169,7 @@ const make = Effect.gen(function* () {
           turnItemId: item.id,
           label: item.label,
           reason: item.reason,
+          ...(item.url === undefined ? {} : { url: item.url }),
           ...(item.placeholder === undefined ? {} : { placeholder: item.placeholder }),
           ...(item.delivery === undefined ? {} : { delivery: item.delivery }),
           secretStatus,
