@@ -2,6 +2,7 @@ export {
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   MICROPHONE_PERMISSION_ERROR,
+  resolveTranscriptCommit,
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
