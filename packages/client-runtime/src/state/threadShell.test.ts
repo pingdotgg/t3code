@@ -403,47 +403,6 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
-  it("keeps a task under its settled parent once the parent's snapshot leaves it out as older settled", () => {
-    const { registry, threads, snapshotAtom } = makeHarness([environmentId, remoteEnvironmentId]);
-    const settledAt = DateTime.makeUnsafe("2026-06-01T00:00:00.000Z");
-    const task = {
-      ...v2ThreadShell,
-      id: ThreadId.make("remote-task"),
-      creationSource: "mcp" as const,
-      delegatedFrom: { environmentId, threadId: v2ThreadShell.id, title: v2ThreadShell.title },
-    };
-    // The parent is settled and still exists, but 25 newer settled threads push it below the
-    // snapshot's cut, so the environment's snapshot omits it and counts it in `olderSettled`.
-    registry.set(snapshotAtom(environmentId), {
-      ...v2ShellSnapshot,
-      threads: [],
-      olderSettled: {
-        before: DateTime.formatIso(DateTime.add(settledAt, { days: 1 })),
-        asOfSequence: v2ShellSnapshot.snapshotSequence,
-        counts: [{ projectId: v2ThreadShell.projectId, count: 1 }],
-      },
-    });
-    registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: [task] });
-    const dispose = registry.mount(threads.navigationThreadShellsAtom);
-    expect(
-      registry
-        .get(threads.navigationThreadShellsAtom)
-        .map((thread) => `${thread.environmentId}/${thread.id}`),
-    ).toEqual([]);
-    // The parent might instead be archived or deleted, so a task still at work stays listed.
-    registry.set(snapshotAtom(remoteEnvironmentId), {
-      ...v2ShellSnapshot,
-      threads: [{ ...task, status: "running", activityRunStatus: "running" }],
-    });
-    expect(
-      registry
-        .get(threads.navigationThreadShellsAtom)
-        .map((thread) => `${thread.environmentId}/${thread.id}`),
-    ).toEqual([`${remoteEnvironmentId}/${task.id}`]);
-    dispose();
-    registry.dispose();
-  });
-
   it("brings an approval up a chain of tasks across three environments to its root", () => {
     const thirdEnvironmentId = EnvironmentId.make("third-environment-v2");
     const { registry, threads, snapshotAtom } = makeHarness([

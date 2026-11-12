@@ -222,6 +222,8 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       assert.deepEqual(item?.type === "subagent" ? item.remoteChild : undefined, remoteChild);
       // No thread was created here for the child.
       assert.equal(yield* orchestrator.getThreadShell(remoteChild.threadId), null);
+      const index = yield* (yield* ProjectionStore.ProjectionStoreV2).listActiveShellIndex();
+      assert.isTrue(index.find((entry) => entry.id === parent.threadId)?.hasRemoteTasks);
     }),
   );
 

@@ -663,15 +663,6 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
-  const environmentOmitsOlderSettledAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make(
-      (get) =>
-        get(input.snapshotAtom(environmentId))?.olderSettled?.counts.some(
-          ({ count }) => count > 0,
-        ) ?? false,
-    ).pipe(Atom.withLabel(`environment-omits-older-settled:${environmentId}`)),
-  );
-
   let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
   const delegatedUnderParentAtom = Atom.make((get) => {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
@@ -679,19 +670,12 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
-        if (parent === undefined || !environmentIds.has(parent.environmentId)) continue;
-        const parentShell = get(environmentThreadIndexAtom(parent.environmentId)).get(
-          parent.threadId,
-        );
         if (
+          parent !== undefined &&
+          environmentIds.has(parent.environmentId) &&
           // An archived parent leaves navigation; its task there stays listed on its own.
-          parentShell !== undefined
-            ? parentShell.archivedAt === null
-            : // A missing parent may be an older settled thread the snapshot left out, or an
-              // archived or deleted one. Only an idle task is nested then, so live work stays listed.
-              !isChildRunLive(thread) &&
-              thread.pendingRuntimeRequest == null &&
-              get(environmentOmitsOlderSettledAtom(parent.environmentId))
+          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
+            null
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
