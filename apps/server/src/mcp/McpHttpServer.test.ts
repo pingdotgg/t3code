@@ -1495,6 +1495,7 @@ it.effect("lists browser and device tools only to credentials that grant them", 
             McpToolAccessTestkit.liveThreadsLayer,
             PreviewAutomationBroker.layer,
             Layer.mock(DeviceService.DeviceService)({}),
+            Layer.mock(ProjectService.ProjectService)({}),
           ),
         ),
         Layer.provide(
