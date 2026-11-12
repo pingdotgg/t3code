@@ -101,7 +101,8 @@ export function blockedAssetUrlState(
     fileAccess.canReadFiles ||
     (resource._tag !== "workspace-file" &&
       resource._tag !== "media-file" &&
-      resource._tag !== "draft-workspace-file")
+      resource._tag !== "draft-workspace-file" &&
+      !(resource._tag === "native-app-icon" && resource.app._tag === "app-path"))
   ) {
     return null;
   }
@@ -275,6 +276,7 @@ export function createAssetEnvironmentAtoms<R, E>(
         error._tag === "AssetWorkspaceContextNotFoundError"
       ) ||
       resource._tag !== "media-file" ||
+      resource.hostOnly ||
       !(resource.path.startsWith("/") || isWindowsAbsolutePath(resource.path)) ||
       mediaMimeTypeFromExtension(resource.path.slice(resource.path.lastIndexOf("."))) === null
     )
@@ -321,6 +323,14 @@ export function createAssetEnvironmentAtoms<R, E>(
   };
 }
 
+/**
+ * The resource a project's icon URL is minted for. Refreshing the `createUrl` query for it makes
+ * the server resolve the icon again instead of serving a cached answer.
+ */
+export function projectFaviconResource(cwd: string, path: string | null | undefined) {
+  return { _tag: "project-favicon" as const, cwd, ...(path ? { path } : {}) };
+}
+
 export function createProjectFaviconUrlAtomFamily(input: {
   readonly imageCache?: ProjectFaviconCache;
   readonly createUrl: (target: {
@@ -340,8 +350,10 @@ export function createProjectFaviconUrlAtomFamily(input: {
   const projectClones = input.projectClones;
   const family = Atom.family((key: string) => {
     const [environmentId, cwd, path] = decodeKey(JSON.parse(key));
-    const resource = { _tag: "project-favicon" as const, cwd, ...(path ? { path } : {}) };
-    const query = input.createUrl({ environmentId, input: { resource } });
+    const query = input.createUrl({
+      environmentId,
+      input: { resource: projectFaviconResource(cwd, path) },
+    });
     // A cloned project exists before its files do, and the server reports its
     // icon missing until the clone lands. Ask again whenever the clone's phase
     // changes: the first list a client sees may already say done.
