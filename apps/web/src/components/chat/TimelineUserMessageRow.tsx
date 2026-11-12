@@ -58,7 +58,7 @@ import {
   Redo2Icon,
 } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
-import { FreshSessionRow, ModelSwitchRow } from "./V2LifecycleRow";
+import { FreshSessionRow, HandoffNote, ModelSwitchNote } from "./V2LifecycleRow";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -246,15 +246,10 @@ function UserVideoAttachment({
 }
 
 export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
-  const ctx = use(TimelineRowCtx);
   const item = row.projectedItem?.item;
-  const modelSwitch = item?.type === "user_message" ? item.modelSwitch : undefined;
   return (
     <>
       {item?.type === "user_message" && item.freshContext ? <FreshSessionRow /> : null}
-      {modelSwitch ? (
-        <ModelSwitchRow environmentId={ctx.activeThreadEnvironmentId} modelSwitch={modelSwitch} />
-      ) : null}
       <UserMessageContent row={row} />
     </>
   );
@@ -263,16 +258,44 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
 function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   return ctx.workflowOpening?.messageId === row.message.id ? (
-    <WorkflowOpeningBlock
-      opening={ctx.workflowOpening}
-      environmentId={ctx.activeThreadEnvironmentId}
-      onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
-    />
+    <>
+      <WorkflowOpeningBlock
+        opening={ctx.workflowOpening}
+        environmentId={ctx.activeThreadEnvironmentId}
+        onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
+      />
+      {userMessageHasSwitch(row) ? (
+        <div className="flex justify-end pe-1 pt-1">
+          <UserMessageSwitchNote row={row} />
+        </div>
+      ) : null}
+    </>
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (
     <UserTimelineRow row={row} />
   );
+}
+
+function userMessageHasSwitch(row: Extract<TimelineRow, { kind: "message" }>) {
+  return Boolean(
+    row.switchHandoff ||
+    (row.projectedItem?.item.type === "user_message" && row.projectedItem.item.modelSwitch),
+  );
+}
+
+function UserMessageSwitchNote({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const item = row.projectedItem?.item;
+  return row.switchHandoff ? (
+    <HandoffNote
+      environmentId={ctx.activeThreadEnvironmentId}
+      item={row.switchHandoff}
+      runs={ctx.runs}
+    />
+  ) : item?.type === "user_message" && item.modelSwitch ? (
+    <ModelSwitchNote environmentId={ctx.activeThreadEnvironmentId} modelSwitch={item.modelSwitch} />
+  ) : null;
 }
 
 function AutomationMessageToggle(props: useRender.ComponentProps<"button">) {
@@ -351,6 +374,11 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         />
       ) : null}
       <UserMessageProjectedStatus row={row} />
+      {userMessageHasSwitch(row) ? (
+        <div className="flex max-w-full justify-end pe-1">
+          <UserMessageSwitchNote row={row} />
+        </div>
+      ) : null}
       {expanded ? (
         <div className="flex items-center justify-end whitespace-nowrap text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:static pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/user-row:opacity-100 has-[button]:-me-1.5">
           <div className="flex shrink-0 items-center gap-2">
@@ -1071,15 +1099,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
       </div>
       <UserMessageProjectedStatus row={row} />
-      {!folded || expanded ? (
+      {!folded || expanded || userMessageHasSwitch(row) ? (
         <div
           className={cn(
-            "flex w-full max-w-[80%] justify-end pe-1",
-            floatActions && "@min-[37rem]:hidden",
-            ACTIONS_REVEAL_CLASS_NAME,
+            "flex w-full min-w-0 items-center justify-end gap-x-2 pe-1",
+            floatActions && !userMessageHasSwitch(row) && "@min-[37rem]:hidden",
           )}
         >
-          {messageActions}
+          {!folded || expanded ? (
+            <div
+              className={cn(
+                "flex shrink-0 justify-end",
+                floatActions && "@min-[37rem]:hidden",
+                ACTIONS_REVEAL_CLASS_NAME,
+              )}
+            >
+              {messageActions}
+            </div>
+          ) : null}
+          <UserMessageSwitchNote row={row} />
         </div>
       ) : null}
     </div>

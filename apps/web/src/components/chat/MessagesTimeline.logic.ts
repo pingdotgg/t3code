@@ -640,6 +640,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
+      switchHandoff?: Extract<OrchestrationV2ProjectedTurnItem["item"], { type: "handoff" }>;
       showAssistantMeta: boolean;
       suppressEmptyResponse?: boolean;
       showAssistantCopyButton: boolean;
@@ -2661,15 +2662,55 @@ export function deriveMessagesTimelineRows(input: {
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
   return withPromptGrouping(
-    result.map((sourceRow, index) => {
-      const row = supersededRowIds.has(sourceRow.id)
-        ? { ...sourceRow, superseded: true }
-        : sourceRow;
-      return timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
-        ? { ...row, continuesWorkLog: true }
-        : row;
-    }),
+    attachSwitchHandoffs(
+      result.map((sourceRow, index) => {
+        const row = supersededRowIds.has(sourceRow.id)
+          ? { ...sourceRow, superseded: true }
+          : sourceRow;
+        return timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+          ? { ...row, continuesWorkLog: true }
+          : row;
+      }),
+    ),
   );
+}
+
+export function attachSwitchHandoffs(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+): MessagesTimelineRow[] {
+  const prompts = new Map<string, Extract<MessagesTimelineRow, { kind: "message" }>>();
+  for (const row of rows) {
+    if (
+      row.kind === "message" &&
+      timelineRowIsUserPrompt(row) &&
+      row.message.runId !== null &&
+      !row.superseded
+    ) {
+      const key = `${row.projectedItem?.sourceThreadId ?? ""}:${row.message.runId}`;
+      if (!prompts.has(key)) prompts.set(key, row);
+    }
+  }
+  const handoffs = new Map<
+    string,
+    NonNullable<Extract<MessagesTimelineRow, { kind: "message" }>["switchHandoff"]>
+  >();
+  const moved = new Set<string>();
+  for (const row of rows) {
+    if (row.kind !== "event" || row.projectedItem.item.type !== "handoff" || row.superseded)
+      continue;
+    const prompt = prompts.get(
+      `${row.projectedItem.sourceThreadId ?? ""}:${row.projectedItem.item.runId}`,
+    );
+    if (!prompt || handoffs.has(prompt.id)) continue;
+    handoffs.set(prompt.id, row.projectedItem.item);
+    moved.add(row.id);
+  }
+  return rows
+    .filter((row) => !moved.has(row.id))
+    .map((row) => {
+      const switchHandoff = handoffs.get(row.id);
+      return row.kind === "message" && switchHandoff ? { ...row, switchHandoff } : row;
+    });
 }
 
 /** Flags prompts by their neighbours; rerun whenever rows move, so stale flags never split a group. */
@@ -3668,6 +3709,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
+        a.switchHandoff === bm.switchHandoff &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.suppressEmptyResponse === bm.suppressEmptyResponse &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
