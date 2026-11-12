@@ -1739,6 +1739,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                 props.isHighlighted || props.isRouteActive
                   ? "bg-sidebar-row-active text-sidebar-foreground"
                   : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                props.isHighlighted && "ring-2 ring-inset ring-ring",
                 isFileDragOver && "ring-1 ring-inset ring-primary/70",
                 isFileDragOver && !props.isRouteActive && "bg-sidebar-row-hover",
               )}
