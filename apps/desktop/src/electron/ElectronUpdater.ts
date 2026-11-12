@@ -4,7 +4,15 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { AppImageUpdater, autoUpdater } from "electron-updater";
+import {
+  AppImageUpdater,
+  autoUpdater,
+  DebUpdater,
+  PacmanUpdater,
+  RpmUpdater,
+} from "electron-updater";
+
+import * as ElectronApp from "./ElectronApp.ts";
 
 type AutoUpdater = typeof autoUpdater;
 type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => Promise<boolean>;
@@ -13,8 +21,7 @@ type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => 
 // relaunched AppImage inherits them, so old runtimes and FUSE mounts never exit. bash (AppRun
 // already needs it; dash cannot close multi-digit fds) closes them before exec'ing the AppImage.
 // -p skips BASH_ENV and exported functions in the helper only; the AppImage still receives both.
-const CLOSE_INHERITED_FDS_THEN_EXEC =
-  'for fd in /proc/self/fd/*; do fd=${fd##*/}; case $fd in *[!0-9]*|[012]) ;; *) eval "exec $fd>&-" ;; esac; done; exec "$@"';
+const CLOSE_INHERITED_FDS_THEN_EXEC = `${ElectronApp.CLOSE_INHERITED_FDS}; exec "$@"`;
 
 const relaunchWithoutInheritedDescriptors = (updater: AppImageUpdater) => {
   const spawnLog = (AppImageUpdater.prototype as unknown as { spawnLog: SpawnLog }).spawnLog;
@@ -167,13 +174,23 @@ export const make = ElectronUpdater.of({
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
   }),
-  quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+  quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function* ({
     isSilent,
     isForceRunAfter,
   }) {
-    return Effect.suspend(() => {
+    const relaunch = yield* ElectronApp.makeRelaunch;
+    return yield* Effect.suspend(() => {
       const channel = autoUpdater.channel;
       if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
+      if (
+        autoUpdater instanceof DebUpdater ||
+        autoUpdater instanceof RpmUpdater ||
+        autoUpdater instanceof PacmanUpdater
+      ) {
+        // Package installs restart through app.relaunch(), which would set no_new_privs.
+        (autoUpdater as unknown as { app: { relaunch: () => void } }).app.relaunch = () =>
+          relaunch();
+      }
       return Effect.try({
         try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
         catch: (cause) =>
