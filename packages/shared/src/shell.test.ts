@@ -597,49 +597,75 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
   );
 
   it.effect("finds a command in a known POSIX CLI directory that is not on PATH", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
-      const localBin = path.join(home, ".local", "bin");
-      yield* fs.makeDirectory(localBin, { recursive: true });
-      const claude = path.join(localBin, "claude");
-      yield* fs.writeFileString(claude, "#!/bin/sh\n");
-      yield* fs.chmod(claude, 0o755);
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const saved = process.env.T3CODE_CLI_FALLBACK_DIRS;
+        delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+        return saved;
+      }),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
+          const localBin = path.join(home, ".local", "bin");
+          yield* fs.makeDirectory(localBin, { recursive: true });
+          const claude = path.join(localBin, "claude");
+          yield* fs.writeFileString(claude, "#!/bin/sh\n");
+          yield* fs.chmod(claude, 0o755);
 
-      // PATH deliberately excludes ~/.local/bin, as a GUI app launched from
-      // Finder/Dock would have.
-      const env = { HOME: home, PATH: "/usr/bin:/bin" };
+          // PATH deliberately excludes ~/.local/bin, as a GUI app launched from
+          // Finder/Dock would have.
+          const env = { HOME: home, PATH: "/usr/bin:/bin" };
 
-      const resolved = yield* resolveCommandPath("claude", { env }).pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(CommandResolutionCache, new Map()),
-      );
+          const resolved = yield* resolveCommandPath("claude", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          );
 
-      expect(resolved).toBe(claude);
-    }),
+          expect(resolved).toBe(claude);
+        }),
+      (saved) =>
+        Effect.sync(() => {
+          if (saved === undefined) delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+          else process.env.T3CODE_CLI_FALLBACK_DIRS = saved;
+        }),
+    ),
   );
 
   it.effect("finds a command in a known POSIX directory even when PATH is empty", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
-      const localBin = path.join(home, ".local", "bin");
-      yield* fs.makeDirectory(localBin, { recursive: true });
-      const claude = path.join(localBin, "claude");
-      yield* fs.writeFileString(claude, "#!/bin/sh\n");
-      yield* fs.chmod(claude, 0o755);
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const saved = process.env.T3CODE_CLI_FALLBACK_DIRS;
+        delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+        return saved;
+      }),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
+          const localBin = path.join(home, ".local", "bin");
+          yield* fs.makeDirectory(localBin, { recursive: true });
+          const claude = path.join(localBin, "claude");
+          yield* fs.writeFileString(claude, "#!/bin/sh\n");
+          yield* fs.chmod(claude, 0o755);
 
-      const env = { HOME: home, PATH: "" };
+          const env = { HOME: home, PATH: "" };
 
-      const resolved = yield* resolveCommandPath("claude", { env }).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(CommandResolutionCache, new Map()),
-      );
+          const resolved = yield* resolveCommandPath("claude", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          );
 
-      expect(resolved).toBe(claude);
-    }),
+          expect(resolved).toBe(claude);
+        }),
+      (saved) =>
+        Effect.sync(() => {
+          if (saved === undefined) delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+          else process.env.T3CODE_CLI_FALLBACK_DIRS = saved;
+        }),
+    ),
   );
 });
 
