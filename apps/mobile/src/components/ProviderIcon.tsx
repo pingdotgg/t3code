@@ -189,7 +189,9 @@ export function ProviderInstanceIcon(props: {
       className={props.surfaceColor ? undefined : "border-screen"}
       style={{
         height: tab.height + tab.ring * 2,
-        paddingHorizontal: tab.paddingHorizontal,
+        ...(corner
+          ? { width: tab.cornerWidth + tab.ring * 2 }
+          : { paddingHorizontal: tab.paddingHorizontal }),
         borderRadius: tab.borderRadius + tab.ring,
         borderWidth: tab.ring,
         ...(props.surfaceColor ? { borderColor: props.surfaceColor } : {}),
@@ -200,6 +202,7 @@ export function ProviderInstanceIcon(props: {
       }}
     >
       <Text
+        numberOfLines={1}
         style={{
           fontSize: tab.fontSize,
           fontWeight: "700",

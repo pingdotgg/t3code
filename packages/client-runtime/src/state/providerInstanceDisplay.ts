@@ -71,6 +71,8 @@ export function providerInstanceTabMetrics(iconSize: number) {
     height: large ? 13 : 12,
     fontSize: large ? 10 : 9,
     paddingHorizontal: 3,
+    /** Fixed width in a "corner" slot, so the space kept beside the slot fits any initials. */
+    cornerWidth: 22,
     borderRadius: 4,
     /** How far the tab sits over the logo's right edge. */
     overlap: 4,

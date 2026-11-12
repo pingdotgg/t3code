@@ -139,7 +139,9 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
         )}
         style={{
           height: rem(tab.height),
-          padding: `0 ${rem(tab.paddingHorizontal)}`,
+          ...(corner
+            ? { width: rem(tab.cornerWidth) }
+            : { padding: `0 ${rem(tab.paddingHorizontal)}` }),
           borderRadius: rem(tab.borderRadius),
           fontSize: rem(tab.fontSize),
           boxShadow: `0 0 0 ${rem(tab.ring)} ${indicatorBackground}`,

@@ -80,7 +80,7 @@ function SubagentAvatar(props: {
       accessible={false}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
       // Room for the account tab, so the next stacked avatar does not cover it.
-      style={{ marginRight: showBadge ? 18 : 0 }}
+      style={{ marginRight: showBadge ? 21 : 0 }}
     >
       {showBadge ? (
         <ProviderInstanceIcon
