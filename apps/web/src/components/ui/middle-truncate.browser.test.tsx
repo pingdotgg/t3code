@@ -40,4 +40,12 @@ describe("MiddleTruncate", () => {
 
     expect(width("split")).toBeCloseTo(width("whole"), 0);
   });
+
+  it("keeps the raw value's tail when collapsing its spaces", async () => {
+    await using screen = await render(<MiddleTruncate value={"longprefix a  b.txt"} />);
+
+    expect(screen.container.querySelector("[title] > span:last-child")?.textContent).toBe(
+      "x a b.txt",
+    );
+  });
 });
