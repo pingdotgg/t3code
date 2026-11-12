@@ -1966,6 +1966,97 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #35601 a speed change sent with a steer reaches Codex's later turns
+  it.effect("updates native thread settings when a steer changes the service tier", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "steer-tier-thread";
+      const nativeTurnId = "steer-tier-turn";
+      const prompt = "Keep working on the goal.";
+      const steeredText = "Switch back to the default speed.";
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
+      const turnStart = preamble[5];
+      if (turnStart?.type !== "expect_outbound" || !Predicate.isObject(turnStart.frame)) return;
+      preamble[5] = {
+        ...turnStart,
+        frame: {
+          ...turnStart.frame,
+          params: { ...(turnStart.frame.params as object), serviceTier: "priority" },
+        },
+      };
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "steer-service-tier",
+          entries: [
+            ...preamble,
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update",
+              frame: {
+                id: 4,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, serviceTier: "default" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 4, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "turn/steer",
+              frame: {
+                id: 5,
+                method: "turn/steer",
+                params: {
+                  threadId: nativeThreadId,
+                  expectedTurnId: nativeTurnId,
+                  input: [{ type: "text", text: steeredText }],
+                },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 5, result: { turnId: nativeTurnId } } },
+          ],
+        }),
+      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("steer-tier-attempt"),
+        text: prompt,
+      });
+      yield* harness.runtime.startTurn({
+        ...turnInput,
+        modelSelection: {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "serviceTier", value: "priority" }],
+        },
+      });
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId,
+      });
+      yield* harness.runtime.steerTurn({
+        threadId: turnInput.threadId,
+        runId: turnInput.runId,
+        providerThread: harness.providerThread,
+        providerTurnId,
+        message: { ...turnInput.message, text: steeredText },
+        modelSelection: {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "serviceTier", value: "default" }],
+        },
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["subagent", "remote", "toggled-off"] as const)(
     "never samples a suggestion for a %s thread",
     (delegation) =>
