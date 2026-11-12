@@ -78,10 +78,7 @@ import {
   ProjectId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import {
-  createOrchestrationV2TurnItemVisibility,
-  isOrchestrationV2SupersededInterrupt,
-} from "@t3tools/shared/orchestrationV2Timeline";
+import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import {
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
@@ -1462,6 +1459,28 @@ function isTurnItemAtOrBeforeRun(input: {
   return ordinal !== undefined && ordinal <= input.sourceRunOrdinal;
 }
 
+// Run ordinals enforce the fork cutoff; this keeps later rollbacks from hiding
+// inherited history while retaining cancellation evidence for undelivered input.
+function createInheritedTurnItemVisibility(
+  source: Parameters<typeof createOrchestrationV2TurnItemVisibility>[0],
+) {
+  const cancelledRunIds = new Set(
+    source.attempts
+      .filter((attempt) => attempt.status === "cancelled")
+      .map((attempt) => attempt.runId),
+  );
+  return createOrchestrationV2TurnItemVisibility({
+    ...source,
+    runs: source.runs.flatMap((run) =>
+      run.status !== "rolled_back"
+        ? [run]
+        : cancelledRunIds.has(run.id)
+          ? [{ ...run, status: "cancelled" as const }]
+          : [],
+    ),
+  });
+}
+
 // Rollback stamps completedAt; a fork made after the rewind never received that run.
 function runRolledBackAt(run: Pick<OrchestrationV2Run, "status" | "completedAt">) {
   return run.status === "rolled_back" ? run.completedAt : null;
@@ -1496,6 +1515,11 @@ function visibleTurnItemsThroughRun(input: {
   }
 
   const runOrdinalById = forkInheritedRunOrdinals(input.sourceProjection.runs, input.forkCreatedAt);
+  const isVisible = createInheritedTurnItemVisibility({
+    runs: input.sourceProjection.runs,
+    attempts: input.sourceProjection.attempts,
+    items: input.sourceProjection.turnItems,
+  });
   const inheritedPrefix = input.sourceProjection.visibleTurnItems
     .filter(
       (row) => row.item.threadId !== input.sourceProjection.thread.id || row.item.type === "fork",
@@ -1507,23 +1531,16 @@ function visibleTurnItemsThroughRun(input: {
       item: row.item,
     }));
   const localPrefix = inheritedVisibleTurnItemsFromLocalItems(
-    input.sourceProjection.turnItems.filter((item) => {
-      if (
-        isOrchestrationV2SupersededInterrupt({
-          item,
-          attempts: input.sourceProjection.attempts,
-          items: input.sourceProjection.turnItems,
-        })
-      ) {
-        return false;
-      }
-      return isTurnItemAtOrBeforeRun({
-        historyOrigin: input.sourceProjection.thread.historyOrigin,
-        itemRunId: item.runId,
-        runOrdinalById,
-        sourceRunOrdinal: sourceRun.ordinal,
-      });
-    }),
+    input.sourceProjection.turnItems.filter(
+      (item) =>
+        isVisible(item) &&
+        isTurnItemAtOrBeforeRun({
+          historyOrigin: input.sourceProjection.thread.historyOrigin,
+          itemRunId: item.runId,
+          runOrdinalById,
+          sourceRunOrdinal: sourceRun.ordinal,
+        }),
+    ),
   );
 
   return [...inheritedPrefix, ...localPrefix];
@@ -3125,16 +3142,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ),
                       9223372036854775807
                     )
+                    -- The fork cutoff below filters rewound runs; undelivered queued input stays hidden.
                     AND (
                       ${window.requiredRunId ?? null} IS NOT NULL
-                      OR (
-                        (run.status IS NULL OR run.status <> 'rolled_back')
-                        AND NOT (
-                          item.type = 'user_message'
-                          AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
-                          AND run.status IS 'cancelled'
+                      OR run.status IS NULL
+                      OR run.status <> 'rolled_back'
+                    )
+                    AND NOT (
+                      item.type = 'user_message'
+                      AND (
+                        COALESCE(run.status IN ('queued', 'cancelled'), 0)
+                        OR (
+                          run.status = 'rolled_back'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM orchestration_v2_projection_run_attempts AS attempt
+                            WHERE attempt.run_id = run.run_id
+                              AND attempt.status = 'cancelled'
+                          )
                         )
                       )
+                      AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
                     )
                     AND (
                       ${window.requiredRunId ?? null} IS NULL
@@ -6371,18 +6399,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         let inherited: Array<TimelineIndexRow> = [];
         if (sourceRun !== undefined) {
           const ordinals = forkInheritedRunOrdinals(source.records.runs, records.thread.createdAt);
-          const sourceItems = source.local.map((row) => row.item);
+          const isInheritedVisible = createInheritedTurnItemVisibility({
+            runs: source.records.runs,
+            attempts: source.records.attempts,
+            items: source.local.map((row) => row.item),
+          });
           inherited = [
             ...source.visible.filter(
               (row) => row.item.threadId !== fork.threadId || row.item.type === "fork",
             ),
             ...source.local.filter(
               (row) =>
-                !isOrchestrationV2SupersededInterrupt({
-                  item: row.item,
-                  attempts: source.records.attempts,
-                  items: sourceItems,
-                }) &&
+                isInheritedVisible(row.item) &&
                 isTurnItemAtOrBeforeRun({
                   historyOrigin: source.records.thread.historyOrigin,
                   itemRunId: row.item.runId,
@@ -6579,13 +6607,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         })),
       });
       // Only these runs can hide rows: every row of a rolled-back run, the queued turn of a
-      // cancelled run, and the stop result of a replaced attempt. So the hidden rows are found
-      // without reading the thread.
+      // queued or cancelled run, and the stop result of a replaced attempt. So the hidden rows
+      // are found without reading the thread.
       const stoppedRuns = new Set(stopRequests.map((row) => row.run_id));
-      const runsWithStatus = (status: "rolled_back" | "cancelled") =>
-        records.runs.flatMap((run) => (run.status === status ? [String(run.id)] : []));
+      const runsWithStatus = (...statuses: ReadonlyArray<OrchestrationV2Run["status"]>) =>
+        records.runs.flatMap((run) => (statuses.includes(run.status) ? [String(run.id)] : []));
       const rolledBack = runsWithStatus("rolled_back");
-      const cancelled = runsWithStatus("cancelled");
+      const heldInput = runsWithStatus("queued", "cancelled");
       const steered = [...new Set(superseded.map((attempt) => String(attempt.runId)))].filter(
         (runId) => !stoppedRuns.has(runId) && !rolledBack.includes(runId),
       );
@@ -6610,8 +6638,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 ON item.thread_id = ${threadId} AND item.run_id = wanted.value`,
         // The conversation index holds the type and run of these rows, so only the matches are
-        // fetched. Through the run index, every row of each cancelled run would be.
-        cancelled.length + steered.length === 0
+        // fetched. Through the run index, every row of each such run would be.
+        heldInput.length + steered.length === 0
           ? Effect.succeed([])
           : sql<HiddenCandidate>`
               SELECT ${candidateColumns}
@@ -6620,7 +6648,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE item.thread_id = ${threadId}
                 AND item.type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}
                 AND ((item.type = 'user_message'
-                    AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(cancelled)})))
+                    AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(heldInput)})))
                   OR (item.type = 'run_interrupt_result'
                     AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(steered)}))))`,
       ]);
@@ -7709,18 +7737,58 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `;
 
+    // Forks do not inherit undelivered queued input, including from cancelled runs
+    // rolled back later. Checking the run first limits sparse-index seeks to those few runs.
     const selectShellRunItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellRunItemCountRow>`
-        SELECT thread_id, run_key AS run_id, item_count
-        FROM orchestration_v2_projection_turn_item_counts
-        WHERE run_key <> '' AND thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
+        SELECT per_run.thread_id, per_run.run_key AS run_id,
+          per_run.item_count - CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM orchestration_v2_projection_runs AS run
+              WHERE run.run_id = per_run.run_key
+                AND (
+                  run.status IN ('queued', 'cancelled')
+                  OR (
+                    run.status = 'rolled_back'
+                    AND EXISTS (
+                      SELECT 1
+                      FROM orchestration_v2_projection_run_attempts AS attempt
+                      WHERE attempt.run_id = run.run_id
+                        AND attempt.status = 'cancelled'
+                    )
+                  )
+                )
+            ) THEN (
+              SELECT COUNT(*)
+              FROM orchestration_v2_projection_turn_items AS held
+                INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
+              WHERE held.run_id = per_run.run_key
+                AND held.type = 'user_message'
+                AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
+            )
+            ELSE 0
+          END AS item_count
+        FROM orchestration_v2_projection_turn_item_counts AS per_run
+        WHERE per_run.run_key <> '' AND per_run.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
       `;
 
     const selectShellItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellItemCountRow>`
         SELECT counts.thread_id,
           SUM(CASE WHEN counts.run_key = '' OR r.status <> 'rolled_back'
-            THEN counts.item_count ELSE 0 END) AS item_count,
+            THEN counts.item_count - CASE
+              WHEN r.status IN ('queued', 'cancelled') THEN (
+                SELECT COUNT(*)
+                FROM orchestration_v2_projection_turn_items held
+                INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
+                WHERE held.run_id = counts.run_key
+                  AND held.type = 'user_message'
+                  AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
+              )
+              ELSE 0
+            END
+            ELSE 0 END) AS item_count,
           SUM(CASE WHEN counts.run_key = '' THEN counts.item_count ELSE 0 END)
             AS runless_item_count
         FROM orchestration_v2_projection_turn_item_counts counts
