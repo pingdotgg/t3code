@@ -2,6 +2,7 @@ import {
   NodeId,
   CommandId,
   OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderFailure,
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
@@ -21,6 +22,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
 
@@ -32,6 +34,7 @@ import {
   type ProviderTurnAnalyticsContext,
 } from "../telemetry/ProviderUsageAnalytics.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { exhaustedPoolRefillAt, UsageLimitSources } from "../usage/UsageLimitSources.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -255,8 +258,35 @@ export const layer: Layer.Layer<
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources);
     const scope = yield* Effect.scope;
     const completedTurnAnalytics = new Set<string>();
+
+    // Proxied CLIs drop the hub's Retry-After, so take the reset from the hub's own snapshot.
+    const withProxiedPoolReset = Effect.fnUntraced(function* (
+      input: ProviderEventIngestInput,
+      failure: OrchestrationV2ProviderFailure,
+    ) {
+      if (
+        failure.class !== "usage_limit" ||
+        failure.resetAt != null ||
+        Option.isNone(usageLimitSources)
+      )
+        return failure;
+      const instance = yield* instances.getInstance(input.providerInstanceId);
+      if (!instance) return failure;
+      const provider = yield* instance.snapshot.getSnapshot;
+      const proxied =
+        provider.auth.type === "customEndpoint" ||
+        provider.usageLimits?.unavailable?.reason === "unsupported";
+      if (!proxied) return failure;
+      const resetAt = exhaustedPoolRefillAt(
+        yield* usageLimitSources.value.current,
+        instance.driverKind,
+        DateTime.toEpochMillis(yield* DateTime.now),
+      );
+      return resetAt === null ? failure : { ...failure, resetAt };
+    });
 
     const makeDomainEvent =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -659,7 +689,7 @@ export const layer: Layer.Layer<
               const occurredAt = yield* DateTime.now;
               const failure = (yield* agentScope.oomKilled(input.threadId))
                 ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
-                : input.event.failure;
+                : yield* withProxiedPoolReset(input, input.event.failure);
               return [
                 ...dismissed,
                 yield* makeDomainEvent(input, {

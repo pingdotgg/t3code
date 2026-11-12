@@ -3,6 +3,7 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
   type ServerSettings,
   UsageLimitSourceConfig,
   settingsSecretLiteral,
@@ -39,6 +40,27 @@ export class UsageLimitSources extends Context.Service<
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
   }
 >()("t3/usage/UsageLimitSources") {}
+
+/** When a hub has exhausted every pooled account for `driver`, the earliest moment one refills. */
+export function exhaustedPoolRefillAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  now: number,
+): string | null {
+  let earliest: number | null = null;
+  for (const account of sources.flatMap((source) => source.accounts)) {
+    if (account.driver !== driver) continue;
+    const refills = account.usageLimits.windows
+      .filter((window) => window.usedPercent >= 100 && window.resetsAt !== undefined)
+      .map((window) => Date.parse(window.resetsAt!))
+      .filter((at) => at > now);
+    // An account with no exhausted window may still serve, so the pool has no reset.
+    if (refills.length === 0) return null;
+    const refill = Math.max(...refills);
+    if (earliest === null || refill < earliest) earliest = refill;
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
