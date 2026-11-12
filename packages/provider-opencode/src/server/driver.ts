@@ -26,6 +26,7 @@ import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
@@ -60,6 +61,7 @@ import {
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
 import * as OpenCode2Server from "./v2/OpenCode2Server.ts";
+import { replaceOutdatedService } from "./v2/OpenCode2Service.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -271,6 +273,7 @@ export const OpenCodeDriver: ProviderDriver<
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
+    const agentScope = yield* AgentScope;
     const httpClient =
       (yield* ProviderHost.ProviderHost).usageHttpClient ?? (yield* HttpClient.HttpClient);
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -601,6 +604,31 @@ export const OpenCodeDriver: ProviderDriver<
             ),
           );
 
+    const serverUrl = effectiveConfig.serverUrl.trim();
+    const afterUpdate =
+      serverUrl.length > 0
+        ? replaceOutdatedService({
+            binaryPath: effectiveConfig.binaryPath,
+            serverUrl,
+            environment: processEnv,
+          }).pipe(
+            Effect.ensuring(openCode2Server.forget),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Failed to replace the OpenCode service after an update.",
+                  cause,
+                }),
+            ),
+            Effect.provideService(AgentScope, agentScope),
+            Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+          )
+        : Effect.void;
+
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>({
       resolveMaintenance,
@@ -734,6 +762,8 @@ export const OpenCodeDriver: ProviderDriver<
                 }),
               ),
             ),
+      invalidateCaches: openCode2Server.forget,
+      afterUpdate,
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;
