@@ -111,14 +111,21 @@ export function applyAppearanceFontVariables(
     }
   }
 
-  const markerWidth = probeWidth(
-    appearanceFontStack(preferences.sans, DEFAULT_SANS_FONT_STACK),
-    LIST_MARKER_PROBE_TEXT,
+  const sansStack = appearanceFontStack(
+    preferences.sans.trim() || (absolutely ? ABSOLUTELY_SANS_FONT_STACK : ""),
+    DEFAULT_SANS_FONT_STACK,
   );
-  if (markerWidth === null) {
-    root.style.removeProperty("--list-marker-sans");
-  } else {
-    root.style.setProperty("--list-marker-sans", `${(markerWidth / PROBE_FONT_SIZE).toFixed(3)}em`);
+  const replyStack = appearanceFontStack(
+    preferences.reply.trim() || (absolutely ? ABSOLUTELY_REPLY_FONT_STACK : ""),
+    sansStack,
+  );
+  for (const [variable, stack] of [
+    ["--list-marker-sans", sansStack],
+    ["--list-marker-reply", replyStack],
+  ] as const) {
+    const markerWidth = probeWidth(stack, LIST_MARKER_PROBE_TEXT);
+    if (markerWidth === null) root.style.removeProperty(variable);
+    else root.style.setProperty(variable, `${(markerWidth / PROBE_FONT_SIZE).toFixed(3)}em`);
   }
 
   for (const [variable, value] of [
