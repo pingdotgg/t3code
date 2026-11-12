@@ -2671,6 +2671,40 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
   }),
 );
 
+it.effect("a finished turn leaves another project's cached listing in place", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            reads.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+    const webListing = { state: "open" as const, projectId: "p1" as ProjectId };
+    const everyListing = { state: "open" as const };
+
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    reads.length = 0;
+    yield* service.refreshAfterTurn("p2" as ProjectId);
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
+
+    yield* service.refreshAfterTurn("p2" as ProjectId, { pushed: true });
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/web"]);
+  }),
+);
+
 it.effect("a refresh or a finished turn drops the provider's own change request reads", () =>
   Effect.gen(function* () {
     const forgotten: Array<{ readonly repository: string; readonly number?: number } | undefined> =
