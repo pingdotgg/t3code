@@ -135,7 +135,12 @@ export function ArchivedThreadsPanel() {
     }));
     return { groups: sortedGroups, hasMultipleEnvironments };
   })();
-  const archivedRowLimit = useDeferredValue(Number.POSITIVE_INFINITY, INITIAL_ARCHIVED_ROWS);
+  // The limit only rises once rows exist, so data that arrives after the loading render
+  // still paints the first rows before the background render mounts the rest.
+  const archivedRowLimit = useDeferredValue(
+    archivedGroups.length === 0 ? INITIAL_ARCHIVED_ROWS : Number.POSITIVE_INFINITY,
+    INITIAL_ARCHIVED_ROWS,
+  );
   const renderedGroups = (() => {
     const rendered: typeof archivedGroups = [];
     let remaining = archivedRowLimit;
