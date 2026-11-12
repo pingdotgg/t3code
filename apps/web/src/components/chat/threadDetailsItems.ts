@@ -8,10 +8,12 @@ export const THREAD_DETAILS_ITEMS = [
   { id: "branch", label: "Branch and pull request", defaultVisible: true },
   { id: "gitActions", label: "Git actions", defaultVisible: true },
   { id: "changes", label: "Changes", defaultVisible: true },
-  { id: "work", label: "Work", defaultVisible: true },
+  // Retired as separate panels; folded into condensed Team when Labs → Agent Teams is on.
+  { id: "work", label: "Work", defaultVisible: false },
   { id: "servers", label: "Servers", defaultVisible: true },
-  { id: "specialist", label: "Specialist", defaultVisible: true },
-  { id: "role", label: "Role tools", defaultVisible: true },
+  { id: "specialist", label: "Specialist", defaultVisible: false },
+  { id: "role", label: "Role tools", defaultVisible: false },
+  { id: "team", label: "Team", defaultVisible: true },
   { id: "automations", label: "Automations", defaultVisible: true },
   { id: "lineage", label: "Agents", defaultVisible: true },
   { id: "sideChats", label: "Side chats", defaultVisible: true },
@@ -27,6 +29,17 @@ type ThreadDetailsItemSettings = Pick<
   ClientSettings,
   "threadDetailsItems" | "threadDetailsUsageEnabled"
 >;
+
+/** Separate Work / Specialist / Role tools rows folded into Team; omit from the customize menu. */
+const RETIRED_THREAD_DETAILS_ITEM_IDS = new Set<ThreadDetailsItemId>([
+  "work",
+  "specialist",
+  "role",
+]);
+
+export const THREAD_DETAILS_MENU_ITEMS = THREAD_DETAILS_ITEMS.filter(
+  (item) => !RETIRED_THREAD_DETAILS_ITEM_IDS.has(item.id),
+);
 
 // People who turned on the retired Labs toggle keep Usage and Context until they change them here.
 function defaultVisible(item: ThreadDetailsItem, settings: ThreadDetailsItemSettings) {

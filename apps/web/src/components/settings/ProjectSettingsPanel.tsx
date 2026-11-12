@@ -651,9 +651,12 @@ function ProjectDetail({
           ) : null}
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
-        <ProjectAgentTeamSettings
-          projectRef={scopeProjectRef(filePickerProject.environmentId, filePickerProject.id)}
-        />
+        {environmentById.get(filePickerProject.environmentId)?.serverConfig?.settings
+          .agentTeamsEnabled === true ? (
+          <ProjectAgentTeamSettings
+            projectRef={scopeProjectRef(filePickerProject.environmentId, filePickerProject.id)}
+          />
+        ) : null}
         <ProjectActionsSettings />
         {checkoutChoices}
         <SettingsSection title="Danger">

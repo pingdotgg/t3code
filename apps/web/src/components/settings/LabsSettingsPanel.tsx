@@ -23,6 +23,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        <AgentTeamsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
@@ -184,6 +185,32 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label="Suggest next prompt"
+        />
+      }
+    />
+  );
+}
+
+function AgentTeamsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("agent-teams")}
+      settingKeys={["agentTeamsEnabled"]}
+      description={
+        <>
+          Specialists, owned work, and Workshop install. Adds Team in Thread Details and Projects.
+          MCP tools stay on while this is off.
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["agentTeamsEnabled"]}
+          checked={settings.agentTeamsEnabled}
+          onCheckedChange={(checked) => updateSettings({ agentTeamsEnabled: Boolean(checked) })}
+          aria-label="Agent Teams"
         />
       }
     />

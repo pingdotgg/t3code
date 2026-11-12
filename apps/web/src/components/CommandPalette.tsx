@@ -718,16 +718,22 @@ function OpenCommandPaletteDialog(props: {
     supportsTriage(triageEnvironmentId);
   const specialistTemplateProjectRef = defaultProjectRef;
   const specialistTemplateEnvironmentId = specialistTemplateProjectRef?.environmentId ?? null;
+  const specialistTemplateEnvironment = environments.find(
+    (environment) => environment.environmentId === specialistTemplateEnvironmentId,
+  );
   const supportsTeamTemplates =
     specialistTemplateEnvironmentId !== null &&
-    environments.find(
-      (environment) => environment.environmentId === specialistTemplateEnvironmentId,
-    )?.serverConfig?.environment.capabilities.teamTemplates === true;
+    specialistTemplateEnvironment?.serverConfig?.environment.capabilities.teamTemplates === true;
+  const agentTeamsEnabled =
+    specialistTemplateEnvironment?.serverConfig?.settings.agentTeamsEnabled === true;
   const canAddSpecialistsPermission = useAtomValue(
     threadEnvironment.addSpecialistsFromTemplate.permissionAtom(specialistTemplateEnvironmentId),
   );
   const canAddSpecialistsFromTemplate =
-    specialistTemplateProjectRef !== null && supportsTeamTemplates && canAddSpecialistsPermission;
+    specialistTemplateProjectRef !== null &&
+    supportsTeamTemplates &&
+    agentTeamsEnabled &&
+    canAddSpecialistsPermission;
   const currentProject = resolveCommandPaletteProject(
     projectByKey,
     currentProjectEnvironmentId,

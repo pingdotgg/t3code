@@ -529,6 +529,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
   },
   {
+    id: "agent-teams",
+    title: "Agent Teams",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [
+      "beta labs agent teams specialists workshop owned work role tools multi agent openrig",
+    ],
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",

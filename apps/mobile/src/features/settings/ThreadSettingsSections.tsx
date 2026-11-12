@@ -57,6 +57,7 @@ export function SettingsLabsRouteScreen() {
           setting="fastWorktreeCheckout"
           description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
         />
+        <AgentTeamsSection />
       </ScrollView>
     </SettingsScreen>
   );
@@ -296,6 +297,50 @@ function MachineBetaSection({
         })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">{description}</Text>
+    </View>
+  );
+}
+
+function AgentTeamsSection() {
+  const { environments } = useEnvironments();
+  const supported = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" && environment.serverConfig != null,
+  );
+  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "agentTeamsEnabled beta update",
+    reportFailure: true,
+  });
+  if (supported.length === 0) return null;
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: Agent Teams">
+        {supported.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, "agentTeamsEnabled");
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="person.2"
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings.agentTeamsEnabled === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { agentTeamsEnabled: value } },
+                })
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Durable specialist seats, owned work, and Workshop install. MCP team tools stay available
+        while this is off.
+      </Text>
     </View>
   );
 }

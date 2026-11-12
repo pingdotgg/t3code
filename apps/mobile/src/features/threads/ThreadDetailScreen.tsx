@@ -1674,10 +1674,12 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
                     />
-                    <ThreadOwnedWorkBar
-                      threadRef={props.selectedThreadDetailRef}
-                      canOperateThread={props.canOperateThread}
-                    />
+                    {props.serverConfig?.settings.agentTeamsEnabled === true ? (
+                      <ThreadOwnedWorkBar
+                        threadRef={props.selectedThreadDetailRef}
+                        canOperateThread={props.canOperateThread}
+                      />
+                    ) : null}
                     {props.draftMode ? null : (
                       <ThreadSideChatsRow
                         environmentId={props.environmentId}

@@ -23,7 +23,10 @@ describe("thread details items", () => {
     expect(visibility.usage).toBe(row.usage);
     expect(visibility.context).toBe(row.context);
     expect(visibility.servers).toBe(true);
-    expect(visibility.work).toBe(true);
+    expect(visibility.team).toBe(true);
+    expect(visibility.work).toBe(false);
+    expect(visibility.specialist).toBe(false);
+    expect(visibility.role).toBe(false);
   });
 
   it("stores only choices that differ from the default", () => {

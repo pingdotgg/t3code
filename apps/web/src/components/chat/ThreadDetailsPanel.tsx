@@ -20,12 +20,10 @@ import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { ThreadAgentTeamPanel } from "./ThreadAgentTeamPanel";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
-import { ThreadOwnedWorkPanel } from "./ThreadOwnedWorkPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
-import { ThreadSpecialistLoadoutPanel } from "./ThreadSpecialistLoadoutPanel";
-import { ThreadSpecialistPanel } from "./ThreadSpecialistPanel";
 import {
   ThreadDetailsContext,
   ThreadDetailsUsage,
@@ -33,6 +31,7 @@ import {
 } from "./ThreadDetailsUsage";
 import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
 import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
+import { useAgentTeamsEnabled } from "../../hooks/useAgentTeamsEnabled";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { SlidersHorizontalIcon } from "lucide-react";
@@ -92,6 +91,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const agentTeamsEnabled = useAgentTeamsEnabled(props.environmentId);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
@@ -243,8 +243,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
-              {!props.draftId && visible.work ? (
-                <ThreadOwnedWorkPanel
+              {!props.draftId && agentTeamsEnabled && visible.team ? (
+                <ThreadAgentTeamPanel
                   environmentId={props.environmentId}
                   threadId={props.threadId}
                   density={density}
@@ -253,20 +253,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
-              ) : null}
-
-              {density === "full" && !props.draftId && visible.specialist ? (
-                <ThreadSpecialistPanel
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                />
-              ) : null}
-
-              {density === "full" && !props.draftId && visible.role ? (
-                <ThreadSpecialistLoadoutPanel
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                />
               ) : null}
 
               {density === "full" && !props.draftId && visible.automations ? (
