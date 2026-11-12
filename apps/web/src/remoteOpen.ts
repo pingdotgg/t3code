@@ -56,7 +56,7 @@ export function resolveRemoteOpenState(input: {
   readonly sshTarget: {
     readonly alias: string;
     readonly username: string | null;
-    readonly port?: number | null;
+    readonly port: number | null;
   } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
@@ -93,7 +93,7 @@ export function resolveRemoteOpenState(input: {
         host,
         ...(username === null ? {} : { username }),
         // Editors default to 22; any other port must ride along or Remote-SSH dials 22.
-        ...(port == null || port === 22 ? {} : { port }),
+        ...(port === null || port === 22 ? {} : { port }),
       },
     };
   }

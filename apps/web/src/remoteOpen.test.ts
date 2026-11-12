@@ -96,7 +96,7 @@ describe("resolveRemoteOpenState", () => {
   it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
-      sshTarget: { alias: "sol", username: null },
+      sshTarget: { alias: "sol", username: null, port: null },
       isDesktopRenderer: true,
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
@@ -127,7 +127,7 @@ describe("resolveRemoteOpenState", () => {
   ])("keeps one login username in editor links for $alias (username: '$username')", (sshTarget) => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
-      sshTarget,
+      sshTarget: { ...sshTarget, port: null },
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
       hostEnvironmentId: null,
