@@ -31,7 +31,7 @@ const discovery = {
   label: "Cursor Origin",
   executable: OriginCli.ORIGIN_COMMAND,
   versionArgs: ["--version"],
-  authArgs: ["auth", "status", "--json"],
+  authArgs: OriginCli.ORIGIN_AUTH_STATUS_ARGS,
   parseAuth: (input) => {
     const status = OriginCli.parseOriginAuthStatus(input.stdout);
     const account = OriginCli.originAccount(status);
