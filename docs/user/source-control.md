@@ -458,16 +458,19 @@ Branches must already follow the selected ancestry; edits do not create branches
 Click a branch in the stack to switch the checkout and thread to it. Switching requires a clean
 checkout and a target branch that is not checked out in another worktree.
 
-Commit and Commit dialog still commit only to the current layer. Publishing a middle layer also
-restacks and pushes its descendants, updating their existing reviews without creating new ones.
-At the top of the stack, publishing keeps its usual behavior. Regrouping existing commits defaults
-to the current layer's parent rather than the repository's default branch.
+Commit and Commit dialog commit only to the current layer. Publishing a stack pushes branches
+from the bottom through the current layer, then creates any missing reviews in that order, each
+targeting its parent branch. Existing reviews are reused. Upper layers are rebased locally;
+their remote branches and reviews are left unchanged. Publish those layers when they are ready.
+Unambiguous local stacks are tracked automatically on their first publish. Regrouping existing
+commits defaults to the current layer's parent rather than the repository's default branch.
 
 **Update stack** incorporates remote branch updates and removes merged layers from tracking before
 restacking and pushing the remaining branches. Enable **Include latest base** to also bring in new
 changes from the base branch. A conflict pauses the operation in the checkout shown in the sidebar;
 resolve and stage its files, then choose **Continue**, or **Abort** to restore local branches.
-Completed remote pushes are not undone. **Untrack** stops T3 maintenance without deleting branches.
+Completed remote pushes are not undone. **Untrack** stops T3 maintenance without deleting branches
+and disables automatic tracking for those branches. Save the hierarchy in **Edit layers** to enable it again.
 
 Updating requires a clean working tree. Branches checked out in another worktree must be released
 before restacking; T3 does not change another checkout. Divergent remote changes stop the operation
