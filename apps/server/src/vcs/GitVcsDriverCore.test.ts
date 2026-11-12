@@ -6,6 +6,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -649,6 +650,25 @@ it.effect.each(["bare", "unborn"] as const)(
     ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reads the project's own repository when the server inherited GIT_DIR", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const cwd = yield* makeTmpDir();
+      const other = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* initRepoWithCommit(other);
+      yield* git(other, ["switch", "-c", "other-repository"]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("GIT_DIR", path.join(other, ".git"));
+      assert.equal((yield* driver.statusDetailsLocal(cwd)).branch, initialBranch);
+      const refs = yield* driver.listRefs({ cwd });
+      assert.isFalse(refs.refs.some((ref) => ref.name === "other-repository"));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["on a branch", "detached", "unborn"] as const)(
   "reads only the repository root for review requests that ignore the branch when %s",
   (state) =>
@@ -1166,6 +1186,48 @@ describe("pullCurrentBranch", () => {
         ),
       ),
     ),
+  );
+
+  // A slow smudge filter (LFS) can hold the checkout past 30 seconds; killing it there leaves a
+  // half-updated working tree. The automatic pulls and pull request refresh use these defaults.
+  it.effect.each(["pull", "merge"] as const)(
+    "lets a slow %s checkout finish instead of killing it at 30 seconds",
+    (subcommand) =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { cwd, remoteHead } = yield* cloneBehindRemote;
+        yield* git(cwd, ["fetch", "origin"]);
+        const checkoutStarted = yield* Deferred.make<void>();
+        const releaseCheckout = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const handle = yield* delegate.spawn(command);
+            if (!ChildProcess.isStandardCommand(command) || command.args[0] !== subcommand) {
+              return handle;
+            }
+            yield* Deferred.succeed(checkoutStarted, undefined);
+            return ChildProcessSpawner.makeHandle({
+              ...handle,
+              exitCode: Deferred.await(releaseCheckout).pipe(Effect.andThen(handle.exitCode)),
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+
+        const move =
+          subcommand === "pull"
+            ? Effect.asVoid(driver.pullCurrentBranch(cwd))
+            : Effect.asVoid(driver.refreshCheckedOutBranch({ cwd, targetCommit: remoteHead }));
+        const moving = yield* move.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(checkoutStarted);
+        yield* TestClock.adjust("60 seconds");
+        yield* Deferred.succeed(releaseCheckout, undefined);
+
+        yield* Fiber.join(moving);
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+      }).pipe(Effect.provide(layerTest)),
   );
 });
 
@@ -5423,6 +5485,22 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           /^feature-custom-dir-[0-9a-f]{16}$/,
         );
         assert.equal(yield* fileSystem.exists(created.worktree.path), true);
+
+        yield* git(cwd, ["worktree", "remove", "--force", created.worktree.path]);
+        yield* git(cwd, ["branch", "-D", "feature/custom-dir"]);
+        yield* fileSystem.makeDirectory(created.worktree.path);
+        const leftover = pathService.join(created.worktree.path, "notes.txt");
+        yield* fileSystem.writeFileString(leftover, "my notes");
+        const recreated = yield* driver.createWorktree(
+          { cwd, path: null, refName: initialBranch, newRefName: "feature/custom-dir" },
+          { worktreesDirectory },
+        );
+        assert.notEqual(recreated.worktree.path, created.worktree.path);
+        assert.equal(
+          yield* git(recreated.worktree.path, ["branch", "--show-current"]),
+          "feature/custom-dir",
+        );
+        assert.deepEqual(yield* fileSystem.readDirectory(created.worktree.path), ["notes.txt"]);
 
         const error = yield* driver
           .createWorktree(

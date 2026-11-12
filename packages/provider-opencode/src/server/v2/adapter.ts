@@ -592,6 +592,7 @@ const RECONNECT_WAIT = "30 seconds";
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
+const MCP_TOOL_RELOAD_SETTLE = "250 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -4060,6 +4061,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
+        const fresh = state.mcp === undefined;
         mcpAvailable = yield* client.mcp
           .add({
             server: name,
@@ -4081,6 +4083,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           );
         if (mcpAvailable) state.mcp = wanted;
+        // Before 2.2.6, OpenCode loads a new server's tools 100 ms after it connects, and a prompt sent sooner lacks them.
+        if (mcpAvailable && fresh && compareSemverVersions(connection.version, "2.2.6") < 0) {
+          yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
+        }
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),

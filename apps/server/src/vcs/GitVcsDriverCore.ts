@@ -42,7 +42,11 @@ import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
-import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
+import {
+  explicitBareRepositoryEnv,
+  gitConfigEnv,
+  unsetInheritedRepositoryEnv,
+} from "./VcsProcess.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
@@ -993,8 +997,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               }),
           ),
         );
+        const hostEnv = yield* HostProcess.Environment;
         const baseEnv = {
-          ...(yield* HostProcess.Environment),
+          ...hostEnv,
+          ...unsetInheritedRepositoryEnv(hostEnv, hostPlatform),
           // Concurrent status polls must not take index.lock to save refreshed indexes.
           GIT_OPTIONAL_LOCKS: "0",
           ...input.env,
@@ -2984,8 +2990,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // After a successful pull, HEAD before and after decides the result, so its output is not
     // needed. A large fast-forward's diffstat can exceed the output cap, which must not fail a
     // pull Git applied.
+    // A deadline would kill git mid-checkout (e.g. a slow LFS smudge) and strand a half-updated tree.
     const options = {
-      timeoutMs: 30_000,
+      timeoutMs: null,
       appendTruncationMarker: true,
       allowNonZeroExit: true,
     };
@@ -4467,8 +4474,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (Buffer.byteLength(prefix + character) > 23) break;
         prefix += character;
       }
-      const directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
-      worktreePath = path.join(parentDir, repoName, directoryName);
+      const basePath = path.join(parentDir, repoName, `${prefix}-${Hex.encode(hash).slice(0, 16)}`);
+      // The name is stable per branch, so a folder left by an earlier worktree must not block it.
+      worktreePath = basePath;
+      for (
+        let suffix = 2;
+        yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false));
+        suffix++
+      ) {
+        worktreePath = `${basePath}-${suffix}`;
+      }
     }
     const newRefName = input.newRefName;
     if (newRefName) {
@@ -4773,7 +4788,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? ["merge", "--ff-only", input.targetCommit]
           : ["reset", "--merge", input.targetCommit],
         {
-          timeoutMs: 30_000,
+          // Killing a slow checkout partway through strands a half-updated working tree.
+          timeoutMs: null,
           fallbackErrorDetail: "git failed to move the checkout onto the pull request head",
         },
       );
