@@ -3037,6 +3037,7 @@ describe("v2 run and attempt history", () => {
       timelineEntries: ReadonlyArray<TimelineEntry>,
       toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
       latestRun?: typeof ended | typeof running,
+      awaitingUser = false,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
@@ -3046,6 +3047,7 @@ describe("v2 run and attempt history", () => {
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility,
+        awaitingUser,
       }).map((row) => row.id);
 
     const turn = [user, step, passed, failed, final];
@@ -3077,6 +3079,10 @@ describe("v2 run and attempt history", () => {
       "live-activity-row",
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
+    // A question keeps the run working; the reply written before it is what the user answers.
+    expect(rows([user, step, passed, final], "zen", running)).not.toContain("final");
+    expect(rows([user, step, passed, final], "zen", running, true)).toContain("final");
+    expect(rows([user, step, passed, final], "zen", running, true)).not.toContain("step");
     expect(rows(turn, "zen", ended)).toEqual(["user", "final"]);
     const followUp = message("follow-up", "user", 30);
     expect(rows([...turn, followUp], "zen", ended)).toEqual([

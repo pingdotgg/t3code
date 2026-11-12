@@ -1362,6 +1362,7 @@ describe("buildThreadFeed", () => {
       items: ReadonlyArray<OrchestrationV2TurnItem>,
       toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
       latestRun: ThreadFeedLatestRun | null = null,
+      awaitingUser = false,
     ) =>
       deriveThreadFeedPresentation(
         buildThreadFeed(items.map((item, index) => projected(item, index))),
@@ -1371,7 +1372,7 @@ describe("buildThreadFeed", () => {
         latestRun ? at(1) : null,
         false,
         undefined,
-        { toolCallVisibility, revealedMessageId: null },
+        { toolCallVisibility, revealedMessageId: null, awaitingUser },
       ).map((row) =>
         row.type === "activity-group"
           ? row.activities.map((activity) => activity.projectedItem.item.id).join("+")
@@ -1412,6 +1413,13 @@ describe("buildThreadFeed", () => {
       "thinking:step",
     ]);
     expect(rows([user, step, passed], "zen", running)).toEqual(["user", "thinking:step"]);
+    // A question keeps the run working; the reply written before it is what the user answers.
+    expect(rows([user, step, passed, final], "zen", running)).not.toContain("final");
+    expect(rows([user, step, passed, final], "zen", running, true)).toEqual([
+      "user",
+      "final",
+      "thinking:",
+    ]);
     expect(rows(turn, "zen", { ...running, turnEnded: true })).toEqual(["user", "final"]);
     const nextRun = { ...running, runId: RunId.make("run-2") };
     const followUp = { ...say("follow-up", 6, true), runId: nextRun.runId };

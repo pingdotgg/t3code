@@ -1451,13 +1451,16 @@ function timelineRowEntries(
     | "latestRun"
     | "runningRunId"
     | "pendingApprovalRequestIds"
+    | "awaitingUser"
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
   const entries = input.timelineEntries;
   let shown = entries;
   if (visibility === "zen") {
-    const answering = input.isWorking && input.latestRun?.turnEnded !== true;
+    // A run that waits on a question still works, but the text before the question is its answer.
+    const answering =
+      input.isWorking && input.latestRun?.turnEnded !== true && input.awaitingUser !== true;
     const answeringRunId = answering
       ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
       : null;
@@ -1540,6 +1543,8 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   toolCallVisibility?: ToolCallVisibility;
   revealedMessageId?: MessageId | null;
+  /** A pending question or approval: the run waits on the user, so zen shows what it wrote. */
+  awaitingUser?: boolean;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();

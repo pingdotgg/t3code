@@ -1379,6 +1379,7 @@ function presentationRestart(
     previous.runlessWorkActive !== runlessWorkActive ||
     previous.display.toolCallVisibility !== display.toolCallVisibility ||
     previous.display.revealedMessageId !== display.revealedMessageId ||
+    previous.display.awaitingUser !== display.awaitingUser ||
     !setsEqual(previous.expandedRunIds, expandedRunIds) ||
     !setsEqual(previous.expandedWorkGroupIds, expandedWorkGroupIds)
   ) {
@@ -1527,6 +1528,8 @@ function liveAnswerPreview(feed: ReadonlyArray<ThreadFeedEntry>): string | null 
 export interface ThreadFeedDisplay {
   readonly toolCallVisibility: ToolCallVisibility;
   readonly revealedMessageId: MessageId | null;
+  /** A pending question or approval: the run waits on the user, so zen shows what it wrote. */
+  readonly awaitingUser?: boolean;
 }
 
 const DEFAULT_THREAD_FEED_DISPLAY: ThreadFeedDisplay = {
@@ -1579,7 +1582,8 @@ export function deriveThreadFeedPresentation(
   const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const activeRunId = unsettledRunId(latestRun);
   const zen = toolCallVisibility === "zen";
-  const answering = isWorking && latestRun?.turnEnded !== true;
+  // A run that waits on a question still works, but the text before the question is its answer.
+  const answering = isWorking && latestRun?.turnEnded !== true && display.awaitingUser !== true;
   const zenAnswerIds = zen
     ? zenAnswerMessageIds(feed, start, answering, answering ? activeRunId : null)
     : null;
@@ -1748,7 +1752,7 @@ export function deriveThreadFeedPresentation(
       thinkingRow(
         activeWorkStartedAt,
         activeRunId,
-        zen ? liveAnswerPreview(feed) : null,
+        zen && display.awaitingUser !== true ? liveAnswerPreview(feed) : null,
         latestRun?.providerStartingLabel,
       ),
     );

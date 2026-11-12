@@ -1494,6 +1494,9 @@ function ThreadDetailBody(
                   threadTitle={props.selectedThread.title}
                   latestRun={props.activityRun}
                   activeWorkStartedAt={props.activeWorkStartedAt}
+                  awaitingUser={
+                    props.activePendingApproval !== null || props.activePendingUserInput !== null
+                  }
                   runlessWorkActive={props.runlessWorkActive ?? false}
                   listRef={listRef}
                   freeze={freeze}
