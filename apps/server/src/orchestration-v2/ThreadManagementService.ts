@@ -176,7 +176,8 @@ export interface ThreadManagementWaitInput {
   readonly threadId: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
-  readonly terminalOnly?: boolean;
+  /** Also return when live input blocks the run, leaving its status as is. */
+  readonly returnOnInput?: boolean;
   /**
    * Also wait until the thread's own delegated work settles: an ended run
    * still owes the thread's answer while a child, a background task or a
@@ -955,9 +956,9 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const fields = input.terminalOnly
-      ? (["runs"] as const)
-      : (["runs", "nodes", "runtimeRequests", "turnItems"] as const);
+    const fields = input.returnOnInput
+      ? (["runs", "nodes", "runtimeRequests", "turnItems"] as const)
+      : (["runs"] as const);
     const filter = {
       turnItemTypes: ["secret_request"],
       omitSettledLeafNodes: true,
@@ -1007,7 +1008,7 @@ const make = Effect.gen(function* () {
       let hasPendingQuestion = false;
       let pendingApproval: ThreadManagementWaitResult["pendingApproval"] = null;
       let oldestApproval = Infinity;
-      if (!input.terminalOnly && (!isTerminalRunStatus(run.status) || untilDelegatedWorkSettled)) {
+      if (input.returnOnInput && (!isTerminalRunStatus(run.status) || untilDelegatedWorkSettled)) {
         const blockingRuns = new Set(
           runs
             .filter(
@@ -1123,16 +1124,15 @@ const make = Effect.gen(function* () {
                 }),
               )
             : []),
-          input.terminalOnly
-            ? Stream.empty
-            : orchestrator.streamStoredEventsFrom({
+          input.returnOnInput
+            ? orchestrator.streamStoredEventsFrom({
                 threadId: input.threadId,
                 afterSequence,
                 eventType: "runtime-request.updated",
-              }),
-          input.terminalOnly
-            ? Stream.empty
-            : orchestrator
+              })
+            : Stream.empty,
+          input.returnOnInput
+            ? orchestrator
                 .streamStoredEventsFrom({
                   threadId: input.threadId,
                   afterSequence,
@@ -1144,7 +1144,8 @@ const make = Effect.gen(function* () {
                       stored.event.type === "turn-item.updated" &&
                       stored.event.payload.type === "secret_request",
                   ),
-                ),
+                )
+            : Stream.empty,
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -1180,11 +1181,7 @@ const make = Effect.gen(function* () {
     "orchestrationV2.threadManagement.settleAfterRun",
   )(function* (input) {
     const requestedAt = yield* DateTime.now;
-    const { run } = yield* waitForThread({
-      ...input,
-      timeoutMs: SETTLE_AFTER_RUN_WAIT_MS,
-      terminalOnly: true,
-    });
+    const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
     const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
     const trySettle = Effect.gen(function* () {

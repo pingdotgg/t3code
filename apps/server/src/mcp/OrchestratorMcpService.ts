@@ -3266,7 +3266,7 @@ const make = Effect.gen(function* () {
           projectId: target.thread.projectId,
           threadId: input.threadId,
           ...(input.runId === undefined ? {} : { runId: input.runId }),
-          terminalOnly: !threadWaitReturnsOnInput(scope, input.returnOnInput),
+          returnOnInput: threadWaitReturnsOnInput(scope, input.returnOnInput),
           timeoutMs: Math.min(
             MAX_WAIT_TIMEOUT_MS,
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),

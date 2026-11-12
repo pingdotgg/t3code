@@ -293,7 +293,7 @@ it.effect.each([
       Effect.provide(layerTest),
     );
     const fiber = yield* service
-      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000, returnOnInput: true })
       .pipe(Effect.forkChild);
     yield* TestClock.adjust("1 minute");
     const result = yield* Fiber.join(fiber);
@@ -354,7 +354,7 @@ it.effect.each([
       Effect.provide(layerTest),
     );
     const fiber = yield* service
-      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000, returnOnInput: true })
       .pipe(Effect.forkChild);
     yield* TestClock.adjust("1 minute");
     expect(yield* Fiber.join(fiber)).toMatchObject({
@@ -412,7 +412,7 @@ it.effect.each(["command", "user_input", "secret_request"] as const)(
         Effect.provide(layerTest),
       );
       const fiber = yield* service
-        .waitForThread({ projectId, threadId, runId, timeoutMs: 600_000 })
+        .waitForThread({ projectId, threadId, runId, timeoutMs: 600_000, returnOnInput: true })
         .pipe(Effect.forkChild);
       yield* Deferred.await(subscribed);
       if (kind === "secret_request") {
@@ -446,7 +446,7 @@ it.effect.each(["command", "user_input", "secret_request"] as const)(
       });
       expect(reads).toBe(2);
       const terminalWait = yield* service
-        .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000, terminalOnly: true })
+        .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
         .pipe(Effect.forkChild);
       yield* TestClock.adjust("1 minute");
       expect(yield* Fiber.join(terminalWait)).toMatchObject({
@@ -608,6 +608,7 @@ it.effect.each(["completion", "secret_request"] as const)(
           runId,
           timeoutMs: 60 * 60 * 1_000,
           untilDelegatedWorkSettled: true,
+          returnOnInput: true,
         })
         .pipe(Effect.forkChild);
       // A wait that returns early fails below instead of hanging here.

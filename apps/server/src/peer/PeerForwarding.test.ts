@@ -495,11 +495,11 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         threadId: boxThread,
         returnOnInput: false,
       });
-      expect((yield* Ref.get(seen)).waits.map(({ terminalOnly }) => terminalOnly)).toEqual([
-        false,
-        false,
-        false,
+      expect((yield* Ref.get(seen)).waits.map(({ returnOnInput }) => returnOnInput)).toEqual([
         true,
+        true,
+        true,
+        false,
       ]);
 
       const send = (caller: string, clientRequestId: string) =>

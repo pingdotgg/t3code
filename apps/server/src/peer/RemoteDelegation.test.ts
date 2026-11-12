@@ -343,9 +343,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
           input.untilDelegatedWorkSettled === true &&
           (yield* Ref.get(thread.nested))
         ) {
-          const pendingInput = input.terminalOnly
-            ? null
-            : yield* Ref.getAndSet(thread.nestedInput, null);
+          const pendingInput = input.returnOnInput
+            ? yield* Ref.getAndSet(thread.nestedInput, null)
+            : null;
           if (pendingInput !== null) {
             return {
               threadId: input.threadId,
