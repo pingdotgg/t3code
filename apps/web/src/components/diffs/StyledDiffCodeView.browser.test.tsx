@@ -74,7 +74,7 @@ function RepeatedDiffs({
       </button>
       <StyledDiffCodeView
         viewerRef={viewerRef}
-        style={{ height: 600, width: 800 }}
+        className="h-[600px] w-[800px]"
         items={entries.map(({ fileDiff, fileKey, fileVersion }) => ({
           type: "diff",
           id: fileKey,
@@ -155,32 +155,36 @@ describe("repeated diff blocks", () => {
       );
       await flush();
     };
-    const expectExpanded = (expanded: boolean[]) => {
-      expect(blocks()).toHaveLength(3);
-      expect(blocks().map((_, index) => body(index) !== null)).toEqual(expanded);
+    const expectExpanded = async (expanded: boolean[]) => {
+      await vi.waitFor(() => {
+        expect(blocks()).toHaveLength(3);
+        expect(blocks().map((_, index) => body(index) !== null)).toEqual(expanded);
+      });
     };
-    expectExpanded([true, true, true]);
-    expect(body(0)?.textContent).toContain("first");
-    expect(body(1)?.textContent).toContain("second");
-    expect(body(2)?.textContent).toContain("second");
+    await expectExpanded([true, true, true]);
+    await vi.waitFor(() => {
+      expect(body(0)?.textContent).toContain("first");
+      expect(body(1)?.textContent).toContain("second");
+      expect(body(2)?.textContent).toContain("second");
+    });
 
     await click(blocks()[1]!.shadowRoot!.querySelector("[data-diffs-header]")!);
-    expectExpanded([true, false, true]);
+    await expectExpanded([true, false, true]);
     await click(blocks()[1]!.shadowRoot!.querySelector("[data-title] bdi")!);
     expect(onOpen).toHaveBeenCalledExactlyOnceWith("same.ts");
-    expectExpanded([true, false, true]);
+    await expectExpanded([true, false, true]);
     await click(blocks()[1]!.querySelector("button")!);
-    expectExpanded([true, true, true]);
+    await expectExpanded([true, true, true]);
     await click(blocks()[1]!.querySelector("a")!);
     expect(onLink).toHaveBeenCalledOnce();
     await click(body(1)!);
-    expectExpanded([true, true, true]);
+    await expectExpanded([true, true, true]);
     await click(blocks()[0]!.shadowRoot!.querySelector("[data-diffs-header]")!);
-    expectExpanded([false, true, true]);
+    await expectExpanded([false, true, true]);
     await click(document.querySelector("[data-toggle-all]")!);
-    expectExpanded([false, false, false]);
+    await expectExpanded([false, false, false]);
     await click(document.querySelector("[data-toggle-all]")!);
-    expectExpanded([true, true, true]);
+    await expectExpanded([true, true, true]);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });
