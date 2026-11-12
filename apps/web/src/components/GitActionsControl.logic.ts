@@ -50,6 +50,16 @@ export interface GitActionResultToastTiming {
 
 export const GIT_ACTION_SUCCESS_VISIBLE_MS = 10_000;
 
+export function resolveGitActionSuccessDescription(
+  result: Pick<GitRunStackedActionResult, "commit" | "pr" | "toast">,
+): string | null {
+  if (result.pr.status === "created") return null;
+  if (result.pr.status !== "opened_existing" && result.commit.status === "created") {
+    return result.commit.subject ?? result.toast.description ?? null;
+  }
+  return result.toast.description ?? null;
+}
+
 export function resolveGitActionResultToastTiming(
   type: "error" | "success",
 ): GitActionResultToastTiming {

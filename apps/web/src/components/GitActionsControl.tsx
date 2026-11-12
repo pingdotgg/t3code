@@ -58,6 +58,7 @@ import {
   resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
   resolveGitActionResultToastTiming,
+  resolveGitActionSuccessDescription,
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
@@ -382,7 +383,7 @@ function GitActionProgressButtonContent({ progress }: { progress: GitActionProgr
           <Tooltip>
             <TooltipTrigger
               render={
-                <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+                <p className="pointer-events-auto truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
               }
             >
               {progress.output}
@@ -420,7 +421,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
           <Tooltip>
             <TooltipTrigger
               render={
-                <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+                <p className="pointer-events-auto truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
               }
             >
               {success.description}
@@ -1312,7 +1313,7 @@ export default function GitActionsControl({
       title: createdPullRequest
         ? `Created ${changeRequestTerminology.shortLabel}`
         : actionResult.toast.title,
-      description: createdPullRequest ? null : (actionResult.toast.description ?? null),
+      description: resolveGitActionSuccessDescription(actionResult),
       scopeKey: successScopeKey,
       expiresAtMs: inlineSuccessExpiresAt(),
     });
