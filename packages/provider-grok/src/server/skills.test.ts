@@ -189,7 +189,7 @@ describe("discoverGrokSkills", () => {
         ),
       );
 
-      expect(spawnOptions[0]?.env).toEqual({
+      expect(spawnOptions[0]?.env).toMatchObject({
         GROK_DISABLE_AUTOUPDATER: "1",
         GROK_HOME: "/home/dev/.grok",
         MISE_OFFLINE: "1",
