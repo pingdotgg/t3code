@@ -202,7 +202,8 @@ class CertutilError extends Schema.TaggedError<CertutilError>()("CertutilError",
 
 /**
  * Chrome on Linux trusts only its own roots and `$HOME/.pki/nssdb`, so local roots such as a
- * TLS-inspecting proxy's need an NSS database under a T3-owned HOME. Empty when none are needed.
+ * TLS-inspecting proxy's need an NSS database under a T3-owned HOME. It starts as a copy of the
+ * user's database so certificates trusted there stay trusted. Empty when none are needed.
  */
 export const trustEnvironment = Effect.fn("PreviewBrowserHost.trustEnvironment")(function* (
   directory: string,
@@ -213,11 +214,20 @@ export const trustEnvironment = Effect.fn("PreviewBrowserHost.trustEnvironment")
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const env = yield* HostProcess.Environment;
-  const realHome = yield* HostProcess.HomeDirectory;
-  const key = NodeCrypto.createHash("sha256")
-    .update(anchors.map((anchor) => anchor.fingerprint256).join(","))
-    .digest("hex")
-    .slice(0, 16);
+  const realHome = env.HOME ?? (yield* HostProcess.HomeDirectory);
+  const userDatabase = path.join(realHome, ".pki", "nssdb");
+  const userFiles: Array<readonly [string, Uint8Array]> = [];
+  for (const name of ["cert9.db", "key4.db"]) {
+    const bytes = yield* fs
+      .readFile(path.join(userDatabase, name))
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (bytes !== undefined) userFiles.push([name, bytes]);
+  }
+  const hash = NodeCrypto.createHash("sha256").update(
+    anchors.map((anchor) => anchor.fingerprint256).join(","),
+  );
+  for (const [name, bytes] of userFiles) hash.update(`\0${name}\0`).update(bytes);
+  const key = hash.digest("hex").slice(0, 16);
   const home = path.join(directory, key);
   const ready = (root: string) =>
     fs.exists(path.join(root, ".pki", "nssdb", "cert9.db")).pipe(Effect.orElseSucceed(() => false));
@@ -241,8 +251,14 @@ export const trustEnvironment = Effect.fn("PreviewBrowserHost.trustEnvironment")
         if (exitCode !== 0) return yield* new CertutilError({ args, exitCode });
       });
       yield* Effect.gen(function* () {
-        yield* fs.makeDirectory(path.join(staging, ".pki", "nssdb"), { recursive: true });
-        yield* certutil(["-N", "--empty-password"]);
+        const stagingDatabase = path.join(staging, ".pki", "nssdb");
+        yield* fs.makeDirectory(stagingDatabase, { recursive: true });
+        for (const [name, bytes] of userFiles) {
+          yield* fs.writeFile(path.join(stagingDatabase, name), bytes, { mode: 0o600 });
+        }
+        if (!userFiles.some(([name]) => name === "cert9.db")) {
+          yield* certutil(["-N", "--empty-password"]);
+        }
         for (const anchor of anchors) {
           const file = path.join(staging, "anchor.pem");
           yield* fs.writeFileString(file, anchor.toString());
