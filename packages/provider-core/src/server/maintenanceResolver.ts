@@ -1052,6 +1052,48 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   };
 });
 
+const decodeVitePlusConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ shimMode: Schema.optional(Schema.String) })),
+);
+
+/**
+ * Vite+ 0.3's `vp env off` writes `shimMode: "system_first"`, and its shims then run the
+ * next install on PATH, falling back to the managed copy only when there is none.
+ * `vp env which` still names the managed copy, so read the config and PATH instead.
+ */
+const resolveVitePlusSystemFirstTarget = Effect.fn("resolveVitePlusSystemFirstTarget")(function* (
+  shimPath: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+) {
+  if (!isVitePlusGlobalCommandPath(shimPath)) return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const vpHome = path.dirname(path.dirname(shimPath));
+  const configHome = env.XDG_CONFIG_HOME || (env.HOME ? path.join(env.HOME, ".config") : null);
+  const configPaths = [
+    path.join(vpHome, "config.json"),
+    ...(configHome ? [path.join(configHome, "vite-plus", "config.json")] : []),
+  ];
+  let shimMode: string | undefined;
+  for (const configPath of configPaths) {
+    const config = yield* fileSystem
+      .readFileString(configPath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (config === null) continue;
+    shimMode = Option.getOrUndefined(decodeVitePlusConfig(config))?.shimMode;
+    break;
+  }
+  if (shimMode !== "system_first") return null;
+  const delimiter = platform === "win32" ? ";" : ":";
+  const otherPath = (env.PATH ?? env.Path ?? env.path ?? "")
+    .split(delimiter)
+    .filter((entry) => !isVitePlusGlobalCommandPath(`${entry.trim().replace(/^"|"$/g, "")}/`))
+    .join(delimiter);
+  const command = path.basename(shimPath, platform === "win32" ? path.extname(shimPath) : "");
+  return yield* resolveCommandPath(command, { env: { ...env, PATH: otherPath } });
+});
+
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (
@@ -1067,7 +1109,10 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
-  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
+  const platform = yield* HostProcess.Platform;
+  const shimPath = yield* resolveCommandPath(binaryPath, { env });
+  const resolvedCommandPath =
+    shimPath && ((yield* resolveVitePlusSystemFirstTarget(shimPath, env, platform)) ?? shimPath);
   if (!resolvedCommandPath) {
     return yield* resolver.resolve(null);
   }
@@ -1084,7 +1129,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     resolvedCommandPath,
     realCommandPath,
     env,
-    platform: yield* HostProcess.Platform,
+    platform,
   });
 }, Effect.flatMap(withConfiguredNpmVersionLookup));
 
