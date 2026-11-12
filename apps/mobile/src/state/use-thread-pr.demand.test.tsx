@@ -60,7 +60,10 @@ vi.mock("../connection/runtime", async () => {
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   const config = Atom.make({ environment: { capabilities: { threadPullRequests: true } } });
-  return { serverEnvironment: { configValueAtom: () => config } };
+  return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    serverEnvironment: { configValueAtom: () => config },
+  };
 });
 
 import { ThreadPrDemandProvider } from "./thread-pr-demand";
