@@ -234,6 +234,8 @@ function SubagentAvatar({
       aria-hidden
       className={cn(
         "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
+        // Room for the account tab, so the next stacked avatar does not cover it.
+        driver && showBadge && "mr-3.5",
         className,
       )}
     >
