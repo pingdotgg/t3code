@@ -711,6 +711,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                     view === "git" ? (scope === "unstaged" ? "stage" : "unstage") : undefined
                   }
                   canStageLines={(file, range) =>
+                    !props.ignoreWhitespace &&
                     canStage &&
                     !pending &&
                     Boolean(
@@ -723,7 +724,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                     )
                   }
                   onStageLines={
-                    view === "git"
+                    view === "git" && !props.ignoreWhitespace
                       ? (file, range) => {
                           const path = resolveFileDiffPath(file);
                           const patch = reviewSelectedLinesPatch(
@@ -799,7 +800,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                               <Button
                                 size="xs"
                                 variant="ghost"
-                                disabled={!canStage || pending}
+                                disabled={!canStage || pending || props.ignoreWhitespace}
                                 aria-label={`${scope === "unstaged" ? "Stage" : "Unstage"} hunk ${index + 1} in ${path}`}
                                 onClick={() =>
                                   void updateStaging(scope, stagingPaths(scope, path), patch)

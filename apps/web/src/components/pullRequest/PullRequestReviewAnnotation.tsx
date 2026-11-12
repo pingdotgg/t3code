@@ -1,4 +1,4 @@
-import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
+import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useReviewThreadActions } from "./useReviewThreadActions";
@@ -52,7 +52,12 @@ import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPres
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import { usePendingReviewComments, type PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  pendingReviewDiscardTargets,
+  usePendingReviewComments,
+  usePullRequestReviewStore,
+  type PendingReviewComment,
+} from "./pullRequestReviewStore";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -193,15 +198,18 @@ export function PendingReviewCommentCard({
 export function InlineReviewThreads({
   threads,
   renderThread,
+  revealedThreadId,
 }: {
   threads: ReadonlyArray<PullRequestReviewThread>;
   renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
+  revealedThreadId?: string | undefined;
 }) {
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
   const open = threads.filter((thread) => !thread.isResolved);
-  if (open.some((thread) => !shown.has(thread.id))) {
-    setShown(new Set([...shown, ...open.map((thread) => thread.id)]));
+  const visible = threads.filter((thread) => !thread.isResolved || thread.id === revealedThreadId);
+  if (visible.some((thread) => !shown.has(thread.id))) {
+    setShown(new Set([...shown, ...visible.map((thread) => thread.id)]));
   }
   const resolved = threads.filter((thread) => thread.isResolved);
   const expanded = resolved.every((thread) => shown.has(thread.id));
@@ -327,17 +335,34 @@ export function ReviewThreadCard({
     thread.comments,
     currentPage?.comments ?? [],
   );
-  const reviewKey = usePullRequestReviewKey(environmentId, reference);
-  const pendingComments = usePendingReviewComments(reviewKey, [
+  const { key: reviewKey, ready: reviewReady } = usePullRequestReviewScope(
+    environmentId,
+    reference,
+  );
+  const storedComments = usePendingReviewComments(reviewKey, [
     { ...thread, comments: receivedComments },
   ]);
+  const pendingComments = reviewReady ? storedComments : [];
+  const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
+  const discardById = new Map(
+    pendingReviewDiscardTargets(
+      pendingComments,
+      [{ ...thread, comments: receivedComments }],
+      removedIds,
+    ).flatMap((comment) =>
+      comment.hostedComment ? [[comment.hostedComment.commentId, comment] as const] : [],
+    ),
+  );
   const pendingById = new Map(
     pendingComments.flatMap((comment) =>
       comment.hostedComment ? [[comment.hostedComment.commentId, comment] as const] : [],
     ),
   );
   const comments = receivedComments.filter(
-    (comment) => !comment.pendingReviewId || thread.line === null || pendingById.has(comment.id),
+    (comment) =>
+      !comment.pendingReviewId ||
+      (reviewReady &&
+        (thread.line === null ? !removedIds?.includes(comment.id) : pendingById.has(comment.id))),
   );
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
@@ -356,6 +381,7 @@ export function ReviewThreadCard({
     const saved = await onEditComment(commentId, body);
     setSavingEdit(false);
     if (saved) {
+      usePullRequestReviewStore.getState().updateHostedCommentBody(reviewKey, commentId, body);
       setLoadedPage((previous) =>
         previous?.threadId === thread.id
           ? {
@@ -506,14 +532,14 @@ export function ReviewThreadCard({
                       </Button>
                     ) : null}
                     {comment.pendingReviewId &&
-                    pendingById.has(comment.id) &&
+                    discardById.has(comment.id) &&
                     pendingActions.canDiscard ? (
                       <Button
                         size="icon-xs"
                         variant="ghost-muted"
                         aria-label="Discard this comment"
                         disabled={pendingActions.busy}
-                        onClick={() => void pendingActions.discard(pendingById.get(comment.id)!)}
+                        onClick={() => void pendingActions.discard(discardById.get(comment.id)!)}
                       >
                         <Trash2Icon className="size-3.5" />
                       </Button>

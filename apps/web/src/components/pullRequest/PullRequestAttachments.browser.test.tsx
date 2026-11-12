@@ -18,6 +18,16 @@ vi.mock(import("~/state/query"), async (original) => ({
 }));
 import { PullRequestAttachments } from "./PullRequestAttachments";
 
+function setup() {
+  let finish!: (markdown: string) => void;
+  state.publish.mockReset().mockReturnValue(
+    new Promise<string>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  return { finish };
+}
+
 function Composer() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("Original");
@@ -38,12 +48,7 @@ function Composer() {
 }
 
 it("preserves edits received while an attachment is being published", async () => {
-  let finish!: (markdown: string) => void;
-  state.publish.mockReset().mockReturnValue(
-    new Promise<string>((resolve) => {
-      finish = resolve;
-    }),
-  );
+  const { finish } = setup();
   using _publishPermission = vi
     .spyOn(pullRequestEnvironment.uploadAttachment, "permissionAtom")
     .mockReturnValue(Atom.make(true));

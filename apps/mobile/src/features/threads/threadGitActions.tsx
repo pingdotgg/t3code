@@ -159,7 +159,8 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
   // The same secondary actions as desktop's split button; the quick action already covers its own.
   const menuActions = isRepo
     ? secondaryGitMenuItems(buildMenuItems(gitStatus, busy, hasPrimaryRemote), quickAction).map(
-        (item) => (canWriteSourceControl ? item : { ...item, disabled: true }),
+        (item) =>
+          canWriteSourceControl || item.kind === "open_pr" ? item : { ...item, disabled: true },
       )
     : [];
 

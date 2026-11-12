@@ -20,6 +20,12 @@ vi.mock(import("./filesViewedStore"), () => ({
 }));
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 
+function setup() {
+  state.data = { files: [{ path: "a.ts", state: "viewed" }], truncated: false };
+  state.error = null;
+  state.overlay = new Map();
+}
+
 function Probe() {
   const view = usePullRequestFilesViewed({
     environmentId: EnvironmentId.make("viewed-read-failure"),
@@ -31,8 +37,7 @@ function Probe() {
 }
 
 it("stops treating retained files as complete after a refresh fails", async () => {
-  state.data = { files: [{ path: "a.ts", state: "viewed" }], truncated: false };
-  state.error = null;
+  setup();
   await using screen = await render(<Probe />);
   const result = () => JSON.parse(screen.container.querySelector("output")!.textContent!);
   expect(result()).toEqual({ paths: ["a.ts"], ready: true });

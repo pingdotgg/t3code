@@ -1,4 +1,4 @@
-import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
+import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
@@ -9,6 +9,7 @@ import {
   savePendingReviewComment,
   usePullRequestReviewStore,
   type PendingReviewComment,
+  type PendingReviewDiscardTarget,
 } from "./pullRequestReviewStore";
 
 /** Saving a review comment stays private until the review is submitted. */
@@ -16,7 +17,7 @@ export function usePendingReviewCommentActions(
   environmentId: EnvironmentId,
   reference: PullRequestRef,
 ) {
-  const key = usePullRequestReviewKey(environmentId, reference);
+  const { key, ready } = usePullRequestReviewScope(environmentId, reference);
   const canSave = useAtomValue(
     pullRequestEnvironment.saveDraftComment.permissionAtom(environmentId),
   );
@@ -29,6 +30,7 @@ export function usePendingReviewCommentActions(
     reportFailure: false,
   });
   const saveDraft = async (comment: PendingReviewComment) => {
+    if (!ready) return null;
     return await (async () => {
       return await savePendingReviewComment(key, comment, async (draft) => {
         const result = await save({ environmentId, input: { ...reference, comment: draft } });
@@ -46,14 +48,21 @@ export function usePendingReviewCommentActions(
     });
   };
   const add = (comment: PendingReviewComment, saveToHost: boolean) => {
+    if (!ready) return;
     usePullRequestReviewStore.getState().addComment(key, comment);
     if (saveToHost) void saveDraft(comment);
   };
   const copyLink = async (comment: PendingReviewComment) => (await saveDraft(comment))?.url ?? null;
-  const discard = async (givenComment: PendingReviewComment) => {
+  const discard = async (givenComment: PendingReviewDiscardTarget) => {
+    if (!ready) return false;
     const store = usePullRequestReviewStore.getState();
     const comment =
-      store.drafts[key]?.find((entry) => entry.id === givenComment.id) ?? givenComment;
+      store.drafts[key]?.find(
+        (entry) =>
+          entry.id === givenComment.id ||
+          (givenComment.hostedComment &&
+            entry.hostedComment?.commentId === givenComment.hostedComment.commentId),
+      ) ?? givenComment;
     if (store.busyComments[key]?.includes(comment.id)) return false;
     store.setCommentBusy(key, comment.id, true);
     return await (async () => {
@@ -77,10 +86,20 @@ export function usePendingReviewCommentActions(
       store.setCommentBusy(key, comment.id, false);
     });
   };
-  const discardAll = async (comments: ReadonlyArray<PendingReviewComment>) => {
+  const discardAll = async (comments: ReadonlyArray<PendingReviewDiscardTarget>) => {
     for (const comment of comments) {
       if (!(await discard(comment))) return;
     }
   };
-  return { busy, canSave, canDiscard, add, saveDraft, copyLink, discard, discardAll };
+  return {
+    ready,
+    busy,
+    canSave: ready && canSave,
+    canDiscard: ready && canDiscard,
+    add,
+    saveDraft,
+    copyLink,
+    discard,
+    discardAll,
+  };
 }

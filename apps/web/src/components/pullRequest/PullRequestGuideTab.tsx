@@ -75,13 +75,17 @@ export function PullRequestGuideTab({
   const runKey = guideRunKey(environmentId, reference);
   const reviewKey = usePullRequestReviewKey(environmentId, reference);
   const pending = usePendingReviewComments(reviewKey, detail.reviewThreads);
-  const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
+  const { add: addComment, ready: reviewReady } = usePendingReviewCommentActions(
+    environmentId,
+    reference,
+  );
+  const canQueueComment = reviewReady && canComment;
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting: ExcerptCommenting | null =
-    !canComment && onAskAboutLines === null && !detail.capabilities.review.reply
+    !canQueueComment && onAskAboutLines === null && !detail.capabilities.review.reply
       ? null
       : {
-          canComment,
+          canComment: canQueueComment,
           rangeComments,
           completionScope,
           renderAttachments: (onTextChange, onBusyChange, textarea) => (
@@ -93,7 +97,7 @@ export function PullRequestGuideTab({
               onBusyChange={onBusyChange}
             />
           ),
-          pending,
+          pending: reviewReady ? pending : [],
           threads: detail.reviewThreads.filter((thread) =>
             thread.comments.some((comment) => !comment.pendingReviewId),
           ),
@@ -114,7 +118,9 @@ export function PullRequestGuideTab({
               },
               detail.capabilities.review.draftComment === true,
             ),
-          onRemove: (commentId) => removeComment(reviewKey, commentId),
+          onRemove: (commentId) => {
+            if (reviewReady) removeComment(reviewKey, commentId);
+          },
           onAskAgent: onAskAboutLines,
         };
 
@@ -204,6 +210,7 @@ export function PullRequestGuideTab({
   return (
     <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
       <GuideTour
+        key={reviewKey}
         environmentId={environmentId}
         reference={reference}
         guide={guide}

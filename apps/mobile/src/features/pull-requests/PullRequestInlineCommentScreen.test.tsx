@@ -4,6 +4,10 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   viewer: "alice",
+  ready: true,
+  flush: vi.fn().mockResolvedValue(true),
+  goBack: vi.fn(),
+  alert: vi.fn(),
   update: vi.fn(),
   save: vi.fn().mockResolvedValue({ _tag: "Success", value: {} }),
   buttons: new Map<string, { disabled: boolean; onPress: () => void }>(),
@@ -15,13 +19,13 @@ vi.mock("./usePullRequestDiff", () => ({
 }));
 vi.mock("./pullRequestDiffComments", () => ({ reviewPositionLabel: () => "Line 1" }));
 vi.mock("react-native", () => ({
-  Alert: { alert: vi.fn() },
+  Alert: { alert: mocks.alert },
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ScrollView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("@react-navigation/native", () => ({
   useFocusEffect: () => {},
-  useNavigation: () => ({ goBack: vi.fn() }),
+  useNavigation: () => ({ goBack: mocks.goBack }),
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
@@ -86,22 +90,32 @@ vi.mock("./usePullRequestReviewDraft", () => ({
   setReviewDraftBusy: () => true,
   usePullRequestReviewDraft: (params: object) => ({
     scope: { ...params, viewer: mocks.viewer },
-    ready: true,
+    ready: mocks.ready,
+    isReady: () => mocks.ready,
     busy: false,
     error: null,
     update: mocks.update,
-    flush: async () => true,
+    flush: mocks.flush,
     comments: mocks.viewer === "alice" ? [{ id: "draft", body: "Alice's private feedback" }] : [],
   }),
 }));
 import { PullRequestInlineCommentScreen } from "./PullRequestInlineCommentScreen";
 
-it("blocks an open editor's text from being saved by a different account", async () => {
+function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.viewer = "alice";
+  mocks.ready = true;
   mocks.update.mockClear();
   mocks.save.mockClear();
+  mocks.flush.mockReset().mockResolvedValue(true);
+  mocks.goBack.mockClear();
+  mocks.alert.mockClear();
   mocks.buttons.clear();
+  mocks.form = null;
+}
+
+it("blocks an open editor's text from being saved by a different account", async () => {
+  setup();
   const root = createRoot(document.createElement("div"));
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
   const route = {
@@ -123,8 +137,74 @@ it("blocks an open editor's text from being saved by a different account", async
   mocks.viewer = "bob";
   act(() => root.render(<PullRequestInlineCommentScreen route={route} />));
   const save = mocks.buttons.get("Add to review")!;
+  expect(mocks.form!.value).toBe("");
   await act(async () => save.onPress());
   expect(mocks.update).not.toHaveBeenCalled();
   expect(mocks.save).not.toHaveBeenCalled();
   expect(save.disabled).toBe(true);
+});
+
+it.each([1, 2])("keeps the editor open when draft flush %i fails", async (failedFlush) => {
+  setup();
+  mocks.flush.mockResolvedValueOnce(failedFlush === 2).mockResolvedValueOnce(false);
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const route = {
+    params: {
+      environmentId: "env",
+      projectId: "project",
+      repository: "owner/repo",
+      number: 1,
+      path: "a.ts",
+      position: { kind: "added" as const, newLine: 1 },
+      headSha: "head",
+      code: "code",
+      body: "Feedback",
+    },
+  };
+  act(() => root.render(<PullRequestInlineCommentScreen route={route} />));
+  act(() => mocks.form!.onChangeText("Feedback"));
+  await act(async () => mocks.buttons.get("Add to review")!.onPress());
+  expect(mocks.goBack).not.toHaveBeenCalled();
+  expect(mocks.alert).toHaveBeenCalledWith(
+    "Could not save the review comment",
+    expect.stringContaining("Could not save the draft on this device."),
+  );
+  expect(mocks.save).toHaveBeenCalledTimes(failedFlush - 1);
+});
+
+it("waits for settled ownership before showing or editing text and capturing the editor account", async () => {
+  setup();
+  mocks.ready = false;
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const route = {
+    params: {
+      environmentId: "env",
+      projectId: "project",
+      repository: "owner/repo",
+      number: 1,
+      path: "a.ts",
+      position: { kind: "added" as const, newLine: 1 },
+      headSha: "head",
+      code: "code",
+      body: "Unowned route text",
+    },
+  };
+  act(() => root.render(<PullRequestInlineCommentScreen route={route} />));
+  expect(mocks.form!.value).toBe("");
+  act(() => mocks.form!.onChangeText("Unowned edit"));
+  mocks.viewer = "bob";
+  mocks.ready = true;
+  act(() => root.render(<PullRequestInlineCommentScreen route={route} />));
+  expect(mocks.form!.value).toBe("");
+  act(() => mocks.form!.onChangeText("Bob's feedback"));
+  await act(async () => mocks.buttons.get("Add to review")!.onPress());
+  expect(mocks.save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        comment: expect.objectContaining({ body: "Bob's feedback" }),
+      }),
+    }),
+  );
 });

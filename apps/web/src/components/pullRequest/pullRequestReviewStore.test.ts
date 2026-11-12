@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, type PullRequestReviewThread } from "@t3tools
 
 import {
   mergePendingReviewComments,
+  pendingReviewDiscardTargets,
   type PendingReviewComment,
   pullRequestReviewKey,
   savePendingReviewComment,
@@ -161,6 +162,19 @@ describe("pull request review drafts", () => {
       "remote",
     ]);
     expect(usePullRequestReviewStore.getState().drafts["review-a"]).toBeUndefined();
+    const outdated = { ...hostedThread(), line: null, isOutdated: true };
+    const targets = pendingReviewDiscardTargets([], [outdated], []);
+    expect(targets).toEqual([
+      {
+        id: "remote",
+        hostedComment: {
+          reviewId: "review",
+          commentId: "remote",
+          url: "https://github.com/owner/repo/pull/7/changes#r1",
+        },
+      },
+    ]);
+    expect(pendingReviewDiscardTargets([], [outdated], ["remote"])).toEqual([]);
   });
 
   it("keeps drafts on different hosts separate when a thread reviews the same repository and number", () => {
@@ -192,6 +206,26 @@ describe("pull request review drafts", () => {
 
     expect(usePullRequestReviewStore.getState().drafts[publicKey]).toEqual([comment("public")]);
     expect(usePullRequestReviewStore.getState().summaries[publicKey]).toBe("Public review");
+  });
+
+  it("updates only the matching hosted draft body within its account scope", () => {
+    const store = usePullRequestReviewStore.getState();
+    const saved = {
+      ...comment("local", "Original"),
+      hostedComment: { reviewId: "review", commentId: "remote", url: "https://example.com/r1" },
+    };
+    store.addComment("review-a", saved);
+    store.addComment("review-a", comment("other"));
+    store.addComment("review-b", saved);
+    store.updateHostedCommentBody("review-a", "remote", "Edited");
+    expect(
+      mergePendingReviewComments(
+        usePullRequestReviewStore.getState().drafts["review-a"]!,
+        [hostedThread()],
+        [],
+      ),
+    ).toEqual([{ ...saved, body: "Edited" }, comment("other")]);
+    expect(usePullRequestReviewStore.getState().drafts["review-b"]).toEqual([saved]);
   });
 
   it("does not clear a summary revised while submission is in flight", () => {
