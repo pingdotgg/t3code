@@ -157,6 +157,7 @@ describe("resolveRemoteOpenState", () => {
       sshTarget: { alias: "localhost", username: "dockware", port },
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
+      hostEnvironmentId: null,
     });
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
     expect(
