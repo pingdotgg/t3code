@@ -283,7 +283,7 @@ export function useComposerAttachmentIntake(input: {
         );
         continue;
       }
-      inheritComposerImageThumbnail(file, result.file);
+      await inheritComposerImageThumbnail(file, result.file);
       rememberComposerImageSource(file, result.file);
       compressed.push({ id, file: result.file });
     }
