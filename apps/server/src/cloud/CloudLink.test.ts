@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Signs proofs as the relay would, outside the code under test.
 import * as NodeCrypto from "node:crypto";
 
 import { EnvironmentId } from "@t3tools/contracts";

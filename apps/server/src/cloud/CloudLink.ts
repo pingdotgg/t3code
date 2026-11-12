@@ -4,6 +4,7 @@ import {
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
+  t3ConnectTroubleshootingUrl,
 } from "@t3tools/contracts";
 import {
   RelayCloudEnvironmentHealthProofPayload,
@@ -37,6 +38,7 @@ import {
   RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
   RELAY_MINT_REQUEST_TYP,
   RELAY_MINT_RESPONSE_TYP,
+  RelayJwtError,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
@@ -198,12 +200,34 @@ const SignedRelayRequest = Schema.Literals(["health", "mint"]);
 
 export class CloudLinkProofRejectedError extends Schema.TaggedError<CloudLinkProofRejectedError>()(
   "CloudLinkProofRejectedError",
-  { request: SignedRelayRequest },
+  { request: SignedRelayRequest, hostClockBehind: Schema.optional(Schema.Boolean) },
 ) {
   override get message(): string {
-    return `Invalid cloud ${this.request} request.`;
+    return this.hostClockBehind
+      ? `Refused the cloud ${this.request} request because this host's clock is more than a minute behind. Sync the host's clock, then retry.`
+      : `Invalid cloud ${this.request} request.`;
   }
 }
+
+/** Jwt.verify reports a future iat only after the signature, issuer and audience check out. */
+const verifiedRelayProofOrNone =
+  (request: typeof SignedRelayRequest.Type) =>
+  <A, R>(verify: Effect.Effect<A, RelayJwtError, R>) =>
+    verify.pipe(
+      Effect.asSome,
+      Effect.catch((error) =>
+        RelayJwtError.diagnosticCode(error) === "ClaimValidationFailed.iat.future"
+          ? Effect.logWarning(
+              "Refused a T3 Connect relay request because this host's clock is behind",
+              { request, moreInfo: t3ConnectTroubleshootingUrl("the-clock-is-off") },
+            ).pipe(
+              Effect.andThen(
+                Effect.fail(new CloudLinkProofRejectedError({ request, hostClockBehind: true })),
+              ),
+            )
+          : Effect.succeedNone,
+      ),
+    );
 
 export class CloudLinkProofReplayedError extends Schema.TaggedError<CloudLinkProofReplayedError>()(
   "CloudLinkProofReplayedError",
@@ -1464,7 +1488,10 @@ const make = Effect.gen(function* () {
         typ: RELAY_HEALTH_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
+      }).pipe(
+        Effect.provideService(Signature.Signature, signature),
+        verifiedRelayProofOrNone("health"),
+      );
       if (
         Option.isNone(proofOption) ||
         proofOption.value.environmentId !== environmentId ||
@@ -1566,7 +1593,10 @@ const make = Effect.gen(function* () {
         typ: RELAY_MINT_REQUEST_TYP,
         issuer: normalizeRelayIssuer(relayIssuer),
         audience: `t3-env:${environmentId}`,
-      }).pipe(Effect.provideService(Signature.Signature, signature), Effect.option);
+      }).pipe(
+        Effect.provideService(Signature.Signature, signature),
+        verifiedRelayProofOrNone("mint"),
+      );
       if (
         Option.isNone(proofOption) ||
         proofOption.value.environmentId !== environmentId ||
