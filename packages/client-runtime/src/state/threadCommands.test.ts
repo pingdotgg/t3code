@@ -344,6 +344,7 @@ describe("remote thread lifecycle commands", () => {
           type: commandType,
           threadId: THREAD_ID,
           expectedLatestRunId: "run-latest",
+          expectedUpdatedAt: NOW,
         });
       }),
   );

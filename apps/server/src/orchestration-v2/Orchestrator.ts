@@ -3887,6 +3887,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is archived.`,
       });
     }
+    if (
+      (command.type === "thread.settle" || command.type === "thread.snooze") &&
+      command.expectedUpdatedAt !== undefined &&
+      DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.expectedUpdatedAt)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} changed before this command was sent.`,
+      });
+    }
     // Reject reorder after unpin so a raced request cannot restore a cleared pin.
     if (command.type === "thread.pin.reorder" && thread.pinnedAt == null) {
       return yield* new OrchestratorDispatchError({

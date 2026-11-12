@@ -32,6 +32,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -99,6 +100,8 @@ export type UnarchiveThreadInput = ThreadCommandInput;
 export interface SettleThreadInput extends ThreadCommandInput {
   /** The server rejects the command when the thread's latest run is no longer this one. */
   readonly expectedLatestRunId?: RunId;
+  /** The server rejects the command when the thread changed after this time. */
+  readonly expectedUpdatedAt?: DateTime.Utc;
 }
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
@@ -121,6 +124,7 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
   readonly expectedLatestRunId?: RunId;
+  readonly expectedUpdatedAt?: DateTime.Utc;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -552,6 +556,9 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
     ...(input.expectedLatestRunId === undefined
       ? {}
       : { expectedLatestRunId: input.expectedLatestRunId }),
+    ...(input.expectedUpdatedAt === undefined
+      ? {}
+      : { expectedUpdatedAt: input.expectedUpdatedAt }),
   });
 });
 
@@ -632,6 +639,9 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     ...(input.expectedLatestRunId === undefined
       ? {}
       : { expectedLatestRunId: input.expectedLatestRunId }),
+    ...(input.expectedUpdatedAt === undefined
+      ? {}
+      : { expectedUpdatedAt: input.expectedUpdatedAt }),
   });
 });
 

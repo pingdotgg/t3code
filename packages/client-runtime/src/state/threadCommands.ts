@@ -122,9 +122,17 @@ export function createThreadEnvironmentAtoms<R, E>(
   });
 
   // Offline, the command is queued so its optimistic change shows now; it sends on reconnect,
-  // guarded by the cached latest run so a run the machine took meanwhile wins.
+  // guarded by the cached thread so any change the machine made meanwhile wins.
   const sendOnReconnect =
-    <I extends { readonly threadId: ThreadId; readonly expectedLatestRunId?: RunId }, E, R>(
+    <
+      I extends {
+        readonly threadId: ThreadId;
+        readonly expectedLatestRunId?: RunId;
+        readonly expectedUpdatedAt?: DateTime.Utc;
+      },
+      E,
+      R,
+    >(
       execute: (input: I) => Effect.Effect<{ readonly sequence: number }, E, R>,
     ) =>
     (input: I, registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
@@ -137,15 +145,21 @@ export function createThreadEnvironmentAtoms<R, E>(
         if (Option.isSome(yield* SubscriptionRef.get(supervisor.session))) {
           return yield* execute(input);
         }
-        const latestRunId = registry
+        const cached = registry
           .get(snapshotAtom(environmentId))
-          ?.threads.find((thread) => thread.id === input.threadId)?.latestRunId;
+          ?.threads.find((thread) => thread.id === input.threadId);
+        const guarded: I =
+          cached === undefined
+            ? input
+            : {
+                ...input,
+                expectedUpdatedAt: cached.updatedAt,
+                ...(cached.latestRunId === null ? {} : { expectedLatestRunId: cached.latestRunId }),
+              };
         const fiber = yield* SubscriptionRef.changes(supervisor.session).pipe(
           Stream.filter(Option.isSome),
           Stream.runHead,
-          Effect.andThen(
-            execute(latestRunId == null ? input : { ...input, expectedLatestRunId: latestRunId }),
-          ),
+          Effect.andThen(execute(guarded)),
           Effect.forkDetach,
         );
         return { sent: fiber };

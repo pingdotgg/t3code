@@ -3082,6 +3082,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-resettle"),
         threadId,
       });
+      const beforePin = (yield* orchestrator.getThreadProjection(threadId)).thread.updatedAt;
+      yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.pin",
         commandId: CommandId.make("runtime-layer-lifecycle-pin-settled"),
@@ -3090,6 +3092,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const pinnedProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(pinnedProjection.thread.settledOverride, "active");
       assert.isNotNull(pinnedProjection.thread.unsettledAt);
+      // A settle or snooze made against the thread before the pin must not undo it.
+      const staleSettle = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("runtime-layer-lifecycle-stale-settle"),
+          threadId,
+          expectedUpdatedAt: beforePin,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleSettle, Orchestrator.OrchestratorDispatchError);
+      const staleSnooze = yield* orchestrator
+        .dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("runtime-layer-lifecycle-stale-snooze"),
+          threadId,
+          snoozedUntil: "2099-01-01T00:00:00.000Z",
+          expectedUpdatedAt: beforePin,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleSnooze, Orchestrator.OrchestratorDispatchError);
+      const stillPinned = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.isNotNull(stillPinned.pinnedAt);
+      assert.isNull(stillPinned.snoozedUntil);
 
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",

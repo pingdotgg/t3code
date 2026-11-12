@@ -3025,6 +3025,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     expectedLatestRunId: Schema.optional(RunId),
+    /** Rejects the command when the thread changed after this time. */
+    expectedUpdatedAt: Schema.optional(Schema.DateTimeUtc),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
@@ -3047,6 +3049,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
     expectedLatestRunId: Schema.optional(RunId),
+    expectedUpdatedAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
