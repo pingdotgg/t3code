@@ -1655,6 +1655,7 @@ function PullRequestCodeTab({
   const revealLink = useEffectEvent(() => {
     if (revealUrl === undefined) answeredLink.current = null;
     if (revealUrl === undefined || linkAnchor?.kind !== "diff") return;
+    if (sliceState.refreshing !== null) return;
     // The panel selects the link's commit after this tab's effects run, so the files on screen
     // can still be another commit's.
     const linkCommit = pullRequestLinkCommit(revealUrl);

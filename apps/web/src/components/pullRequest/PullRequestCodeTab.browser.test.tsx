@@ -220,9 +220,11 @@ it("restarts a refresh without advancing the cursor of the replaced page walk", 
   const registry = AtomRegistry.make();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
   using _firstPage = { [Symbol.dispose]: registry.mount(pageResults("first")) };
-  const content = (token: number) => (
+  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
+  const settled = vi.fn();
+  const content = (token: number, revealUrl?: string) => (
     <RegistryContext value={registry}>
-      {tab(token, { path: "late.test.ts", nonce: 1 })}
+      {tab(token, { path: "late.test.ts", nonce: 1 }, revealUrl, settled)}
     </RegistryContext>
   );
   await using screen = await render(content(0), { container: pagedContainer() });
@@ -230,13 +232,16 @@ it("restarts a refresh without advancing the cursor of the replaced page walk", 
 
   await act(() => registry.set(pageResults("first"), AsyncResult.initial()));
   await screen.rerender(content(1));
+  await screen.rerender(content(1, url));
+  expect(settled).not.toHaveBeenCalled();
   await act(async () => {
     registry.set(pageResults("first"), AsyncResult.success(pages.first!));
-    await screen.rerender(content(2));
+    await screen.rerender(content(2, url));
   });
 
   await vi.waitFor(() => expect(mocks.diffCursors.at(-1)).toBe("page-2"));
   await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
   await screen.rerender(content(3));
   await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
 });
