@@ -2432,7 +2432,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
-    it.effect("checkpoint completion settles its own delivery and releases a pending sibling", () =>
+    it.effect("checkpoint retry releases a pending sibling after its wake offer failed", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
@@ -2528,7 +2528,19 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             },
           ],
         });
+        using offer = vi
+          .spyOn(requests, "offer")
+          .mockImplementationOnce(() => Effect.die("successor wake offer failed"));
+        const firstAttempt = yield* Effect.exit(
+          orchestrator.recoverDelegatedTask(threadId, { completedRunId: run.id }),
+        );
+        assert.isTrue(Exit.isFailure(firstAttempt));
+        const reserved = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.id === originRunId,
+        )!.delegatedCompletion!.delivery!;
+        assert.deepEqual(reserved.taskIds, [siblingId]);
         yield* worker.drain();
+        assert.lengthOf(offer.mock.calls, 2);
         const completed = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(
           completed.subagents.find((task) => task.id === firstId)?.completionDelivery?.state,

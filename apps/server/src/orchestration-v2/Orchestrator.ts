@@ -15061,10 +15061,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: ThreadId,
       options?: { readonly sourceRunId?: RunId; readonly completedRunId?: RunId },
     ) {
-      if (options?.completedRunId !== undefined) {
+      const completedRunId = options?.completedRunId;
+      if (completedRunId !== undefined) {
         yield* threadDispatch.withLock(
           threadId,
-          finalizeDelegatedCompletionDelivery(threadId, options.completedRunId),
+          Effect.gen(function* () {
+            const message = yield* projectionStore.getRunMessage(threadId, completedRunId);
+            if (message?.delegatedCompletion === undefined) return;
+            // A prior attempt may have committed the next generation before offering its wake.
+            yield* offerDelegatedCompletionDelivery(
+              threadId,
+              message.delegatedCompletion.parentRunId,
+            );
+            yield* finalizeDelegatedCompletionDelivery(threadId, completedRunId);
+          }),
         );
       }
       const sourceRunId = options?.sourceRunId;
