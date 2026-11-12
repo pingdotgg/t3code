@@ -79,14 +79,6 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-const GIT_DEFAULT_CONFLICT_MARKER_SIZE = 7;
-
-// Git falls back to the default for any value that is not a positive integer.
-function parseConflictMarkerSize(value = "") {
-  const size = /^\+?\d+$/.test(value) ? Number.parseInt(value, 10) : 0;
-  return size > 0 ? size : GIT_DEFAULT_CONFLICT_MARKER_SIZE;
-}
-
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
 // git diff --numstat reads every untracked byte (~5 ms/MB), so status totals skip larger untracked input.
@@ -2485,209 +2477,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     filePaths?: readonly string[],
     env?: NodeJS.ProcessEnv,
   ) {
-    const isolatedIndexConfig = [
-      "-c",
-      "core.splitIndex=false",
-      "-c",
-      "splitIndex.sharedIndexExpire=never",
-    ];
-    const config = env ? isolatedIndexConfig : [];
-    const envOptions = env ? { env } : {};
+    const config = env
+      ? ["-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never"]
+      : [];
     let preserveUnselectedConflicts = false;
-    // Status paths are repository-relative, while cwd can be a subdirectory.
-    const toPathspec = (file: string) => `:(top,literal)${file}`;
-    const pathspecs = (filePaths ?? []).map(toPathspec);
-    const unmerged = yield* executeGit(
-      "GitVcsDriver.commit.unmerged",
-      cwd,
-      [
-        "ls-files",
-        "--unmerged",
-        "-z",
-        "--full-name",
-        "--",
-        ...(pathspecs.length > 0 ? pathspecs : [":(top)"]),
-      ],
-      { ...envOptions, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
-    );
-    // Each record is "<mode> <object> <stage>\t<path>", once per stage.
-    const unmergedPaths = new Set(
-      splitNullSeparatedGitStdoutPaths(unmerged).map((record) =>
-        record.slice(record.indexOf("\t") + 1),
-      ),
-    );
-    if (unmergedPaths.size > 0) {
-      // add -A marks unmerged paths resolved, so check the files it would stage for leftover markers.
-      const files = Array.from(unmergedPaths);
-      const operation = "GitVcsDriver.commit.conflictMarkers";
-      const checkFailed = "Could not check conflicted files for conflict markers.";
-      const root = yield* readWorktreeRoot(cwd);
-      if (root === null) {
-        return yield* new GitCommandError({ operation, command: "git", cwd, detail: checkFailed });
-      }
-      // check-attr takes plain repository paths, not pathspecs, and prints one
-      // "<path> <attribute> <value>" triple per path and attribute in input order.
-      const readAttributes = (source: readonly string[], options: { env?: NodeJS.ProcessEnv }) =>
-        executeGit(
-          "GitVcsDriver.commit.conflictMarkerSize",
-          root,
-          [
-            "check-attr",
-            ...source,
-            "-z",
-            "conflict-marker-size",
-            "working-tree-encoding",
-            "--",
-            ...files,
-          ],
-          { ...options, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
-        ).pipe(Effect.map((result) => result.stdout.split("\0")));
-      // HEAD's attributes come from a throwaway index, since check-attr --source needs Git 2.40.
-      const readHeadAttributes = Effect.gen(function* () {
-        const head = yield* executeGit(
-          "GitVcsDriver.commit.head",
-          cwd,
-          ["rev-parse", "--verify", "--quiet", "HEAD"],
-          { allowNonZeroExit: true },
-        );
-        if (head.exitCode !== 0) return [];
-        const directory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3code-attributes-index-",
-        });
-        const headIndex = { GIT_INDEX_FILE: path.join(directory, "index") };
-        yield* runGit(
-          "GitVcsDriver.commit.headIndex",
-          cwd,
-          [...isolatedIndexConfig, "read-tree", "HEAD"],
-          { env: headIndex },
-        );
-        return yield* readAttributes(["--cached"], { env: headIndex });
-      }).pipe(
-        Effect.scoped,
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            new GitCommandError({ operation, command: "git", cwd, detail: checkFailed, cause }),
-        }),
-      );
-      // Markers use the size and encoding from before the conflict; afterwards they may survive only in
-      // HEAD, the index or the worktree. An unborn HEAD leaves the defaults.
-      const lookups = yield* Effect.all(
-        [
-          readAttributes([], envOptions),
-          readAttributes(["--cached"], envOptions),
-          readHeadAttributes,
-        ],
-        { concurrency: 3 },
-      );
-      const checks = new Map<
-        string,
-        { size: number; encoding: string | null; files: Set<string> }
-      >();
-      files.forEach((file, index) => {
-        for (const values of lookups) {
-          const size = parseConflictMarkerSize(values[index * 6 + 2]);
-          const value = values[index * 6 + 5] ?? "unspecified";
-          const encoding = ["unspecified", "unset", "set"].includes(value) ? null : value;
-          const key = `${size} ${encoding ?? ""}`;
-          const check = checks.get(key) ?? { size, encoding, files: new Set<string>() };
-          check.files.add(file);
-          checks.set(key, check);
-        }
-      });
-      const grepMarkers = Effect.fn("GitVcsDriver.commit.grepMarkers")(function* (
-        size: number,
-        group: readonly string[],
-        command: readonly string[],
-        options: { env?: NodeJS.ProcessEnv },
-      ) {
-        // Git writes exactly `size` marker characters, then whitespace and a label.
-        const args = [
-          ...command,
-          "-l",
-          "-z",
-          "--full-name",
-          "-E",
-          "-e",
-          `^(<{${size}}|>{${size}})([[:space:]]|$)`,
-          "--",
-          ...group.map(toPathspec),
-        ];
-        const markers = yield* executeGit(operation, cwd, args, {
-          ...options,
-          allowNonZeroExit: true,
-          maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
-        });
-        if (markers.exitCode !== 0 && markers.exitCode !== 1) {
-          return yield* new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: checkFailed,
-            ...(markers.exitCode === null ? {} : { exitCode: markers.exitCode }),
-            stdoutLength: markers.stdout.length,
-            stderrLength: markers.stderr.length,
-          });
-        }
-        return splitNullSeparatedGitStdoutPaths(markers);
-      });
-      // Git writes markers in the working-tree encoding. A throwaway repository's info/attributes
-      // outranks .gitattributes, so its index holds the files decoded from that encoding.
-      const grepEncodedMarkers = Effect.fn("GitVcsDriver.commit.grepEncodedMarkers")(
-        function* (size: number, encoding: string, group: readonly string[]) {
-          const directory = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3code-encoded-",
-          });
-          yield* runGit("GitVcsDriver.commit.encodedRepository", root, [
-            "init",
-            "--bare",
-            "--quiet",
-            "--template=",
-            directory,
-          ]);
-          yield* fileSystem.makeDirectory(path.join(directory, "info"), { recursive: true });
-          yield* fileSystem.writeFileString(
-            path.join(directory, "info", "attributes"),
-            `* -filter working-tree-encoding=${encoding}\n`,
-          );
-          const repository = [`--git-dir=${directory}`, `--work-tree=${root}`];
-          const options = { env: { ...env, GIT_INDEX_FILE: path.join(directory, "index") } };
-          // One file per call: a file that does not decode in this encoding is skipped, not fatal.
-          yield* Effect.forEach(
-            group,
-            (file) =>
-              executeGit(
-                "GitVcsDriver.commit.encodedIndex",
-                root,
-                [...repository, ...isolatedIndexConfig, "update-index", "--add", "--", file],
-                { ...options, allowNonZeroExit: true },
-              ),
-            { discard: true },
-          );
-          return yield* grepMarkers(size, group, [...repository, "grep", "--cached"], options);
-        },
-        Effect.scoped,
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            new GitCommandError({ operation, command: "git", cwd, detail: checkFailed, cause }),
-        }),
-      );
-      const markedPaths = new Set<string>();
-      for (const { size, encoding, files: group } of checks.values()) {
-        const found =
-          encoding === null
-            ? yield* grepMarkers(size, [...group], ["grep"], envOptions)
-            : yield* grepEncodedMarkers(size, encoding, [...group]);
-        for (const file of found) markedPaths.add(file);
-      }
-      if (markedPaths.size > 0) {
-        const named = Array.from(markedPaths).slice(0, 5).join(", ");
-        const more = markedPaths.size > 5 ? ` and ${markedPaths.size - 5} more` : "";
-        return yield* new GitCommandError({
-          operation: "GitVcsDriver.commit",
-          command: "git commit",
-          cwd,
-          detail: `Cannot commit files that still contain conflict markers: ${named}${more}. Resolve the conflicts, then commit again.`,
-        });
-      }
-    }
     if (filePaths && filePaths.length > 0) {
       if (env) {
         const head = yield* executeGit(
@@ -2738,20 +2531,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             detail: `Cannot commit selected files during a ${operation}. Commit all files to finish the ${operation}.`,
           });
         }
-        const remainingConflicts = yield* runGitStdout(
-          "GitVcsDriver.commit.unselectedConflicts",
+        const selectedFiles = new Set(filePaths);
+        const unmergedPaths = yield* runGitStdoutWithOptions(
+          "GitVcsDriver.commit.unmergedPaths",
           cwd,
-          [
-            "ls-files",
-            "--unmerged",
-            "-z",
-            "--",
-            ":(top)",
-            ...filePaths.map((file) => `:(top,exclude,literal)${file}`),
-          ],
+          ["-c", "diff.relative=false", "diff", "--name-only", "--diff-filter=U", "-z"],
+          { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
         );
-        preserveUnselectedConflicts = remainingConflicts.length > 0;
-        // Reset discards conflict stages and attributes needed by the next commit's marker check.
+        // Reset drops every conflict stage, so keep the index while unselected files are conflicted.
+        preserveUnselectedConflicts = unmergedPaths
+          .split("\0")
+          .some((file) => file.length > 0 && !selectedFiles.has(file));
         if (!preserveUnselectedConflicts) {
           yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
         }
@@ -2846,7 +2636,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         env ? { env } : {},
       );
     }
-    return preserveUnselectedConflicts ? pathspecs : [];
+    return preserveUnselectedConflicts ? filePaths : undefined;
   });
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
@@ -2982,14 +2772,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options?: GitVcsDriver.GitCommitOptions,
   ) {
     const partialCommitPaths =
-      options?.stage !== undefined ? yield* stageCommitChanges(cwd, options.stage.filePaths) : [];
+      options?.stage !== undefined
+        ? yield* stageCommitChanges(cwd, options.stage.filePaths)
+        : undefined;
     const args = ["commit", "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
     }
-    if (partialCommitPaths.length > 0) {
-      args.push("--only", "--", ...partialCommitPaths);
+    if (partialCommitPaths) {
+      args.push("--only", "--pathspec-from-file=-", "--pathspec-file-nul");
     }
     const progress =
       options?.progress?.onOutputLine === undefined
@@ -3003,6 +2795,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           };
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
+      ...(partialCommitPaths
+        ? { stdin: partialCommitPaths.map((file) => `:(top,literal)${file}\0`).join("") }
+        : {}),
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
     }).pipe(Effect.asVoid);

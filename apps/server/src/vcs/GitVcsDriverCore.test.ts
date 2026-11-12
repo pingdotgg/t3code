@@ -6600,98 +6600,84 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each([
-      { markerSize: "3", attributes: "untracked" },
-      { markerSize: "3", attributes: "staged" },
-      { markerSize: "9", attributes: "incoming" },
-      { markerSize: "3", attributes: "changed" },
-      { markerSize: "5.0", attributes: "committed" },
-      { markerSize: "7", attributes: "encoded" },
-      { markerSize: "7", attributes: "encoding removed" },
-    ])(
-      "rejects files that still contain conflict markers outside a merge (size $markerSize, $attributes)",
-      ({ markerSize, attributes }) =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          // Git still writes markers into -diff files (often lockfiles), at the configured size. Each row
-          // leaves that size in one place only: the worktree, the index, or HEAD (the stash or the user
-          // changes it afterwards).
-          const setSize = (size: string) =>
-            writeTextFile(cwd, ".gitattributes", `/README.md -diff conflict-marker-size=${size}\n`);
-          // Git stores working-tree-encoding files as UTF-8 but writes their markers in that encoding.
-          const encoded = attributes === "encoded" || attributes === "encoding removed";
-          const writeReadme = (contents: string) =>
-            encoded
-              ? Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
-                  fileSystem.writeFile(`${cwd}/README.md`, Buffer.from(contents, "utf16le")),
-                )
-              : writeTextFile(cwd, "README.md", contents);
-          if (encoded) {
-            yield* writeTextFile(
-              cwd,
-              ".gitattributes",
-              "/README.md working-tree-encoding=UTF-16LE\n",
-            );
-            yield* writeReadme("# test\n");
-            yield* git(cwd, ["add", ".gitattributes", "README.md"]);
-            yield* git(cwd, ["commit", "-m", "Encoding"]);
-          }
-          if (attributes === "untracked") yield* setSize(markerSize);
-          if (attributes === "incoming" || attributes === "changed" || attributes === "committed") {
-            yield* setSize(markerSize);
-            yield* git(cwd, ["add", ".gitattributes"]);
-            yield* git(cwd, ["commit", "-m", "Attributes"]);
-          }
-          if (attributes === "incoming") yield* setSize("3");
-          yield* writeReadme("stashed version\n");
-          yield* git(cwd, ["stash"]);
-          yield* writeReadme("committed version\n");
-          yield* git(cwd, ["commit", "-am", "Change README"]);
-          if (attributes === "staged") {
-            yield* setSize(markerSize);
-            yield* git(cwd, ["add", ".gitattributes"]);
-          }
-          const pop = yield* driver.execute({
-            operation: "test.stashPop",
-            cwd,
-            args: ["stash", "pop"],
-            allowNonZeroExit: true,
+    it.effect("keeps other files conflicted through a selected-file commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // git stash pop leaves README.md conflicted with no merge in progress.
+        yield* writeTextFile(cwd, "README.md", "stashed version\n");
+        yield* git(cwd, ["stash"]);
+        yield* writeTextFile(cwd, "README.md", "committed version\n");
+        yield* git(cwd, ["commit", "-am", "Change README"]);
+        const pop = yield* driver.execute({
+          operation: "test.stashPop",
+          cwd,
+          args: ["stash", "pop"],
+          allowNonZeroExit: true,
+        });
+        assert.equal(pop.exitCode, 1);
+        yield* writeTextFile(cwd, "other.txt", "other\n");
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
+        const nested = (yield* Path.Path).join(cwd, "nested");
+        yield* (yield* FileSystem.FileSystem).makeDirectory(nested);
+
+        yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
+
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD~1"]), head);
+        assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+        assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
+        const all = yield* driver.prepareCommitContext(nested).pipe(Effect.flip);
+        assert.equal(
+          all.detail,
+          "Cannot commit with unresolved merge conflicts in README.md. Resolve them, then commit.",
+        );
+      }),
+    );
+
+    it.effect("commits a selected file beside more than 1 MB of conflicted path names", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const dir = ["a", "b", "c"].map((letter) => letter.repeat(200)).join("/");
+        yield* fs.makeDirectory(path.join(cwd, dir), { recursive: true });
+        const files = Array.from(
+          { length: 1_250 },
+          (_, index) => `${dir}/${String(index).padStart(4, "0")}-${"x".repeat(240)}`,
+        );
+        assert.isAbove(files.join("\0").length, 1_000_000);
+        const writeAll = (content: string) =>
+          Effect.forEach(files, (file) => fs.writeFileString(path.join(cwd, file), content), {
+            concurrency: 16,
+            discard: true,
           });
-          assert.equal(pop.exitCode, 1);
-          if (attributes === "staged" || attributes === "changed") yield* setSize("7");
-          if (attributes === "changed") yield* git(cwd, ["add", ".gitattributes"]);
-          if (attributes === "encoding removed") yield* writeTextFile(cwd, ".gitattributes", "");
-          yield* writeTextFile(cwd, "other.txt", "other\n");
-          const head = yield* git(cwd, ["rev-parse", "HEAD"]);
-          const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
-          const nested = (yield* Path.Path).join(cwd, "nested");
-          yield* (yield* FileSystem.FileSystem).makeDirectory(nested);
-          const detail =
-            "Cannot commit files that still contain conflict markers: README.md. Resolve the conflicts, then commit again.";
+        yield* writeAll("base\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-qm", "Add files"]);
+        yield* writeAll("stashed\n");
+        yield* git(cwd, ["stash", "-q"]);
+        yield* writeAll("committed\n");
+        yield* git(cwd, ["commit", "-qam", "Change files"]);
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const pop = yield* driver.execute({
+          operation: "test.stashPop",
+          cwd,
+          args: ["stash", "pop"],
+          allowNonZeroExit: true,
+          maxOutputBytes: 16 * 1024 * 1024,
+        });
+        assert.equal(pop.exitCode, 1);
+        yield* writeTextFile(cwd, "other.txt", "other\n");
 
-          const selected = yield* driver
-            .commit(cwd, "Pick", "", { stage: { filePaths: ["README.md", "other.txt"] } })
-            .pipe(Effect.flip);
-          const all = yield* driver.prepareCommitContext(nested).pipe(Effect.flip);
+        yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
 
-          assert.equal(selected.detail, detail);
-          assert.equal(all.detail, detail);
-          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), head);
-          assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
-          yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
-          assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
-          assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
-          assert.equal(
-            (yield* driver.prepareCommitContext(nested).pipe(Effect.flip)).detail,
-            detail,
-          );
-          if (encoded) {
-            yield* writeReadme("resolved version\n");
-            yield* driver.commit(cwd, "Resolve", "", { stage: {} });
-          }
-        }),
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD~1"]), head);
+        assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+      }),
     );
 
     const commitWithHooks = (hooks: Record<string, string>) =>
