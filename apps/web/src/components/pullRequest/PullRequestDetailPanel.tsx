@@ -20,6 +20,8 @@ import {
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
+import { pullRequestCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { copyThreadReference } from "~/lib/copyThreadReference";
 import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { openPullRequestWorkspace } from "../../layout/openRules";
 import { useAtomValue } from "@effect/atom-react";
@@ -549,12 +551,20 @@ export function PullRequestDetailPanel({
     const command = resolveShortcutCommand(event, keybindings, {
       context: getShortcutContext(),
     });
+    const url = handoffSummary?.url;
+    if (command === "thread.copyReference" && url) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat)
+        void copyThreadReference(pullRequestCopyTarget(url, terminology.shortLabel));
+      return;
+    }
     if (command !== "pullRequest.copyNumber") return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number and copy-link shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
     window.addEventListener("keydown", onKeyDown, true);
