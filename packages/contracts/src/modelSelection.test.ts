@@ -70,3 +70,13 @@ it.effect(
       assert.deepStrictEqual(encoded.options, decoded.options);
     }),
 );
+
+it("ModelSelection gives every field a JSON Schema type, which Vertex AI requires of tool parameters", () => {
+  const { properties } = Schema.toJsonSchemaDocument(ModelSelection).schema as {
+    readonly properties: Record<string, { type?: string; anyOf?: Array<{ type?: string }> }>;
+  };
+  for (const [field, schema] of Object.entries(properties)) {
+    const types = schema.anyOf?.map((branch) => branch.type) ?? [schema.type];
+    assert.notInclude(types, undefined, field);
+  }
+});
