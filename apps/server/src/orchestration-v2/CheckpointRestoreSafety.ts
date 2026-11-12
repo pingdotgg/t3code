@@ -35,6 +35,32 @@ interface RestoreSafetyDependencies {
 }
 
 /**
+ * A path's real spelling. A missing one, such as a worktree storage cleanup removed, keeps its
+ * nearest existing ancestor's, so links above it (/tmp and /private/tmp) still compare equal.
+ */
+const realPathOrMissing = Effect.fn("orchestrationV2.realPathOrMissing")(function* (
+  dependencies: Pick<RestoreSafetyDependencies, "fileSystem" | "path">,
+  target: string,
+) {
+  const { fileSystem, path } = dependencies;
+  const resolved = path.resolve(target);
+  let candidate = resolved;
+  for (;;) {
+    const real = yield* fileSystem.realPath(candidate).pipe(
+      Effect.asSome,
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(Option.none<string>()),
+      ),
+    );
+    if (Option.isSome(real)) return path.join(real.value, path.relative(candidate, resolved));
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return resolved;
+    candidate = parent;
+  }
+});
+
+/**
  * Real paths every other thread may write in: its workspace, its checkpoint
  * scopes, live sessions, and its repository worktrees. Null when a thread's
  * project is gone, so its workspace is unknown.
@@ -43,7 +69,7 @@ const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function*
   thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
   dependencies: RestoreSafetyDependencies,
 ) {
-  const { fileSystem, projections, projects } = dependencies;
+  const { projections, projects } = dependencies;
   const candidates = new Set<string>();
   const shell = yield* projections.getShellSnapshot();
   for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
@@ -88,16 +114,8 @@ const otherThreadPaths = Effect.fn("orchestrationV2.otherThreadPaths")(function*
   }
   const resolved: Array<string> = [];
   for (const candidate of candidates) {
-    // A removed folder still counts, spelled as restoreIsolation spells a removed target, since
-    // rollback can recreate a checkout another thread still has attached.
-    resolved.push(
-      yield* fileSystem.realPath(candidate).pipe(
-        Effect.catchIf(
-          (error) => error.reason._tag === "NotFound",
-          (_error) => Effect.succeed(dependencies.path.resolve(candidate)),
-        ),
-      ),
-    );
+    // A removed folder still counts, since rollback can recreate a checkout another thread has attached.
+    resolved.push(yield* realPathOrMissing(dependencies, candidate));
   }
   return resolved;
 });
@@ -110,7 +128,7 @@ const restoreIsolation = Effect.fn("orchestrationV2.restoreIsolation")(function*
   },
   dependencies: RestoreSafetyDependencies,
 ) {
-  const { fileSystem, path } = dependencies;
+  const { path } = dependencies;
   const contains = (parent: string, child: string) => {
     const relative = path.relative(parent, child);
     return (
@@ -119,13 +137,7 @@ const restoreIsolation = Effect.fn("orchestrationV2.restoreIsolation")(function*
     );
   };
   // Storage cleanup may have removed a worktree; rollback recreates it.
-  const resolve = (target: string) =>
-    fileSystem.realPath(target).pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        (_error) => Effect.succeed(path.resolve(target)),
-      ),
-    );
+  const resolve = (target: string) => realPathOrMissing(dependencies, target);
   // A checkpoint snapshots the whole checkout, so only the thread's own worktree is restorable.
   let workspaceCwd: string | null = null;
   let workspaceIsolated = targets.workspace === null ? null : thread.worktreePath != null;
@@ -256,9 +268,9 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
   const targetOrdinal = input.checkpoint.ordinalWithinScope;
   // The workspace snapshot covers a checkout the thread attached under another spelling.
   const realPathOr = (target: string) =>
-    dependencies.fileSystem
-      .realPath(target)
-      .pipe(Effect.orElseSucceed(() => dependencies.path.resolve(target)));
+    realPathOrMissing(dependencies, target).pipe(
+      Effect.orElseSucceed(() => dependencies.path.resolve(target)),
+    );
   const workspaceCwd = yield* realPathOr(input.scope.cwd);
   const workspaceStatus = checkpointWorkspaceStatus(input.checkpoint);
   // Unlike a missing snapshot, a failed one of the thread's own worktree can't be skipped:
@@ -281,7 +293,8 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
     { workspace: workspaceReady ? input.scope : null, repositories },
     dependencies,
   );
-  if (workspaceReady && isolation.workspace !== true) {
+  // A failed target snapshot can't be compared, but later turns' listed files still show edits.
+  if ((workspaceReady || workspaceStatus === "error") && isolation.workspace !== true) {
     const later = input.checkpoints
       .filter(
         (checkpoint) =>
@@ -292,14 +305,15 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
       .toSorted((left, right) => left.ordinalWithinScope - right.ordinalWithinScope);
     let workspaceChangedLater = later.some(
       (checkpoint) =>
+        checkpointWorkspaceFiles(checkpoint).length > 0 ||
         // Without a snapshot, a later turn may have changed the folder.
-        checkpointWorkspaceStatus(checkpoint) !== "ready" ||
-        checkpointWorkspaceFiles(checkpoint).length > 0,
+        (workspaceReady && checkpointWorkspaceStatus(checkpoint) !== "ready"),
     );
     const latest = later.at(-1);
     // An empty file list is not proof: its diff summary may have failed.
     if (
       !workspaceChangedLater &&
+      workspaceReady &&
       repositories.length > 0 &&
       latest !== undefined &&
       dependencies.workspaceChanged !== undefined
@@ -311,7 +325,7 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
         toCheckpointRef: latest.ref,
       });
     }
-    if (repositories.length === 0 || workspaceChangedLater) {
+    if ((workspaceReady && repositories.length === 0) || workspaceChangedLater) {
       return { _tag: "shared-workspace" } satisfies CheckpointRestorePlan;
     }
   }

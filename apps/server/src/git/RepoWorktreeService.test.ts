@@ -912,181 +912,200 @@ describe("RepoWorktreeService", () => {
     ),
   );
 
-  it.effect("treats a linked worktree location and Git's real path as one checkout", () =>
-    withFixture(
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const service = yield* RepoWorktreeService.RepoWorktreeService;
-          const first = yield* createThread;
-          const second = yield* createThread;
-          const request = { repository: "alpha", branch: "feature/shared", baseRef: "main" };
+  it.effect.skipIf(!symlinksSupported)(
+    "treats a linked worktree location and Git's real path as one checkout",
+    () =>
+      withFixture(
+        () =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const service = yield* RepoWorktreeService.RepoWorktreeService;
+            const first = yield* createThread;
+            const second = yield* createThread;
+            const request = { repository: "alpha", branch: "feature/shared", baseRef: "main" };
 
-          const created = yield* service.ensure({ threadId: first, ...request });
-          const reused = yield* service.ensure({ threadId: second, ...request });
-          assert.equal(
-            yield* fileSystem.realPath(created.repoWorktree.worktreePath),
-            reused.repoWorktree.worktreePath,
-          );
-          assert.notEqual(created.repoWorktree.worktreePath, reused.repoWorktree.worktreePath);
+            const created = yield* service.ensure({ threadId: first, ...request });
+            const reused = yield* service.ensure({ threadId: second, ...request });
+            assert.equal(
+              yield* fileSystem.realPath(created.repoWorktree.worktreePath),
+              reused.repoWorktree.worktreePath,
+            );
+            assert.notEqual(created.repoWorktree.worktreePath, reused.repoWorktree.worktreePath);
 
-          const again = yield* service.ensure({ threadId: first, ...request });
-          assert.isTrue(again.alreadyAttached);
-          assert.equal((yield* readThread(first)).repoWorktrees?.length, 1);
-          assert.deepEqual(
-            yield* service.detach({
-              threadId: first,
-              worktreePath: reused.repoWorktree.worktreePath,
-            }),
-            { detached: true, worktreePath: created.repoWorktree.worktreePath },
-          );
-        }),
-      { linkedWorktreesDirectory: true },
-    ),
+            const again = yield* service.ensure({ threadId: first, ...request });
+            assert.isTrue(again.alreadyAttached);
+            assert.equal((yield* readThread(first)).repoWorktrees?.length, 1);
+            assert.deepEqual(
+              yield* service.detach({
+                threadId: first,
+                worktreePath: reused.repoWorktree.worktreePath,
+              }),
+              { detached: true, worktreePath: created.repoWorktree.worktreePath },
+            );
+          }),
+        { linkedWorktreesDirectory: true },
+      ),
   );
 
-  it.effect("keeps a worktree that a folder thread attached when its own thread deletes it", () =>
-    withFixture(
-      (fixture) =>
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps a worktree that a folder thread attached when its own thread deletes it",
+    () =>
+      withFixture(
+        (fixture) =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const service = yield* RepoWorktreeService.RepoWorktreeService;
+            // An ordinary thread's worktree, made through the linked location, inside an unattached one.
+            const outerPath = path.join(fixture.worktreesDirectory, "alpha", "outer");
+            yield* git(fixture.alpha, [
+              "worktree",
+              "add",
+              "-b",
+              "feature/outer",
+              outerPath,
+              "main",
+            ]);
+            const worktreePath = path.join(outerPath, "feature-login");
+            yield* git(fixture.alpha, [
+              "worktree",
+              "add",
+              "-b",
+              "feature/login",
+              worktreePath,
+              "main",
+            ]);
+            yield* fileSystem.writeFileString(path.join(worktreePath, "draft.txt"), "draft\n");
+            yield* createThreadIn({ branch: "feature/login", worktreePath });
+            const folderThread = yield* createThread;
+            const attached = yield* service.ensure({
+              threadId: folderThread,
+              repository: "alpha",
+              branch: "feature/login",
+            });
+            assert.equal(attached.status, "reused");
+            assert.equal(attached.uncommittedFiles, 1);
+
+            const refused = yield* service
+              .removeWorktree({ cwd: fixture.alpha, path: worktreePath, force: true })
+              .pipe(Effect.flip);
+            assert.equal(refused._tag, "RepoWorktreeInUseError");
+            assert.include(refused.message, '"Folder thread"');
+            const relativeRefused = yield* service
+              .removeWorktree({
+                cwd: fixture.alpha,
+                path: path.relative(fixture.alpha, worktreePath),
+                force: true,
+              })
+              .pipe(Effect.flip);
+            assert.equal(relativeRefused._tag, "RepoWorktreeInUseError");
+            const outerRefused = yield* service
+              .removeWorktree({ cwd: fixture.alpha, path: outerPath, force: true })
+              .pipe(Effect.flip);
+            assert.equal(outerRefused._tag, "RepoWorktreeInUseError");
+            assert.equal(
+              yield* fileSystem.readFileString(path.join(worktreePath, "draft.txt")),
+              "draft\n",
+            );
+
+            yield* service.detach({ threadId: folderThread, worktreePath });
+            yield* service.removeWorktree({ cwd: fixture.alpha, path: worktreePath, force: true });
+            assert.isFalse(yield* fileSystem.exists(worktreePath));
+          }),
+        { linkedWorktreesDirectory: true },
+      ),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "lets Files save in attached worktrees outside both folders until detached",
+    () =>
+      withFixture((fixture) =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const service = yield* RepoWorktreeService.RepoWorktreeService;
-          // An ordinary thread's worktree, made through the linked location.
-          const worktreePath = path.join(fixture.worktreesDirectory, "alpha", "feature-login");
-          yield* git(fixture.alpha, [
-            "worktree",
-            "add",
-            "-b",
-            "feature/login",
-            worktreePath,
-            "main",
-          ]);
-          yield* fileSystem.writeFileString(path.join(worktreePath, "draft.txt"), "draft\n");
-          yield* createThreadIn({ branch: "feature/login", worktreePath });
-          const folderThread = yield* createThread;
-          const attached = yield* service.ensure({
-            threadId: folderThread,
-            repository: "alpha",
-            branch: "feature/login",
-          });
-          assert.equal(attached.status, "reused");
-          assert.equal(attached.uncommittedFiles, 1);
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const outside = path.join(fixture.root, "outside");
+          const alphaWorktree = path.join(outside, "alpha");
+          const serverWorktree = path.join(outside, "server");
+          const serverOther = path.join(outside, "server-other");
+          yield* git(fixture.alpha, ["worktree", "add", "-b", "feature/external", alphaWorktree]);
+          yield* git(fixture.server, ["worktree", "add", "-b", "feature/external", serverWorktree]);
+          yield* git(fixture.server, ["worktree", "add", "-b", "feature/other", serverOther]);
+          yield* fileSystem.writeFileString(path.join(alphaWorktree, "draft.txt"), "draft\n");
+          const unrelated = path.join(fixture.root, "unrelated");
+          const unrelatedWorktree = path.join(fixture.root, "unrelated-feature");
+          yield* initRepo(unrelated);
+          yield* git(unrelated, ["worktree", "add", "-b", "feature/x", unrelatedWorktree]);
+          const linked = path.join(fixture.folder, "linked");
+          yield* fileSystem.symlink(unrelated, linked);
+          const plain = path.join(fixture.root, "plain");
+          yield* fileSystem.makeDirectory(plain);
 
-          const refused = yield* service
-            .removeWorktree({ cwd: fixture.alpha, path: worktreePath, force: true })
-            .pipe(Effect.flip);
-          assert.equal(refused._tag, "RepoWorktreeInUseError");
-          assert.include(refused.message, '"Folder thread"');
-          const relativeRefused = yield* service
-            .removeWorktree({
-              cwd: fixture.alpha,
-              path: path.relative(fixture.alpha, worktreePath),
-              force: true,
-            })
-            .pipe(Effect.flip);
-          assert.equal(relativeRefused._tag, "RepoWorktreeInUseError");
+          // Bound by its own worktree path, which the folder project's Git list lacks.
+          yield* createThreadIn({ branch: "feature/external", worktreePath: serverWorktree });
+          const threadId = yield* createThread;
+          const alpha = yield* service.ensure({
+            threadId,
+            repository: "alpha",
+            branch: "feature/external",
+          });
+          assert.equal(alpha.status, "reused");
+          assert.equal(alpha.uncommittedFiles, 1);
+          assert.equal(alpha.repoWorktree.worktreePath, alphaWorktree);
+          const server = yield* service.ensure({
+            threadId,
+            repository: "server",
+            branch: "feature/external",
+          });
+          assert.equal(server.status, "reused");
+
+          assert.equal(yield* saveReadme(fixture.folder, alphaWorktree), "saved");
+          assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "saved");
           assert.equal(
-            yield* fileSystem.readFileString(path.join(worktreePath, "draft.txt")),
+            yield* fileSystem.readFileString(path.join(alphaWorktree, "README.md")),
+            "saved\n",
+          );
+          assert.equal(
+            yield* fileSystem.readFileString(path.join(alphaWorktree, "draft.txt")),
             "draft\n",
           );
 
-          yield* service.detach({ threadId: folderThread, worktreePath });
-          yield* service.removeWorktree({ cwd: fixture.alpha, path: worktreePath, force: true });
-          assert.isFalse(yield* fileSystem.exists(worktreePath));
-        }),
-      { linkedWorktreesDirectory: true },
-    ),
-  );
+          // Records only the server writes, naming checkouts Git does not list for that repository.
+          for (const [repositoryPath, worktreePath] of [
+            [fixture.alpha, serverOther],
+            [unrelated, unrelatedWorktree],
+            [linked, unrelatedWorktree],
+            [fixture.alpha, plain],
+          ] as const) {
+            const forged = yield* createThread;
+            yield* threads.dispatch({
+              type: "thread.repo-worktree.attach",
+              commandId: CommandId.make(`attach:${forged}`),
+              threadId: forged,
+              repoWorktree: {
+                repository: "forged",
+                repositoryPath,
+                worktreePath,
+                branch: "forged",
+                baseRef: null,
+                origin: "reused",
+                attachedAt: "2026-01-01T00:00:00.000Z",
+              },
+            });
+            assert.equal(yield* saveReadme(fixture.folder, worktreePath), "refused");
+          }
 
-  it.effect("lets Files save in attached worktrees outside both folders until detached", () =>
-    withFixture((fixture) =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const service = yield* RepoWorktreeService.RepoWorktreeService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const outside = path.join(fixture.root, "outside");
-        const alphaWorktree = path.join(outside, "alpha");
-        const serverWorktree = path.join(outside, "server");
-        const serverOther = path.join(outside, "server-other");
-        yield* git(fixture.alpha, ["worktree", "add", "-b", "feature/external", alphaWorktree]);
-        yield* git(fixture.server, ["worktree", "add", "-b", "feature/external", serverWorktree]);
-        yield* git(fixture.server, ["worktree", "add", "-b", "feature/other", serverOther]);
-        yield* fileSystem.writeFileString(path.join(alphaWorktree, "draft.txt"), "draft\n");
-        const unrelated = path.join(fixture.root, "unrelated");
-        const unrelatedWorktree = path.join(fixture.root, "unrelated-feature");
-        yield* initRepo(unrelated);
-        yield* git(unrelated, ["worktree", "add", "-b", "feature/x", unrelatedWorktree]);
-        const linked = path.join(fixture.folder, "linked");
-        yield* fileSystem.symlink(unrelated, linked);
-        const plain = path.join(fixture.root, "plain");
-        yield* fileSystem.makeDirectory(plain);
-
-        // Bound by its own worktree path, which the folder project's Git list lacks.
-        yield* createThreadIn({ branch: "feature/external", worktreePath: serverWorktree });
-        const threadId = yield* createThread;
-        const alpha = yield* service.ensure({
-          threadId,
-          repository: "alpha",
-          branch: "feature/external",
-        });
-        assert.equal(alpha.status, "reused");
-        assert.equal(alpha.uncommittedFiles, 1);
-        assert.equal(alpha.repoWorktree.worktreePath, alphaWorktree);
-        const server = yield* service.ensure({
-          threadId,
-          repository: "server",
-          branch: "feature/external",
-        });
-        assert.equal(server.status, "reused");
-
-        assert.equal(yield* saveReadme(fixture.folder, alphaWorktree), "saved");
-        assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "saved");
-        assert.equal(
-          yield* fileSystem.readFileString(path.join(alphaWorktree, "README.md")),
-          "saved\n",
-        );
-        assert.equal(
-          yield* fileSystem.readFileString(path.join(alphaWorktree, "draft.txt")),
-          "draft\n",
-        );
-
-        // Records only the server writes, naming checkouts Git does not list for that repository.
-        for (const [repositoryPath, worktreePath] of [
-          [fixture.alpha, serverOther],
-          [unrelated, unrelatedWorktree],
-          [linked, unrelatedWorktree],
-          [fixture.alpha, plain],
-        ] as const) {
-          const forged = yield* createThread;
+          yield* service.detach({ threadId, worktreePath: alphaWorktree });
+          assert.equal(yield* saveReadme(fixture.folder, alphaWorktree), "refused");
+          assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "saved");
           yield* threads.dispatch({
-            type: "thread.repo-worktree.attach",
-            commandId: CommandId.make(`attach:${forged}`),
-            threadId: forged,
-            repoWorktree: {
-              repository: "forged",
-              repositoryPath,
-              worktreePath,
-              branch: "forged",
-              baseRef: null,
-              origin: "reused",
-              attachedAt: "2026-01-01T00:00:00.000Z",
-            },
+            type: "thread.delete",
+            commandId: CommandId.make(`delete:${threadId}`),
+            threadId,
           });
-          assert.equal(yield* saveReadme(fixture.folder, worktreePath), "refused");
-        }
-
-        yield* service.detach({ threadId, worktreePath: alphaWorktree });
-        assert.equal(yield* saveReadme(fixture.folder, alphaWorktree), "refused");
-        assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "saved");
-        yield* threads.dispatch({
-          type: "thread.delete",
-          commandId: CommandId.make(`delete:${threadId}`),
-          threadId,
-        });
-        assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "refused");
-      }),
-    ),
+          assert.equal(yield* saveReadme(fixture.folder, serverWorktree), "refused");
+        }),
+      ),
   );
 });

@@ -565,7 +565,8 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new RepoWorktreeReadError({ operation: "attachments", cause })),
       );
     for (const attachment of attachments) {
-      if ((yield* pathIdentity(attachment.worktreePath)) === target) {
+      // Removing a folder also removes a worktree attached inside it.
+      if (insideOrEqual(target, yield* pathIdentity(attachment.worktreePath))) {
         return yield* new RepoWorktreeInUseError({
           path: input.path,
           threadId: attachment.threadId,
@@ -961,7 +962,7 @@ const make = Effect.gen(function* () {
           RepoWorktreeDispatchError: (error) =>
             Effect.logWarning("repository worktree branch was not relabeled", {
               threadId,
-              cause: error.cause,
+              operation: error.operation,
             }),
         }),
       );

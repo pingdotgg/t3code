@@ -671,7 +671,7 @@ export const layer: Layer.Layer<
     const run = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
       git.execute({ operation: `CheckpointService.${operation}`, cwd, args, timeoutMs: 60_000 });
 
-    const diffFiles = (input: {
+    const changedFiles = (input: {
       readonly scopeId: CheckpointScopeId;
       readonly cwd: string;
       readonly fromCheckpointRef: CheckpointRef;
@@ -710,10 +710,6 @@ export const layer: Layer.Layer<
               deletions: file.deletions,
             })),
         ),
-      );
-    };
-    const changedFiles = (input: Parameters<typeof diffFiles>[0]) =>
-      diffFiles(input).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
             scopeId: input.scopeId,
@@ -722,19 +718,30 @@ export const layer: Layer.Layer<
           }).pipe(Effect.as([])),
         ),
       );
+    };
+    // Unlike turn diffs, a merged upstream still leaves the folder unlike the snapshot.
     const workspaceChanged: CheckpointServiceV2Shape["workspaceChanged"] = Effect.fn(
       "CheckpointService.workspaceChanged",
     )((input) =>
-      diffFiles(input).pipe(
-        Effect.map((files) => files.length > 0),
-        Effect.catch((cause) =>
-          Effect.logWarning("orchestration V2 checkpoint workspace comparison failed", {
-            scopeId: input.scopeId,
-            checkpointRef: input.toCheckpointRef,
-            cause: String(cause),
-          }).pipe(Effect.as(true)),
+      checkpointStore
+        .diffCheckpoints({
+          cwd: input.cwd,
+          fromCheckpointRef: input.fromCheckpointRef,
+          toCheckpointRef: input.toCheckpointRef,
+          fallbackFromToHead: false,
+          ignoreWhitespace: false,
+          format: "numstat",
+        })
+        .pipe(
+          Effect.map((diff) => parseTurnDiffFilesFromNumstat(diff).length > 0),
+          Effect.catch((cause) =>
+            Effect.logWarning("orchestration V2 checkpoint workspace comparison failed", {
+              scopeId: input.scopeId,
+              checkpointRef: input.toCheckpointRef,
+              error: cause._tag,
+            }).pipe(Effect.as(true)),
+          ),
         ),
-      ),
     );
 
     const refExists = (cwd: string, checkpointRef: CheckpointRef) =>

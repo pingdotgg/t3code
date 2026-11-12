@@ -425,11 +425,17 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
 );
 
 it.effect.each([
-  { diff: "is empty", failed: false, changed: false },
-  { diff: "fails", failed: true, changed: true },
+  { diff: "is empty", numstat: "", failed: false, changed: false },
+  {
+    diff: "has only a merged upstream's file",
+    numstat: "1\t0\tupstream.txt",
+    failed: false,
+    changed: true,
+  },
+  { diff: "fails", numstat: "", failed: true, changed: true },
 ] as const)(
   "counts the workspace as changed when its diff $diff: $changed",
-  ({ failed, changed }) =>
+  ({ numstat, failed, changed }) =>
     Effect.gen(function* () {
       const checkpoints = yield* CheckpointService.CheckpointServiceV2;
       const result = yield* checkpoints.workspaceChanged({
@@ -457,8 +463,9 @@ it.effect.each([
                           detail: "fatal: bad object",
                         }),
                       )
-                    : Effect.succeed(""),
-                listAuthoredPaths: () => Effect.succeed(null),
+                    : Effect.succeed(numstat),
+                // No later commit wrote anything: every changed path is a Git import.
+                listAuthoredPaths: () => Effect.succeed(new Set<string>()),
               }),
               Layer.mock(GitVcsDriver.GitVcsDriver)({}),
             ),

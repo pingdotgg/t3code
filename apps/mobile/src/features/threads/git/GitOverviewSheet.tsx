@@ -106,7 +106,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     gitStatus.data?.refName ??
     (sourceControl.repoWorktree === null
       ? selectedThread?.branch
-      : gitStatus.data === undefined
+      : gitStatus.data === null
         ? sourceControl.repoWorktree.branch
         : null) ??
     "Detached HEAD";

@@ -242,6 +242,15 @@ it.effect.each([
     expected: "shared-workspace",
   },
   {
+    refusal: "the project folder's snapshot failed at the target and a later turn edited it",
+    owner: "project folder",
+    target: "error",
+    later: "ready",
+    otherAttached: false,
+    laterFolderEdit: true,
+    expected: "shared-workspace",
+  },
+  {
     refusal: "the project folder changed after the target but no later turn listed its files",
     owner: "project folder",
     target: "ready",
@@ -258,6 +267,19 @@ it.effect.each([
     otherAttached: true,
     expected: "shared-repository",
   },
+  ...(symlinksSupported
+    ? ([
+        {
+          refusal: "another thread has the removed service worktree attached through a link",
+          owner: "project folder",
+          target: "ready",
+          later: "ready",
+          otherAttached: true,
+          attachedThroughLink: true,
+          expected: "shared-repository",
+        },
+      ] as const)
+    : []),
 ] as const)(
   "refuses file restore when $refusal",
   ({ owner, target: targetStatus, later, otherAttached, expected, ...row }) =>
@@ -276,7 +298,17 @@ it.effect.each([
         ref: "refs/t3/test/service",
         status: "ready",
       };
-      const checkpoint = (ordinal: number, workspaceStatus: "ready" | "error") =>
+      const file = (filePath: string) => ({
+        path: filePath,
+        kind: "modified",
+        additions: 1,
+        deletions: 1,
+      });
+      const checkpoint = (
+        ordinal: number,
+        workspaceStatus: "ready" | "error",
+        folderEdit = false,
+      ) =>
         ({
           id: CheckpointId.make(`restore-error-checkpoint-${ordinal}`),
           scopeId,
@@ -285,9 +317,14 @@ it.effect.each([
           ordinalWithinScope: ordinal,
           ref: `refs/t3/test/workspace-${ordinal}`,
           repositories: [repository],
-          files: [{ path: "service/index.ts", kind: "modified", additions: 1, deletions: 1 }],
+          files: [file("service/index.ts"), ...(folderEdit ? [file("README.md")] : [])],
         }) as never;
       const target = checkpoint(1, targetStatus);
+      let attachedPath = repository.worktreePath;
+      if ("attachedThroughLink" in row) {
+        yield* fileSystem.symlink(parent, path.join(parent, "link"));
+        attachedPath = path.join(parent, "link", "service-work");
+      }
       const plan = yield* planCheckpointRestore(
         {
           thread: {
@@ -297,7 +334,7 @@ it.effect.each([
           },
           scope: { id: scopeId, cwd: worktreePath },
           checkpoint: target,
-          checkpoints: [target, checkpoint(2, later)],
+          checkpoints: [target, checkpoint(2, later, "laterFolderEdit" in row)],
         },
         {
           fileSystem,
@@ -311,7 +348,7 @@ it.effect.each([
                   ? [
                       {
                         threadId: ThreadId.make("other-thread"),
-                        worktreePath: repository.worktreePath,
+                        worktreePath: attachedPath,
                       },
                     ]
                   : [],
