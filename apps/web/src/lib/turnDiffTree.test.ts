@@ -139,13 +139,13 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
-  it("keeps literal backslashes in file names apart from directory paths", () => {
-    const tree = buildTurnDiffTree([
-      { path: "back\\slash.txt", kind: "modified", additions: 1, deletions: 0 },
-      { path: "back/slash.txt", kind: "modified", additions: 2, deletions: 0 },
-    ]);
-
-    expect(tree).toEqual([
+  it("keeps a literal backslash in a POSIX file name instead of splitting it into a folder", () => {
+    expect(
+      buildTurnDiffTree([
+        { path: "back\\slash.txt", kind: "modified", additions: 1, deletions: 0 },
+        { path: "back/slash.txt", kind: "modified", additions: 2, deletions: 0 },
+      ]),
+    ).toEqual([
       {
         kind: "directory",
         name: "back",
