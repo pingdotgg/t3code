@@ -28,6 +28,7 @@ import {
   readThemeFileGuarded,
 } from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
 
 const SparseSettings = Schema.Record(Schema.String, Schema.Unknown);
@@ -159,24 +160,38 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
 }
 
 const envT3Home = Config.String("T3CODE_HOME").pipe(Config.option);
+const DEV_STATE_PLACEHOLDER_URL = new URL("http://localhost");
+
+const hasLiveServer = (statePath: string) =>
+  readPersistedServerRuntimeState(statePath).pipe(
+    Effect.map((state) => Option.isSome(state) && isProcessAlive(state.value.pid)),
+    Effect.orElseSucceed(() => false),
+  );
 
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
   const envHome = Option.filter(yield* envT3Home, (value) => value.trim().length > 0);
   const configuredBaseDir = Option.orElse(explicitBaseDir, () => envHome);
   const baseDir = yield* resolveBaseDir(Option.getOrUndefined(configuredBaseDir));
-  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {
+  const userdataPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {
     baseDirIsExplicit: Option.isSome(configuredBaseDir),
   });
+  // A dev server with an implicit home keeps its state in `dev`; follow it unless a
+  // `userdata` server is running too, the same order `t3 pair` checks.
+  let derivedPaths = userdataPaths;
+  if (
+    Option.isNone(configuredBaseDir) &&
+    !(yield* hasLiveServer(userdataPaths.serverRuntimeStatePath))
+  ) {
+    const devPaths = yield* ServerConfig.deriveServerPaths(baseDir, DEV_STATE_PLACEHOLDER_URL);
+    if (yield* hasLiveServer(devPaths.serverRuntimeStatePath)) derivedPaths = devPaths;
+  }
   return {
     settingsPath: derivedPaths.settingsPath,
     themesDir: derivedPaths.environmentThemesDir,
   };
 });
 
-/**
- * A permission or I/O error must propagate: reading it as "no settings" would
- * have the caller write a fresh sparse file over settings it never saw.
- */
+/** Propagate read errors to avoid overwriting unread settings with a sparse file. */
 const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const exists = yield* fs
@@ -195,10 +210,7 @@ const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   return { raw, settings };
 });
 
-/**
- * A running server owns this file too, and its write path is an in-process
- * semaphore that cannot serialize against another process.
- */
+/** The server's in-process semaphore cannot serialize writes from this process. */
 const CONCURRENT_WRITE_ATTEMPTS = 5;
 
 const writeDefaultTheme = Effect.fn(function* (input: {
@@ -212,8 +224,7 @@ const writeDefaultTheme = Effect.fn(function* (input: {
     const setAt = DateTime.formatIso(yield* DateTime.now);
     const next =
       input.themeId.length > 0
-        ? // The timestamp is the set-generation: it lets clients apply a re-set
-          // of the same value they already applied once.
+        ? // The timestamp lets clients reapply the same theme.
           { ...settings, defaultTheme: input.themeId, defaultThemeSetAt: setAt }
         : Object.fromEntries(
             Object.entries(settings).filter(
@@ -289,16 +300,13 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const fileBasename = path.basename(input.filePath, ".json");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
-  // The same rules the watcher applies when it reads the directory back, so a
-  // publish cannot report success for a file that will then be skipped.
+  // Match watcher validation so published files will not be skipped.
   if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
     return yield* new ThemeFileIdInvalidError({ themeId, filePath: input.filePath });
   }
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
-  // Neither ends in `.json`, so the watcher never mistakes them for themes.
-  // Both names carry the pid, so concurrent publishers of one id cannot
-  // unlink or restore over each other's staging and rollback copies.
+  // Non-JSON suffixes hide these from the watcher; PIDs isolate concurrent publishers.
   const backupPath = `${destinationPath}.rollback-${process.pid}`;
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
   yield* fs
@@ -308,11 +316,8 @@ const publishThemeFile = Effect.fn(function* (input: {
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
 
-  // The staging entry is created O_EXCL after clearing any stale leftover, so a
-  // symlink or file already at that predictable name is never followed or
-  // written through. Written verbatim: appending so much as a newline could
-  // push a file at the size limit past it and have the watcher skip what was
-  // just accepted.
+  // O_EXCL prevents following a symlink at the predictable staging path.
+  // Preserve bytes exactly: even an added newline could exceed the watcher's size limit.
   const stagedIno = yield* Effect.try({
     try: () => {
       try {
@@ -333,10 +338,7 @@ const publishThemeFile = Effect.fn(function* (input: {
     catch: publishFailure,
   });
 
-  // Whatever occupies the destination -- a theme, a symlink, anything -- is
-  // moved aside in one atomic step rather than inspected and then replaced:
-  // there is no window between a check and the commit, and rollback restores
-  // that exact directory entry instead of a re-read of it.
+  // Atomic rename avoids a check/replace race and preserves the exact entry for rollback.
   const hadPrevious = yield* Effect.try({
     try: () => {
       try {
@@ -355,9 +357,7 @@ const publishThemeFile = Effect.fn(function* (input: {
       NodeFS.unlinkSync(stagingPath);
     } catch {}
     try {
-      // The destination is touched only while it is empty or still holds
-      // the exact file this process put there; a concurrent publisher's
-      // newer file wins, and this process's obsolete copy is discarded.
+      // Only replace this process's inode or an empty destination; concurrent publishers win.
       const destinationIno = (() => {
         try {
           return NodeFS.lstatSync(destinationPath).ino;
@@ -390,11 +390,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   return { themeId, revert, cleanup };
 });
 
-/**
- * The mobile default is absent on purpose -- web and desktop cannot resolve it
- * and mobile does not follow this setting, so naming it would be the silent
- * no-op this check exists to stop.
- */
+/** Web and desktop cannot resolve the mobile default, and mobile does not follow this setting. */
 const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
   const published = yield* readPublishedThemes(themesDir);
   return [...BUILT_IN_THEME_IDS, ...published.map((theme) => theme.id)].toSorted();
@@ -408,7 +404,7 @@ const themeSetCommand = Command.make("set", {
   ),
   theme: Argument.String("theme").pipe(
     Argument.withDescription(
-      'A theme id (a built-in, or one this machine publishes — themes/nightfall.json is "nightfall"), or a path to a theme JSON file to publish and set in one step.',
+      'A theme id (a built-in, or one this machine publishes, where themes/nightfall.json is "nightfall"), or a path to a theme JSON file to publish and set in one step.',
     ),
   ),
 }).pipe(
@@ -422,9 +418,7 @@ const themeSetCommand = Command.make("set", {
       }
       const paths = yield* resolveThemePaths(flags.baseDir);
 
-      // Path-shaped first, existence second. Deciding on existence alone would
-      // make `t3 theme set ocean` publish ./ocean whenever the cwd happens to
-      // hold a file by that name, instead of selecting the built-in.
+      // A bare theme id must not publish a same-named file that happens to exist in cwd.
       const looksLikePath =
         target.endsWith(".json") ||
         target.includes("/") ||

@@ -18,7 +18,9 @@ export function ComposerEditor({
   contentInsetVertical = 0,
   singleLineCentered: _singleLineCentered,
   enterBehavior: _enterBehavior,
+  readResetGeneration: _readResetGeneration,
   readOnly = false,
+  onContentSizeChange,
   ...props
 }: ComposerEditorProps) {
   const inputRef = useRef<TextInputInstance>(null);
@@ -33,6 +35,7 @@ export function ComposerEditor({
       blur: () => inputRef.current?.blur(),
       setSelection: (nextSelection) =>
         inputRef.current?.setSelection(nextSelection.start, nextSelection.end),
+      flushPendingInput: async () => {},
     }),
     [],
   );
@@ -45,6 +48,7 @@ export function ComposerEditor({
         editable={(props.editable ?? true) && !readOnly}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
+        onContentSizeChange={(event) => onContentSizeChange?.(event.nativeEvent.contentSize)}
         multiline={props.multiline ?? true}
         placeholderTextColorClassName={"accent-placeholder"}
         className="text-foreground"

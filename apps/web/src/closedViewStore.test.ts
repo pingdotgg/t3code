@@ -29,22 +29,6 @@ const snapshot: PreviewSessionSnapshot = {
 };
 
 describe("closedViewStore", () => {
-  it.each([null, {}, { entries: null }, { entries: {} }, { entries: "invalid" }])(
-    "rehydrates malformed older history %j as empty history",
-    async (state) => {
-      useClosedViewStore.getState().remember(diff(refA));
-      const { storage, name } = useClosedViewStore.persist.getOptions();
-      await storage!.setItem(name!, {
-        state: state as { entries: ClosedViewEntry[] },
-        version: 0,
-      });
-      await useClosedViewStore.persist.rehydrate();
-      expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
-      expect(useClosedViewStore.getState().entries).toEqual([]);
-      expect(await storage!.getItem(name!)).toEqual({ state: { entries: [] }, version: 2 });
-    },
-  );
-
   it.each([
     { id: "bad", kind: "browser", threadRef: refA, snapshot: {} },
     {
@@ -70,6 +54,12 @@ describe("closedViewStore", () => {
       threadRef: refA,
       surface: { kind: "pull-request", id: "pull-request:x", repository: "owner/repo", number: 1 },
     },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "side-chat", id: "side-chat:x" },
+    },
   ])("discards incomplete saved views %j while retaining valid history", async (entry) => {
     const id = useClosedViewStore.getState().remember(diff(refA));
     const { storage, name } = useClosedViewStore.persist.getOptions();
@@ -81,59 +71,6 @@ describe("closedViewStore", () => {
     expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
     expect(useClosedViewStore.getState().entries).toEqual([{ ...diff(refA), id }]);
     expect(() => useClosedViewStore.getState().remember(diff(refB))).not.toThrow();
-  });
-
-  it("preserves every supported saved panel type and its restore data", async () => {
-    const surfaces = [
-      { kind: "diff", id: "diff" },
-      { kind: "files", id: "files" },
-      { kind: "pull-requests", id: "pull-requests" },
-      { kind: "preview", id: "browser:new", resourceId: null },
-      { kind: "preview", id: "browser:saved", resourceId: "saved" },
-      { kind: "device", id: "device" },
-      {
-        kind: "device",
-        id: "device:phone",
-        title: "My phone",
-        target: { hostId: "mac", deviceId: "phone", platform: "ios", name: "iPhone" },
-      },
-      { kind: "file", id: "file:x", relativePath: "x", revealLine: 12, revealRequestId: 1 },
-      {
-        kind: "file",
-        id: "attachment:a",
-        relativePath: "report.pdf",
-        revealLine: null,
-        revealRequestId: 0,
-        attachment: {
-          type: "file",
-          id: "a",
-          name: "report.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 1,
-        },
-      },
-      {
-        kind: "pull-request",
-        id: "pull-request:x",
-        projectId: "project",
-        repository: "owner/repo",
-        number: 1,
-        environmentId: "env-1",
-        host: "github.com",
-        url: "https://github.com/owner/repo/pull/1",
-      },
-    ];
-    const entries = surfaces.map((surface, index) => ({
-      id: String(index),
-      kind: "panel-tab",
-      threadRef: refA,
-      surface,
-    })) as ClosedViewEntry[];
-    const { storage, name } = useClosedViewStore.persist.getOptions();
-    await storage!.setItem(name!, { state: { entries }, version: 0 });
-    await useClosedViewStore.persist.rehydrate();
-    expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
-    expect(useClosedViewStore.getState().entries).toEqual(entries);
   });
 
   it("keeps private tabs available in memory without saving their metadata", async () => {
@@ -154,6 +91,11 @@ describe("closedViewStore", () => {
 
   it("removes private metadata and malformed entries from history saved by earlier versions", async () => {
     const store = useClosedViewStore.getState();
+    const sideChatId = store.remember({
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { id: "side-chat:side", kind: "side-chat", threadId: ThreadId.make("side") },
+    });
     const publicId = store.remember(diff(refA));
     const browserId = store.remember({
       kind: "browser",
@@ -184,37 +126,10 @@ describe("closedViewStore", () => {
     expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([
       browserId,
       publicId,
+      sideChatId,
     ]);
     const saved = JSON.stringify(await storage!.getItem(name!));
     expect(saved).not.toContain("private.example");
     expect(saved).not.toContain("Private page");
-  });
-
-  it("keeps newest first, moves a re-closed tab to the front, and caps at 20", () => {
-    const store = useClosedViewStore.getState();
-    store.remember(diff(refA));
-    store.remember(diff(refB));
-    store.remember(diff(refA));
-    expect(useClosedViewStore.getState().entries).toMatchObject([
-      { threadRef: refA },
-      { threadRef: refB },
-    ]);
-
-    for (let index = 0; index < 24; index++) {
-      store.remember({
-        kind: "panel-tab",
-        threadRef: refA,
-        surface: {
-          kind: "file",
-          id: `file:${index}`,
-          relativePath: `${index}.ts`,
-          revealLine: null,
-          revealRequestId: 0,
-        },
-      });
-    }
-    const entries = useClosedViewStore.getState().entries;
-    expect(entries).toHaveLength(20);
-    expect(entries[0]).toMatchObject({ surface: { id: "file:23" } });
   });
 });

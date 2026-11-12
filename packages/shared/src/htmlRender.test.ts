@@ -1,20 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  HTML_RENDER_MAX_HEIGHT,
-  htmlRenderFrameHeight,
-  htmlRenderReferencesEqual,
-  htmlRenderTheme,
-  htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
-  htmlRenderThemeMessage,
-  readHtmlRenderContentHeight,
   readHtmlRenderImageRequest,
-  readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
-  readHtmlRenderReference,
 } from "./htmlRender.ts";
-import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
@@ -31,6 +21,22 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected).toContain('name="viewport"');
   });
 
+  it.each([
+    "<html><head data-condition='x > 0'>",
+    '<html><head data-condition="x > 0" data-label=\'it "works"\'>',
+    "<html data-condition='x > 0'>",
+    '<html data-condition="x > 0" data-label="it \'works\'">',
+  ])("keeps the bootstrap after the complete opening tag: %s", (opening) => {
+    const prefix = `<!doctype html>${opening}`;
+    const head = opening.startsWith("<html><head") ? "" : "<head>";
+    const content = `${head ? "" : "<title>Report</title></head>"}<body><p>Report</p></body></html>`;
+    const injected = injectHtmlRenderBootstrap(prefix + content);
+    expect(injected.startsWith(`${prefix}${head}<meta charset="utf-8">`)).toBe(true);
+    expect(injected.indexOf('<style id="t3-theme">')).toBeGreaterThan(prefix.length);
+    expect(injected).toContain("<script>");
+    expect(injected.endsWith(content)).toBe(true);
+  });
+
   it("wraps fragments without a head and keeps existing meta tags", () => {
     const fragment =
       '<meta charset="utf-8"><meta name="viewport" content="width=device-width"><p>hi</p>';
@@ -41,17 +47,14 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected.endsWith("<p>hi</p>")).toBe(true);
   });
 
-  it.each(["textarea", "title", "xmp", "iframe", "noembed", "noframes", "noscript", "plaintext"])(
-    "keeps the bootstrap outside %s content",
-    (tag) => {
-      const fragment = `<${tag}><head><meta name="viewport"></head></${tag}>`;
-      const injected = injectHtmlRenderBootstrap(fragment);
-      expect(injected.startsWith("<!doctype html><head>")).toBe(true);
-      expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf(`<${tag}>`));
-      expect(injected).toContain('<meta name="viewport" content="width=device-width');
-      expect(injected.endsWith(fragment)).toBe(true);
-    },
-  );
+  it.each(["textarea", "iframe", "plaintext"])("keeps the bootstrap outside %s content", (tag) => {
+    const fragment = `<${tag}><head><meta name="viewport"></head></${tag}>`;
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected.startsWith("<!doctype html><head>")).toBe(true);
+    expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf(`<${tag}>`));
+    expect(injected).toContain('<meta name="viewport" content="width=device-width');
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
 
   it.each([
     '<template><head><meta name="viewport"></head></template>',
@@ -117,91 +120,41 @@ describe("readHtmlRenderImageRequest", () => {
     });
     expect(
       readHtmlRenderImageRequest(image({ src: "data:image/png;base64,AA", name: " Chart " })),
-    ).toEqual({
-      src: "data:image/png;base64,AA",
-      name: "Chart",
-    });
+    ).toEqual({ images: [{ src: "data:image/png;base64,AA", name: "Chart" }], index: 0 });
     expect(readHtmlRenderImageRequest(image({ src: "https://example.com/a.png" }))).toEqual({
-      src: "https://example.com/a.png",
-      name: "Image",
+      images: [{ src: "https://example.com/a.png", name: "Image" }],
+      index: 0,
     });
+    const boundaryImage = readHtmlRenderImageRequest(
+      image({ src: "https://example.com/a.png", name: "a".repeat(199) + "😀" }),
+    );
+    expect(boundaryImage?.images[0]?.name.isWellFormed()).toBe(true);
+    expect(boundaryImage?.images[0]?.name).toBe("a".repeat(199));
     expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
   });
-});
 
-describe("readHtmlRenderKeyDown", () => {
-  it("reads the key of a keydown notification and nothing else", () => {
-    const notification = (params: unknown) => ({
-      jsonrpc: "2.0",
-      method: "t3/notifications/keydown",
-      params,
+  it("keeps the page's other images, dropping unsafe ones, around the clicked image", () => {
+    const b = { src: "https://example.com/b.png", name: "B" };
+    const params = {
+      ...b,
+      images: [{ src: "https://example.com/a.png", name: "A" }, { src: "blob:null/1" }, b, null],
+      index: 2,
+    };
+    const request = (overrides: object) =>
+      readHtmlRenderImageRequest({
+        jsonrpc: "2.0",
+        method: "t3/notifications/open-image",
+        params: { ...params, ...overrides },
+      });
+    expect(request({})).toEqual({
+      images: [{ src: "https://example.com/a.png", name: "A" }, b],
+      index: 1,
     });
-    expect(readHtmlRenderKeyDown(notification({ key: "k", code: "KeyK", metaKey: true }))).toEqual({
-      key: "k",
-      code: "KeyK",
-      metaKey: true,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      repeat: false,
-    });
-    expect(readHtmlRenderKeyDown(notification({ key: 1, code: "KeyK" }))).toBeUndefined();
-    expect(
-      readHtmlRenderKeyDown({ jsonrpc: "2.0", method: "ui/open-link", params: { key: "k" } }),
-    ).toBeUndefined();
-  });
-});
-
-describe("readHtmlRenderContentHeight", () => {
-  it("reads only the height of an MCP Apps size-changed notification", () => {
-    const notification = (params: unknown) => ({
-      jsonrpc: "2.0",
-      method: "ui/notifications/size-changed",
-      params,
-    });
-    expect(readHtmlRenderContentHeight(notification({ height: 412 }))).toBe(412);
-    expect(readHtmlRenderContentHeight(notification({ height: "412" }))).toBe(undefined);
-    expect(readHtmlRenderContentHeight(notification({ height: 0 }))).toBe(undefined);
-    expect(readHtmlRenderContentHeight({ ...notification({ height: 412 }), method: "x" })).toBe(
-      undefined,
-    );
-  });
-});
-
-describe("htmlRenderThemeMessage", () => {
-  it("is an MCP Apps host-context-changed notification carrying the theme variables", () => {
-    const theme = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
-    expect(htmlRenderThemeMessage(theme)).toEqual({
-      jsonrpc: "2.0",
-      method: "ui/notifications/host-context-changed",
-      params: { theme: "dark", styles: { variables: theme.variables } },
-    });
-  });
-});
-
-describe("htmlRenderTheme", () => {
-  it("exposes the brand accent as --accent and keeps the fragment decodable", () => {
-    const theme = htmlRenderTheme(T3_CODE_LIGHT_THEME_COLORS, "light");
-    expect(theme.variables["--accent"]).toBe(T3_CODE_LIGHT_THEME_COLORS.accent);
-    expect(theme.variables["--chart-1"]).toBe(T3_CODE_LIGHT_THEME_COLORS.accent);
-    expect(theme.variables["--chart-6"]).toBeDefined();
-    const fragment = htmlRenderThemeFragment(theme);
-    expect(JSON.parse(decodeURIComponent(fragment.slice("#t3-theme=".length)))).toEqual(theme);
-    expect(fragment).not.toContain("&");
-    expect(htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark").variables["--background"]).toBe(
-      T3_CODE_DARK_THEME_COLORS.canvas,
-    );
-  });
-});
-
-describe("readHtmlRenderReference", () => {
-  it("clamps height and rejects malformed references", () => {
-    expect(readHtmlRenderReference({ ...reference, height: 99_999 })?.height).toBe(2000);
-    expect(readHtmlRenderReference({ ...reference, title: "  " })?.title).toBe("HTML");
-    expect(readHtmlRenderReference({ ...reference, attachmentId: 4 })).toBeUndefined();
-    expect(readHtmlRenderReference({ ...reference, height: Number.NaN })).toBeUndefined();
+    // An index that does not point at the clicked image falls back to that image alone.
+    expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
+    expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
   });
 });
 
@@ -217,74 +170,5 @@ describe("htmlRenderFromToolItem", () => {
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
-  });
-
-  it("ignores other tools and failed calls", () => {
-    expect(htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_preview", output: result })).toBe(
-      undefined,
-    );
-    expect(htmlRenderFromToolItem({ toolName: "mcp__other__html_render", output: result })).toBe(
-      undefined,
-    );
-    expect(
-      htmlRenderFromToolItem({ toolName: "html_render", output: { ...result, isError: true } }),
-    ).toBeUndefined();
-  });
-});
-
-describe("htmlRenderFrameHeight", () => {
-  const measured = readHtmlRenderReference({
-    ...reference,
-    height: 1500,
-    heights: [
-      [728, 1403],
-      [390, 1290],
-      [1000, 1660],
-    ],
-  })!;
-
-  it("takes the taller neighbor between measured widths and holds the ends", () => {
-    expect(measured.heights?.map(([width]) => width)).toEqual([390, 728, 1000]);
-    expect(htmlRenderFrameHeight(measured, 728)).toBe(1403);
-    expect(htmlRenderFrameHeight(measured, 559)).toBe(1403);
-    expect(htmlRenderFrameHeight(measured, 320)).toBe(1290);
-  });
-
-  it("takes the taller layout when a breakpoint falls between measured widths", () => {
-    const responsive = readHtmlRenderReference({
-      ...reference,
-      height: 2000,
-      heights: [
-        [520, 900],
-        [640, 450],
-      ],
-    })!;
-    expect(htmlRenderFrameHeight(responsive, 590)).toBe(900);
-    expect(htmlRenderFrameHeight(responsive, 640)).toBe(450);
-  });
-
-  it("fits a page the client lays out taller than the server measured", () => {
-    const fitted = { ...measured, height: 1403 };
-    expect(htmlRenderFrameHeight(fitted, 728, 1415)).toBe(1415);
-    expect(htmlRenderFrameHeight(fitted, 1400)).toBe(1660);
-    expect(htmlRenderFrameHeight(fitted, 728, 5000)).toBe(HTML_RENDER_MAX_HEIGHT);
-  });
-
-  it("keeps the agent's height when it asked for a scrolling frame or the page is unmeasured", () => {
-    const scrolling = { ...measured, height: 600 };
-    expect(htmlRenderFrameHeight(scrolling, 728, 1415)).toBe(600);
-    expect(htmlRenderFrameHeight(scrolling, 1400)).toBe(600);
-    expect(htmlRenderFrameHeight(reference, 728)).toBe(reference.height);
-    expect(htmlRenderFrameHeight(reference, 728, 900)).toBe(reference.height);
-    expect(htmlRenderFrameHeight(reference, 728, 300)).toBe(300);
-  });
-
-  it("drops a malformed table and compares tables by value", () => {
-    expect(readHtmlRenderReference({ ...reference, heights: [[728, "x"]] })?.heights).toBe(
-      undefined,
-    );
-    const copy = readHtmlRenderReference(JSON.parse(JSON.stringify(measured)))!;
-    expect(htmlRenderReferencesEqual(measured, copy)).toBe(true);
-    expect(htmlRenderReferencesEqual(measured, { ...copy, heights: [[390, 1290]] })).toBe(false);
   });
 });

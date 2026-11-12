@@ -1,16 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseInlineMarkdown } from "./composer-rich-text";
+import { inlineMarkdownUnitMarks, parseInlineMarkdown } from "./composer-rich-text";
 
 describe("composer rich text markdown", () => {
-  it("parses bold markers into styled spans", () => {
-    expect(parseInlineMarkdown("hello **bold** world")).toEqual([
-      { text: "hello ", marks: [] },
-      { text: "bold", marks: ["bold"] },
-      { text: " world", marks: [] },
-    ]);
-  });
-
   it("preserves unmatched markers, escaped markers, and identifiers", () => {
     for (const text of [
       "plain text",
@@ -62,6 +54,24 @@ describe("composer rich text markdown", () => {
   it("keeps code span contents literal", () => {
     expect(parseInlineMarkdown("`**not bold**`")).toEqual([
       { text: "**not bold**", marks: ["code"] },
+    ]);
+  });
+
+  it("maps each source character to its marks, or null for a dropped delimiter", () => {
+    const bold = ["bold"];
+    expect(inlineMarkdownUnitMarks("**`*` w** \\*")).toEqual([
+      null,
+      null,
+      null,
+      ["bold", "code"],
+      null,
+      bold,
+      bold,
+      null,
+      null,
+      [],
+      [],
+      [],
     ]);
   });
 });

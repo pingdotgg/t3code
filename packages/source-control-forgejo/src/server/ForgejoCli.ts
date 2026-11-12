@@ -1,6 +1,8 @@
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
@@ -209,7 +211,14 @@ export function matchForgejoLogin(
       : undefined;
 }
 
+const ForgejoKeysConfig = Config.all({
+  dataHome: Config.String("XDG_DATA_HOME").pipe(Config.option),
+  appData: Config.String("APPDATA").pipe(Config.option),
+});
+
 export const make = Effect.gen(function* () {
+  // Optional strings cannot fail to decode.
+  const { dataHome, appData } = yield* Effect.suspend(() => ForgejoKeysConfig).pipe(Effect.orDie);
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
@@ -249,10 +258,8 @@ export const make = Effect.gen(function* () {
     for (const path of forgejoKeysPaths({
       platform: yield* HostProcess.Platform,
       home: yield* HostProcess.HomeDirectory,
-      ...(globalThis.process.env.XDG_DATA_HOME
-        ? { dataHome: globalThis.process.env.XDG_DATA_HOME }
-        : {}),
-      ...(globalThis.process.env.APPDATA ? { appData: globalThis.process.env.APPDATA } : {}),
+      ...(Option.isSome(dataHome) ? { dataHome: dataHome.value } : {}),
+      ...(Option.isSome(appData) ? { appData: appData.value } : {}),
     })) {
       const exists = yield* fileSystem.exists(path).pipe(
         Effect.mapError(
@@ -433,7 +440,12 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const cached = authenticated.get(login.url);
     if (token && cached?.token === token && now - cached.time < 30_000) return token;
-    yield* execute({ command: "fj", cwd, args: ["--host", login.url, "whoami"] });
+    // fj reads the cwd repository even with --host and fails on an unborn branch.
+    yield* execute({
+      command: "fj",
+      cwd: yield* HostProcess.HomeDirectory,
+      args: ["--host", login.url, "whoami"],
+    });
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
     if (!refreshed)
@@ -515,7 +527,10 @@ export const make = Effect.gen(function* () {
         const matchingUrls = [
           ...new Set(
             result.stdout.split("\n").flatMap((line) => {
-              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)$/.exec(line.trim())?.[1];
+              // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/.exec(
+                line.trim(),
+              )?.[1];
               return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
                 ? [url]
                 : [];

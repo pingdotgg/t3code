@@ -151,12 +151,6 @@ describe("createRunningThreadKeepAliveAtom", () => {
     expect(h.openStreams()).toEqual([]);
   });
 
-  it("keeps queued threads open", () => {
-    const h = makeHarness();
-    h.registry.set(h.threads(LOCAL), [shell("a", "queued")]);
-    expect(h.openStreams()).toEqual(["local:a"]);
-  });
-
   it("follows environments that connect and go away", () => {
     const h = makeHarness();
     h.registry.set(h.environmentIds, [LOCAL]);

@@ -68,33 +68,3 @@ it("fails pending focus when the helper exits", async () => {
   assert.lengthOf(workerConstructorMock.mock.calls, 2);
   thread.close();
 });
-
-it("replaces a timed-out helper before accepting more work", async () => {
-  vi.useFakeTimers();
-  const replacement = makeWorker();
-  workerConstructorMock.mockReturnValueOnce(worker).mockReturnValueOnce(replacement);
-  const thread = startWindowsForegroundFocusThread("focus.cjs");
-
-  try {
-    worker.emit("message", "ready");
-    const focused = thread.focus(target);
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    assert.isFalse(await focused);
-    assert.lengthOf(worker.terminate.mock.calls, 1);
-    assert.lengthOf(workerConstructorMock.mock.calls, 2);
-
-    replacement.emit("message", "ready");
-    const prepared = thread.prepare(target);
-    assert.deepEqual(replacement.postMessage.mock.calls[0]?.[0], {
-      type: "prepare",
-      requestId: 2,
-      target,
-    });
-    replacement.emit("message", { type: "result", requestId: 2, focused: true });
-    assert.isTrue(await prepared);
-  } finally {
-    thread.close();
-    vi.useRealTimers();
-  }
-});

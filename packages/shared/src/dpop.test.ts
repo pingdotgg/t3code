@@ -209,6 +209,27 @@ describe("verifyDpopProof", () => {
     assert.equal(invalidSignature.code, "invalid_signature");
   });
 
+  it("accepts clock offsets through 300 seconds in either direction", () => {
+    for (const { offset, accepted } of [
+      { offset: -300, accepted: true },
+      { offset: 300, accepted: true },
+      { offset: -301, accepted: false },
+      { offset: 301, accepted: false },
+    ]) {
+      const result = verifyDpopProof({
+        proof,
+        method: "POST",
+        url: "https://example.com/oauth/token",
+        nowEpochSeconds: 100 + offset,
+      });
+
+      assert.equal(result.ok, accepted, `Clock offset: ${offset}s`);
+      if (!result.ok) {
+        assert.equal(result.code, "time_window");
+      }
+    }
+  });
+
   it("requires the RFC 9449 access token hash when an access token is expected", () => {
     const thumbprint = computeDpopJwkThumbprint(publicJwk);
     const accessTokenProof = signDpopProof({

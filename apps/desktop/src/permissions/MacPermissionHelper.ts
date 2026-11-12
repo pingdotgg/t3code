@@ -18,7 +18,7 @@ const permissionGranted = (permission: MacPermission) => {
   return false;
 };
 
-export function macAppBundlePath(executable: string): string | undefined {
+function macAppBundlePath(executable: string): string | undefined {
   return /^(.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1];
 }
 
@@ -88,8 +88,7 @@ export class MacPermissionHelper {
     const bundle = macAppBundlePath(Electron.app.getPath("exe"));
     if (!bundle) return;
     if (owner?.isDestroyed()) return;
-    // Finder's bundle-icon lookup can return the generic app icon for mounted artifacts.
-    // Use the same PNG that packaging uses to generate the app's macOS icon.
+    // Finder can return generic icons for mounted artifacts; use the packaging PNG.
     const appIcon = iconPaths
       .map((iconPath) => Electron.nativeImage.createFromPath(iconPath))
       .find((image) => !image.isEmpty());

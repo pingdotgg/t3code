@@ -1,15 +1,24 @@
+import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contracts";
 import type {
   ModelSelection,
   ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
+  ScheduledTaskThreadMode,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
-import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  parseMaxDeliveryAge,
+  parseWebhookFilterDrafts,
+  webhookFilterDrafts,
+  webhookFilterDraftsChanged,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
@@ -44,21 +53,35 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "once" | "interval" | "webhook";
   readonly timeOfDay: string;
+  /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
+  readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
+  readonly replayKey: string;
+  readonly coalesceKey: string;
+  readonly coalesceWindowSeconds: string;
+  readonly filters: ReadonlyArray<WebhookFilterDraft>;
+  /** The filter rows the form opened with. */
+  readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
   timeOfDay: "09:00",
+  runAt: "",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
   signature: null,
   maxDeliveryAgeMinutes: "",
+  replayKey: "",
+  coalesceKey: "",
+  coalesceWindowSeconds: "",
+  filters: [],
+  savedFilters: [],
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
@@ -71,6 +94,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
       };
+    case "once":
+      return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
     case "interval":
       return {
         ...DEFAULT_SCHEDULE,
@@ -82,18 +107,45 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         ...DEFAULT_SCHEDULE,
         mode: "webhook",
         signature: task.schedule.signature,
+        replayKey: task.schedule.dedupe?.replayKey ?? "",
+        coalesceKey: task.schedule.dedupe?.coalesceKey ?? "",
+        coalesceWindowSeconds:
+          task.schedule.dedupe?.coalesceWindowSeconds === undefined
+            ? ""
+            : String(task.schedule.dedupe.coalesceWindowSeconds),
         maxDeliveryAgeMinutes:
           task.schedule.maxDeliveryAgeMinutes == null
             ? ""
             : String(task.schedule.maxDeliveryAgeMinutes),
+        filters: webhookFilterDrafts(task.schedule.filters),
+        savedFilters: webhookFilterDrafts(task.schedule.filters),
       };
   }
+}
+
+export function parseIntervalMinutes(value: string): number {
+  return Number(value.trim().replace(",", "."));
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
+    const replayKey = draft.replayKey.trim();
+    const coalesceKey = draft.coalesceKey.trim();
+    if ([replayKey, coalesceKey].some((key) => key && !isWebhookDedupeTemplate(key))) return null;
+    const coalesceWindowSeconds = draft.coalesceWindowSeconds?.trim()
+      ? Number(draft.coalesceWindowSeconds)
+      : undefined;
+    if (
+      coalesceWindowSeconds !== undefined &&
+      (!Number.isInteger(coalesceWindowSeconds) ||
+        coalesceWindowSeconds < 10 ||
+        coalesceWindowSeconds > 3600)
+    )
+      return null;
+    const parsedFilters = parseWebhookFilterDrafts(draft.filters);
+    if (!("filters" in parsedFilters)) return null;
     // No secret is sent, so the server keeps the stored one.
     return {
       type: "webhook",
@@ -106,10 +158,27 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
               prefix: draft.signature.prefix,
             },
       maxDeliveryAgeMinutes,
+      ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
+        ? {
+            dedupe: {
+              ...(replayKey ? { replayKey } : {}),
+              ...(coalesceKey ? { coalesceKey } : {}),
+              ...(coalesceWindowSeconds === undefined ? {} : { coalesceWindowSeconds }),
+            },
+          }
+        : { dedupe: {} }),
+      // Only edited filters are sent; the server keeps the stored ones otherwise.
+      ...(webhookFilterDraftsChanged(draft.savedFilters, draft.filters)
+        ? { filters: parsedFilters.filters }
+        : {}),
     };
   }
+  if (draft.mode === "once") {
+    const runAt = new Date(draft.runAt);
+    return Number.isNaN(runAt.getTime()) ? null : { type: "once", runAt: runAt.toISOString() };
+  }
   if (draft.mode === "interval") {
-    const minutes = Number(draft.intervalMinutes);
+    const minutes = parseIntervalMinutes(draft.intervalMinutes);
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
@@ -134,9 +203,11 @@ export type ScheduledTaskDraft = {
   readonly title: string;
   readonly prompt: string;
   readonly projectId: ProjectId | null;
+  readonly threadId: ThreadId | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
+  readonly threadMode: ScheduledTaskThreadMode;
   readonly workspace: Workspace;
   readonly baseRef: string;
   readonly checkoutPath: string;
@@ -150,6 +221,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.title,
     draft.prompt,
     draft.projectId,
+    draft.threadId,
     draft.modelSelection?.instanceId,
     draft.modelSelection?.model,
     [...(draft.modelSelection?.options ?? [])]
@@ -157,9 +229,15 @@ function draftSignature(draft: ScheduledTaskDraft): string {
       .map((option) => [option.id, option.value]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
+    draft.schedule.runAt,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
+    draft.schedule.replayKey,
+    draft.schedule.coalesceKey,
+    draft.schedule.coalesceWindowSeconds,
+    draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
+    draft.threadMode,
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,
@@ -176,6 +254,38 @@ export function hasScheduledTaskDraftChanges(
   return draftSignature(initial) !== draftSignature(current);
 }
 
+export function moveDraftToThread(
+  draft: ScheduledTaskDraft,
+  thread: { readonly id: ThreadId; readonly projectId: ProjectId },
+): ScheduledTaskDraft {
+  return {
+    ...draft,
+    threadId: thread.id,
+    projectId: thread.projectId,
+    threadMode: draft.threadMode === "new_thread" ? "continue" : draft.threadMode,
+  };
+}
+
+/** Leaves the thread but keeps the mode. Matches MCP: new threads stay out of the shared checkout. */
+export function unbindDraftFromThread(draft: ScheduledTaskDraft): ScheduledTaskDraft {
+  if (draft.threadId === null) return draft;
+  return {
+    ...draft,
+    threadId: null,
+    ...(draft.workspace === "root"
+      ? { workspace: "worktree" as const, startFromOrigin: true }
+      : {}),
+  };
+}
+
+export function changeDraftProject(
+  draft: ScheduledTaskDraft,
+  projectId: ProjectId,
+): ScheduledTaskDraft {
+  if (projectId === draft.projectId) return draft;
+  return { ...unbindDraftFromThread(draft), projectId };
+}
+
 export function createDraft(
   projectId: ProjectId | null,
   modelSelection: ModelSelection | null,
@@ -185,9 +295,11 @@ export function createDraft(
     title: "",
     prompt: "",
     projectId,
+    threadId: null,
     modelSelection,
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
+    threadMode: "new_thread",
     workspace: "worktree",
     baseRef: "main",
     checkoutPath: "",
@@ -203,9 +315,11 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
+    threadId: task.threadId,
     modelSelection: task.modelSelection,
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
+    threadMode: scheduledTaskThreadMode(task),
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     checkoutPath:

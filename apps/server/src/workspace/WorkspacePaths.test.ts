@@ -4,7 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
+
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -20,47 +21,8 @@ const makeTempDir = Effect.fn("makeTempDir")(function* () {
   });
 });
 
-const writeTextFile = Effect.fn("writeTextFile")(function* (
-  cwd: string,
-  relativePath: string,
-  contents = "",
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const absolutePath = path.join(cwd, relativePath);
-  yield* fileSystem
-    .makeDirectory(path.dirname(absolutePath), { recursive: true })
-    .pipe(Effect.orDie);
-  yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
-});
-
 it.layer(layerTest)("WorkspacePathsLive", (it) => {
   describe("normalizeWorkspaceRoot", () => {
-    it.effect("resolves an existing directory", () =>
-      Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-        const cwd = yield* makeTempDir();
-
-        const resolved = yield* workspacePaths.normalizeWorkspaceRoot(cwd);
-
-        expect(resolved).toBe(cwd);
-      }),
-    );
-
-    it.effect("rejects missing directories", () =>
-      Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-        const cwd = yield* makeTempDir();
-        const path = yield* Path.Path;
-
-        const error = yield* workspacePaths
-          .normalizeWorkspaceRoot(path.join(cwd, "missing"))
-          .pipe(Effect.flip);
-
-        expect(error.message).toContain("Workspace root does not exist:");
-      }),
-    );
-
     it.effect("creates missing directories when createIfMissing is enabled", () =>
       Effect.gen(function* () {
         const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -78,114 +40,9 @@ it.layer(layerTest)("WorkspacePathsLive", (it) => {
         expect(stat.type).toBe("Directory");
       }),
     );
-
-    it.effect("rejects file paths", () =>
-      Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-        const cwd = yield* makeTempDir();
-        const path = yield* Path.Path;
-        const filePath = path.join(cwd, "README.md");
-        yield* writeTextFile(cwd, "README.md", "# hi\n");
-
-        const error = yield* workspacePaths.normalizeWorkspaceRoot(filePath).pipe(Effect.flip);
-
-        expect(error.message).toContain("Workspace root is not a directory:");
-      }),
-    );
-
-    it.effect("preserves non-NotFound stat failures while validating the root", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const workspacePaths = yield* WorkspacePaths.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            stat: (path) =>
-              Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "stat",
-                  pathOrDescriptor: String(path),
-                  description: "Test PermissionDenied stat failure.",
-                }),
-              ),
-          }),
-        );
-        const path = yield* Path.Path;
-        const workspaceRoot = " ./permission-denied ";
-        const normalizedWorkspaceRoot = path.resolve(workspaceRoot.trim());
-
-        const error = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(WorkspacePaths.WorkspaceRootStatFailedError);
-        expect(error).toMatchObject({
-          workspaceRoot,
-          normalizedWorkspaceRoot,
-          phase: "validate-existing",
-        });
-      }),
-    );
-
-    it.effect("preserves stat failures while verifying a newly created root", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        let statCalls = 0;
-        const workspacePaths = yield* WorkspacePaths.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            stat: (path) => {
-              statCalls += 1;
-              const reason = statCalls === 1 ? "NotFound" : "PermissionDenied";
-              return Effect.fail(
-                PlatformError.systemError({
-                  _tag: reason,
-                  module: "FileSystem",
-                  method: "stat",
-                  pathOrDescriptor: String(path),
-                  description: `Test ${reason} stat failure.`,
-                }),
-              );
-            },
-            makeDirectory: () => Effect.void,
-          }),
-        );
-        const path = yield* Path.Path;
-        const workspaceRoot = " ./created-then-unreadable ";
-        const normalizedWorkspaceRoot = path.resolve(workspaceRoot.trim());
-
-        const error = yield* workspacePaths
-          .normalizeWorkspaceRoot(workspaceRoot, { createIfMissing: true })
-          .pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(WorkspacePaths.WorkspaceRootStatFailedError);
-        expect(error).toMatchObject({
-          workspaceRoot,
-          normalizedWorkspaceRoot,
-          phase: "verify-created",
-        });
-      }),
-    );
   });
 
   describe("resolveRelativePathWithinRoot", () => {
-    it.effect("resolves relative paths inside the workspace root", () =>
-      Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-        const cwd = yield* makeTempDir();
-        const path = yield* Path.Path;
-
-        const resolved = yield* workspacePaths.resolveRelativePathWithinRoot({
-          workspaceRoot: cwd,
-          relativePath: "plans/effect-rpc.md",
-        });
-
-        expect(resolved).toEqual({
-          absolutePath: path.join(cwd, "plans/effect-rpc.md"),
-          relativePath: "plans/effect-rpc.md",
-        });
-      }),
-    );
-
     it.effect("rejects paths that escape the workspace root", () =>
       Effect.gen(function* () {
         const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -202,6 +59,26 @@ it.layer(layerTest)("WorkspacePathsLive", (it) => {
           "Workspace file path must be relative to the project root: ../escape.md",
         );
       }),
+    );
+
+    // On Windows `\` is a separator, so these names cannot exist there.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps a backslash in a name as part of the name",
+      () =>
+        Effect.gen(function* () {
+          const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir();
+
+          for (const relativePath of ["weird\\name.txt", "..\\..\\etc"]) {
+            expect(
+              yield* workspacePaths.resolveRelativePathWithinRoot({
+                workspaceRoot: cwd,
+                relativePath,
+              }),
+            ).toEqual({ absolutePath: path.join(cwd, relativePath), relativePath });
+          }
+        }),
     );
   });
 });

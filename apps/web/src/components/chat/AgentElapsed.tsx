@@ -1,7 +1,7 @@
 import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
-import { useEffect, useRef } from "react";
+import { tickTextContent } from "~/lib/tickTextContent";
 
 function formatElapsedSeconds(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
@@ -16,7 +16,7 @@ function formatElapsedSeconds(totalSeconds: number): string {
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-export function formatCompactElapsedSeconds(totalSeconds: number): string {
+function formatCompactElapsedSeconds(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -33,38 +33,18 @@ export function AgentElapsed({
   compact?: boolean;
 }) {
   const format = compact ? formatCompactElapsedSeconds : formatElapsedSeconds;
-  const textRef = useRef<HTMLSpanElement>(null);
   const live = isOrchestrationV2WorkActive(agent.status);
-  const startedAt = agent.startedAt;
-  const completedAt = agent.completedAt;
-
-  useEffect(() => {
-    if (!startedAt) {
-      return;
-    }
-    const update = () => {
-      if (textRef.current) {
-        const elapsedMs = deriveSubagentElapsedMs(
-          { status: agent.status, startedAt, completedAt },
-          Date.now(),
-        );
-        const text = elapsedMs === null ? "" : format(elapsedMs / 1000);
-        if (textRef.current.textContent !== text) textRef.current.textContent = text;
-      }
-    };
-    update();
-    if (!live) return;
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, [live, startedAt, completedAt, agent.status, format]);
-
-  const elapsedMs = deriveSubagentElapsedMs(agent, 0);
-  if (elapsedMs === null) {
+  const { status, startedAt, completedAt } = agent;
+  if (deriveSubagentElapsedMs(agent, 0) === null) {
     return null;
   }
   return (
-    <span ref={textRef} className="tabular-nums">
-      {format(elapsedMs / 1000)}
-    </span>
+    <span
+      ref={tickTextContent((nowMs) => {
+        const elapsedMs = deriveSubagentElapsedMs({ status, startedAt, completedAt }, nowMs);
+        return elapsedMs === null ? "" : format(elapsedMs / 1000);
+      }, live)}
+      className="tabular-nums"
+    />
   );
 }

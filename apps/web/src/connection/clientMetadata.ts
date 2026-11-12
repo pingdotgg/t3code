@@ -5,7 +5,7 @@ import type {
   DesktopBridge,
 } from "@t3tools/contracts";
 
-interface BrowserIdentity {
+export interface BrowserIdentity {
   readonly userAgent: string;
   readonly platform: string;
   readonly maxTouchPoints: number;
@@ -44,7 +44,7 @@ export function browserClientOs(identity: BrowserIdentity): ClientOs {
   return "other";
 }
 
-export function browserFamily(userAgent: string): string {
+function browserFamily(userAgent: string): string {
   if (userAgent.trim() === "") return "unknown";
   if (/edg(?:e|a|ios)?\//i.test(userAgent)) return "Edge";
   if (/opr\/|opios\//i.test(userAgent)) return "Opera";
@@ -55,7 +55,7 @@ export function browserFamily(userAgent: string): string {
   return "other";
 }
 
-export function browserDeviceType(identity: BrowserIdentity): AuthClientMetadataDeviceType {
+function browserDeviceType(identity: BrowserIdentity): AuthClientMetadataDeviceType {
   const userAgent = identity.userAgent;
   if (userAgent.trim() === "") return "unknown";
   if (
@@ -79,7 +79,7 @@ export function clientPresentationMetadata(input: {
     return {
       label: "T3 Code Desktop",
       deviceType: "desktop",
-      os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform?.()),
+      os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform()),
       surface: "desktop",
       ...(input.appVersion === "0.0.0" ? {} : { appVersion: input.appVersion }),
     };

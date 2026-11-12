@@ -1,6 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =
@@ -31,6 +33,7 @@ export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
   serverThreadExists: boolean;
   serverThreadDeleted: boolean;
+  unlistedThreadDetail: EnvironmentThreadState;
   draftThreadExists: boolean;
 }): ThreadRouteRenderState {
   if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
@@ -39,7 +42,17 @@ export function resolveThreadRouteRenderState(input: {
   if (!input.bootstrapComplete) {
     return "loading";
   }
-  return "missing";
+  if (input.serverThreadExists || input.unlistedThreadDetail.status === "deleted") {
+    return "missing";
+  }
+  // Shell membership can lag a new thread; its detail decides.
+  const projection = Option.getOrNull(input.unlistedThreadDetail.data);
+  if (projection === null) {
+    return "loading";
+  }
+  return projection.thread.deletedAt !== null || projection.thread.archivedAt !== null
+    ? "missing"
+    : "ready";
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {
@@ -52,10 +65,18 @@ export function buildThreadRouteParams(ref: ScopedThreadRef): {
   };
 }
 
-/** Whether a (decoded) location pathname is `ref`'s own thread route, `/$environmentId/$threadId`. */
+/** The router keeps reserved characters encoded in location.pathname. */
 export function isThreadRoutePathname(pathname: string, ref: ScopedThreadRef): boolean {
-  const { environmentId, threadId } = buildThreadRouteParams(ref);
-  return pathname.replace(/\/$/, "") === `/${environmentId}/${threadId}`;
+  const parts = pathname.replace(/\/$/, "").split("/");
+  if (parts.length !== 3 || parts[0] !== "") return false;
+  try {
+    return (
+      decodeURIComponent(parts[1]!) === ref.environmentId &&
+      decodeURIComponent(parts[2]!) === ref.threadId
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function buildDraftThreadRouteParams(draftId: DraftId): {

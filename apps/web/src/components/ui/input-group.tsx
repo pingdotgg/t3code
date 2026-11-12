@@ -1,5 +1,3 @@
-"use client";
-
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 
@@ -95,6 +93,7 @@ function InputGroupAddon({
       data-align={align}
       data-slot="input-group-addon"
       onMouseDown={(e) => {
+        if (e.button !== 0) return;
         const target = e.target as HTMLElement;
         const isInteractive = target.closest(
           "button, a, input, select, textarea, [role='button'], [role='combobox'], [role='listbox'], [data-slot='select-trigger']",

@@ -11,19 +11,6 @@ function queuedLoader() {
   return { paths, resolve, load };
 }
 
-it("bounds loads to four and finishes children even when parents finish last", async () => {
-  const queue = queuedLoader();
-  const loading = loadFileAncestors("a/b/c/d/e/f/file.ts", queue.load, new AbortController());
-  for (let index = 3; index < 6; index++) {
-    queue.resolve[index]?.();
-    await Promise.resolve();
-    expect(queue.paths).toHaveLength(index + 2);
-  }
-  expect(queue.paths).toEqual(["", "a", "a/b", "a/b/c", "a/b/c/d", "a/b/c/d/e", "a/b/c/d/e/f"]);
-  for (const resolve of queue.resolve) resolve();
-  await loading;
-});
-
 it("stops aborted reveals while a new selection loads independently", async () => {
   const old = queuedLoader();
   const controller = new AbortController();

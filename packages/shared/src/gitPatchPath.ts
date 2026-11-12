@@ -31,10 +31,7 @@ const utf8 = new TextEncoder();
 // A leading U+FEFF is part of the filename, not an encoding marker.
 const fromUtf8 = new TextDecoder("utf-8", { ignoreBOM: true });
 
-/**
- * A header side's `a/` or `b/` belongs inside the quoting, so pass it in along with the name:
- * what git quotes is the whole token a reader takes off the line, side letter and all.
- */
+/** Include the a/ or b/ prefix in the quoted token, as Git does. */
 export function quoteGitPatchPath(path: string): string {
   let body = "";
   let quoting = false;
@@ -56,15 +53,11 @@ export function quoteGitPatchPath(path: string): string {
   return quoting ? `${QUOTE}${body}${QUOTE}` : path;
 }
 
-/**
- * The escapes are per byte, so a name in another alphabet arrives as a run of octal and
- * only reads back as itself once those bytes are rejoined and decoded together.
- */
+// Octal escapes represent bytes; rejoin before UTF-8 decoding.
 function unescapeBody(body: string): string {
   if (!body.includes("\\")) return body;
   const bytes: Array<number> = [];
-  // Anything left as itself is encoded a run at a time rather than a unit at a time, so a
-  // character outside the basic plane keeps its pair together rather than coming back as halves.
+  // Encode literal runs together to preserve surrogate pairs.
   let literal = "";
   const flush = () => {
     if (literal.length === 0) return;
@@ -106,11 +99,7 @@ function unescapeBody(body: string): string {
   return fromUtf8.decode(new Uint8Array(bytes));
 }
 
-/**
- * The escapes are undone whether the quotes are still there or not, because patch parsers disagree
- * about how much of the quoting they hand back: the one the clients read diffs with takes the
- * quotes off the `diff --git` line's names and leaves them on a rename's.
- */
+/** Unescape with or without quotes; client parsers strip them inconsistently across patch headers. */
 export function unquoteGitPatchPath(token: string): string {
   if (token.length >= 2 && token.startsWith(QUOTE) && token.endsWith(QUOTE)) {
     return unescapeBody(token.slice(1, -1));

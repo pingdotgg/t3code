@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -51,9 +51,7 @@ const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSet
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
 
-// Python splits BROWSER on the platform path separator before it parses quotes.
-// EPIPE must still exit 0 so Python does not fall back to an OS browser after
-// cancellation.
+// Python splits BROWSER on path separators before parsing quotes. Exit 0 on EPIPE to prevent browser fallback after cancellation.
 const browserHelperSource =
   `process.stderr.on("error",()=>process.exit(0)).write(` +
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
@@ -78,6 +76,8 @@ const removedEnvironmentKeys = new Set([
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
+  // An inherited pipe whose owner exited makes Electron-as-Node print Crashpad errors to stderr.
+  "CHROME_CRASHPAD_PIPE_NAME",
 ]);
 
 export interface AntigravityProfile {
@@ -87,6 +87,7 @@ export interface AntigravityProfile {
   readonly tokenPath: string;
   readonly tempDirectory: string;
   readonly browserCommand: string;
+  readonly caBundlePath?: string;
 }
 
 export interface AntigravityAuthConfig {
@@ -96,7 +97,7 @@ export interface AntigravityAuthConfig {
   readonly gcpLocation: string;
 }
 
-export const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
+const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
   authMethod: "oauth-personal",
   apiKey: "",
   gcpProject: "",
@@ -141,7 +142,7 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
  * `auth.type` names the selected method so a native logout clears only that method's credentials
  * instead of every stored token. Never holds a credential.
  */
-export function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
+function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
   const gcp = {
     ...(auth.gcpProject ? { project: auth.gcpProject } : {}),
     ...(auth.gcpLocation ? { location: auth.gcpLocation } : {}),
@@ -171,10 +172,7 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
-  /**
-   * It sits beside the profile, not inside it: the agent unpacks members up to 120 characters deep,
-   * and the profile's longer name would push them past Windows' 260-character path limit.
-   */
+  /** Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
   readonly runtimeTemp: string;
 }
 
@@ -182,9 +180,9 @@ export interface AntigravityInstanceDirectories {
 export const resolveAntigravityInstanceDirectories = Effect.fn(
   "resolveAntigravityInstanceDirectories",
 )(function* (stateDir: string, instanceId: ProviderInstanceId) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
-  const key = Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(instanceId)));
+  const key = Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(instanceId)));
   return {
     profile: path.join(stateDir, "providers", "antigravity", key),
     runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
@@ -206,21 +204,23 @@ function antigravityEnvironment(
     // Windows treats environment keys as case-insensitive. Remove aliases too.
     if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
   }
-  // The agent prefers GOOGLE_API_KEY over the GCP pair for Agent Platform, so the pair goes through
-  // settings.json instead of the environment.
+  // Put the GCP pair in settings.json because GOOGLE_API_KEY takes precedence in the environment.
   const credential =
     auth.authMethod === "gemini-api-key" && auth.apiKey
       ? { GEMINI_API_KEY: auth.apiKey }
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
         : {};
-  // It unpacks about 1 GB into the system temp directory per launch and a force
-  // kill leaves that behind. Point it at a T3-owned directory so the driver can
-  // reclaim the space.
+  // Each launch unpacks about 1 GB; use T3-owned temp so the driver can reclaim files after force-kill.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
   return {
     ...environment,
     ...credential,
+    ...(profile.caBundlePath !== undefined &&
+    baseEnv.SSL_CERT_FILE === undefined &&
+    baseEnv.SSL_CERT_DIR === undefined
+      ? { SSL_CERT_FILE: profile.caBundlePath }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
     BROWSER: profile.browserCommand,
@@ -232,12 +232,16 @@ function antigravityEnvironment(
   };
 }
 
-/**
- * The agent reads its user-global skills under `GEMINI_HOME`, which T3 points
- * at the private profile. Link the two skill directories back to the user's
- * real `~/.gemini` so global skills load, while MCP servers, hooks, and
- * credentials stay isolated.
- */
+class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkError>()(
+  "AntigravitySkillLinkError",
+  { link: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not link Antigravity user skills at ${this.link}.`;
+  }
+}
+
+/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
   readonly userHome: string;
@@ -252,18 +256,39 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     [links[1], targets[1]],
   ] as const) {
     yield* Effect.gen(function* () {
+      // The harness creates these folders itself, and mkdir fails on a dangling link.
+      if (!(yield* fs.exists(target))) {
+        const linked = yield* fs.readLink(link).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        if (linked) yield* fs.remove(link);
+        return;
+      }
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+        // An empty folder is the harness's placeholder from a launch without the link.
+        // rmdir refuses a non-empty folder, so content added meanwhile is never deleted.
+        Effect.catch((error) =>
+          Effect.tryPromise({
+            try: () => NodeFSP.rmdir(link),
+            catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+          }).pipe(
+            Effect.as(undefined),
+            Effect.mapError(() => error),
+          ),
+        ),
       );
       if (existing === target) return;
       if (existing !== undefined) {
         yield* fs.remove(link);
       }
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
-      yield* Effect.tryPromise(() =>
-        NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
-      );
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
+        catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+      });
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Antigravity user skills are not linked into the profile.", {
@@ -327,6 +352,27 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
+  let caBundlePath: string | undefined;
+  if (platform === "linux") {
+    // Bundled Python may look for certificates at paths absent on this distribution.
+    // Relative paths would resolve differently when the agent runs in the project directory.
+    for (const candidate of [
+      (input.baseEnv ?? process.env).NIX_SSL_CERT_FILE,
+      "/etc/ssl/certs/ca-bundle.crt",
+      "/etc/ssl/certs/ca-certificates.crt",
+      "/etc/pki/tls/certs/ca-bundle.crt",
+      "/etc/ssl/cert.pem",
+    ]) {
+      if (
+        candidate &&
+        path.isAbsolute(candidate) &&
+        (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        caBundlePath = candidate;
+        break;
+      }
+    }
+  }
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
@@ -334,6 +380,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tokenPath: path.join(acpDirectory, "acp_token.json"),
     tempDirectory,
     browserCommand,
+    ...(caBundlePath === undefined ? {} : { caBundlePath }),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
@@ -364,7 +411,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   }).pipe(
     Effect.scoped,
     Effect.timeoutOrElse({
-      duration: "5 seconds",
+      duration: "30 seconds",
       orElse: () =>
         Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
     }),
@@ -407,7 +454,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
     readonly executablePath: string;
-    readonly harnessPath: string;
+    readonly harnessPath: string | null;
   };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
@@ -417,7 +464,13 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    args: input.profile.platform === "linux" ? ["--uid="] : [],
+    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
+    args:
+      input.installation.harnessPath === null
+        ? ["acp"]
+        : input.profile.platform === "linux"
+          ? ["--uid="]
+          : [],
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(
@@ -426,7 +479,9 @@ export function buildAntigravityAcpSpawnInput(input: {
         input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
         input.runtimeTempDirectory,
       ),
-      ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath,
+      ...(input.installation.harnessPath === null
+        ? {}
+        : { ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath }),
     },
     extendEnv: false,
   };

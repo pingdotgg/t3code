@@ -1,13 +1,14 @@
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -22,13 +23,17 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       projectId: string;
       title: string;
       archivedAt: string | null;
+      settled: number;
       host: string;
       repository: string;
       number: number;
       url: string;
     }>`
       SELECT t.thread_id AS id, t.project_id AS "projectId", t.title,
-        t.archived_at AS "archivedAt", json_extract(link.value, '$.host') AS host,
+        t.archived_at AS "archivedAt",
+        (json_extract(t.payload_json, '$.settledAt') IS NOT NULL
+          OR json_extract(t.payload_json, '$.settledOverride') IS 'settled') AS settled,
+        json_extract(link.value, '$.host') AS host,
         json_extract(link.value, '$.repository') AS repository,
         json_extract(link.value, '$.number') AS number,
         json_extract(link.value, '$.url') AS url,
@@ -38,11 +43,18 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       WHERE json_extract(link.value, '$.number') = ${key.number}
         AND json_extract(link.value, '$.source') != 'stack-dismissed'
         AND t.deleted_at IS NULL
+        AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
       ORDER BY "updatedAt" DESC, id ASC
-    `;
+    `.pipe(NodeSqliteClient.readOnly);
     const threads = rows
       .filter((row) => threadPullRequestKeysEqual(row, key))
-      .map(({ id, projectId, title, archivedAt }) => ({ id, projectId, title, archivedAt }));
+      .map(({ id, projectId, title, archivedAt, settled }) => ({
+        id,
+        projectId,
+        title,
+        archivedAt,
+        settled: settled === 1,
+      }));
     return yield* decodeLinkedThreads({ threads });
   },
   Effect.mapError(

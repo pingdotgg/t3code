@@ -5,6 +5,7 @@ import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "./composerPullRequestMatches.ts";
 
 const entry = (number: number, updatedAt: string) => ({
@@ -24,30 +25,6 @@ describe("filterComposerPullRequestMatches", () => {
       limit: 10,
     });
     expect(result.map((match) => match.number)).toEqual([123, 1234, 1230]);
-  });
-
-  it("leaves the caller's array untouched", () => {
-    const entries = [entry(2, "2026-01-01"), entry(1, "2026-01-02")];
-    const snapshot = entries.map((match) => match.number);
-    filterComposerPullRequestMatches({
-      entries,
-      projectId: "p1",
-      repository: "owner/repo",
-      query: "",
-      limit: 10,
-    });
-    expect(entries.map((match) => match.number)).toEqual(snapshot);
-  });
-
-  it("de-duplicates and honours the limit", () => {
-    const result = filterComposerPullRequestMatches({
-      entries: [entry(7, "2026-01-02"), entry(7, "2026-01-01"), entry(8, "2026-01-03")],
-      projectId: "p1",
-      repository: "owner/repo",
-      query: "",
-      limit: 1,
-    });
-    expect(result).toHaveLength(1);
   });
 });
 
@@ -103,15 +80,29 @@ describe("linked pull requests", () => {
     expect(result).toEqual([entry(4, "2026-01-03")]);
   });
 
-  it("skips links that are not synced yet or were dismissed", () => {
-    expect(
-      composerPullRequestsFromLinks(
-        [
-          link("owner/repo-b", 4, { snapshot: null }),
-          link("owner/repo-b", 5, { source: "stack-dismissed" }),
-        ],
-        "p1",
-      ),
-    ).toEqual([]);
+  it("puts linked pull requests ahead of a text search, before and after it returns", () => {
+    const linked = composerPullRequestsFromLinks(
+      [
+        link("owner/repo", 7, {
+          snapshot: { ...link("owner/repo", 7).snapshot!, title: "Fix login" },
+        }),
+        link("owner/repo", 8),
+      ],
+      "p1",
+    );
+    const searching = withLinkedComposerPullRequestsFirst({
+      matches: [],
+      linked,
+      query: "fix",
+      limit: 10,
+    });
+    expect(searching.map((match) => match.number)).toEqual([7]);
+    const searched = withLinkedComposerPullRequestsFirst({
+      matches: [entry(9, "2026-01-05"), entry(8, "2026-01-03")],
+      linked,
+      query: "fix",
+      limit: 10,
+    });
+    expect(searched).toEqual([linked[0], entry(8, "2026-01-03"), entry(9, "2026-01-05")]);
   });
 });

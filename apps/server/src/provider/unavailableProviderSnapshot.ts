@@ -19,38 +19,37 @@ export interface UnavailableProviderSnapshotInput {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-export function buildUnavailableProviderSnapshot(
-  input: UnavailableProviderSnapshotInput,
-): Effect.Effect<ServerProvider> {
-  return Effect.gen(function* () {
-    const checkedAt = input.checkedAt ?? (yield* nowIso);
-    const displayName = input.displayName?.trim() || (input.driverKind as string);
+export const buildUnavailableProviderSnapshot = Effect.fn(
+  "unavailableProviderSnapshot.buildUnavailableProviderSnapshot",
+)(function* (input: UnavailableProviderSnapshotInput): Effect.fn.Return<ServerProvider> {
+  const checkedAt = input.checkedAt ?? (yield* nowIso);
+  const displayName = input.displayName?.trim() || (input.driverKind as string);
 
-    const base = buildServerProvider({
-      presentation: { displayName },
-      enabled: false,
-      checkedAt,
-      models: [],
-      skills: [],
-      probe: {
-        installed: false,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: input.reason,
-      },
-    });
-
-    return {
-      ...base,
-      instanceId: input.instanceId,
-      ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-      driver:
-        typeof input.driverKind === "string"
-          ? ProviderDriverKind.make(input.driverKind)
-          : input.driverKind,
-      availability: "unavailable",
-      unavailableReason: input.reason,
-    };
+  // No driver ran, so its setup capabilities are still unknown.
+  const { setup: _setup, ...base } = buildServerProvider({
+    presentation: { displayName },
+    enabled: false,
+    checkedAt,
+    models: [],
+    skills: [],
+    probe: {
+      installed: false,
+      version: null,
+      status: "error",
+      auth: { status: "unknown" },
+      message: input.reason,
+    },
   });
-}
+
+  return {
+    ...base,
+    instanceId: input.instanceId,
+    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    driver:
+      typeof input.driverKind === "string"
+        ? ProviderDriverKind.make(input.driverKind)
+        : input.driverKind,
+    availability: "unavailable",
+    unavailableReason: input.reason,
+  };
+});

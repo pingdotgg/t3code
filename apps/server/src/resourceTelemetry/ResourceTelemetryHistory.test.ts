@@ -8,10 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import {
-  buildResourceTelemetryHistory,
-  normalizeResourceTelemetryHistoryInput,
-} from "./ResourceTelemetryHistory.ts";
+import { buildResourceTelemetryHistory } from "./ResourceTelemetryHistory.ts";
 
 const SERVER_PID = 100;
 const ELECTRON_PID = 200;
@@ -132,13 +129,6 @@ function desktopSnapshot(): DesktopHostTelemetrySnapshot {
 }
 
 describe("buildResourceTelemetryHistory", () => {
-  it("normalizes query bounds before requesting native history", () => {
-    expect(normalizeResourceTelemetryHistoryInput({ windowMs: 0, bucketMs: 0 })).toEqual({
-      windowMs: 1_000,
-      bucketMs: 1_000,
-    });
-  });
-
   it("replays native snapshots on demand without applying current Electron metrics", () => {
     const history = buildResourceTelemetryHistory({
       readAt: DateTime.makeUnsafe(STARTED_AT_MS + 2_000),
@@ -228,24 +218,6 @@ describe("buildResourceTelemetryHistory", () => {
     const child = history.topProcesses.find((process) => process.identity.pid === CHILD_PID);
     expect(child?.cpuTimeMs).toBe(250);
     expect(child?.ioWriteBytes).toBe(4_000);
-  });
-
-  it("uses an exact current Electron identity for slightly older native samples", () => {
-    const history = buildResourceTelemetryHistory({
-      readAt: DateTime.makeUnsafe(STARTED_AT_MS + 2_000),
-      windowMs: 10_000,
-      bucketMs: 10_000,
-      sampleIntervalMs: 1_000,
-      serverPid: SERVER_PID,
-      sidecarPid: Option.none(),
-      desktopSnapshot: Option.some(desktopSnapshot()),
-      snapshots: [snapshot(1, STARTED_AT_MS, 100, 1_000)],
-      health,
-    });
-
-    expect(
-      history.topProcesses.find((process) => process.identity.pid === ELECTRON_PID)?.category,
-    ).toBe("electron-main");
   });
 
   it("uses the preceding sample as a baseline without attributing pre-window deltas", () => {

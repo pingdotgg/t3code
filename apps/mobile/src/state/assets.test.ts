@@ -1,4 +1,5 @@
 import {
+  AssetWorkspaceAssetNotFoundError,
   AuthFilesystemReadScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
@@ -6,7 +7,7 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -15,17 +16,24 @@ const state = vi.hoisted(() => ({
   assetAtom: {},
   mint: vi.fn(),
   assetQuery: vi.fn(),
+  executeQuery: vi.fn(),
+  preparedConnectionAtom: null as unknown,
 }));
 
 vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
 vi.mock("@effect/atom-react", () => ({
+  useAtomMount: () => undefined,
+  useAtomSubscribe: () => undefined,
   useAtomValue: (atom: unknown) =>
     atom === state.assetAtom
       ? AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 })
       : AsyncResult.initial(false),
 }));
 vi.mock("./session", () => ({
-  environmentSession: { sessionStateAtom: () => ({}) },
+  environmentSession: {
+    sessionStateAtom: () => ({}),
+    preparedConnectionValueAtom: () => state.preparedConnectionAtom,
+  },
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }),
 }));
 vi.mock("./presentation", () => ({
@@ -39,13 +47,20 @@ vi.mock("./query", () => ({
 }));
 vi.mock("./projectClones", () => ({ environmentProjectCloneListAtom: () => null }));
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: { sessionGenerationAtom: () => null },
+}));
 vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),
   createAssetEnvironmentAtoms: () => ({ createUrl: state.assetQuery }),
 }));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  executeAtomQuery: state.executeQuery,
+}));
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
-import { useRefreshAssetUrl, useAssetUrlState } from "./assets";
+import { refreshAssetUrl, useRefreshAssetUrl, useAssetUrlState } from "./assets";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
@@ -89,15 +104,6 @@ it("hides host assets with a denied grant while preserving attachments", () => {
   });
 });
 
-it("stops waiting for an unresolved grant when the connection is offline", () => {
-  state.phase = "offline";
-  expect(useAssetUrlState(environmentId, resource)).toEqual({
-    _tag: "Failure",
-    reason: "disconnected",
-  });
-  expect(state.assetQuery).not.toHaveBeenCalled();
-});
-
 it("lets the server authorize an explicit refresh before the client grant loads", async () => {
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBe(
     "https://host.test/api/assets/image.png",
@@ -110,4 +116,20 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   });
   state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(denied)));
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBeNull();
+});
+
+it("rejects with the server's error and resolves null only without a connection", async () => {
+  const missing = new AssetWorkspaceAssetNotFoundError({
+    resource,
+    checkedPath: "/repo/missing.png",
+  });
+  state.executeQuery.mockResolvedValue(AsyncResult.failure(Cause.fail(missing)));
+  state.preparedConnectionAtom = Atom.make({
+    _tag: "Some",
+    value: { httpBaseUrl: "https://host.test" },
+  });
+  await expect(refreshAssetUrl(environmentId, resource)).rejects.toBe(missing);
+
+  state.preparedConnectionAtom = Atom.make({ _tag: "None" });
+  await expect(refreshAssetUrl(environmentId, resource)).resolves.toBeNull();
 });

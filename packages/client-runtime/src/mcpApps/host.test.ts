@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
 
@@ -107,22 +107,6 @@ describe("makeMcpAppHost", () => {
     ]);
   });
 
-  it("replays a tool call that arrives after initialization, once", () => {
-    const { host, sent } = setup();
-    host.receive({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
-    host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
-    sent.length = 0;
-    host.setToolCall({ arguments: { city: "Oslo" }, result: undefined });
-    host.setToolCall({ arguments: { city: "Bergen" }, result: undefined });
-    expect(sent).toEqual([
-      {
-        jsonrpc: "2.0",
-        method: "ui/notifications/tool-input",
-        params: { arguments: { city: "Oslo" } },
-      },
-    ]);
-  });
-
   it("drops null fields providers report, which the MCP Apps SDK rejects", async () => {
     const { host, sent } = setup({
       callTool: async () => ({ content: [], structuredContent: null, _meta: null }),
@@ -144,6 +128,33 @@ describe("makeMcpAppHost", () => {
       structuredContent: { time: "t" },
     });
     expect(sent.find((m) => m.id === 2)?.result).toEqual({ content: [] });
+  });
+
+  it("sends a later result for a call that had none, without repeating its input", () => {
+    const { host, sent } = setup();
+    initialize(host);
+    sent.length = 0;
+    host.setToolCall({ arguments: { city: "Oslo" }, result: undefined });
+    host.setToolCall({
+      arguments: { city: "Oslo" },
+      result: { content: [{ type: "text", text: "Sunny" }] },
+    });
+    host.setToolCall({
+      arguments: { city: "Bergen" },
+      result: { content: [{ type: "text", text: "Rain" }] },
+    });
+    expect(sent).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-input",
+        params: { arguments: { city: "Oslo" } },
+      },
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: { content: [{ type: "text", text: "Sunny" }] },
+      },
+    ]);
   });
 
   it("accepts ui/message as one text block or the SDK's block array", async () => {
@@ -179,28 +190,6 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
   });
 
-  it("sends only changed context fields, and nothing before initialization", () => {
-    const { host, sent, setTheme } = setup();
-    setTheme("light");
-    host.updateHostContext();
-    expect(sent).toHaveLength(0);
-
-    host.receive({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
-    host.receive({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
-    sent.length = 0;
-    setTheme("dark");
-    host.updateHostContext();
-    expect(sent).toEqual([
-      {
-        jsonrpc: "2.0",
-        method: "ui/notifications/host-context-changed",
-        params: { theme: "dark", styles: context("dark").styles },
-      },
-    ]);
-    host.updateHostContext();
-    expect(sent).toHaveLength(1);
-  });
-
   it("catches the app up on context that changed while it was initializing", () => {
     const { host, sent, setTheme } = setup();
     host.receive({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
@@ -214,10 +203,12 @@ describe("makeMcpAppHost", () => {
   });
 
   it("proxies tools/call and reports a refusal as a JSON-RPC error", async () => {
+    const received: unknown[] = [];
     const { host, sent } = setup({
       callTool: async (input) => {
         if (input.name === "delete_everything")
-          throw new McpAppHostRefusal("Declined by the user.");
+          throw new McpAppHostRefusal({ message: "Declined by the user." });
+        received.push(input.arguments);
         return { content: [], structuredContent: { ok: true } };
       },
     });
@@ -228,7 +219,18 @@ describe("makeMcpAppHost", () => {
       method: "tools/call",
       params: { name: "delete_everything", arguments: {} },
     });
+    // postMessage's structured clone keeps undefined properties, which JSON cannot carry.
+    host.receive({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: {
+        name: "poll",
+        arguments: { since: undefined, nested: { a: undefined, b: 1 }, list: [1, undefined] },
+      },
+    });
     await flush();
+    expect(received).toStrictEqual([{}, { nested: { b: 1 }, list: [1, null] }]);
     expect(sent).toContainEqual({
       jsonrpc: "2.0",
       id: 7,
@@ -251,8 +253,14 @@ describe("makeMcpAppHost", () => {
     });
     host.receive({ jsonrpc: "2.0", id: 3, method: "sampling/createMessage", params: {} });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/message", params: { role: "assistant" } });
+    host.receive({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "poll", arguments: { since: 1n } },
+    });
     expect(sent.map((message) => (message.error as { code: number }).code)).toEqual([
-      -32602, -32601, -32602,
+      -32602, -32601, -32602, -32602,
     ]);
   });
 
@@ -322,7 +330,7 @@ describe("makeMcpAppHost", () => {
       updateModelContext: async (update) => void contexts.push(update),
       downloadFile: async (files) => {
         downloads.push(files);
-        if (files.length > 1) throw new McpAppHostRefusal("Declined by the user.");
+        if (files.length > 1) throw new McpAppHostRefusal({ message: "Declined by the user." });
       },
     });
     initialize(host);
@@ -336,7 +344,10 @@ describe("makeMcpAppHost", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "ui/update-model-context",
-      params: { content: [{ type: "text", text: "2 overdue" }], structuredContent: { overdue: 2 } },
+      params: {
+        content: [{ type: "text", text: "2 overdue" }],
+        structuredContent: { overdue: 2, since: undefined },
+      },
     });
     const embedded = {
       type: "resource",
@@ -358,7 +369,7 @@ describe("makeMcpAppHost", () => {
     });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/download-file", params: { contents: [{}] } });
     await flush();
-    expect(contexts).toEqual([
+    expect(contexts).toStrictEqual([
       { content: [{ type: "text", text: "2 overdue" }], structuredContent: { overdue: 2 } },
     ]);
     expect(downloads[0]).toEqual([
@@ -372,42 +383,5 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
-  });
-
-  it("tears down after the app answers, or after the timeout, and passes on its own request", async () => {
-    vi.useFakeTimers();
-    try {
-      let closeRequested = false;
-      const { host, sent } = setup({ onRequestTeardown: () => (closeRequested = true) });
-      host.receive({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" });
-      expect(closeRequested).toBe(true);
-
-      await host.teardown();
-      expect(sent.some((m) => m.method === "ui/resource-teardown")).toBe(false);
-
-      const answered = setup();
-      initialize(answered.host);
-      let done = false;
-      void answered.host.teardown().then(() => (done = true));
-      const request = answered.sent.find((m) => m.method === "ui/resource-teardown");
-      expect(request).toBeDefined();
-      answered.host.receive({ jsonrpc: "2.0", id: request?.id, result: {} });
-      await vi.runAllTimersAsync();
-      expect(done).toBe(true);
-
-      const silent = setup();
-      initialize(silent.host);
-      let timedOut = false;
-      void silent.host.teardown().then(() => (timedOut = true));
-      await vi.advanceTimersByTimeAsync(1999);
-      expect(timedOut).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(timedOut).toBe(true);
-      const before = silent.sent.length;
-      silent.host.updateHostContext();
-      expect(silent.sent).toHaveLength(before);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

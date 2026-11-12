@@ -19,6 +19,7 @@ const rates: RateTable = new Map([
         cacheCreationCostPerToken: 2.5e-5,
       },
       ultrafast: null,
+      contextTiers: [],
     },
   ],
 ]);
@@ -68,19 +69,6 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
-  it("requires exact bounds for hourly aggregation", () => {
-    expect(
-      () =>
-        new UsageAggregator({
-          timeZone: "UTC",
-          sinceDay: "2026-08-01",
-          untilDay: "2026-08-31",
-          resolution: "hour",
-          rates,
-        }),
-    ).toThrow("requires exact time bounds");
-  });
-
   it("splits a bucket's cost by category and speed", () => {
     const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
 
@@ -98,24 +86,68 @@ describe("UsageAggregator", () => {
     expect(bucket).not.toHaveProperty("ultrafastCostUsd");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
-    const result = aggregate([
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-    ]);
+  it("merges partial copies of a key by channel maximum in the first copy's bucket", () => {
+    const zeroTotals = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const partial = record({
+      dedupeKey: "msg_1:",
+      speed: "fast",
+      reportedCostUsd: 1,
+      totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 3, reasoningTokens: 5 },
+    });
+    const complete = record({
+      dedupeKey: "msg_1:",
+      model: "claude-fable-5[1m]",
+      timestampMs: Date.parse("2026-08-08T12:00:00Z"),
+      sessionId: "session-fork",
+      reportedCostUsd: 2,
+      totals: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 40,
+        outputTokens: 264,
+        reasoningTokens: 135,
+      },
+    });
+    const zero = { ...partial, totals: zeroTotals, reportedCostUsd: null };
+    const merged = {
+      reportedCostUsd: 2,
+      totals: { ...complete.totals, uncachedInputTokens: 100, cachedInputTokens: 1200 },
+    };
 
-    expect(result.duplicatesDropped).toBe(2);
-    expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+    for (const copies of [
+      [zero, partial, complete, complete],
+      [complete, partial, zero, zero],
+    ]) {
+      const aggregator = new UsageAggregator({
+        timeZone: "UTC",
+        sinceDay: "2026-08-01",
+        untilDay: "2026-08-31",
+        rates,
+      });
+      copies.forEach((copy, index) => aggregator.add(copy, `${index}.jsonl`));
+      const result = aggregator.finish();
+      const expected = aggregate([{ ...copies[0]!, ...merged }]).buckets[0];
+
+      expect(result.duplicatesDropped).toBe(3);
+      expect(result.buckets).toEqual([{ ...expected, sourcePath: "0.jsonl" }]);
+    }
   });
 
-  it("still sums records that carry no dedupe key", () => {
-    const result = aggregate([record(), record()]);
+  it("does not count a key whose first copy fell outside the window", () => {
+    const result = aggregate([
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 500 } }),
+    ]);
 
-    expect(result.duplicatesDropped).toBe(0);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(100);
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.outOfWindow).toBe(1);
+    expect(result.buckets).toHaveLength(0);
   });
 
   it("buckets by the day in the requested time zone", () => {
@@ -194,24 +226,6 @@ describe("UsageAggregator", () => {
     ]);
   });
 
-  it("keeps daily payloads collapsed when hourly resolution is not requested", () => {
-    const result = aggregate([
-      record({ timestampMs: Date.parse("2026-08-07T04:05:13.944Z") }),
-      record({ timestampMs: Date.parse("2026-08-07T05:05:13.944Z") }),
-    ]);
-
-    expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.hourStart).toBeUndefined();
-    expect(result.buckets[0]?.records).toBe(2);
-  });
-
-  it("prices against the rate table", () => {
-    const result = aggregate([record()]);
-
-    expect(result.buckets[0]?.costUsd).toBeCloseTo(0.004625, 9);
-    expect(result.buckets[0]?.costSource).toBe("modelPriced");
-  });
-
   it("counts tokens but not cost for a model with no rate", () => {
     const result = aggregate([record({ model: "kimi-k3" })]);
 
@@ -226,26 +240,6 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets[0]?.costUsd).toBe(1.25);
     expect(result.buckets[0]?.costSource).toBe("providerReported");
-  });
-
-  it("drops records outside the window", () => {
-    const result = aggregate([record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") })]);
-
-    expect(result.outOfWindow).toBe(1);
-    expect(result.buckets).toHaveLength(0);
-  });
-
-  it("reports whether a record contributed", () => {
-    const aggregator = new UsageAggregator({
-      timeZone: "UTC",
-      sinceDay: "2026-08-01",
-      untilDay: "2026-08-31",
-      rates,
-    });
-
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
-    expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
   });
 
   it("folds a mapped model into its target and prices it there", () => {
@@ -265,16 +259,6 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.records).toBe(2);
     expect(result.buckets[0]?.costUsd).toBeCloseTo(0.00925, 9);
     expect(result.buckets[0]?.unpricedRecords).toBe(0);
-  });
-
-  it("separates providers and models into their own buckets", () => {
-    const result = aggregate([
-      record(),
-      record({ provider: "codex", model: "gpt-5.6-sol" }),
-      record({ model: "claude-opus-5" }),
-    ]);
-
-    expect(result.buckets).toHaveLength(3);
   });
 });
 

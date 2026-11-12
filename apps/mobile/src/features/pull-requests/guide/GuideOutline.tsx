@@ -1,3 +1,4 @@
+import { Button } from "../../../components/ui/Button";
 import type { PullRequestReviewGuide } from "@t3tools/contracts";
 import { stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
 import { Pressable, View } from "react-native";
@@ -58,7 +59,7 @@ export function GuideOutline({
       </View>
       {guide.stops[0]?.summary ? (
         <View className="mb-6">
-          <PullRequestMarkdown markdown={guide.stops[0].summary} />
+          <PullRequestMarkdown lineBreaks={false} markdown={guide.stops[0].summary} />
         </View>
       ) : null}
       {guide.stops.map((stop, position) => {
@@ -100,14 +101,9 @@ export function GuideOutline({
         );
       })}
       {guide.stops.length ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => onOpen(0)}
-          className="min-h-11 flex-row items-center justify-end gap-2 active:opacity-60"
-        >
-          <Text className="text-sm font-t3-medium">Start tour</Text>
-          <SymbolView name="arrow.right" size={17} tintColorClassName="accent-foreground" />
-        </Pressable>
+        <View className="self-end">
+          <Button label="Start tour" tone="text" onPress={() => onOpen(0)} icon="arrow.right" />
+        </View>
       ) : null}
     </View>
   );

@@ -279,7 +279,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
     assert.deepEqual(deleted.thread.deletedAt, createdAt);
     assert.deepEqual(
       deleted.providerSessions.map((session) => session.status),
-      ["stopped", "error"],
+      ["stopped"],
     );
     assert.deepEqual(
       plan.effects.map((effect) => effect.request),
@@ -290,6 +290,13 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
           detail: "Thread deleted.",
           revokeMcpCredential: true,
         },
+        {
+          type: "provider-session.detach",
+          providerSessionId: ProviderSessionId.make("session:delete-plan:error"),
+          detail: "Thread deleted.",
+          revokeMcpCredential: true,
+        },
+        { type: "scheduled-tasks.cleanup" },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },

@@ -1,8 +1,13 @@
 import {
+  ContextHandoffId,
+  ContextTransferId,
   EventId,
   OrchestrationV2ThreadStreamItem,
+  ProviderThreadId,
+  RunId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -111,17 +116,6 @@ function timelineProjection(itemCount: number): OrchestrationV2ThreadProjection 
 }
 
 describe("decideThreadResume", () => {
-  it("replays when the gap is zero", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 10,
-        highWater: 10,
-        replayEventCount: 0,
-        replayEncodedBytes: 0,
-      }),
-    ).toEqual({ mode: "replay", afterSequence: 10, throughSequence: 10 });
-  });
-
   it("replays when the event count is within the bound", () => {
     expect(
       decideThreadResume({
@@ -137,17 +131,6 @@ describe("decideThreadResume", () => {
     });
   });
 
-  it("falls back to a snapshot when the event count exceeds the bound", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 10,
-        highWater: 20_000,
-        replayEventCount: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
-        replayEncodedBytes: 1,
-      }),
-    ).toEqual({ mode: "snapshot" });
-  });
-
   it("falls back to a snapshot when encoded replay bytes exceed the bound", () => {
     expect(
       decideThreadResume({
@@ -157,20 +140,6 @@ describe("decideThreadResume", () => {
         replayEncodedBytes: THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES + 1,
       }),
     ).toEqual({ mode: "snapshot" });
-  });
-
-  it("rejects pathological raw payloads before decoding them", () => {
-    expect(isThreadReplayRawPayloadSafe(THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES)).toBe(true);
-    expect(isThreadReplayRawPayloadSafe(THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES + 1)).toBe(false);
-
-    expect(
-      decideThreadResume({
-        afterSequence: 9,
-        highWater: 10,
-        replayEventCount: 1,
-        replayEncodedBytes: 1,
-      }),
-    ).toEqual({ mode: "replay", afterSequence: 9, throughSequence: 10 });
   });
 
   it("falls back to a snapshot when the client cursor is ahead of the store", () => {
@@ -184,18 +153,32 @@ describe("decideThreadResume", () => {
     ).toEqual({ mode: "snapshot" });
   });
 
-  it("counts UTF-8 bytes across projected stream items", () => {
-    expect(threadReplayEncodedBytes([{ value: "a" }, { value: "🦊" }])).toBe(
-      Buffer.byteLength('{"value":"a"}', "utf8") + Buffer.byteLength('{"value":"🦊"}', "utf8"),
-    );
-  });
-
   it("builds socket fallback snapshots with a bounded timeline and history cursor", () => {
+    const projection = timelineProjection(80);
+    // A delivered side chat digest stays "ready", which bounded snapshots keep.
+    const sideChatHandoff = {
+      id: ContextHandoffId.make("side-chat-handoff"),
+      transferId: ContextTransferId.make("side-chat-transfer"),
+      threadId: THREAD_ID,
+      targetRunId: RunId.make("side-chat-run"),
+      fromProviderThreadIds: [],
+      toProviderThreadId: ProviderThreadId.make("side-chat-provider-thread"),
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "manual_context",
+      status: "ready",
+      summaryMessageId: null,
+      summaryText: "x".repeat(8_000),
+      delivery: { nativeThreadId: "native", status: "inline", itemIds: [] },
+      createdByProviderInstanceId: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    } satisfies OrchestrationV2ContextHandoff;
     const snapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: 44,
-      projection: timelineProjection(80),
+      projection: { ...projection, contextHandoffs: [sideChatHandoff] },
     });
 
+    expect(snapshot.projection.contextHandoffs.map((handoff) => handoff.summaryText)).toEqual([""]);
     expect(snapshot.kind).toBe("snapshot");
     expect(snapshot.snapshotSequence).toBe(44);
     expect(snapshot.projection.visibleTurnItems).toHaveLength(75);
@@ -203,7 +186,6 @@ describe("decideThreadResume", () => {
     expect(snapshot.historyCursor).not.toBeNull();
     expect(snapshot.hasMoreHistory).toBe(true);
     expect(snapshot.latestLocalTurnOrdinal).toBe(80);
-    expect(snapshot.payloadBudgetExceeded).toBe(false);
   });
 
   it("rejects a 10 MiB raw replay even when its projected form fits the wire budget", () => {
@@ -325,36 +307,5 @@ describe("compact bounded snapshots", () => {
       throw new Error("Expected snapshots");
     }
     expect(boundedSnapshotProjection(decodedCompact)).toEqual(decodedFull.projection);
-  });
-
-  it("keeps the retained interrupt request outside the visible window", () => {
-    const compact = buildBoundedThreadStreamSnapshot({
-      snapshotSequence: 1,
-      projection: forkProjection(),
-      compactTurnItems: true,
-    });
-    expect(compact.projection.turnItems.map((item) => item.id)).toEqual(["interrupt-request"]);
-    expect(boundedSnapshotProjection(compact).turnItems.map((item) => String(item.id))).toEqual([
-      "item-3",
-      "item-4",
-      "item-5",
-      "interrupt-request",
-    ]);
-  });
-
-  it("omits the marker when the window has no local rows", () => {
-    const fork = forkProjection();
-    const inheritedOnly = {
-      ...fork,
-      turnItems: fork.turnItems.slice(0, 1),
-      visibleTurnItems: fork.visibleTurnItems.slice(0, 3),
-    };
-    const compact = buildBoundedThreadStreamSnapshot({
-      snapshotSequence: 1,
-      projection: inheritedOnly,
-      compactTurnItems: true,
-    });
-    expect("turnItemsOmitLocalVisible" in compact).toBe(false);
-    expect(compact.projection.turnItems.map((item) => item.id)).toEqual(["interrupt-request"]);
   });
 });

@@ -1,4 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSetupError, type ProviderAuthState } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -63,6 +65,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
+  const authenticateCalled = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
@@ -81,18 +84,23 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             yield* Deferred.succeed(closed, undefined);
           }),
         );
+        // Like AcpSessionRuntime, `start` reuses one memoized initialize handshake.
+        const initialize = yield* Effect.cached(
+          Effect.gen(function* () {
+            events.push("initialize");
+            yield* options.beforeInitialize ?? Effect.void;
+            return options.supportsLogout === false
+              ? { ...initialized, agentCapabilities: {} }
+              : initialized;
+          }),
+        );
         return {
-          initialize: () =>
-            Effect.gen(function* () {
-              events.push("initialize");
-              yield* options.beforeInitialize ?? Effect.void;
-              return options.supportsLogout === false
-                ? { ...initialized, agentCapabilities: {} }
-                : initialized;
-            }),
+          initialize: () => initialize,
           start: () =>
             Effect.gen(function* () {
+              yield* initialize;
               events.push("authenticate");
+              yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
                   yield* input.onAuthorizationUrl(url);
@@ -130,6 +138,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     authenticated,
     discovered,
     closed,
+    authenticateCalled,
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
@@ -142,22 +151,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   };
 });
 
-it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
-  it.effect("accepts the same authorization URL from stderr and stdout", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        authorizationUrls: [authorizationUrl, authorizationUrl],
-      });
-      yield* harness.auth.controller.start(owner);
-      const waiting = yield* phase(harness.auth, "waiting");
-      assert.equal(waiting.authorizationUrl, authorizationUrl);
-
-      yield* Deferred.succeed(harness.authenticated, undefined);
-      yield* Deferred.succeed(harness.discovered, undefined);
-      yield* phase(harness.auth, "succeeded");
-    }),
-  );
-
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth", (it) => {
   it.effect("accepts a delayed duplicate after callback completion starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -270,6 +264,103 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
+  it.effect("tells the user when the agent cannot reach Google", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(harness.authenticateCalled);
+
+      yield* TestClock.adjust("30 seconds");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message?.includes("Broken IPv6") === true),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+
+      yield* TestClock.adjust("270 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.include(failed.message ?? "", "could not reach Google");
+    }),
+  );
+
+  it.effect("does not blame the network while the runtime is still starting", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        interactive: false,
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Deferred.await(ready)),
+        ),
+      });
+      const hasHint = harness.auth.controller.subscribe(owner).pipe(
+        Stream.runHead,
+        Effect.map((state) => Option.getOrThrow(state).message?.includes("Broken IPv6") === true),
+      );
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+
+      // A one-file runtime can take about a minute to unpack before it answers initialize.
+      yield* TestClock.adjust("60 seconds");
+      assert.isFalse(yield* hasHint);
+
+      yield* Deferred.succeed(ready, undefined);
+      yield* Deferred.await(harness.authenticateCalled);
+      yield* TestClock.adjust("29 seconds");
+      assert.isFalse(yield* hasHint);
+
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message?.includes("Broken IPv6") === true),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+    }),
+  );
+
+  it.effect("does not blame the network when the runtime never answers initialize", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+      const blamesNetwork = /reach(ed)? Google|network|ipv6/i;
+
+      yield* TestClock.adjust("90 seconds");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message !== "Starting Google sign-in."),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+      assert.notMatch(stalled.message ?? "", blamesNetwork);
+      assert.match(stalled.message ?? "", /not started|stuck/i);
+
+      yield* TestClock.adjust("210 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notMatch(failed.message ?? "", blamesNetwork);
+      assert.match(failed.message ?? "", /not respond|may not run/i);
+    }),
+  );
+
+  it.effect("keeps the expired message once the Google link was shown", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, "Google sign-in expired. Start sign-in again.");
+    }),
+  );
+
   it.effect("accepts direct local or cached completion without a callback RPC", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
@@ -352,24 +443,6 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("expires the flow at the official deadline and removes its URL", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const state = yield* harness.auth.controller.start(owner);
-      yield* phase(harness.auth, "waiting");
-      yield* TestClock.adjust("300 seconds");
-      const failed = yield* phase(harness.auth, "failed");
-      assert.include(failed.message ?? "", "expired");
-      assert.isNull(failed.authorizationUrl);
-      yield* Deferred.await(harness.closed);
-      const late = yield* harness.auth.controller
-        .complete(owner, { flowId: state.flowId!, callbackUrl })
-        .pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(late));
-      assert.equal(harness.forwarded(), 0);
-    }),
-  );
-
   it.effect("survives subscriber disconnect and does not replace a competing client's flow", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -381,7 +454,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       assert.isTrue(Exit.isFailure(competing));
       const resumed = yield* phase(harness.auth, "waiting");
       assert.equal(resumed.flowId, first.flowId);
-      assert.deepEqual(harness.events, ["process-open", "authenticate"]);
+      assert.deepEqual(harness.events, ["process-open", "initialize", "authenticate"]);
       yield* harness.auth.controller.cancel(owner, first.flowId!);
     }),
   );
@@ -418,45 +491,6 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         "process-close",
       ]);
       assert.deepEqual(harness.catalog(), []);
-      yield* harness.auth.withProcess(Effect.void, Effect.void).pipe(Effect.scoped);
-    }),
-  );
-
-  it.effect("signs out after a slow packaged runtime starts", () =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const initialized = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        beforeInitialize: Deferred.succeed(entered, undefined).pipe(
-          Effect.andThen(Deferred.await(initialized)),
-        ),
-      });
-      const logout = yield* harness.auth.controller.logout(Effect.void).pipe(Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* TestClock.adjust("47 seconds");
-      yield* Deferred.succeed(initialized, undefined);
-      assert.equal((yield* Fiber.join(logout)).phase, "idle");
-      assert.include(harness.events, "logout");
-      assert.deepEqual(harness.catalog(), []);
-      yield* Deferred.await(harness.closed);
-    }),
-  );
-
-  it.effect("closes a stalled sign-out process without clearing its account catalog", () =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        beforeInitialize: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      const logout = yield* harness.auth.controller
-        .logout(Effect.void)
-        .pipe(Effect.exit, Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* TestClock.adjust("90 seconds");
-      assert.isTrue(Exit.isFailure(yield* Fiber.join(logout)));
-      yield* Deferred.await(harness.closed);
-      assert.notInclude(harness.events, "logout");
-      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
       yield* harness.auth.withProcess(Effect.void, Effect.void).pipe(Effect.scoped);
     }),
   );
