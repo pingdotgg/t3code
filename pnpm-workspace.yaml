@@ -206,6 +206,11 @@ overrides:
   vite: "catalog:"
   vite-plus: "catalog:"
   yaml: "catalog:"
+  # @vercel/routing-utils pins exactly 6.1.0, which has a ReDoS advisory (GHSA-9wv6-86v2-598j).
+  "@vercel/routing-utils>path-to-regexp": 6.3.0
+  # zod 3 has a high advisory (GHSA-mrhx-c7xc-m3w5) fixed only in 4.6.6. @vercel/config only
+  # builds a z.object of z.string().regex() and calls parse, which zod 4 keeps unchanged.
+  "@vercel/config>zod": 4.6.7
 
 packageExtensions:
   "@clerk/expo@*":
