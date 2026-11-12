@@ -1336,6 +1336,22 @@ it.live("closing a tab with an unsaved-changes guard still closes it", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a tab whose renderer crashes stays open for its viewer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* Queue.clear(viewer.output);
+      contexts[0]!.page.emit("crash");
+      const received = yield* Queue.clear(viewer.output);
+      expect(received.filter((item) => item._tag === "gone")).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {
