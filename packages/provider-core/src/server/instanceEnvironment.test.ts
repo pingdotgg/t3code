@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { SecretProviderId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -59,7 +61,7 @@ describe("mergeProviderInstanceEnvironment", () => {
     }),
   );
 
-  it.effect.each([
+  it.live.each([
     { label: "no configured variables", environment: [] },
     {
       label: "configured variables",
@@ -67,14 +69,33 @@ describe("mergeProviderInstanceEnvironment", () => {
     },
   ])("drops the desktop's ELECTRON_RUN_AS_NODE with $label", ({ environment }) =>
     Effect.gen(function* () {
+      // ACP and other spawns extend the server's own environment, which holds the variable.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => vi.stubEnv("ELECTRON_RUN_AS_NODE", "1")),
+        () => Effect.sync(() => vi.unstubAllEnvs()),
+      );
       const merged = yield* mergeProviderInstanceEnvironment(environment, {
         ELECTRON_RUN_AS_NODE: "1",
-        PATH: "/bin",
+        T3_KEPT: "kept",
       });
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          process.execPath,
+          [
+            "-e",
+            "process.stdout.write(`${process.env.ELECTRON_RUN_AS_NODE ?? 'unset'} ${process.env.T3_KEPT}`)",
+          ],
+          { env: merged, extendEnv: true },
+        ),
+      );
+      const [stdout, code] = yield* Effect.all(
+        [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+        { concurrency: "unbounded" },
+      );
 
-      expect(merged).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
-      expect(merged.PATH).toBe("/bin");
-    }),
+      expect({ stdout, code: Number(code) }).toEqual({ stdout: "unset kept", code: 0 });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("overrides inherited environment values and preserves empty strings", () =>

@@ -9,7 +9,8 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
   // The desktop runs the server as Node; inherited, it makes Electron apps agents launch exit.
-  const { ELECTRON_RUN_AS_NODE: _serverOnly, ...next } = baseEnv;
+  // Undefined, not omitted: spawns with `extendEnv` would merge the server's value back in.
+  const next: NodeJS.ProcessEnv = { ...baseEnv, ELECTRON_RUN_AS_NODE: undefined };
   if (!environment || environment.length === 0) {
     return next;
   }
