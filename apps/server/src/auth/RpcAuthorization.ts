@@ -2,6 +2,7 @@ import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
+  clientRpcSufficientScope,
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
@@ -290,8 +291,11 @@ export const layer = (
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
-    const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
-    const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
+    const sufficientScope = clientRpcSufficientScope(rpc._tag, payload);
+    const requiredScope =
+      sufficientScope !== undefined && scopes.includes(sufficientScope)
+        ? undefined
+        : requiredScopesForRpcCall(rpc._tag, payload).find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
     return onAuthorized === undefined
       ? effect

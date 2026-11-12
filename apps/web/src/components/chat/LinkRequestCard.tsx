@@ -94,19 +94,23 @@ function PendingLinkRequest(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const canAnswer = useAtomValue(
+  const declineInput = linkRequestAnswerInput(item, { type: "decline" });
+  const canDecline = useAtomValue(
+    peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId, declineInput),
+  );
+  const canLink = useAtomValue(
     peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId),
   );
   const target = linkRequestTargetName(item);
 
   const decline = async () => {
-    const input = linkRequestAnswerInput(item, { type: "decline" });
-    if (input === null) return;
+    if (declineInput === null) return;
     setDeclining(true);
     setError(null);
-    const result = await answer({ environmentId: props.environmentId, input }).finally(() =>
-      setDeclining(false),
-    );
+    const result = await answer({
+      environmentId: props.environmentId,
+      input: declineInput,
+    }).finally(() => setDeclining(false));
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
@@ -130,7 +134,14 @@ function PendingLinkRequest(props: {
           {error}
         </p>
       ) : null}
-      {canAnswer ? (
+      {canLink ? null : (
+        <p className="text-xs text-muted-foreground">
+          {canDecline
+            ? "Only a session that manages access here can link a machine."
+            : "Only a session that manages access here can answer this."}
+        </p>
+      )}
+      {canDecline ? (
         <div className="flex min-w-0 items-center justify-end gap-2">
           <Button
             type="button"
@@ -141,15 +152,13 @@ function PendingLinkRequest(props: {
           >
             Decline
           </Button>
-          <Button type="button" size="xs" disabled={declining} onClick={() => setOpen(true)}>
-            {picksMachine(item) ? "Choose machine…" : "Review link…"}
-          </Button>
+          {canLink ? (
+            <Button type="button" size="xs" disabled={declining} onClick={() => setOpen(true)}>
+              {picksMachine(item) ? "Choose machine…" : "Review link…"}
+            </Button>
+          ) : null}
         </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          Only a session that manages access here can answer this.
-        </p>
-      )}
+      ) : null}
       <LinkRequestDialog
         environmentId={props.environmentId}
         item={item}

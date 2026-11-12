@@ -82,6 +82,9 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const isLinkRequestDecline = Schema.is(
+  Schema.Struct({ answer: Schema.Struct({ type: Schema.Literal("decline") }) }),
+);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -103,4 +106,15 @@ export function clientRpcRequiredScopes(
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];
+}
+
+/** A scope that authorizes the call on its own, in place of its required scopes. */
+export function clientRpcSufficientScope(
+  method: string,
+  input: unknown,
+): AuthEnvironmentScope | undefined {
+  // Declining links nothing, so what stopping the thread needs is enough.
+  return method === WS_METHODS.peerLinksAnswerRequest && isLinkRequestDecline(input)
+    ? AuthOrchestrationOperateScope
+    : undefined;
 }

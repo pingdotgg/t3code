@@ -1,5 +1,6 @@
 import {
   clientRpcRequiredScopes,
+  clientRpcSufficientScope,
   sessionGrantsScope,
   authScopeRequiredResponse,
   EnvironmentAuthorizationError,
@@ -19,24 +20,28 @@ function makeCommandPermissions<R, E>(
 ) {
   const sessions = createEnvironmentSessionAtoms(runtime);
   const requiredScopes = (input?: unknown) => clientRpcRequiredScopes(method, input);
+  const sufficientScope = (input?: unknown) => clientRpcSufficientScope(method, input);
   const atomsByEnvironment = Atom.family((environmentId: EnvironmentId | null) =>
-    Atom.family((scopeKey: string) =>
-      Atom.make((get) => {
-        if (environmentId === null) return false;
-        const scopes = scopeKey.split(",").filter(Boolean) as AuthEnvironmentScope[];
-        if (scopes.length === 0) return true;
-        const result = get(sessions.sessionStateAtom(environmentId));
-        const session = AsyncResult.getOrElse(result, () => null);
-        return (
-          result._tag !== "Failure" &&
-          session !== null &&
-          scopes.every((scope) => sessionGrantsScope(session, scope))
-        );
-      }),
+    Atom.family((sufficient: AuthEnvironmentScope | undefined) =>
+      Atom.family((scopeKey: string) =>
+        Atom.make((get) => {
+          if (environmentId === null) return false;
+          const scopes = scopeKey.split(",").filter(Boolean) as AuthEnvironmentScope[];
+          if (scopes.length === 0) return true;
+          const result = get(sessions.sessionStateAtom(environmentId));
+          const session = AsyncResult.getOrElse(result, () => null);
+          return (
+            result._tag !== "Failure" &&
+            session !== null &&
+            ((sufficient !== undefined && sessionGrantsScope(session, sufficient)) ||
+              scopes.every((scope) => sessionGrantsScope(session, scope)))
+          );
+        }),
+      ),
     ),
   );
   const permissionAtom = (environmentId: EnvironmentId | null, input?: unknown) =>
-    atomsByEnvironment(environmentId)(requiredScopes(input).join(","));
+    atomsByEnvironment(environmentId)(sufficientScope(input))(requiredScopes(input).join(","));
   const authorize = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -55,6 +60,13 @@ function makeCommandPermissions<R, E>(
             Effect.timeoutOption(6_000),
             Effect.orElseSucceed(() => Option.none<AuthSessionState>()),
           );
+          const sufficient = sufficientScope(input);
+          if (
+            sufficient !== undefined &&
+            Option.isSome(session) &&
+            sessionGrantsScope(session.value, sufficient)
+          )
+            return;
           const missing = scopes.find(
             (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),
           );

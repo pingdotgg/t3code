@@ -1,14 +1,17 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
+  TurnItemId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -16,6 +19,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -384,6 +388,53 @@ describe("thread context authorization", () => {
       }).pipe(Effect.scoped),
   );
 });
+
+it.effect("lets a thread operator decline an environment link request but not answer it", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksAnswerRequest
+        > => tag !== WS_METHODS.peerLinksAnswerRequest,
+      ),
+    );
+    const handled: string[] = [];
+    const answerAs = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.peerLinksAnswerRequest, ({ answer }) =>
+              Effect.sync(() => {
+                handled.push(answer.type);
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+        Effect.map((client) => client[WS_METHODS.peerLinksAnswerRequest]),
+      );
+    const operator = yield* answerAs([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    const accessManager = yield* answerAs([AuthOrchestrationReadScope, AuthAccessWriteScope]);
+    const reader = yield* answerAs([AuthOrchestrationReadScope]);
+    const request = { threadId: ThreadId.make("thread"), turnItemId: TurnItemId.make("item") };
+    const decline = { ...request, answer: { type: "decline" as const } };
+    expect(
+      yield* operator({
+        ...request,
+        answer: { type: "use-existing", environmentId: EnvironmentId.make("buildbox") },
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+    yield* operator(decline);
+    yield* accessManager(decline);
+    expect(yield* reader(decline).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthAccessWriteScope,
+    });
+    expect(handled).toEqual(["decline", "decline"]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect("separates host file URLs from readable attachment URLs", () =>
   Effect.gen(function* () {

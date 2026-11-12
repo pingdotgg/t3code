@@ -112,19 +112,23 @@ function PendingLinkRequest(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const canAnswer = useAtomValue(
+  const declineInput = linkRequestAnswerInput(item, { type: "decline" });
+  const canDecline = useAtomValue(
+    peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId, declineInput),
+  );
+  const canLink = useAtomValue(
     peerLinkEnvironment.answerRequest.permissionAtom(props.environmentId),
   );
   const target = linkRequestTargetName(item);
 
   const decline = async () => {
-    const input = linkRequestAnswerInput(item, { type: "decline" });
-    if (input === null) return;
+    if (declineInput === null) return;
     setDeclining(true);
     setError(null);
-    const result = await answer({ environmentId: props.environmentId, input }).finally(() =>
-      setDeclining(false),
-    );
+    const result = await answer({
+      environmentId: props.environmentId,
+      input: declineInput,
+    }).finally(() => setDeclining(false));
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       pipe(squashAtomCommandFailure(result), linkRequestFailureMessage, setError);
     }
@@ -151,33 +155,35 @@ function PendingLinkRequest(props: {
           {error}
         </Text>
       ) : null}
-      {canAnswer ? (
-        <>
-          <Button
-            label={picksMachine(item) ? "Choose machine…" : "Review link…"}
-            disabled={declining}
-            onPress={() => setOpen(true)}
-            tone="primary"
-            fullWidth
-          />
-          <View className="flex-row justify-end">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: declining }}
-              disabled={declining}
-              hitSlop={8}
-              className="px-1 py-1 active:opacity-60 disabled:opacity-50"
-              onPress={() => void decline()}
-            >
-              <Text className="font-sans text-xs text-foreground-muted">Decline</Text>
-            </Pressable>
-          </View>
-        </>
+      {canLink ? (
+        <Button
+          label={picksMachine(item) ? "Choose machine…" : "Review link…"}
+          disabled={declining}
+          onPress={() => setOpen(true)}
+          tone="primary"
+          fullWidth
+        />
       ) : (
         <Text className="font-sans text-xs text-foreground-muted">
-          Only a session that manages access here can answer this.
+          {canDecline
+            ? "Only a session that manages access here can link a machine."
+            : "Only a session that manages access here can answer this."}
         </Text>
       )}
+      {canDecline ? (
+        <View className="flex-row justify-end">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: declining }}
+            disabled={declining}
+            hitSlop={8}
+            className="px-1 py-1 active:opacity-60 disabled:opacity-50"
+            onPress={() => void decline()}
+          >
+            <Text className="font-sans text-xs text-foreground-muted">Decline</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {open ? (
         <LinkRequestSheet
           environmentId={props.environmentId}
