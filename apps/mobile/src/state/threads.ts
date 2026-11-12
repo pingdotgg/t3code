@@ -51,6 +51,7 @@ const steadyShells = createSteadyShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
   shellStateAtom: environmentShell.stateValueAtom,
+  rowActionsAtom: threadEnvironment.rowActionsAtom,
   connectionStateAtom: environmentCatalog.stateAtom,
 });
 /**

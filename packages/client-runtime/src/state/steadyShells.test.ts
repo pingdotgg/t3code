@@ -32,6 +32,7 @@ const shell = (
   value: OrchestrationV2ShellSnapshot | null,
   phase: "connecting" | "disconnected" | "live",
   generation = 0,
+  rowActions = 0,
 ): SteadyShellInput => ({
   environmentId,
   snapshot: value,
@@ -39,6 +40,7 @@ const shell = (
   status: phase === "live" ? "live" : phase === "connecting" ? "synchronizing" : "cached",
   generation,
   connecting: phase !== "disconnected",
+  rowActions,
 });
 const shown = (state: SteadyShellsState, environmentId: EnvironmentId) =>
   state.shells.get(environmentId)?.shown;
@@ -217,6 +219,44 @@ describe("stepSteadyShells", () => {
     expect(shown(state, A)).toBe(caughtUp);
   });
 
+  it("follows an environment's live rows once the user moves or removes a row there", () => {
+    const [cachedA, cachedB, liveA, confirmedA] = [
+      snapshot(1),
+      snapshot(2),
+      snapshot(3),
+      snapshot(4),
+    ];
+    const [replayedB, archivedB, laterB] = [snapshot(5), snapshot(6), snapshot(7)];
+    const settledA = { ...liveA };
+    let state = stepSteadyShells(
+      EMPTY_STEADY_SHELLS_STATE,
+      [shell(A, cachedA, "connecting"), shell(B, cachedB, "connecting")],
+      0,
+    );
+    state = stepSteadyShells(state, [shell(A, liveA, "live"), shell(B, cachedB, "connecting")], 10);
+    expect(shown(state, A)).toBe(cachedA);
+
+    // The user settles a thread of A: its rows show at once, and B's rows still wait.
+    const heldB = shell(B, replayedB, "connecting");
+    state = stepSteadyShells(state, [shell(A, settledA, "live", 0, 1), heldB], 20);
+    expect(shown(state, A)).toBe(settledA);
+    expect(shown(state, B)).toBe(cachedB);
+    expect(state.releaseAt).toBeNull();
+    state = stepSteadyShells(state, [shell(A, confirmedA, "live", 0, 1), heldB], 30);
+    expect(shown(state, A)).toBe(confirmedA);
+
+    // B still synchronizes when the user archives a thread there. Its rows follow the
+    // replayed events until it is live, then wait again on the next reconnect.
+    const a = shell(A, confirmedA, "live", 0, 1);
+    state = stepSteadyShells(state, [a, shell(B, replayedB, "connecting", 0, 1)], 40);
+    expect(shown(state, B)).toBe(replayedB);
+    state = stepSteadyShells(state, [a, shell(B, archivedB, "connecting", 0, 1)], 50);
+    expect(shown(state, B)).toBe(archivedB);
+    state = stepSteadyShells(state, [a, shell(B, archivedB, "live", 0, 1)], 60);
+    state = stepSteadyShells(state, [a, shell(B, laterB, "connecting", 0, 1)], 70);
+    expect(shown(state, B)).toBe(archivedB);
+  });
+
   it("drops an environment that left the list of enabled environments", () => {
     const state = stepSteadyShells(
       stepSteadyShells(EMPTY_STEADY_SHELLS_STATE, [shell(A, snapshot(1), "live")], 0),
@@ -259,6 +299,7 @@ describe("createSteadyShellAtoms", () => {
     const snapshots = Atom.family((environmentId: EnvironmentId) =>
       Atom.make<OrchestrationV2ShellSnapshot | null>(environmentId === A ? cachedA : snapshot(2)),
     );
+    const rowActions = Atom.family((_: EnvironmentId) => Atom.make(0));
     const shellStates = Atom.family((_: EnvironmentId) =>
       Atom.make<EnvironmentShellState>({ ...EMPTY_SHELL_STATE, status: "synchronizing" }),
     );
@@ -276,6 +317,7 @@ describe("createSteadyShellAtoms", () => {
       catalogValueAtom: catalog,
       snapshotAtom: snapshots,
       shellStateAtom: shellStates,
+      rowActionsAtom: rowActions,
       connectionStateAtom: connections,
     });
     const registry = AtomRegistry.make();

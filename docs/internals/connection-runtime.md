@@ -83,7 +83,10 @@ it is synchronized, or it disconnects, and environments that get there within tw
 seconds of each other show together. Only an environment that is connected or on
 its first attempt, and still owes its snapshot, is waited for; a retry can take
 minutes. A move in a list is refused while its rows wait, because its plan would
-use order keys the server may have replaced. Point reads (a
+use order keys the server may have replaced. The hold stops only changes the user
+did not cause: a command that moves or removes a row (settle, snooze, pin, archive,
+delete, and their reverses) makes that environment's rows follow the live snapshot
+until it is live. Point reads (a
 thread's own shell, route checks) keep the live snapshot, where a row the server just
 sent must not look missing. The decision reads the snapshot's own sequence: a second
 atom derived from the same shell state can be one update behind the rows. The mobile

@@ -27,6 +27,8 @@ export interface SteadyShellInput {
   readonly generation: number;
   /** The connection is up or on its first attempt, so fresh rows can come soon. */
   readonly connecting: boolean;
+  /** How many times the user moved or removed a row of this environment. */
+  readonly rowActions: number;
 }
 
 interface SteadyShell {
@@ -37,6 +39,8 @@ interface SteadyShell {
   readonly following: boolean;
   /** The rows hold a server snapshot of the connection that is synchronizing. */
   readonly caughtUp: boolean;
+  /** The `rowActions` count when the rows last showed while live. */
+  readonly rowActions: number;
 }
 
 export interface SteadyShellsState {
@@ -62,12 +66,18 @@ export function stepSteadyShells(
   const shells = new Map<EnvironmentId, SteadyShell>();
   const waiting: Array<SteadyShellInput> = [];
   let othersOweRows = false;
-  const show = (input: SteadyShellInput, caughtUp: boolean): SteadyShell => ({
+  const show = (
+    input: SteadyShellInput,
+    caughtUp: boolean,
+    current: SteadyShell | undefined,
+  ): SteadyShell => ({
     shown: input.snapshot,
     shownSequence: input.serverSequence,
     shownGeneration: input.generation,
     following: input.status === "live",
     caughtUp,
+    rowActions:
+      input.status === "live" || current === undefined ? input.rowActions : current.rowActions,
   });
   const keep = (input: SteadyShellInput, next: SteadyShell, current: SteadyShell | undefined) => {
     othersOweRows ||= input.status === "synchronizing" && input.connecting && !next.caughtUp;
@@ -77,14 +87,15 @@ export function stepSteadyShells(
       current.shownSequence === next.shownSequence &&
       current.shownGeneration === next.shownGeneration &&
       current.following === next.following &&
-      current.caughtUp === next.caughtUp;
+      current.caughtUp === next.caughtUp &&
+      current.rowActions === next.rowActions;
     shells.set(input.environmentId, same ? current : next);
   };
   for (const input of inputs) {
     const current = previous.shells.get(input.environmentId);
     const synchronizing = input.status === "synchronizing";
     if (current === undefined) {
-      keep(input, show(input, false), current);
+      keep(input, show(input, false, current), current);
       continue;
     }
     const newSnapshot = input.generation > current.shownGeneration;
@@ -92,8 +103,12 @@ export function stepSteadyShells(
     // an environment that shows nothing (its cache is not read yet) has nothing to hold back.
     const local =
       current.shown === null || (input.serverSequence === current.shownSequence && !newSnapshot);
-    if (local || (input.status === "live" && current.following)) {
-      keep(input, show(input, synchronizing && (current.caughtUp || newSnapshot)), current);
+    // The hold stops changes the user did not cause. After the user moves or removes a row,
+    // the environment's rows follow the live data until it is live.
+    const userActed = input.rowActions !== current.rowActions;
+    if (local || userActed || (input.status === "live" && current.following)) {
+      const caughtUp = synchronizing && (current.caughtUp || newSnapshot);
+      keep(input, show(input, caughtUp, current), current);
     } else if (!synchronizing || newSnapshot) {
       waiting.push(input);
       shells.set(input.environmentId, current);
@@ -109,7 +124,8 @@ export function stepSteadyShells(
     if (!othersOweRows || now >= releaseAt) {
       releaseAt = null;
       for (const input of waiting) {
-        shells.set(input.environmentId, show(input, input.status === "synchronizing"));
+        const current = shells.get(input.environmentId);
+        shells.set(input.environmentId, show(input, input.status === "synchronizing", current));
       }
     }
   }
@@ -132,6 +148,7 @@ export function createSteadyShellAtoms<E>(input: {
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
   readonly shellStateAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>;
+  readonly rowActionsAtom: (environmentId: EnvironmentId) => Atom.Atom<number>;
   readonly connectionStateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, E>>;
@@ -164,6 +181,7 @@ export function createSteadyShellAtoms<E>(input: {
         generation: shell.generation,
         // A retry after a failure can take minutes, so it is not waited for until it connects.
         connecting: phase === "connecting" || phase === "connected",
+        rowActions: get(input.rowActionsAtom(environmentId)),
       });
     }
     state = stepSteadyShells(state, inputs, now());
