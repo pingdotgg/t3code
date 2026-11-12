@@ -33,7 +33,11 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
+import {
+  indexedMessageCondition,
+  messageSearchText,
+  nonPlaceholderMessageCondition,
+} from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
@@ -67,6 +71,8 @@ const SearchRequest = Schema.Struct({
   match: Schema.NullOr(Schema.String),
   /** Tokens every hit must contain, checked on the text. */
   substrings: TokenList,
+  /** For each short word outside ASCII, the spellings a hit must contain one of. */
+  shortSpellings: Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
   projectId: Schema.NullOr(ProjectId),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
@@ -99,6 +105,20 @@ const MESSAGE_HIT_LIMIT = 2000;
 const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
+const NON_ASCII = /[\u0080-\uffff]/;
+
+/** SQLite's lower() folds ASCII only, so a short word is checked as each spelling it can match. */
+function shortTokenSpellings(token: string): ReadonlyArray<string> {
+  const forms = (char: string) => {
+    const plain = char.normalize("NFD").replace(/\p{M}/gu, "");
+    return [char, char.toUpperCase(), plain, plain.toUpperCase()];
+  };
+  const spellings = Array.from(token).reduce<ReadonlyArray<string>>(
+    (prefixes, char) => prefixes.flatMap((prefix) => forms(char).map((form) => prefix + form)),
+    [""],
+  );
+  return [...new Set(spellings)];
+}
 
 /**
  * The SQL inputs for a message search, or null when the query has no token
@@ -114,9 +134,11 @@ function buildMessageSearch(
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
   const indexed = hasIndex && long.every((token) => Array.from(token).length >= 3);
+  const narrowing = short.filter((token) => !NON_ASCII.test(token));
   return {
     match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
-    substrings: indexed ? short : [...long, ...short],
+    substrings: indexed ? narrowing : [...long, ...narrowing],
+    shortSpellings: short.filter((token) => NON_ASCII.test(token)).map(shortTokenSpellings),
   };
 }
 
@@ -160,7 +182,7 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // The scan folds ASCII case only, so accent variants and non-ASCII case variants may not match.
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
@@ -185,7 +207,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -202,7 +224,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
@@ -223,7 +245,14 @@ export const messageHitsQuery = (
       AND messages.message_id NOT LIKE 'async-answer:%'
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
-        WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
+        WHERE instr(lower(${messageSearchText(sql)}), token.value) = 0
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(${shortSpellings}) AS token
+        WHERE NOT EXISTS (
+          SELECT 1 FROM json_each(token.value) AS spelling
+          WHERE instr(${messageSearchText(sql)}, spelling.value) > 0
+        )
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
     -- the limit; ordering by the messages table's rowid sorts every hit.
