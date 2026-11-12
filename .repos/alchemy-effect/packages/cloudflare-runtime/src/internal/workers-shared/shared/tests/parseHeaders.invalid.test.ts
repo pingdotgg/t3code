@@ -22,8 +22,7 @@ test("parseHeaders should reject malformed initial lines", ({ expect }) => {
       {
         line: "Access-Control-Allow-Origin: *",
         lineNumber: 5,
-        message:
-          "Path should come before header (access-control-allow-origin: *)",
+        message: "Path should come before header (access-control-allow-origin: *)",
       },
     ],
   });
@@ -67,9 +66,7 @@ test("parseHeaders should reject invalid headers", ({ expect }) => {
   });
 });
 
-test("parseHeaders should reject lines longer than 2000 chars", ({
-  expect,
-}) => {
+test("parseHeaders should reject lines longer than 2000 chars", ({ expect }) => {
   const huge_line = `${Array(1001).fill("a").join("")}: ${Array(1001).fill("b").join("")}`;
   const input = `
     # Valid entry
@@ -96,9 +93,7 @@ test("parseHeaders should reject lines longer than 2000 chars", ({
   });
 });
 
-test("parseHeaders should reject any rules after the first 100", ({
-  expect,
-}) => {
+test("parseHeaders should reject any rules after the first 100", ({ expect }) => {
   const input = `
     # COMMENTS DON'T COUNT TOWARDS TOTAL VALID RULES
     ${Array(150)
@@ -124,9 +119,7 @@ test("parseHeaders should reject any rules after the first 100", ({
   });
 });
 
-test("parseHeaders should reject paths with multiple wildcards", ({
-  expect,
-}) => {
+test("parseHeaders should reject paths with multiple wildcards", ({ expect }) => {
   const input = `
   # Multiple wildcards in an absolute URL
   https://*.pages.dev/*
@@ -257,8 +250,7 @@ test("parseHeaders should reject malformed URLs", ({ expect }) => {
       {
         line: "https://nah.com:8080",
         lineNumber: 19,
-        message:
-          "Specifying ports is not supported. Skipping absolute URL https://nah.com:8080.",
+        message: "Specifying ports is not supported. Skipping absolute URL https://nah.com:8080.",
       },
       {
         line: "https://nah.com:8080/blog",

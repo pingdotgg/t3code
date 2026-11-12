@@ -8,9 +8,11 @@ import {
   EMPTY_ASSET_URL_ATOM,
   makeRevisionedAssetUrlFamily,
 } from "@t3tools/client-runtime/state/assets";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -107,7 +109,10 @@ export function useRefreshAssetUrl(
   };
 }
 
-/** {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. */
+/**
+ * {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. Resolves
+ * null without a connection and rejects with the server's error when it refuses the URL.
+ */
 export async function refreshAssetUrl(
   environmentId: EnvironmentId,
   resource: AssetResource,
@@ -122,6 +127,7 @@ export async function refreshAssetUrl(
     reportFailure: false,
     ...(signal ? { signal } : {}),
   });
+  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   // A route can change while the query runs; resolve against the connection now current.
   const connection = appAtomRegistry.get(connectionAtom);
   if (connection._tag === "None") return null;
@@ -143,27 +149,47 @@ interface FreshAssetUrlKey {
   readonly revision: number;
 }
 
+class AssetUrlUnavailableError extends Schema.TaggedError<AssetUrlUnavailableError>()(
+  "AssetUrlUnavailableError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 // Plain-object keys compare structurally (Effect `Equal`/`Hash`).
 const freshAssetUrlFamily = Atom.family((key: FreshAssetUrlKey) =>
   Atom.make(
     Effect.tryPromise({
-      try: async (signal): Promise<AuthorizedAssetUrl> => {
-        const url =
-          key.environmentId === null
-            ? null
-            : await refreshAssetUrl(key.environmentId, key.resource, signal);
-        if (!url) throw new Error("Reconnect to this environment and try again.");
-        return { url, authorizedAt: Date.now() };
-      },
+      try: async (signal) =>
+        key.environmentId === null
+          ? null
+          : await refreshAssetUrl(key.environmentId, key.resource, signal).catch(() => null),
       catch: (cause) =>
-        cause instanceof Error ? cause : new Error("The attachment is unavailable."),
-    }),
+        new AssetUrlUnavailableError({
+          message: cause instanceof Error ? cause.message : "The attachment is unavailable.",
+          cause,
+        }),
+    }).pipe(
+      Effect.flatMap((url) =>
+        url
+          ? Effect.map(Clock.currentTimeMillis, (authorizedAt): AuthorizedAssetUrl => ({
+              url,
+              authorizedAt,
+            }))
+          : Effect.fail(
+              new AssetUrlUnavailableError({
+                message: "Reconnect to this environment and try again.",
+              }),
+            ),
+      ),
+    ),
   ).pipe(Atom.withLabel("fresh-asset-url")),
 );
 
-const noFreshAssetUrl = Atom.make(AsyncResult.initial<AuthorizedAssetUrl, Error>()).pipe(
-  Atom.withLabel("fresh-asset-url:none"),
-);
+const noFreshAssetUrl = Atom.make(
+  AsyncResult.initial<AuthorizedAssetUrl, AssetUrlUnavailableError>(),
+).pipe(Atom.withLabel("fresh-asset-url:none"));
 const noSessionGeneration = Atom.make(0);
 
 /**

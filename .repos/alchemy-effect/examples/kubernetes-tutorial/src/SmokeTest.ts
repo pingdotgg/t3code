@@ -1,9 +1,9 @@
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Schedule from "effect/Schedule";
 import { Cluster, Namespace, Web } from "./infra.ts";
 
 export default Kubernetes.Job(

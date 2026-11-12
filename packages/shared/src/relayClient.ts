@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -56,24 +57,42 @@ export type RelayClientStatus =
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
-export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
-  readonly reason:
-    | "download_failed"
-    | "invalid_checksum"
-    | "install_locked"
-    | "managed_by_policy"
-    | "override_missing"
-    | "unsupported_platform"
-    | "validation_failed"
-    | "write_failed";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+class RelayClientLockRemoveError extends Schema.TaggedError<RelayClientLockRemoveError>()(
+  "RelayClientLockRemoveError",
+  { lockPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not remove the relay client lock ${this.lockPath}.`;
+  }
+}
 
-class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
-  readonly command: string;
-  readonly exitCode: number;
-}> {}
+export class RelayClientInstallError extends Schema.TaggedError<RelayClientInstallError>()(
+  "RelayClientInstallError",
+  {
+    reason: Schema.Literals([
+      "download_failed",
+      "invalid_checksum",
+      "install_locked",
+      "managed_by_policy",
+      "override_missing",
+      "unsupported_platform",
+      "validation_failed",
+      "write_failed",
+    ]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const isRelayClientInstallError = Schema.is(RelayClientInstallError);
+
+class CloudflaredCommandError extends Schema.TaggedError<CloudflaredCommandError>()(
+  "CloudflaredCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {}
 
 export interface CloudflaredReleaseAsset {
   readonly url: string;
@@ -122,6 +141,8 @@ const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 // Legacy locks have no owner; allow both ten-minute download stages and the install tail.
 const INSTALL_LOCK_LEGACY_STALE_MS = 30 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
+// Antivirus scans can hold the first launch of a freshly downloaded binary for 20-30 s.
+const INSTALL_VALIDATION_TIMEOUT = "2 minutes";
 
 const ACTIVATE_RETRY_COUNT = 40;
 const ACTIVATE_RETRY_DELAY = "250 millis";
@@ -280,19 +301,23 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return platform === "win32" || (info.value.mode & 0o111) !== 0;
   });
 
+  const runVersionProbe = Effect.fn("cloudflared.runVersionProbe")(function* (
+    executablePath: string,
+    timeout: Duration.Input,
+  ) {
+    return yield* spawner
+      .string(ChildProcess.make(executablePath, ["version"], { stdin: "ignore", stderr: "ignore" }))
+      .pipe(
+        Effect.map(parseCloudflaredVersionOutput),
+        Effect.timeoutOption(timeout),
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+  });
+
   // Cache successful version probes per file revision; do not let transient failures hide valid binaries.
   const versionCache = yield* Cache.makeWith(
-    (key: VersionProbeKey) =>
-      spawner
-        .string(
-          ChildProcess.make(key.executablePath, ["version"], { stdin: "ignore", stderr: "ignore" }),
-        )
-        .pipe(
-          Effect.map(parseCloudflaredVersionOutput),
-          Effect.timeoutOption(VERSION_PROBE_TIMEOUT),
-          Effect.map(Option.getOrNull),
-          Effect.orElseSucceed(() => null),
-        ),
+    (key: VersionProbeKey) => runVersionProbe(key.executablePath, VERSION_PROBE_TIMEOUT),
     {
       capacity: 16,
       timeToLive: (exit) =>
@@ -486,7 +511,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const removeEmptyLock = (lockPath: string) =>
-    Effect.tryPromise(() => NodeFSP.rmdir(lockPath)).pipe(Effect.ignore);
+    Effect.tryPromise({
+      try: () => NodeFSP.rmdir(lockPath),
+      catch: (cause) => new RelayClientLockRemoveError({ lockPath, cause }),
+    }).pipe(Effect.ignore);
 
   const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
     lockPath: string,
@@ -626,7 +654,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       }
       yield* report("validating");
       // Verify the pin so mislabeled assets cannot cause repeated redownloads.
-      const installedVersion = yield* probeVersion(executablePath);
+      const installedVersion = yield* runVersionProbe(executablePath, INSTALL_VALIDATION_TIMEOUT);
       if (installedVersion !== CLOUDFLARED_VERSION) {
         return yield* new RelayClientInstallError({
           reason: "validation_failed",
@@ -655,7 +683,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.catchIf(
-        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) => !isRelayClientInstallError(cause),
         (cause) =>
           Effect.fail(
             new RelayClientInstallError({
