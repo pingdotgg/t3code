@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Tracer from "effect/Tracer";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -573,4 +574,64 @@ it.effect(
 
       assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
     }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect("reads a long thread's missed-run history by run, not by walking the thread", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:long-history");
+    // 7,000 runs of 9 items each, the shape of a long coordinator thread.
+    yield* sql`
+      WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 62999)
+      INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          type, status, ordinal, updated_at, payload_json)
+      SELECT 'item:' || i, ${threadId}, 'run:' || (i / 9), NULL, NULL, NULL,
+        CASE i % 3 WHEN 0 THEN 'user_message' WHEN 1 THEN 'reasoning' ELSE 'assistant_message' END,
+        'completed', i, '2026-01-01T00:00:00.000Z', '{}'
+      FROM n
+    `;
+    // Shorter threads beside it, as in any real database.
+    yield* sql`
+      WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 10799)
+      INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          type, status, ordinal, updated_at, payload_json)
+      SELECT 'short-item:' || i, 'thread:short:' || (i / 360), 'short-run:' || (i / 9), NULL,
+        NULL, NULL, 'assistant_message', 'completed', i % 360, '2026-01-01T00:00:00.000Z', '{}'
+      FROM n
+    `;
+    yield* sql`ANALYZE`;
+    const runIds = Array.from({ length: 100 }, (_, i) => RunId.make(`run:${6999 - i}`));
+    const statements: Array<string> = [];
+    yield* store.getTurnStartHistory(threadId, runIds).pipe(
+      Effect.exit,
+      Effect.withTracer(
+        Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            span.end = (endTime, exit) => {
+              end(endTime, exit);
+              const query = span.attributes.get("db.query.text");
+              if (typeof query === "string") statements.push(query);
+            };
+            return span;
+          },
+        }),
+      ),
+    );
+    const query = statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    );
+    assert.isDefined(query);
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`, [
+      threadId,
+      ...runIds,
+    ]))
+      .map((row) => row.detail)
+      .join("\n");
+    assert.include(plan, "turn_items_thread_run_idx (thread_id=? AND run_id=?)");
+  }).pipe(Effect.provide(layerDatabase)),
 );
