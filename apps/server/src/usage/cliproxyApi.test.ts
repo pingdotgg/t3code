@@ -46,6 +46,11 @@ const RequestBody = Schema.Struct({
 type RequestBody = typeof RequestBody.Type;
 const decodeRequest = Schema.decodeUnknownSync(Schema.fromJsonString(RequestBody));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeClaim = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({ program: Schema.String, grant_id: Schema.String, request_id: Schema.String }),
+  ),
+);
 
 function fixture(
   options: {
@@ -346,7 +351,7 @@ describe("CLIProxyAPI built-in management API", () => {
         accounts: [{ ...accounts[0]!, provider: "claude" }],
         // The usage endpoint answers 429 to requests without a Claude Code user agent.
         upstream: (request) => ({
-          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
+          status: request.header?.["User-Agent"]?.startsWith("claude-cli/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -371,6 +376,111 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day_fable", 80],
       ]);
     }),
+  );
+
+  it.effect(
+    "reads Claude reset grants per account and keeps windows beside a malformed block",
+    () =>
+      Effect.gen(function* () {
+        // Shaped like a hub answer of 12 Nov 2026: a weekly and a Fable grant, plus one not usable yet.
+        const grants = {
+          eligible: true,
+          next_grant_id: "full-reset-2611",
+          grants: [
+            {
+              id: "full-reset-2611",
+              resets_left: 1,
+              usable_now: true,
+              clears: ["seven_day", "seven_day_overage_included"],
+              type: "weekly",
+              gives_back_weekly: false,
+              ends_at: "2099-12-10T22:00:00+00:00",
+            },
+            {
+              id: "launch-2610-fable",
+              resets_left: 1,
+              usable_now: true,
+              clears: ["seven_day_overage_included"],
+              type: "full",
+              gives_back_weekly: true,
+              ends_at: "2099-03-09T07:59:00+00:00",
+            },
+            { id: "blocked-grant", resets_left: 1, usable_now: false, blocking: ["seven_day"] },
+          ],
+        };
+        const test = fixture({
+          accounts: [
+            { ...accounts[0]!, provider: "claude" },
+            { ...accounts[1]!, provider: "claude" },
+          ],
+          upstream: (request) => ({
+            status: 200,
+            body: {
+              seven_day: { utilization: 90, resets_at: null },
+              cedar_ember: request.auth_index === "a" ? grants : { eligible: true, grants: "?" },
+            },
+          }),
+        });
+        const [first, second] = yield* (yield* test.api).readAccounts(config);
+        expect(first?.usageLimits.resetCredits).toMatchObject({
+          availableCount: 2,
+          nextCreditId: "full-reset-2611",
+        });
+        expect(
+          first?.usageLimits.resetCredits?.options?.map(({ creditId, label, availableCount }) => [
+            creditId,
+            label,
+            availableCount,
+          ]),
+        ).toEqual([
+          ["full-reset-2611", "Weekly reset", 1],
+          ["launch-2610-fable", "Fable reset", 1],
+        ]);
+        expect(second?.usageLimits.resetCredits).toBeUndefined();
+        expect(second?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([90]);
+        expect(test.requests[1]?.body?.url).toBe(
+          "https://api.anthropic.com/api/oauth/usage?cedar_ember=1",
+        );
+      }),
+  );
+
+  it.effect(
+    "claims the chosen Claude grant for that account's organization, one request id per claim",
+    () =>
+      Effect.gen(function* () {
+        let claims = 0;
+        const test = fixture({
+          accounts: [
+            { ...accounts[0]!, provider: "claude" },
+            { ...accounts[1]!, provider: "claude" },
+          ],
+          upstream: (request) =>
+            request.url?.endsWith("/api/oauth/profile")
+              ? { status: 200, body: { organization: { uuid: `org-${request.auth_index}` } } }
+              : // The first claim goes unanswered, so its retry must address the same claim.
+                { status: ++claims === 1 ? 503 : 200, body: { result: "reset" } },
+        });
+        const api = yield* test.api;
+        const claim = api.consume(config, "second.json", "launch-2610-fable");
+        expect((yield* claim.pipe(Effect.result))._tag).toBe("Failure");
+        expect(yield* claim).toEqual({ outcome: "reset" });
+        expect(yield* claim).toEqual({ outcome: "reset" });
+        const sent = test.requests.filter((request) => request.body?.url?.includes("/reset_rate"));
+        expect(sent.map((request) => request.body?.url)).toEqual(
+          Array(3).fill("https://api.anthropic.com/api/organizations/org-b/reset_rate_limits"),
+        );
+        const bodies = sent.map((request) => decodeClaim(request.body?.data));
+        expect(bodies.map(({ program, grant_id }) => [program, grant_id])).toEqual(
+          Array(3).fill(["cedar_ember", "launch-2610-fable"]),
+        );
+        expect(bodies[1]?.request_id).toBe(bodies[0]?.request_id);
+        expect(bodies[2]?.request_id).not.toBe(bodies[1]?.request_id);
+        expect(
+          test.requests
+            .filter((request) => request.path.endsWith("/reset-quota"))
+            .map((request) => request.body?.auth_index),
+        ).toEqual(["b", "b"]);
+      }),
   );
 
   it.effect.each([

@@ -23,6 +23,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  resetCreditChoices,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -1506,6 +1507,38 @@ describe("/usage-limits", () => {
     ]);
     expect(mixed[2]).toBe(unrelated);
     expect(mixed[3]).toBe(disabled);
+  });
+});
+
+describe("resetCreditChoices", () => {
+  it("offers each kind of hub reset under its own grant through the same hub account", () => {
+    const hub = {
+      sourceId: UsageLimitSourceId.make("hub"),
+      accountId: "claude.json",
+      creditId: "full-reset-2611",
+    };
+    const option = (creditId: string, label: string) => ({
+      creditId,
+      label,
+      description: `${label}.`,
+      availableCount: 1,
+    });
+    const choices = resetCreditChoices(
+      {
+        availableCount: 2,
+        nextCreditId: "full-reset-2611",
+        options: [
+          option("full-reset-2611", "Weekly reset"),
+          option("launch-2610-fable", "Fable reset"),
+        ],
+      },
+      hub,
+      now,
+    );
+    expect(choices.map((choice) => choice.input)).toEqual([
+      hub,
+      { ...hub, creditId: "launch-2610-fable" },
+    ]);
   });
 });
 

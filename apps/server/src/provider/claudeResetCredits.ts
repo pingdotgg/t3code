@@ -59,6 +59,7 @@ const ClaimResponse = Schema.Struct({
     "unavailable",
   ]),
 });
+const decodeClaimResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimResponse));
 
 const RESET_CREDIT_FAILURES = {
   malformedCredit: "Claude returned a malformed reset credit.",
@@ -256,6 +257,51 @@ const CLAIM_OUTCOMES = {
   ineligible: "noCredit",
 } as const satisfies Record<string, ProviderConsumeResetCreditOutcome>;
 
+/** Claude Code's claim of one grant for an organization; requestId is its idempotency key. */
+export const claudeResetClaim = Effect.fn("claudeResetClaim")(function* (input: {
+  readonly organization: string | undefined;
+  readonly grantId: string;
+  readonly requestId: string;
+}) {
+  if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
+    return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
+  }
+  const organization = input.organization?.trim();
+  if (!organization) return yield* new ClaudeResetCreditError({ reason: "signedOut" });
+  return {
+    url: new URL(
+      `/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
+      API_BASE,
+    ).toString(),
+    body: { program: PROGRAM, grant_id: input.grantId, request_id: input.requestId },
+  };
+});
+
+/** Claude's answer to a claim, given its HTTP status and body text. */
+export const claudeResetClaimOutcome = Effect.fn("claudeResetClaimOutcome")(function* (
+  status: number,
+  body: string,
+) {
+  if (status === 429) return yield* new ClaudeResetCreditError({ reason: "rateLimited" });
+  if (status === 401 || status === 403) {
+    return yield* new ClaudeResetCreditError({ reason: "signedOut" });
+  }
+  if (status < 200 || status >= 300) {
+    return yield* new ClaudeResetCreditError({ reason: "requestFailed" });
+  }
+  const answer = yield* decodeClaimResponse(body).pipe(
+    Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "requestFailed", cause })),
+  );
+  if (answer.result === "cooldown") {
+    return yield* new ClaudeResetCreditError({ reason: "coolingDown" });
+  }
+  // Unknown outcomes retain the request ID so retries address the same claim.
+  if (answer.result === "unavailable") {
+    return yield* new ClaudeResetCreditError({ reason: "unconfirmed" });
+  }
+  return CLAIM_OUTCOMES[answer.result];
+});
+
 /** requestId is the claim's idempotency key. */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
   readonly configDir: string;
@@ -264,57 +310,33 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly grantId: string;
   readonly requestId: string;
 }) {
-  if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
-    return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
-  }
   const token = yield* readAccessToken(input.configDir).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "loginUnreadable", cause })),
   );
   const config = yield* readJson(Config, input.accountConfigPath).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "accountUnreadable", cause })),
   );
-  const organization = config.oauthAccount?.organizationUuid?.trim();
-  if (!token || !organization) {
-    return yield* new ClaudeResetCreditError({ reason: "signedOut" });
-  }
+  const claim = yield* claudeResetClaim({
+    organization: config.oauthAccount?.organizationUuid,
+    grantId: input.grantId,
+    requestId: input.requestId,
+  });
+  if (!token) return yield* new ClaudeResetCreditError({ reason: "signedOut" });
   const client = yield* HttpClient.HttpClient;
   const response = yield* client
     .execute(
-      HttpClientRequest.post(
-        new URL(
-          `/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
-          API_BASE,
-        ),
-      ).pipe(
+      HttpClientRequest.post(claim.url).pipe(
         withClaudeHeaders(token, input.version),
-        HttpClientRequest.bodyJsonUnsafe({
-          program: PROGRAM,
-          grant_id: input.grantId,
-          request_id: input.requestId,
-        }),
+        HttpClientRequest.bodyJsonUnsafe(claim.body),
       ),
     )
     .pipe(
       Effect.timeout("25 seconds"),
       Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "requestFailed", cause })),
     );
-  if (response.status === 429) {
-    return yield* new ClaudeResetCreditError({ reason: "rateLimited" });
-  }
-  if (response.status === 401 || response.status === 403) {
-    return yield* new ClaudeResetCreditError({ reason: "signedOut" });
-  }
-  const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(ClaimResponse)),
+  const body = yield* response.text.pipe(
     Effect.timeout("25 seconds"),
-    Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "requestFailed", cause })),
+    Effect.orElseSucceed(() => ""),
   );
-  if (body.result === "cooldown") {
-    return yield* new ClaudeResetCreditError({ reason: "coolingDown" });
-  }
-  // Unknown outcomes retain the request ID so retries address the same claim.
-  if (body.result === "unavailable") {
-    return yield* new ClaudeResetCreditError({ reason: "unconfirmed" });
-  }
-  return CLAIM_OUTCOMES[body.result];
+  return yield* claudeResetClaimOutcome(response.status, body);
 });
