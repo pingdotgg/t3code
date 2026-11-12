@@ -2,7 +2,7 @@ import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { cdp, page } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -449,6 +449,70 @@ describe("MessagesTimeline work rows", () => {
       }
     },
   );
+
+  it("opens adjacent subagent previews without repeating the hover delay", async () => {
+    setup();
+    const now = DateTime.makeUnsafe(CREATED_AT);
+    const task = (id: string, title: string): OrchestrationV2Subagent => ({
+      id: NodeId.make(id),
+      threadId: ThreadId.make("thread-1"),
+      runId: null,
+      parentNodeId: NodeId.make("parent-root"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      providerThreadId: null,
+      childThreadId: ThreadId.make(`child-${id}`),
+      nativeTaskRef: null,
+      prompt: title,
+      title,
+      model: null,
+      status: "completed",
+      result: `${title} result`,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+    const tasks = [task("first", "Review parser"), task("second", "Review renderer")];
+    using _threadAtom = vi.spyOn(environmentThreadDetails, "threadAtom").mockReturnValue(
+      Atom.make({
+        projection: { subagents: tasks, turnItems: [], visibleTurnItems: [] },
+      }) as never,
+    );
+    await using screen = await renderTimeline(
+      tasks.map((agent) =>
+        work(`notification-${agent.id}`, {
+          label: "Notification fallback",
+          tone: "info",
+          itemType: "notification",
+          projectedItem: v2Item("notification", {
+            id: `notification-${agent.id}`,
+            source: {
+              kind: "delegated_task",
+              childThreadId: agent.childThreadId!,
+              taskIds: [agent.id],
+            },
+            outcome: "completed",
+            summary: "Notification fallback",
+          }),
+        }),
+      ),
+    );
+    const openPopup = (title: string) => {
+      const popup = [...document.querySelectorAll('[data-slot="tooltip-popup"][data-open]')].find(
+        (element) => element.textContent?.includes(title),
+      );
+      if (!popup) throw new Error(`No open preview for ${title}`);
+      return popup;
+    };
+    await userEvent.hover(screen.button("Open Review parser"));
+    await vi.waitFor(() => openPopup("Review parser"));
+    await userEvent.hover(screen.button("Open Review renderer"));
+    const popup = await vi.waitFor(() => openPopup("Review renderer"));
+    // Base UI marks a popup that a Tooltip.Provider group opened without its delay.
+    expect(popup.getAttribute("data-instant")).toBe("delay");
+  });
 });
 
 describe("MessagesTimeline messages", () => {
