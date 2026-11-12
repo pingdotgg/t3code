@@ -3928,6 +3928,51 @@ it.each([
   ).toBe(next);
 });
 
+it("hands the list rows whose spacing, wake-up span or setup placement changed", () => {
+  const fold: MessagesTimelineRow = {
+    kind: "turn-fold",
+    id: "fold",
+    ending: "worked",
+    diff: null,
+    foldable: true,
+    failureMessage: null,
+    noticeMessage: null,
+    resetAt: null,
+    runId: RunId.make("run"),
+    createdAt: "2026-01-01T00:00:00Z",
+    label: "Worked for 1m",
+    expanded: true,
+  };
+  const wakeUps: MessagesTimelineRow = {
+    kind: "background-activity",
+    id: "background-activity:wake",
+    createdAt: null,
+    runIds: [],
+    updateCount: 1,
+    updates: [],
+    active: false,
+    expanded: true,
+    revealedRowIds: ["first"],
+  };
+  const setup: MessagesTimelineRow = {
+    kind: "worktree-setup",
+    id: "setup",
+    createdAt: null,
+    snapshot: {} as never,
+    embedded: false,
+  };
+  const previous = computeStableMessagesTimelineRows([fold, wakeUps, setup], {
+    result: [],
+    byId: new Map(),
+  });
+  const next = [
+    { ...fold, continuesWorkLog: true },
+    { ...wakeUps, revealedRowIds: ["first", "second"] },
+    { ...setup, embedded: true },
+  ];
+  expect(computeStableMessagesTimelineRows(next, previous).result).toEqual(next);
+});
+
 describe("streaming v2 row projection", () => {
   function fixture(text = "") {
     const source = makeStreamingTimelineFixture(text);
