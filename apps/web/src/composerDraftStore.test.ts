@@ -1867,6 +1867,40 @@ describe("composerDraftStore modelSelection", () => {
         ?.model,
     ).toBe("gpt-5.3");
   });
+  it("keeps a registry thread's saved preset model once the agent lists only base models", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_cursor");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const effective = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [
+        {
+          instanceId,
+          driver,
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          models: ["default", "composer-2"].map((slug) => ({
+            slug,
+            name: slug,
+            isCustom: false,
+            capabilities: {},
+          })),
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: createModelSelection(instanceId, "composer-2[fast=true]"),
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+    expect(effective.selectedModel).toBe("composer-2");
+    expect(effective.modelOptions?.[instanceId]).toEqual([{ id: "fast", value: "true" }]);
+  });
 });
 
 describe("composerDraftStore per-model sticky options", () => {

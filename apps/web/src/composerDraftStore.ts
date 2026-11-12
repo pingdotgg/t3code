@@ -59,6 +59,7 @@ import {
   readInstanceCustomModels,
   resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
+  splitUnlistedPresetModelSelection,
 } from "./modelSelection";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1132,7 +1133,7 @@ function legacyToModelSelectionByProvider(
   return result;
 }
 
-export function deriveEffectiveComposerModelState(input: {
+export function deriveEffectiveComposerModelState(rawInput: {
   draft:
     | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
     | null
@@ -1146,6 +1147,25 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
+  const split = (selection: ModelSelection | null | undefined) =>
+    selection ? splitUnlistedPresetModelSelection(selection, rawInput.providers) : selection;
+  const draftSelections = rawInput.draft?.modelSelectionByProvider;
+  const input = {
+    ...rawInput,
+    draft: rawInput.draft && {
+      ...rawInput.draft,
+      modelSelectionByProvider:
+        draftSelections &&
+        Object.fromEntries(
+          Object.entries(draftSelections).map(([instanceId, selection]) => [
+            instanceId,
+            selection && splitUnlistedPresetModelSelection(selection, rawInput.providers),
+          ]),
+        ),
+    },
+    threadModelSelection: split(rawInput.threadModelSelection),
+    projectModelSelection: split(rawInput.projectModelSelection),
+  };
   const baseModelCandidate =
     input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
   const preserveThreadModel =

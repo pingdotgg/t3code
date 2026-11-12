@@ -570,3 +570,28 @@ export function applyClaudePromptEffortPrefix(
   }
   return `Ultrathink:\n${trimmed}`;
 }
+
+const BRACKETED_PRESET_MODEL = /^([^[\]]+)\[([^[\]]*)\]$/;
+
+/**
+ * Splits a preset model id such as `composer-2[fast=true]` into its base model and options.
+ * Cursor's ACP agent offers these only without its parameterized model picker; options the
+ * selection already sets win over the preset's.
+ */
+export function splitBracketedPresetModelSelection(selection: ModelSelection): ModelSelection {
+  const match = BRACKETED_PRESET_MODEL.exec(selection.model);
+  const model = match?.[1];
+  const parameters = match?.[2];
+  if (model === undefined || parameters === undefined) return selection;
+  const options = selection.options ?? [];
+  const presetOptions = parameters.split(",").flatMap((parameter) => {
+    const separator = Math.max(parameter.indexOf("="), 0);
+    const id = parameter.slice(0, separator).trim();
+    const value = parameter.slice(separator + 1).trim();
+    if (id.length === 0 || value.length === 0 || options.some((option) => option.id === id)) {
+      return [];
+    }
+    return [{ id, value }];
+  });
+  return { ...selection, model, options: [...options, ...presetOptions] };
+}

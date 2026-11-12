@@ -16,6 +16,7 @@ import {
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveSelectableModel,
+  splitBracketedPresetModelSelection,
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
@@ -296,6 +297,22 @@ export function resolveAppModelSelectionForInstance(
     }
   }
   return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
+}
+
+/** A registry selection saved as a preset id the agent no longer lists keeps its base model and options. */
+export function splitUnlistedPresetModelSelection(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  if (
+    provider?.driver !== "acpRegistry" ||
+    provider.models.some((model) => model.slug === selection.model)
+  ) {
+    return selection;
+  }
+  const split = splitBracketedPresetModelSelection(selection);
+  return provider.models.some((model) => model.slug === split.model) ? split : selection;
 }
 
 // New drafts carry the stored selection; capabilities resolve its raw options later.
