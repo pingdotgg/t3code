@@ -10,6 +10,7 @@ import {
   EnvironmentId,
   NodeId,
   OrchestratorMcpThreadReadResult,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
@@ -35,6 +36,7 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
   OrchestratorProjectionError,
+  OrchestratorProviderSelectionBusyError,
 } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -58,6 +60,7 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
+import { ThreadToolkit } from "./thread/tools.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
@@ -75,6 +78,9 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeThreadSearchResult = Schema.decodeUnknownEffect(
+  ThreadToolkit.tools.t3_thread_search.successSchema,
+);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -227,6 +233,11 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
       new OrchestratorCommandRejectedError({ ...command, cause: "Run is not queued." }),
     ).message,
   ).toBe("Run is not queued.");
+  const busy = new OrchestratorProviderSelectionBusyError({
+    commandId: command.commandId,
+    threadId,
+  });
+  expect(dispatchFailure(busy)).toMatchObject({ code: "invalid_request", message: busy.message });
   for (const cause of [
     undefined,
     "",
@@ -279,7 +290,10 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       server
         .callTool({
           name,
-          arguments: { path: "/t3-missing-dir/revenue.html", title: "Revenue", height: 240 },
+          arguments: {
+            path: "/t3-missing-dir/revenue.html",
+            ...(name === "html_render" ? { title: "Revenue", height: 240 } : {}),
+          },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
@@ -396,7 +410,7 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
     expect(dispatched).toEqual([]);
     expect(outcome).toMatchObject({
       _tag: "Failure",
-      failure: { message: expect.stringContaining("Expected no excess property") },
+      failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
     });
   }).pipe(
     Effect.provide(
@@ -580,6 +594,59 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
   ),
 );
 
+it.effect("search names the calling thread, so an agent can tell its own match apart", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const search = (invocation: McpInvocationContext.McpInvocationScope) =>
+      server
+        .callTool({ name: "t3_thread_search", arguments: { query: "release notes" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const fromThread = yield* search(scope);
+    expect(fromThread.structuredContent).toMatchObject({
+      currentThreadId: threadId,
+      matches: [{ threadId }, { threadId: "earlier-thread" }],
+    });
+
+    const fromClient = yield* search(clientScope("auto"));
+    expect(fromClient.structuredContent).toMatchObject({ currentThreadId: null });
+
+    // A linked environment on an older version answers without the field.
+    const fromOlderPeer = yield* decodeThreadSearchResult({ matches: [] });
+    expect(fromOlderPeer).toEqual({ matches: [] });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(ThreadSearch.ThreadSearch)({
+            searchThreads: () =>
+              Effect.succeed({
+                matches: [threadId, ThreadId.make("earlier-thread")].map((id) => ({
+                  threadId: id,
+                  projectId: ProjectId.make("project:mcp-test"),
+                  title: "Release notes",
+                  source: "title" as const,
+                  snippet: "",
+                  messageCreatedAt: null,
+                })),
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      ),
+    ),
+  ),
+);
+
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -709,6 +776,11 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const fresh = yield* call("schedule_task", {
+      scheduledTaskId: "task-auto",
+      freshSession: true,
+    });
+    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -1091,7 +1163,21 @@ it.effect(
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (projectId) =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "MCP test",
+                  workspaceRoot: "/repo",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
