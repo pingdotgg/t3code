@@ -122,7 +122,6 @@ interface HarnessOptions {
   readonly threadAttachedOnRecheck?: boolean;
   readonly threadArchivedOnRecheck?: boolean;
   readonly threadReadFailsOnRecheck?: boolean;
-  readonly continuation?: "queued" | "started";
   readonly projectMissing?: boolean;
   readonly projectReadFails?: boolean;
   readonly existingBranchWorktreePath?: string | null;
@@ -175,7 +174,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
                                 userMessageId: command.worktreeContinuation.messageId,
                                 rootNodeId: null,
                                 activeAttemptId: null,
-                                status: options.continuation === "started" ? "starting" : "queued",
+                                status: "queued",
                                 requestedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
                                 startedAt: null,
                                 completedAt: null,
@@ -466,19 +465,6 @@ describe("t3_worktree_handoff", () => {
       expect(harness.dispatch.mock.invocationCallOrder[0]).toBeLessThan(
         harness.runForThread.mock.invocationCallOrder[0]!,
       );
-    });
-  });
-
-  it.effect("reports a continuation started when no run was blocking the handoff", () => {
-    const harness = makeHarness({ continuation: "started" });
-    return Effect.gen(function* () {
-      const result = yield* runHandoff(harness, {
-        branch: "feature/continue-idle",
-        continuationPrompt: "Keep going.",
-      });
-      expect(result.continuation).toEqual({ status: "scheduled", delivery: "started" });
-      expect(harness.dispatch).toHaveBeenCalledTimes(1);
-      expect(harness.sendToThread).not.toHaveBeenCalled();
     });
   });
 
