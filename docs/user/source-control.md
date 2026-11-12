@@ -54,7 +54,8 @@ repositories you use and grant the permissions required for each operation:
 | --------------------------------------- | ------------------------------------------------------------------------ |
 | Browse PRs and their checks             | Pull requests: read; Contents: read; Checks: read; Commit statuses: read |
 | Create, edit, comment on, or review PRs | Pull requests: write                                                     |
-| Push commits, update branches, or merge | Contents: write                                                          |
+| Push commits or merge                   | Contents: write                                                          |
+| Update pull request branches            | Pull requests: write; Contents: write                                    |
 | Push changes to workflow files          | Contents: write and Workflows: write                                     |
 | Approve workflow runs                   | Actions: write                                                           |
 | Create repositories                     | Repository creation: write, or Administration: write                     |

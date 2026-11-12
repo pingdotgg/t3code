@@ -31,12 +31,12 @@ const decodeViewer = Schema.decodeUnknownEffect(Viewer);
 export const makeGitHubViewerReader = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const client = yield* GraphQLClient.make(group).pipe(Effect.provide(GitHubGraphQlClient.layer));
-  return (input: {
+  return Effect.fn("GitHubViewer.read")(function* (input: {
     readonly host: string;
     readonly operation: string;
     readonly allowReserve?: boolean;
-  }) =>
-    api.rest({ ...input, path: "user" }).pipe(
+  }) {
+    return yield* api.rest({ ...input, path: "user" }).pipe(
       Effect.flatMap((response) => decodeRestViewer(response.body)),
       Effect.catchIf(
         (error) => error._tag === "GitHubApiResponseError" && error.status === 403,
@@ -58,4 +58,5 @@ export const makeGitHubViewerReader = Effect.gen(function* () {
           : error,
       ),
     );
+  });
 });
