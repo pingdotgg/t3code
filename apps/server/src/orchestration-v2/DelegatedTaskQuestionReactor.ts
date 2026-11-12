@@ -4,12 +4,14 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
+  ProviderRequestKind,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -18,6 +20,10 @@ import { reportLabel } from "@t3tools/provider-core/server/notification";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+const isApprovalKind = Schema.is(ProviderRequestKind);
+const notifiesParent = (kind: OrchestrationV2RuntimeRequest["kind"]) =>
+  kind === "user_input" || isApprovalKind(kind);
 
 export class DelegatedTaskQuestionReactor extends Context.Service<
   DelegatedTaskQuestionReactor,
@@ -38,6 +44,9 @@ const make = Effect.gen(function* () {
     if (task.childThreadId === null) return;
     const key = `${task.threadId}:${request.id}`;
     const label = reportLabel(task.title?.trim() || task.prompt);
+    const quotedLabel = label === undefined ? "" : ` "${label}"`;
+    // An approval notice is advisory: the parent agent cannot approve on the user's behalf.
+    const approval = isApprovalKind(request.kind);
     const situation =
       request.responseCapability.type === "message"
         ? `Delegated task ${task.id} asked a question and is still working.`
@@ -47,11 +56,13 @@ const make = Effect.gen(function* () {
       commandId: CommandId.make(`server:delegated-task-question:${key}`),
       threadId: task.threadId,
       messageId: MessageId.make(`message:delegated-task-question:${key}`),
-      text: `${situation} Read it with t3_pending_request action read, threadId ${task.childThreadId}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
+      text: approval
+        ? `Delegated task ${task.id} is blocked on a ${request.kind} approval (requestId ${request.id}, threadId ${task.childThreadId}) and cannot continue until the user approves or declines it in the app. You cannot approve it. Tell the user it is waiting, or stop the task with task_cancel and relaunch it if it should not need this approval. If it is no longer pending, it was resolved.`
+        : `${situation} Read it with t3_pending_request action read, threadId ${task.childThreadId}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
       notification: {
         source: { kind: "delegated_task", taskIds: [task.id], childThreadId: task.childThreadId },
         outcome: "updated",
-        summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
+        summary: `Delegated task${quotedLabel} ${approval ? "needs approval" : "has a question"}`,
       },
       attachments: [],
       dispatchMode: { type: "queue_after_active" },
@@ -114,7 +125,7 @@ const make = Effect.gen(function* () {
           ]);
           for (const request of child.runtimeRequests) {
             if (
-              request.kind !== "user_input" ||
+              !notifiesParent(request.kind) ||
               request.status !== "pending" ||
               request.responseCapability.type !== "live"
             ) {
@@ -142,12 +153,12 @@ const make = Effect.gen(function* () {
         ) {
           return;
         }
-        // A settled task can no longer use an answer to its still-pending questions.
+        // A settled task can no longer use an answer to its still-pending requests.
         const { runtimeRequests } = yield* projections.getThreadRecords(task.childThreadId, [
           "runtimeRequests",
         ]);
-        const questions = runtimeRequests.filter((request) => request.kind === "user_input");
-        if (questions.length === 0) return;
+        const requests = runtimeRequests.filter((request) => notifiesParent(request.kind));
+        if (requests.length === 0) return;
         const child = yield* projections.getThreadRecords(task.childThreadId, ["runs", "nodes"]);
         const taskRunIds = new Set(
           child.runs
@@ -167,13 +178,21 @@ const make = Effect.gen(function* () {
         );
         yield* cancelQueuedWakes(
           task.threadId,
-          questions
+          requests
             .filter((request) => taskNodeIds.has(request.nodeId))
             .map((request) => request.id),
         );
         return;
       }
-      if (event.type !== "runtime-request.updated" || event.payload.kind !== "user_input") {
+      if (event.type !== "runtime-request.updated" || !notifiesParent(event.payload.kind)) {
+        return;
+      }
+      // Only a live approval can still be approved, so only it is worth a notice.
+      if (
+        isApprovalKind(event.payload.kind) &&
+        event.payload.status === "pending" &&
+        event.payload.responseCapability.type !== "live"
+      ) {
         return;
       }
       const child = yield* projections.getThread(event.threadId);
@@ -202,7 +221,7 @@ const make = Effect.gen(function* () {
       ) {
         return;
       }
-      // A blocking delegate_task wait delivers the question itself.
+      // A blocking delegate_task wait delivers the request itself.
       if (
         task.completionWake === "settled_only" &&
         event.payload.responseCapability.type === "live" &&
