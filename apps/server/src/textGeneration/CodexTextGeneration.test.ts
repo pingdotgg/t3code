@@ -546,6 +546,8 @@ const PREFLIGHT_PRIMARY_STATES = [
   "not installed, fallback disabled for project",
   "signed out",
   "signed out, fallback failed",
+  "cannot generate text",
+  "model cannot generate text",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -589,6 +591,22 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           : {}),
         ...(primaryState === "signed out, fallback failed" && instanceId === fallback
           ? { status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "cannot generate text" && instanceId === primary
+          ? { supportsTextGeneration: false }
+          : {}),
+        ...(primaryState === "model cannot generate text" && instanceId === primary
+          ? {
+              models: [
+                {
+                  slug: selection.model,
+                  name: selection.model,
+                  isCustom: false,
+                  supportsTextGeneration: false,
+                  capabilities: null,
+                },
+              ],
+            }
           : {}),
         ...(primaryState === "exhausted" && instanceId === primary
           ? {
