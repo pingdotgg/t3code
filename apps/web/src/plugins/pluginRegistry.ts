@@ -29,7 +29,10 @@ export interface PluginCommandEntry {
 // reads them through `pluginUi.ts`, so this stays out of startup.
 const rightPanels = new Map<string, PluginRightPanelEntry>();
 const settingsPanels = new Map<string, PluginSettingsPanelEntry>();
-const webFailures = new Map<string, string>();
+// The web loader and the styles loader each keep their own failure, so either clearing its own
+// leaves the other's on the plugin's row. Render failures count as the web half's.
+type PluginWebFailureSource = "web" | "styles";
+const webFailures = new Map<string, Partial<Record<PluginWebFailureSource, string>>>();
 const webLoaded = new Set<string>();
 const commands = new Map<string, PluginCommandEntry>();
 
@@ -113,12 +116,16 @@ export const pluginSettingsPanelAtom = Atom.family((key: string) =>
 export function setPluginWebFailure(
   environmentId: EnvironmentId,
   pluginId: string,
+  source: PluginWebFailureSource,
   message: string | undefined,
 ) {
   const key = pluginContributionKey(environmentId, pluginId);
-  if (webFailures.get(key) === message) return;
-  if (message === undefined) webFailures.delete(key);
-  else webFailures.set(key, message);
+  const next = { ...webFailures.get(key) };
+  if (next[source] === message) return;
+  if (message === undefined) delete next[source];
+  else next[source] = message;
+  if (Object.keys(next).length === 0) webFailures.delete(key);
+  else webFailures.set(key, next);
   bump();
 }
 
@@ -127,8 +134,10 @@ export const pluginWebFailuresAtom = Atom.family((pluginId: string) =>
     get(versionAtom);
     const suffix = `\u0000${pluginId}`;
     return new Map(
-      [...webFailures].flatMap(([key, message]) =>
-        key.endsWith(suffix) ? [[key.slice(0, -suffix.length), message] as const] : [],
+      [...webFailures].flatMap(([key, { web, styles }]) =>
+        key.endsWith(suffix)
+          ? [[key.slice(0, -suffix.length), [web, styles].filter(Boolean).join(" ")] as const]
+          : [],
       ),
     );
   }),

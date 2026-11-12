@@ -420,7 +420,7 @@ export function startPluginLoader(
     loaded.set(plugin.id, entry);
     // Cleared here rather than once `activate` resolves, so a part that throws while it awaits
     // keeps its note.
-    setPluginWebFailure(environmentId, plugin.id, undefined);
+    setPluginWebFailure(environmentId, plugin.id, "web", undefined);
     const track = (cleanup: () => void) => {
       if (entry.disposed) runCleanups([cleanup]);
       else entry.cleanups.add(cleanup);
@@ -471,7 +471,7 @@ export function startPluginLoader(
       // bundle that downloaded and then failed stays in `loaded`, so it waits for the plugin to
       // restart instead of failing again on every change.
       if (!downloaded) loaded.delete(plugin.id);
-      setPluginWebFailure(environmentId, plugin.id, errorText(error));
+      setPluginWebFailure(environmentId, plugin.id, "web", errorText(error));
     }
   };
 
@@ -487,7 +487,7 @@ export function startPluginLoader(
       if (want === undefined || loadKey(want, appWide(pluginId)) !== plugin.key) unload(pluginId);
     }
     for (const plugin of plugins) {
-      if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
+      if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, "web", undefined);
     }
     // Not awaited, so a plugin that hangs until its deadline holds back neither the others nor
     // the next change, such as turning another plugin off.

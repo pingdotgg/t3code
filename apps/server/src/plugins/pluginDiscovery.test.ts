@@ -10,7 +10,7 @@ const manifest = (id: string) =>
   JSON.stringify({ id, name: id, version: "1.0.0", engines: { t3: ">=0.1.0" } });
 
 it.layer(NodeServices.layer)("discoverPlugins", (it) => {
-  it.effect("reports valid, missing, invalid, renamed and duplicate plugins", () =>
+  it.effect("reports valid, missing, invalid, renamed, duplicate and unscanned plugins", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -46,7 +46,11 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       const devOnly = path.join(root, "dev", "workbench");
       yield* write(devOnly, manifest("dev-only"));
 
-      const { plugins } = yield* discoverPlugins({ pluginsDir, devPaths: [devCopy, devOnly] });
+      const { plugins, complete } = yield* discoverPlugins({
+        pluginsDir,
+        devPaths: [devCopy, devOnly],
+      });
+      assert.isTrue(complete);
       const summary = plugins.map((plugin) => ({
         id: plugin.id,
         source: plugin.source,
@@ -70,6 +74,14 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       );
       assert.include(failures[3], "version");
       assert.include(failures[5], 'Missing definition "no"');
+
+      // Past the folder limit a plugin is unseen, not gone, so its switch must not be forgotten.
+      for (let index = 0; index < 64; index++) {
+        yield* write(path.join(pluginsDir, `filler-${String(index).padStart(2, "0")}`), undefined);
+      }
+      const unscanned = yield* discoverPlugins({ pluginsDir, devPaths: [devOnly] });
+      assert.isFalse(unscanned.complete);
+      assert.isFalse(unscanned.plugins.some((plugin) => plugin.id === "unchecked"));
     }).pipe(Effect.scoped),
   );
 });

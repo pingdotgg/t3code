@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - a plain Node build script with no Effect runtime: it
+// runs the declaration compiler and writes the package's files.
 // Builds the publishable package into dist: JavaScript and bundled declarations from src, and a
 // package.json whose exports point at them. Publish or pack dist itself, never this folder, whose
 // manifest exports the sources.

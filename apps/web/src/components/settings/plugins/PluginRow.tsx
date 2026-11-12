@@ -1,4 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
@@ -41,6 +45,8 @@ export function PluginRow({
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
+  // The last reload, switch or removal that failed, until the next one starts.
+  const [actionFailure, setActionFailure] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const customSettings = useAtomValue(
     pluginSettingsPanelAtom(pluginContributionKey(environmentId, plugin.id)),
@@ -48,10 +54,19 @@ export function PluginRow({
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
   const partNotes = useAtomValue(pluginPartNotesAtom(plugin.id)).get(environmentId) ?? [];
   const hasSettings = customSettings !== undefined || plugin.hasSettings;
-  const whileBusy = async (action: () => Promise<unknown>) => {
+  const whileBusy = async (
+    failedTo: string,
+    action: () => Promise<AtomCommandResult<unknown, unknown>>,
+  ) => {
     setBusy(true);
-    await action();
+    setActionFailure(null);
+    const result = await action();
     setBusy(false);
+    if (result._tag === "Success") return;
+    const error = squashAtomCommandFailure(result);
+    setActionFailure(
+      `Could not ${failedTo}: ${error instanceof Error ? error.message : "the request failed."}`,
+    );
   };
   const unlink = plugin.source === "dev";
   // Removing it would delete data the id's other folders use, so its failure says what to delete.
@@ -69,6 +84,7 @@ export function PluginRow({
             : ["Some of its code is still running. Restarting T3 Code stops it."]),
         ]),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
+    ...(actionFailure === null ? [] : [actionFailure]),
   ];
   const row = (
     <SettingsRow
@@ -128,7 +144,9 @@ export function PluginRow({
             disabled={busy || !canManage}
             aria-label={`Reload ${plugin.name}`}
             onClick={() =>
-              void whileBusy(() => reload({ environmentId, input: { pluginId: plugin.id } }))
+              void whileBusy("reload it", () =>
+                reload({ environmentId, input: { pluginId: plugin.id } }),
+              )
             }
           >
             <RotateCwIcon className="size-4" />
@@ -140,7 +158,9 @@ export function PluginRow({
               folder={unlink ? folder : undefined}
               disabled={busy || !canManage}
               onRemove={() =>
-                whileBusy(() => uninstall({ environmentId, input: { pluginId: plugin.id } }))
+                whileBusy(unlink ? "unlink it" : "remove it", () =>
+                  uninstall({ environmentId, input: { pluginId: plugin.id } }),
+                )
               }
             />
           )}
@@ -149,7 +169,7 @@ export function PluginRow({
             disabled={busy || !canManage}
             aria-label={`Enable ${plugin.name}`}
             onCheckedChange={(enabled) =>
-              void whileBusy(() =>
+              void whileBusy(enabled ? "turn it on" : "turn it off", () =>
                 setEnabled({ environmentId, input: { pluginId: plugin.id, enabled } }),
               )
             }

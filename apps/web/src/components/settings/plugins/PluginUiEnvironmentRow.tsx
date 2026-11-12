@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
 
 import {
+  hidesPluginUiChoice,
   loadsPluginUi,
   pluginUiChoicesAtom,
   withPluginUiChoice,
@@ -20,7 +21,7 @@ import { runsPlugins } from "./pluginTargets";
 
 /**
  * Turns plugin UI on or off for each environment in this browser. The main environment starts on
- * and the others off; hidden while the main environment is the only one that could supply it.
+ * and the others off; hidden while the main environment is on and the only one that could supply it.
  */
 export function PluginUiEnvironmentRow() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -33,8 +34,11 @@ export function PluginUiEnvironmentRow() {
     (environment) => runsPlugins(environment) || isOn(environment.environmentId),
   );
   if (
-    primaryEnvironmentId !== null &&
-    options.every((option) => option.environmentId === primaryEnvironmentId)
+    hidesPluginUiChoice(
+      choices,
+      options.map((option) => option.environmentId),
+      primaryEnvironmentId,
+    )
   ) {
     return null;
   }

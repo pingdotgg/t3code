@@ -43,7 +43,7 @@ const setList = (plugins: ReadonlyArray<PluginState>) =>
 // Every case starts with no plugins listed yet and plugin UI loading from the environment.
 function setup() {
   appAtomRegistry.set(state.live, AsyncResult.initial());
-  setPluginWebFailure(environmentId, "hello-web", undefined);
+  setPluginWebFailure(environmentId, "hello-web", "web", undefined);
   appAtomRegistry.set(pluginUiChoicesAtom, new Map([[environmentId, true]]));
   return { [Symbol.dispose]: () => appAtomRegistry.set(pluginUiChoicesAtom, new Map()) };
 }
@@ -90,7 +90,7 @@ describe("PluginPanelSurface", () => {
     setList([helloWeb("active")]);
     await expect.element(page.getByText('Hello web is loading its "hello" panel.')).toBeVisible();
     // A web part that fails to load is not coming, so the wait ends.
-    setPluginWebFailure(environmentId, "hello-web", "boom");
+    setPluginWebFailure(environmentId, "hello-web", "web", "boom");
     await expect.element(page.getByText("Plugin not active")).toBeVisible();
   });
 });
