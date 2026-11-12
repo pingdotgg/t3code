@@ -1296,102 +1296,105 @@ describe("AcpAdapterV2", () => {
       assert.equal(promptOrdinal, 2, "continuation turn must not dispatch session/prompt");
     }).pipe(Effect.provide(layerTest)),
   );
-  it.live("fails an end_turn the outcome check rejects and restarts before the next turn", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome");
-      const threadId = ThreadId.make("thread-acp-prompt-outcome");
-      const quota = {
-        class: "usage_limit",
-        message: "Quota reached.",
-        code: "RESOURCE_EXHAUSTED",
-        retryable: true,
-        resetAt: "2030-01-01T00:00:00.000Z",
-      } as const;
-      // The runtime ordinal of each prompt, and the session each check watched.
-      const promptRuntimes: Array<number> = [];
-      const promptTexts: Array<string> = [];
-      const watchedSessions: Array<string> = [];
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          watchPromptOutcome: (sessionId) =>
-            Effect.sync(() => {
-              watchedSessions.push(sessionId);
-              const failed = watchedSessions.length === 1;
-              return () => Effect.succeed(failed ? quota : undefined);
+  it.live.each([false, true])(
+    "fails an end_turn the outcome check rejects and restarts before the next turn (replacement: %s)",
+    (replacement) =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome");
+        const threadId = ThreadId.make("thread-acp-prompt-outcome");
+        const quota = {
+          class: "usage_limit",
+          message: "Quota reached.",
+          code: "RESOURCE_EXHAUSTED",
+          retryable: true,
+          resetAt: "2030-01-01T00:00:00.000Z",
+        } as const;
+        // The runtime ordinal of each prompt, and the session each check watched.
+        const promptRuntimes: Array<number> = [];
+        const promptTexts: Array<string> = [];
+        const watchedSessions: Array<string> = [];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            replaceRuntimeOnActivation: () => replacement,
+            watchPromptOutcome: (sessionId) =>
+              Effect.sync(() => {
+                watchedSessions.push(sessionId);
+                const failed = watchedSessions.length === 1;
+                return () => Effect.succeed(failed ? quota : undefined);
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* bundledMockAgentPath,
+              wrapRuntime: (runtime, runtimeOrdinal) => ({
+                ...runtime,
+                prompt: (payload) =>
+                  Effect.sync(() => {
+                    promptRuntimes.push(runtimeOrdinal);
+                    promptTexts.push(
+                      payload.prompt
+                        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                        .join("\n"),
+                    );
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }),
             }),
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            mockAgentPath: yield* bundledMockAgentPath,
-            wrapRuntime: (runtime, runtimeOrdinal) => ({
-              ...runtime,
-              prompt: (payload) =>
-                Effect.sync(() => {
-                  promptRuntimes.push(runtimeOrdinal);
-                  promptTexts.push(
-                    payload.prompt
-                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
-                      .join("\n"),
-                  );
-                  return { stopReason: "end_turn" as const };
-                }),
-            }),
-          }),
-        },
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-outcome"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const runTurn = (ordinal: number) =>
-        Effect.gen(function* () {
-          yield* runtime.startTurn(
-            makeTurnInput({
-              threadId,
-              providerThread,
-              instanceId,
-              runtimePolicy,
-              now: yield* DateTime.now,
-              ordinal,
-            }),
-          );
-          const events = yield* runtime.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runCollect,
-          );
-          return events.at(-1);
+          },
         });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-outcome"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runTurn = (ordinal: number) =>
+          Effect.gen(function* () {
+            yield* runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now: yield* DateTime.now,
+                ordinal,
+              }),
+            );
+            const events = yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            );
+            return events.at(-1);
+          });
 
-      const failed = yield* runTurn(1);
-      if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
-        return assert.fail("expected a failed terminal");
-      }
-      assert.deepEqual(failed.failure, quota);
-      const completed = yield* runTurn(2);
-      assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
-      assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
-      // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
-      assert.include(promptTexts[1] ?? "", "<runtime_info>");
-      assert.include(promptTexts[1] ?? "", "T3 Code interaction mode: Default");
-      assert.equal(watchedSessions.length, 2);
-      assert.equal(watchedSessions[0], watchedSessions[1]);
-    }).pipe(Effect.provide(layerTest)),
+        const failed = yield* runTurn(1);
+        if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
+          return assert.fail("expected a failed terminal");
+        }
+        assert.deepEqual(failed.failure, quota);
+        const completed = yield* runTurn(2);
+        assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
+        assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
+        // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
+        assert.include(promptTexts[1] ?? "", "<runtime_info>");
+        assert.include(promptTexts[1] ?? "", "T3 Code interaction mode: Default");
+        assert.equal(watchedSessions.length, 2);
+        assert.equal(watchedSessions[0], watchedSessions[1]);
+      }).pipe(Effect.provide(layerTest)),
   );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
@@ -5640,22 +5643,27 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["startTurn", "resumeThread"] as const)(
-    "preserves the workspace runtime on background work or failed reactivation via %s",
-    (activation) =>
+  it.effect.each([
+    { activation: "startTurn", rejection: "mode" },
+    { activation: "resumeThread", rejection: "mode" },
+    { activation: "startTurn", rejection: "model" },
+    { activation: "resumeThread", rejection: "model" },
+  ] as const)(
+    "preserves the workspace runtime on background work or failed $rejection reactivation via $activation",
+    ({ activation, rejection }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const workspaceB = yield* fs.makeTempDirectoryScoped();
-        const mockAgentPath = yield* path.fromFileUrl(
-          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-        );
+        const mockAgentPath = yield* bundledMockAgentPath;
         const instanceId = ProviderInstanceId.make("acp-workspace-reactivation");
         let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
         const inputs: Array<AcpAdapterV2RuntimeInput> = [];
         const prompts: Array<string> = [];
         let originalClosed = false;
+        let originalRead:
+          | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleReadTextFile"]>[0]
+          | undefined;
         const nativeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
@@ -5665,6 +5673,9 @@ describe("AcpAdapterV2", () => {
             capabilities: AcpProviderCapabilitiesV2,
             replaceRuntimeOnActivation: () => true,
             sessionModeForPolicy: () => "code",
+            clientFileSystem: {
+              readTextFile: (_request, cwd) => Effect.succeed({ content: cwd ?? "" }),
+            },
             enablePostSettleContinuation: true,
             registerExtensions: (context) =>
               Effect.sync(() => {
@@ -5693,13 +5704,27 @@ describe("AcpAdapterV2", () => {
                   inputs.length === 4
                     ? {
                         ...candidate,
-                        setMode: () =>
-                          Effect.fail(
-                            new EffectAcpErrors.AcpTransportError({
-                              detail: "Fixture mode configuration failure",
-                              cause: null,
-                            }),
-                          ),
+                        ...(rejection === "model"
+                          ? {
+                              setConfigOption: () =>
+                                Effect.fail(
+                                  new EffectAcpErrors.AcpRequestError({
+                                    code: -32602,
+                                    errorMessage: "Fixture model configuration failure",
+                                  }),
+                                ),
+                            }
+                          : {}),
+                        setMode:
+                          rejection === "model"
+                            ? candidate.setMode
+                            : () =>
+                                Effect.fail(
+                                  new EffectAcpErrors.AcpTransportError({
+                                    detail: "Fixture mode configuration failure",
+                                    cause: null,
+                                  }),
+                                ),
                       }
                     : inputs.length === 3
                       ? {
@@ -5717,6 +5742,10 @@ describe("AcpAdapterV2", () => {
                         }
                       : {
                           ...candidate,
+                          handleReadTextFile: (handler) => {
+                            originalRead = handler;
+                            return candidate.handleReadTextFile(handler);
+                          },
                           prompt: (request) => {
                             prompts.push(input.cwd);
                             return candidate.prompt(request);
@@ -5761,9 +5790,8 @@ describe("AcpAdapterV2", () => {
           messageText: "original workspace history",
         });
         const turn = (ordinal: number) =>
-          runtime.startTurn({
-            ...turnInput,
-            ...makeTurnInput({
+          runtime.startTurn(
+            makeTurnInput({
               threadId,
               providerThread,
               instanceId,
@@ -5772,7 +5800,7 @@ describe("AcpAdapterV2", () => {
               ordinal,
               messageText: "original workspace history",
             }),
-          });
+          );
         const completed = runtime.events.pipe(
           Stream.filter((event) => event.type === "turn.terminal"),
           Stream.runHead,
@@ -5806,8 +5834,23 @@ describe("AcpAdapterV2", () => {
         const rejected = yield* Effect.exit(resume());
         assert.isTrue(Exit.isFailure(rejected));
         if (Exit.isFailure(rejected))
-          assert.include(Cause.pretty(rejected.cause), "Fixture mode configuration failure");
+          assert.include(
+            Cause.pretty(rejected.cause),
+            `Fixture ${rejection} configuration failure`,
+          );
         assert.isFalse(originalClosed, "configuration rejection must retain the original process");
+        const retainedBeforeTurn = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(retainedBeforeTurn.messages, unchanged.messages);
+        assert.deepEqual(retainedBeforeTurn.providerTurns, unchanged.providerTurns);
+        if (originalRead === undefined)
+          return yield* Effect.die("Expected original client file handler");
+        assert.equal(
+          (yield* originalRead(
+            { sessionId, path: "policy-probe" },
+            { requestId: "policy-probe", method: "fs/read_text_file" },
+          )).content,
+          runtimePolicy.cwd,
+        );
         yield* turn(2);
         yield* completed;
         assert.deepEqual(prompts, [runtimePolicy.cwd, runtimePolicy.cwd]);
@@ -5825,7 +5868,7 @@ describe("AcpAdapterV2", () => {
             [workspaceB, workspaceB, sessionId],
           ],
         );
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
@@ -6797,6 +6840,7 @@ describe("AcpAdapterV2", () => {
               environment: (runtimeOrdinal) =>
                 runtimeOrdinal === 1 ? { T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG: "1" } : {},
               ownDetachedProcessGroup: true,
+              processGroupTerminationGrace: 0,
               protocolEvents,
             }),
             normalizeToolCall: normalizeXAiAcpToolCallState,

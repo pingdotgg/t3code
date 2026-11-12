@@ -27,5 +27,5 @@ it.effect("reads only bounded regular instruction files and skips missing files"
       yield* fs.symlink("/dev/zero", device);
       assert.isTrue(Exit.isFailure(yield* Effect.exit(readAntigravityInstructions(device))));
     }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
