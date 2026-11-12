@@ -233,6 +233,12 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // A command can outlive end_turn; session/cancel leaves it running, so Stop ends the process group.
+    extractBackgroundTaskId: (toolCall) =>
+      toolCall.kind === "execute" ? toolCall.toolCallId : undefined,
+    deferFinalizeForBackgroundWork: true,
+    restartRuntimeAfterInterrupt: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
