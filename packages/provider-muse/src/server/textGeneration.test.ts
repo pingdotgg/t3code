@@ -252,18 +252,31 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
           detail:
             "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
         },
+        {
+          reason: "upstream 429: quota exceeded for this key",
+          detail: "Muse Code usage limit reached. Try again after it resets.",
+        },
+        {
+          reason: "raw provider refusal",
+          detail:
+            "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+        },
       ];
-      for (const { error, detail } of cases) {
+      for (const { error, reason, detail } of cases) {
+        const raw = error === undefined ? reason : "message" in error ? error.message : message;
         const test = fixture((emit) =>
           emit("turn/completed", {
             terminal: "failed",
-            error: { message, ...error, retryable: false },
+            ...(error === undefined
+              ? { reason }
+              : { error: { message, ...error, retryable: false } }),
           }),
         );
         const service = yield* test.make;
         const failure = yield* service.generateThreadTitle(titleInput).pipe(Effect.flip);
         expect(failure).toMatchObject({ _tag: "TextGenerationError", detail });
-        expect(failure.detail).not.toContain("message" in error ? error.message : message);
+        expect(failure.detail).not.toContain(raw);
+        expect(failure.cause).toMatchObject({ cause: { message: raw } });
         expect(test.host.close).toHaveBeenCalledOnce();
       }
     }),

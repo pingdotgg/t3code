@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -40,14 +41,13 @@ import {
 } from "../serverRuntimeState.ts";
 import {
   buildPairingUrl,
-  formatHostForUrl,
   isLoopbackHost,
-  isWildcardHost,
   renderTerminalQrCode,
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -65,6 +65,8 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   {
     checkedStatePaths: Schema.Array(Schema.String),
     inLinkedWorktree: Schema.Boolean,
+    serveCommand: Schema.String,
+    connectCommand: Schema.String,
   },
 ) {
   override get message(): string {
@@ -74,7 +76,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
     ].join("\n");
   }
 }
@@ -245,7 +247,8 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
 ) {
   const bases: Array<string> = [];
   let inLinkedWorktree = false;
-  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
+  const hasExplicitBaseDir = explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0;
+  if (hasExplicitBaseDir) {
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
     // Same precedence as dev-runner: inside a linked worktree only its own
@@ -292,7 +295,13 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       } satisfies DiscoveredPairTarget;
     }
   }
-  return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
+  const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
+  return yield* new NoRunningServerError({
+    checkedStatePaths,
+    inLinkedWorktree,
+    serveCommand: (yield* resolveHostCliCommand("serve", baseDirArgs)).command,
+    connectCommand: (yield* resolveHostCliCommand("connect", baseDirArgs)).command,
+  });
 });
 
 /** Use the discovered state directory, independent of ambient config variables. */
