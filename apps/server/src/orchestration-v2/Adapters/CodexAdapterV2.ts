@@ -782,6 +782,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    /** The user's `model_reasoning_summary` from the Codex config, when set. */
+    readonly configuredReasoningSummary?: CodexSchema.V2TurnStartParams__ReasoningSummary;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -828,8 +830,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ...(additionalContext ? { additionalContext } : {}),
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
-      // Catalogues can default summaries to "none"; request them explicitly on every turn.
-      summary: "detailed",
+      // Catalogues can default summaries to "none", and turn/start overrides the user's config,
+      // so pass theirs through or `auto`: some providers (Amazon Bedrock) reject `detailed`.
+      summary: input.configuredReasoningSummary ?? "auto",
       // Omitting the reviewer on resume preserves the previous Auto reviewer.
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
@@ -7237,6 +7240,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const configuredReasoningSummary = yield* client
+              .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
+              .pipe(
+                Effect.map((response) => response.config.model_reasoning_summary ?? undefined),
+                Effect.catch(() =>
+                  Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
+                ),
+              );
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
@@ -7247,6 +7258,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
