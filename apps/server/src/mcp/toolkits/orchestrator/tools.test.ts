@@ -27,3 +27,15 @@ it("refuses a t3_thread_update whose fields do not fit its action", () => {
     true,
   );
 });
+
+// The server binds an omitted field only for a thread caller scheduling in its own project.
+it("states schedule_task's conditional bindToCurrentThread default", () => {
+  const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.schedule_task) as {
+    readonly properties: Readonly<
+      Record<string, { readonly anyOf?: ReadonlyArray<{ readonly description?: string }> }>
+    >;
+  };
+  const description = schema.properties.bindToCurrentThread?.anyOf?.[0]?.description ?? "";
+  expect(description).not.toMatch(/^Default true\b/);
+  expect(description).toMatch(/project/i);
+});
