@@ -220,8 +220,9 @@ const windowsHost = (acls: Map<string, unknown>) =>
       ProcessRunner.ProcessRunner.of({
         run: (input) => {
           const acl = acls.get(input.env?.T3_PRIVATE_FILE ?? "");
+          if (acl instanceof ProcessRunner.ProcessSpawnError) return Effect.fail(acl);
           return Effect.succeed({
-            stdout: acl === undefined ? "" : JSON.stringify(acl),
+            stdout: typeof acl === "string" ? acl : acl === undefined ? "" : JSON.stringify(acl),
             stderr: "",
             code: ChildProcessSpawner.ExitCode(acl === undefined ? 1 : 0),
             timedOut: false,
@@ -256,6 +257,12 @@ it.effect("publishes on Windows only from a file whose ACL is private to the ser
         { ...privateAcl, owner: "S-1-5-21-1-2-3-1002" },
         { ...privateAcl, dacl: null },
         undefined,
+        "malformed-acl-synthetic-private-detail",
+        new ProcessRunner.ProcessSpawnError({
+          command: "powershell.exe",
+          argumentCount: 4,
+          cause: new Error("runner-synthetic-private-detail"),
+        }),
       ];
       for (const [index, acl] of notPrivate.entries()) {
         if (acl === undefined) acls.delete(input.filePath);
@@ -264,6 +271,8 @@ it.effect("publishes on Windows only from a file whose ACL is private to the ser
           .publish({ ...input, clientRequestId: `not-private-${index}` })
           .pipe(Effect.flip);
         assert.equal(failure.reason, "invalid_file");
+        assert.isFalse(failure.message.includes("synthetic-private-detail"));
+        assert.isFalse(JSON.stringify(failure).includes("synthetic-private-detail"));
       }
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
