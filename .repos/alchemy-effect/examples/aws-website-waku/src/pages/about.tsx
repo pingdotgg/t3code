@@ -2,10 +2,7 @@ export default function AboutPage() {
   return (
     <div>
       <h1>About</h1>
-      <p>
-        This page is prerendered at build time (SSG) and served as a static
-        asset.
-      </p>
+      <p>This page is prerendered at build time (SSG) and served as a static asset.</p>
     </div>
   );
 }
