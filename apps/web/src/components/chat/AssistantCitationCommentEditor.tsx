@@ -115,6 +115,7 @@ export function AssistantCitationCommentEditor({
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+        <TextFieldSpeechControls speech={speech} compact />
         {onViewSource ? (
           <Button
             variant="secondary"
@@ -133,7 +134,6 @@ export function AssistantCitationCommentEditor({
         >
           Cancel
         </Button>
-        <TextFieldSpeechControls speech={speech} compact />
         <Button
           size="xs"
           disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
