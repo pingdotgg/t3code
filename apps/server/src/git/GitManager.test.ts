@@ -1706,6 +1706,89 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect.each([
+    "create_branch",
+    "prepare",
+    "commit",
+    "commit-untracked",
+    "commit-failure",
+    "commit-untracked-failure",
+  ] as const)("creates a feature branch before the first commit: %s", (mode) =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTempDir("t3code-unborn-feature-");
+      yield* runGit(cwd, ["init", "--initial-branch=master"]);
+      yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test User"]);
+      NodeFS.writeFileSync(NodePath.join(cwd, "staged.txt"), "staged\n");
+      if (!mode.includes("untracked")) yield* runGit(cwd, ["add", "staged.txt"]);
+      NodeFS.writeFileSync(NodePath.join(cwd, "untracked.txt"), "untracked\n");
+      const before = (yield* runGit(cwd, ["status", "--porcelain"])).stdout;
+      const originalIndex = NodeFS.existsSync(NodePath.join(cwd, ".git/index"))
+        ? NodeFS.readFileSync(NodePath.join(cwd, ".git/index"))
+        : undefined;
+      if (mode.endsWith("failure")) {
+        const hook = NodePath.join(cwd, ".git/hooks/pre-commit");
+        NodeFS.writeFileSync(
+          hook,
+          '#!/bin/sh\nif [ "$(git log -1 --format=%s 2>/dev/null)" = "Add concern 1" ]; then exit 1; fi\n',
+        );
+        NodeFS.chmodSync(hook, 0o755);
+      }
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: (context) =>
+            Effect.succeed({
+              commits: context.changeUnitSummary.split("\n").map((line, index) => ({
+                subject: `Add concern ${index + 1}`,
+                body: "",
+                hunkIds: [line.split("\t")[0]!],
+              })),
+            }),
+        },
+      });
+      if (mode.endsWith("failure")) {
+        yield* runStackedAction(manager, { cwd, action: "commit", featureBranch: true }).pipe(
+          Effect.flip,
+        );
+        expect((yield* runGit(cwd, ["rev-parse", "--verify", "HEAD"], true)).exitCode).not.toBe(0);
+        expect((yield* runGit(cwd, ["status", "--porcelain"])).stdout).toBe(before);
+        expect(NodeFS.existsSync(NodePath.join(cwd, ".git/index"))).toBe(
+          originalIndex !== undefined,
+        );
+        if (originalIndex)
+          expect(NodeFS.readFileSync(NodePath.join(cwd, ".git/index"))).toEqual(originalIndex);
+        expect(NodeFS.existsSync(NodePath.join(cwd, ".git/index.lock"))).toBe(false);
+        return;
+      }
+      const branch =
+        mode === "prepare"
+          ? yield* manager.createFeatureBranch({
+              cwd,
+              expectedBranch: "master",
+              settings: {
+                modelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+                style: DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+              },
+            })
+          : (yield* runStackedAction(manager, {
+              cwd,
+              action: mode === "create_branch" ? "create_branch" : "commit",
+              featureBranch: true,
+            })).branch.name;
+      expect(branch).toBe("feature/implement-stacked-git-actions");
+      expect((yield* runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).stdout.trim()).toBe(branch);
+      expect(NodeFS.readFileSync(NodePath.join(cwd, "staged.txt"), "utf8")).toBe("staged\n");
+      expect(NodeFS.readFileSync(NodePath.join(cwd, "untracked.txt"), "utf8")).toBe("untracked\n");
+      if (mode === "commit" || mode === "commit-untracked") {
+        expect((yield* runGit(cwd, ["rev-list", "--count", "HEAD"])).stdout.trim()).toBe("2");
+        expect((yield* runGit(cwd, ["status", "--porcelain"])).stdout.trim()).toBe("");
+      } else {
+        expect((yield* runGit(cwd, ["status", "--porcelain"])).stdout).toBe(before);
+        expect((yield* runGit(cwd, ["rev-list", "--all", "--count"])).stdout.trim()).toBe("0");
+      }
+    }),
+  );
+
   it.effect.each(["commit", "prepare", "create_branch", "commit-detached"] as const)(
     "featureBranch honors project branch naming config: %s",
     (mode) =>

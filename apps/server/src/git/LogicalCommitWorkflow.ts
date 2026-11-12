@@ -99,7 +99,10 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         return yield* fail(`Logical commit snapshots support patches up to ${PATCH_LIMIT} bytes.`);
       return prepared?.stagedPatch ?? "";
     });
-    const head = yield* output(["rev-parse", "HEAD"]);
+    const readHead = () => output(["rev-parse", "--verify", "HEAD"], { allowNonZeroExit: true });
+    const head = yield* readHead();
+    const initialTree =
+      head || (yield* output(["hash-object", "-t", "tree", "-w", "--stdin"], { stdin: "" }));
     const branchRef = yield* readBranch();
     const branch = branchRef.replace(/^refs\/heads\//, "") || null;
     if (branch !== request.expectedBranch)
@@ -111,14 +114,14 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     )
       return yield* fail("Finish the merge before splitting commits.");
     const indexPath = path.resolve(cwd, yield* output(["rev-parse", "--git-path", "index"]));
-    const originalIndex = yield* fs.readFile(indexPath);
+    const originalIndex = (yield* fs.exists(indexPath)) ? yield* fs.readFile(indexPath) : undefined;
     const worktree = yield* readWorkingTree();
-    let base = head;
+    let base = initialTree;
     let rangeHead = head;
     const followingCommits: string[] = [];
     let patch: string;
     if (request.scope.type === "branch" || request.scope.type === "branch_range") {
-      if (!branch || worktree !== "")
+      if (!head || !branch || worktree !== "")
         return yield* fail("Rebuilding branch history requires a clean feature branch.");
       if (request.scope.expectedHeadSha && request.scope.expectedHeadSha !== head)
         return yield* fail(
@@ -262,23 +265,30 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     ]);
     yield* stage("create", `Creating ${generated.commits.length} logical commits...`);
     const backupRef = `${backupRoot}/original`;
-    yield* execute(["update-ref", backupRef, head, ""]);
+    if (head) yield* execute(["update-ref", backupRef, head, ""]);
     const finalIndex = path.join(directory, "final-index");
-    yield* fs.writeFile(finalIndex, originalIndex);
+    if (originalIndex) yield* fs.writeFile(finalIndex, originalIndex);
+    else yield* execute(["read-tree", "--empty"], { env: { GIT_INDEX_FILE: finalIndex } });
     const finalEnv = { GIT_INDEX_FILE: finalIndex, GIT_LITERAL_PATHSPECS: "1" };
     yield* execute(["-c", "core.splitIndex=false", "update-index", "--no-split-index"], {
       env: finalEnv,
     });
     const indexTree = yield* output(["write-tree"], { env: finalEnv });
     yield* execute(["update-ref", `${backupRoot}/index`, indexTree, ""]);
-    const paths = (yield* execute(["diff", "--name-only", "--no-renames", "-z", head, targetTree]))
-      .stdout;
-    const currentIndex = yield* fs.readFile(indexPath);
+    const paths = (yield* execute([
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      initialTree,
+      targetTree,
+    ])).stdout;
+    const currentIndex = (yield* fs.exists(indexPath)) ? yield* fs.readFile(indexPath) : undefined;
     if (
-      (yield* output(["rev-parse", "HEAD"])) !== head ||
+      (yield* readHead()) !== head ||
       (yield* readBranch()) !== branchRef ||
-      currentIndex.length !== originalIndex.length ||
-      !currentIndex.every((byte, index) => byte === originalIndex[index]) ||
+      currentIndex?.length !== originalIndex?.length ||
+      (currentIndex && !currentIndex.every((byte, index) => byte === originalIndex?.[index])) ||
       (yield* readWorkingTree()) !== worktree
     )
       return yield* fail(
@@ -286,15 +296,19 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
       );
 
     const update = (from: string, to: string) =>
-      execute(["update-ref", ...(branchRef ? [] : ["--no-deref"]), branchRef || "HEAD", to, from]);
+      execute([
+        "update-ref",
+        ...(branchRef ? [] : ["--no-deref"]),
+        ...(to ? [branchRef || "HEAD", to, from] : ["-d", branchRef || "HEAD", from]),
+      ]);
     const installIndex = Effect.fn("LogicalCommitWorkflow.installIndex")(function* (
-      bytes: Uint8Array,
+      bytes: Uint8Array | undefined,
     ) {
       const lockPath = `${indexPath}.lock`;
       let owned = false;
       yield* Effect.acquireRelease(
         Effect.uninterruptible(
-          fs.writeFile(lockPath, bytes, { flag: "wx" }).pipe(
+          fs.writeFile(lockPath, bytes ?? new Uint8Array(), { flag: "wx" }).pipe(
             Effect.tap(() =>
               Effect.sync(() => {
                 owned = true;
@@ -305,10 +319,10 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
         () => (owned ? fs.remove(lockPath, { force: true }).pipe(Effect.ignore) : Effect.void),
       );
       yield* Effect.uninterruptible(
-        fs.rename(lockPath, indexPath).pipe(
+        (bytes ? fs.rename(lockPath, indexPath) : fs.remove(indexPath, { force: true })).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
-              owned = false;
+              if (bytes) owned = false;
             }),
           ),
         ),
@@ -316,7 +330,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
     }, Effect.scoped);
     let tip = head;
     return yield* Effect.gen(function* () {
-      if (base !== head) {
+      if (head && base !== head) {
         yield* update(head, base);
         tip = base;
       }
@@ -328,11 +342,11 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
               step.id === `commit:${index}` ? { ...step, state: "running" } : step,
             ),
         );
-        if ((yield* output(["rev-parse", "HEAD"])) !== tip || (yield* readBranch()) !== branchRef)
+        if ((yield* readHead()) !== tip || (yield* readBranch()) !== branchRef)
           return yield* fail(
             "The branch changed while committing. Stop other Git operations and retry.",
           );
-        yield* execute(["read-tree", tip]);
+        yield* execute(["read-tree", tip || initialTree]);
         const selected = units.filter((unit) => commit.hunkIds.includes(unit.id));
         yield* execute(["apply", "--cached", "--recount", "--whitespace=nowarn", "-"], {
           stdin: buildPatchForLogicalChangeUnits(selected),
@@ -384,7 +398,7 @@ export const runLogicalCommitWorkflow = Effect.fn("LogicalCommitWorkflow.run")(
       return {
         commitSha: tip,
         subjects: generated.commits.map((commit) => commit.subject),
-        backupRef,
+        backupRef: head ? backupRef : null,
       };
     }).pipe(
       Effect.onError(() =>

@@ -3700,8 +3700,7 @@ export const make = Effect.gen(function* () {
           "The branch changed while preparing the feature branch. Reopen the commit dialog and try again.",
       });
     }
-    yield* gitCore.createRef({ cwd, refName: resolvedBranch });
-    yield* Effect.scoped(gitCore.switchRef({ cwd, refName: resolvedBranch }));
+    yield* gitCore.createRef({ cwd, refName: resolvedBranch, switchRef: true });
 
     return {
       branchStep: { status: "created" as const, name: resolvedBranch },
