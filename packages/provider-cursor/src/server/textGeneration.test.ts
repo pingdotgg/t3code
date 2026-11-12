@@ -36,8 +36,10 @@ vi.mock("./sdk.ts", () => ({
 }));
 
 let hasCustomPolicy = false;
+let customPolicy = '{ "type": "insecure_none" }';
 const layerFs = FileSystem.layerNoop({
   exists: () => Effect.succeed(hasCustomPolicy),
+  readFileString: () => Effect.succeed(customPolicy),
   makeTempDirectoryScoped: () => Effect.succeed("/isolated-text-generation"),
 });
 const layerTest = Layer.merge(layerFs, CursorSdk.layer);
@@ -47,6 +49,7 @@ const cursorSettings = decodeCursorSettings({ enabled: true });
 
 beforeEach(() => {
   hasCustomPolicy = false;
+  customPolicy = '{ "type": "insecure_none" }';
   cursorSdkMock.create.mockReset();
   cursorSdkMock.send.mockReset();
   cursorSdkMock.create.mockImplementation(async (options) => {
@@ -253,6 +256,20 @@ describe("CursorTextGeneration", () => {
       );
       expect(failure.detail).toContain("custom ~/.cursor/sandbox.json");
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("runs when sandbox.json only allowlists network hosts", () =>
+    Effect.gen(function* () {
+      hasCustomPolicy = true;
+      customPolicy = '{ "networkPolicy": { "default": "deny", "allow": ["*.github.com"] } }';
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      yield* generation.generateThreadTitle({
+        cwd: "/real-workspace",
+        message: "Title",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+      });
+      expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
     }).pipe(Effect.provide(layerTest)),
   );
 
