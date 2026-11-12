@@ -6492,6 +6492,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
+    // regression: #14169 Codex refuses while its last snapshot rounds the window to 99%
+    {
+      name: "near-full-reset",
+      code: "usageLimitExceeded",
+      notification: true,
+      usedBefore: 99,
+      expectedClass: "usage_limit",
+    },
     {
       name: "exhausted-429",
       code: "responseTooManyFailedAttempts",
@@ -6813,7 +6821,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "deferred-reset" || scenario.name === "first-request-reset")
+        if (
+          scenario.name === "deferred-reset" ||
+          scenario.name === "first-request-reset" ||
+          scenario.name === "near-full-reset"
+        )
           assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "newer-reset-during-read")
           assert.equal(terminal.failure.resetAt, "2033-05-20T11:06:40.000Z");
