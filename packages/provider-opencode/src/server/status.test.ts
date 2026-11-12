@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
@@ -24,6 +25,7 @@ import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2ModelLoader,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -1158,5 +1160,22 @@ it.effect("reads an already loaded OpenCode 2 directory once without waiting for
     );
     NodeAssert.deepEqual(workspace, scanned);
     NodeAssert.deepEqual(calls, ["read"]);
+  }),
+);
+
+it.effect("lists a catalog whose cold server start outlasts the settle budget", () =>
+  Effect.gen(function* () {
+    const catalog: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+    ];
+    let reads = 0;
+    // The loader's read includes spawning the server; a loaded host can take 6s to start it.
+    const read = Effect.suspend(() =>
+      reads++ === 0 ? Effect.sleep("6 seconds").pipe(Effect.as(catalog)) : Effect.succeed(catalog),
+    );
+    const load = yield* makeOpenCode2ModelLoader(read);
+    const fiber = yield* Effect.forkChild(load);
+    yield* TestClock.adjust("10 seconds");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
   }),
 );
