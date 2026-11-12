@@ -33,6 +33,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1531,6 +1532,116 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ["finalize"],
       "the thread's removed worktree should list the project's skills",
     );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("one account's failed model refresh does not stop the others refreshing", () =>
+  Effect.gen(function* () {
+    const driver = ProviderDriverKind.make("antigravity");
+    const failing = ProviderInstanceId.make("antigravity");
+    const healthy = ProviderInstanceId.make("antigravity_2");
+    const providerFor = (instanceId: ProviderInstanceId): ServerProvider => ({
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-07T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    });
+    const providers = [providerFor(failing), providerFor(healthy)];
+    const refreshed: Array<ProviderInstanceId> = [];
+    const responses = yield* Queue.unbounded<unknown>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed(providers),
+        invalidateModelCaches: () => Effect.void,
+        refresh: () => Effect.succeed(providers),
+        refreshInstance: () => Effect.succeed(providers),
+      }),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        listInstances: Effect.succeed([
+          {
+            instanceId: failing,
+            refreshModels: () =>
+              Effect.fail(
+                new ProviderDriverError({
+                  driver,
+                  instanceId: failing,
+                  detail: "Antigravity model refresh timed out.",
+                }),
+              ),
+          },
+          {
+            instanceId: healthy,
+            refreshModels: () => Effect.sync(() => void refreshed.push(healthy)),
+          },
+        ] as never),
+      }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed([]),
+        refresh: Effect.void,
+      }),
+      Layer.mock(ProjectService.ProjectService)({}),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        scratchRoot: Effect.succeedNone,
+        namedProjectsRoot: process.cwd(),
+      }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(WsServerRefreshProvidersRpc),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit" ? Queue.offer(responses, response.exit) : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("refresh-models-test"),
+            subject: "refresh-models-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { refreshModels: true },
+      headers: Headers.empty,
+    });
+    const exit = (yield* Queue.take(responses)) as Exit.Exit<unknown, unknown>;
+    assert.deepEqual(refreshed, [healthy]);
+    assert.isTrue(Exit.isSuccess(exit), "one instance's failure should not fail the refresh");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
