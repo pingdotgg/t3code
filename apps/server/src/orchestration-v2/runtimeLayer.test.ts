@@ -4166,6 +4166,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const wakes = messages.filter((message) => message.notification !== undefined);
       assert.equal(wakes.length, 1);
       for (const number of numbers) assert.include(wakes[0]!.text, `#${number}`);
+      const source = wakes[0]!.notification!.source;
+      assert.deepEqual(
+        source.kind === "monitor"
+          ? [source.pullRequest, ...(source.otherPullRequests ?? [])]
+              .map((stamp) => stamp?.number)
+              .toSorted()
+          : [],
+        numbers,
+      );
     }),
   );
 

@@ -34,6 +34,7 @@ import {
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2LimitRecoveryUpdate,
+  type OrchestrationV2Notification,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
@@ -960,14 +961,21 @@ function pullRequestSnapshotEndsWatch(
   );
 }
 
-function isStalePullRequestWatchWake(
+type MonitorPullRequestStamp = NonNullable<
+  Extract<OrchestrationV2Notification["source"], { readonly kind: "monitor" }>["pullRequest"]
+>;
+
+function monitorPullRequestStamps(
+  source: OrchestrationV2Notification["source"] | undefined,
+): ReadonlyArray<MonitorPullRequestStamp> {
+  if (source?.kind !== "monitor" || source.pullRequest === undefined) return [];
+  return [source.pullRequest, ...(source.otherPullRequests ?? [])];
+}
+
+function isStalePullRequestWatchStamp(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
-  run: OrchestrationV2Run,
+  stamp: MonitorPullRequestStamp,
 ): boolean {
-  const source = projection.messages.find((message) => message.id === run.userMessageId)
-    ?.notification?.source;
-  if (source?.kind !== "monitor" || source.pullRequest === undefined) return false;
-  const stamp = source.pullRequest;
   const link = threadPullRequestsOf(projection.thread).find(
     (candidate) =>
       candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, stamp),
@@ -980,15 +988,14 @@ function isStalePullRequestWatchWake(
   }
   if (link.watch === undefined) {
     // A watch the server ended with a final notice still owes the wakes it queued before it.
-    const endedWithNotice = projection.messages.some((message) => {
-      const ending = message.notification?.source;
-      return (
-        ending?.kind === "monitor" &&
-        ending.pullRequest?.watchEnded === true &&
-        ending.pullRequest.watchStartedAt === stamp.watchStartedAt &&
-        threadPullRequestKeysEqual(ending.pullRequest, stamp)
-      );
-    });
+    const endedWithNotice = projection.messages.some((message) =>
+      monitorPullRequestStamps(message.notification?.source).some(
+        (ending) =>
+          ending.watchEnded === true &&
+          ending.watchStartedAt === stamp.watchStartedAt &&
+          threadPullRequestKeysEqual(ending, stamp),
+      ),
+    );
     return (
       !endedWithNotice ||
       link.endedWatch?.startedAt !== stamp.watchStartedAt ||
@@ -999,6 +1006,18 @@ function isStalePullRequestWatchWake(
     link.watch.startedAt !== stamp.watchStartedAt ||
     (stamp.headSha !== null && link.watch.headSha !== stamp.headSha) ||
     pullRequestSnapshotEndsWatch(link.snapshot, link.watch.startedAt)
+  );
+}
+
+function isStalePullRequestWatchWake(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+  run: OrchestrationV2Run,
+): boolean {
+  const stamps = monitorPullRequestStamps(
+    projection.messages.find((message) => message.id === run.userMessageId)?.notification?.source,
+  );
+  return (
+    stamps.length > 0 && stamps.every((stamp) => isStalePullRequestWatchStamp(projection, stamp))
   );
 }
 
@@ -3548,57 +3567,75 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         );
-      const key = normalizeThreadPullRequestKey(command);
-      const link = threadPullRequestsOf(thread).find(
-        (candidate) =>
-          candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
-      );
+      const { others = [], wake, ...primary } = command;
+      const entries = [
+        { ...primary, includesRemarks: wake?.includesRemarks },
+        ...others.map((other) => ({
+          type: primary.type,
+          commandId: primary.commandId,
+          threadId: primary.threadId,
+          ...other,
+        })),
+      ].map((entry) => {
+        const key = normalizeThreadPullRequestKey(entry);
+        const link = threadPullRequestsOf(thread).find(
+          (candidate) =>
+            candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+        );
+        return { entry, key, link };
+      });
       const inactive =
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
         isProviderNativeSubagentThread(thread);
-      if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
+      // An idle thread dispatches immediately, bypassing queued-wake validation.
+      const outdated = entries.map(
+        ({ entry, link }) =>
+          wake?.notification.source.kind === "monitor" &&
+          entry.watch !== null &&
+          pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
+      );
+      if (
+        entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
+        (wake && inactive) ||
+        // One wake cannot drop the news of just some of its pull requests; the sender splits it.
+        (entries.length > 1 && outdated.some(Boolean))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: "The pull request watch ended or its thread settled while it was read.",
         });
       }
-      yield* dispatchThreadMutation(command, events, effects);
-      if (command.wake === undefined) return;
-      // An idle thread dispatches immediately, bypassing queued-wake validation.
-      if (
-        command.wake.notification.source.kind === "monitor" &&
-        command.watch !== null &&
-        pullRequestSnapshotEndsWatch(link.snapshot, command.startedAt)
-      ) {
-        return;
+      for (const { entry } of entries) {
+        const { includesRemarks: _, ...mutation } = entry;
+        yield* dispatchThreadMutation(mutation, events, effects);
       }
+      if (wake === undefined || outdated[0]) return;
+      const stamps = entries.map(({ entry, key }) => ({
+        ...key,
+        watchStartedAt: entry.startedAt,
+        headSha: entry.includesRemarks === true ? null : (entry.watch?.headSha ?? null),
+        ...(entry.watch === null ? { watchEnded: true } : {}),
+      }));
       yield* dispatchMessage(
         {
           type: "message.dispatch",
           commandId: command.commandId,
           threadId: command.threadId,
-          messageId: command.wake.messageId,
-          text: command.wake.text,
+          messageId: wake.messageId,
+          text: wake.text,
           notification: {
-            ...command.wake.notification,
+            ...wake.notification,
             source:
-              command.wake.notification.source.kind === "monitor"
+              wake.notification.source.kind === "monitor"
                 ? {
                     kind: "monitor",
-                    pullRequest: {
-                      ...key,
-                      watchStartedAt: command.startedAt,
-                      headSha:
-                        command.wake.includesRemarks === true
-                          ? null
-                          : (command.watch?.headSha ?? null),
-                      ...(command.watch === null ? { watchEnded: true } : {}),
-                    },
+                    pullRequest: stamps[0]!,
+                    ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
                   }
-                : command.wake.notification.source,
+                : wake.notification.source,
           },
           attachments: [],
           dispatchMode: { type: "queue_after_active" },

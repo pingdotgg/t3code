@@ -1260,6 +1260,13 @@ const SubagentNotificationSource = Schema.Struct({
   childThreadId: Schema.optional(ThreadId),
 });
 const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+const MonitorPullRequestStamp = Schema.Struct({
+  ...ThreadPullRequestKey.fields,
+  watchStartedAt: IsoDateTime,
+  /** Null when the wake is not about one head, so a newer push does not outdate it. */
+  headSha: Schema.NullOr(TrimmedNonEmptyString),
+  watchEnded: Schema.optional(Schema.Boolean),
+});
 
 /** Encode legacy background_command/background_task shapes first so older clients accept command/subagent sources. */
 export const OrchestrationV2NotificationSource = kindUnionWithFallback(
@@ -1292,15 +1299,9 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({
       kind: Schema.Literal("monitor"),
-      pullRequest: Schema.optional(
-        Schema.Struct({
-          ...ThreadPullRequestKey.fields,
-          watchStartedAt: IsoDateTime,
-          /** Null when the wake is not about one head, so a newer push does not outdate it. */
-          headSha: Schema.NullOr(TrimmedNonEmptyString),
-          watchEnded: Schema.optional(Schema.Boolean),
-        }),
-      ),
+      pullRequest: Schema.optional(MonitorPullRequestStamp),
+      /** The other pull requests one wake covers; it is outdated only once all of them are. */
+      otherPullRequests: Schema.optional(Schema.Array(MonitorPullRequestStamp)),
     }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     Schema.Struct({ kind: Schema.Literal("system") }),
@@ -3482,6 +3483,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     watch: Schema.NullOr(ThreadPullRequestWatch),
     /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
     endedWatch: Schema.optional(ThreadPullRequestWatch),
+    /** More watches of this thread recorded together, which `wake` also reports on. */
+    others: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          ...ThreadPullRequestKey.fields,
+          startedAt: IsoDateTime,
+          watch: Schema.NullOr(ThreadPullRequestWatch),
+          endedWatch: Schema.optional(ThreadPullRequestWatch),
+          includesRemarks: Schema.optional(Schema.Boolean),
+        }),
+      ),
+    ),
     wake: Schema.optional(
       Schema.Struct({
         messageId: MessageId,
