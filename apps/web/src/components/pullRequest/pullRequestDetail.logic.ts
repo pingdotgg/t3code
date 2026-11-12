@@ -1343,7 +1343,12 @@ export function buildAddSelectionToAgentHandoff(input: {
     prompt: bounded(input.request),
     reviewComments: [
       pullRequestContextComment(input, []),
-      { ...input.comment, id: `pull-request-selection:${input.url}:${input.comment.id}`, text: "" },
+      {
+        ...input.comment,
+        id: `pull-request-selection:${input.url}:${input.comment.id}`,
+        sectionTitle: `${input.comment.sectionTitle} (${boundedField(input.url)})`,
+        text: "",
+      },
     ],
   };
 }
