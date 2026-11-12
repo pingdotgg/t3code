@@ -1842,6 +1842,8 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
+  const sharedSessionId = ProviderSessionId.make("session:settled-subagents:shared");
   const now = yield* DateTime.now;
   const threadId = yield* addRolledBackRecoveryCandidate("settled-leaf-nodes");
   const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
@@ -2052,7 +2054,7 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         createdBy: "agent",
         driver,
         providerInstanceId,
-        providerThreadId: null,
+        providerThreadId: ProviderThreadId.make(`provider-thread:settled-subagents:${name}`),
         childThreadId,
         nativeTaskRef: null,
         prompt: "Do the work",
@@ -2068,6 +2070,110 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         updatedAt: now,
       },
     });
+    // Each task has a node in this thread and a provider thread in its child thread.
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:node:${name}`),
+      type: "node.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: run.id,
+        rootNodeId: run.rootNodeId!,
+        parentNodeId: run.rootNodeId,
+        kind: "subagent",
+        status,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:provider-thread:${name}`),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make(`provider-thread:settled-subagents:${name}`),
+        appThreadId: ThreadId.make(`thread:settled-subagents:child:${name}`),
+        driver,
+        providerInstanceId,
+        // One settled task ran in a provider session this thread also uses.
+        providerSessionId: name === "acknowledged" ? sharedSessionId : null,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  }
+  yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
+    (provider_session_id, thread_id) VALUES (${sharedSessionId}, ${threadId})`;
+  // A command drops the node and the provider thread of each task it drops. The provider thread
+  // in the shared session stays: detaching that session probes it for background work.
+  const kept = ["active-run-delivered", "claimed", "no-delivery", "pending-delivery", "running"];
+  const commandTrace = traceSqlStatements();
+  const commandRecords = yield* store
+    .getThreadRecords(threadId, ["nodes", "providerThreads"], {
+      omitSettledLeafNodes: true,
+      omitSettledSubagentRecords: true,
+    })
+    .pipe(Effect.withTracer(commandTrace.tracer));
+  assert.deepEqual(
+    commandRecords.nodes
+      .flatMap((node) => (node.kind === "subagent" ? [node.id.split(":").at(-1)] : []))
+      .toSorted(),
+    // A subagent node that no task record names stays.
+    [...kept, "settled-subagent"],
+  );
+  assert.deepEqual(
+    commandRecords.providerThreads.map((thread) => thread.id.split(":").at(-1)).toSorted(),
+    ["acknowledged", ...kept],
+  );
+  assert.lengthOf(
+    (yield* store.getThreadRecords(threadId, ["providerThreads"])).providerThreads,
+    subagents.length,
+  );
+  // Both reads stay inside their indexes: no scan of the thread's nodes or provider threads.
+  for (const [table, seeks] of [
+    [
+      "nodes",
+      [
+        "SEARCH node USING INTEGER PRIMARY KEY",
+        "SEARCH settled USING COVERING INDEX",
+        "SEARCH settled_node USING COVERING INDEX",
+        "subagents_settled_idx (thread_id=?)",
+      ],
+    ],
+    [
+      "provider_threads",
+      ["MULTI-INDEX OR", "provider_threads_session_idx (provider_session_id=?)"],
+    ],
+  ] as const) {
+    const query = commandTrace.statements.find((statement) =>
+      statement.includes(`FROM orchestration_v2_projection_${table}`),
+    );
+    assert.isDefined(query);
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+      .map((row) => row.detail)
+      .join("\n");
+    for (const seek of seeks) assert.include(plan, seek);
+    assert.notInclude(plan, `SCAN orchestration_v2_projection_${table}`);
   }
   const subagentNames = (records: {
     readonly subagents: ReadonlyArray<{ readonly title: string | null }>;
@@ -5626,7 +5732,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("looks up shell stop requests through the interrupt request index", () =>
+  it.effect("reads shell runs and item counts without walking a thread's history", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -5635,19 +5741,43 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* projectionStore
         .getShellSnapshot({ projectId, location: "active" })
         .pipe(Effect.withTracer(tracer));
+      const planOf = (statement: string) =>
+        sql
+          .unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`)
+          .pipe(Effect.map((rows) => rows.map((row) => row.detail)));
 
       const threadQuery = statements.find((statement) =>
         statement.includes("AS latest_run_stop_requested"),
       );
       assert.isDefined(threadQuery);
-      const stopRequestLookups = (yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${threadQuery}`,
-      ))
-        .map((row) => row.detail)
-        .filter((detail) => detail.startsWith("SEARCH stop_request "));
+      const plan = yield* planOf(threadQuery);
+      const stopRequestLookups = plan.filter((detail) => detail.startsWith("SEARCH stop_request "));
       assert.lengthOf(stopRequestLookups, 2);
       for (const lookup of stopRequestLookups) {
         assert.include(lookup, "orchestration_v2_projection_turn_items_stop_request_idx");
+      }
+      // The active, activity, and pending-secret lookups; walking the ordinal index instead
+      // reads every run of an idle thread.
+      const activeRunLookups = plan.filter(
+        (detail) => detail.startsWith("SEARCH r ") && detail.includes("(thread_id=?"),
+      );
+      assert.lengthOf(activeRunLookups, 4);
+      for (const lookup of activeRunLookups) {
+        assert.include(lookup, "orchestration_v2_projection_runs_thread_status_idx");
+      }
+      const lastExecutedIndex = plan.findIndex((detail) =>
+        detail.includes("orchestration_v2_projection_runs_last_executed_idx"),
+      );
+      assert.notStrictEqual(lastExecutedIndex, -1);
+      // The lookup that follows the search is the sort it no longer needs.
+      assert.notInclude(plan[lastExecutedIndex + 1] ?? "", "USE TEMP B-TREE");
+
+      const countQueries = statements.filter((statement) => statement.includes("item_count"));
+      assert.isNotEmpty(countQueries);
+      for (const countQuery of countQueries) {
+        for (const detail of yield* planOf(countQuery)) {
+          assert.notInclude(detail, "orchestration_v2_projection_turn_items");
+        }
       }
     }),
   );
@@ -5903,6 +6033,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             },
           });
         }
+        let runWrites = 0;
         const applyRun = (
           threadId: ThreadId,
           suffix: string,
@@ -5911,9 +6042,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ) => {
           const runId = RunId.make(`run:shell-item-counts:${suffix}`);
           const rootNodeId = NodeId.make(`node:shell-item-counts:${suffix}`);
+          runWrites += 1;
           return projectionStore
             .apply({
-              id: EventId.make(`event:shell-item-counts:${suffix}:run`),
+              id: EventId.make(`event:shell-item-counts:${suffix}:run:${runWrites}`),
               type: "run.created",
               threadId,
               runId,
@@ -5940,11 +6072,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             })
             .pipe(Effect.as(runId));
         };
-        let ordinal = 0;
-        const applyItem = (threadId: ThreadId, runId: RunId | null) => {
-          ordinal += 1;
+        let items = 0;
+        let writes = 0;
+        // Passing `rewrite` writes that earlier item again, possibly under another run.
+        const applyItem = (threadId: ThreadId, runId: RunId | null, rewrite?: number) => {
+          const ordinal = rewrite ?? (items += 1);
+          writes += 1;
           return projectionStore.apply({
-            id: EventId.make(`event:shell-item-counts:item:${ordinal}`),
+            id: EventId.make(`event:shell-item-counts:write:${writes}`),
             type: "turn-item.updated",
             threadId,
             ...(runId === null ? {} : { runId }),
@@ -5997,6 +6132,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           );
           assert.equal(shell?.itemCount, itemCount);
         }
+
+        // Writing an item again keeps its count; moving it to another run moves the count.
+        const itemCountOf = (threadId: ThreadId) =>
+          projectionStore.getThreadShell(threadId).pipe(Effect.map((shell) => shell?.itemCount));
+        yield* applyItem(busyThreadId, completedRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        yield* applyItem(busyThreadId, rolledBackRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyItem(busyThreadId, null, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+
+        // A run's rollback uncounts its items, and writing the run again counts them back.
+        yield* applyRun(busyThreadId, "busy-completed", 1, true);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyRun(busyThreadId, "busy-completed", 1, false);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        // Items written before their run exist count once it does.
+        const lateRunId = RunId.make("run:shell-item-counts:late");
+        yield* applyItem(otherThreadId, lateRunId);
+        assert.equal(yield* itemCountOf(otherThreadId), 1);
+        yield* applyRun(otherThreadId, "late", 2, false);
+        assert.equal(yield* itemCountOf(otherThreadId), 2);
       }),
   );
 
