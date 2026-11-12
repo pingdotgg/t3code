@@ -5647,6 +5647,43 @@ body {
   }
 }
 
+.surface-bubble .user-message-markdown {
+  --bubble-block-border: color-mix(in srgb, var(--contrast-border) 75%, currentcolor);
+  --inline-code-fill: color-mix(in srgb, currentcolor 8%, transparent);
+  --code-header-fill: color-mix(in srgb, currentcolor 4%, transparent);
+}
+
+/* Transparent block faces retain the bubble's gradient and theme surface. */
+.surface-bubble
+  .user-message-markdown
+  :is(.chat-markdown-table-container, .chat-markdown-codeblock, pre) {
+  --table-header-fill: var(--code-header-fill);
+  --border: var(--bubble-block-border);
+  --hairline: var(--bubble-block-border);
+  --divider: var(--bubble-block-border);
+}
+
+:root
+  .surface-bubble
+  .user-message-markdown
+  :is(.chat-markdown-codeblock, .chat-markdown-table-container > .surface-well, pre) {
+  background: transparent;
+  border-color: var(--bubble-block-border);
+}
+
+.surface-bubble .user-message-markdown .chat-markdown-table-container thead th {
+  border-bottom-color: var(--bubble-block-border);
+  color: var(--contrast-strong-foreground);
+}
+
+.surface-bubble .user-message-markdown .chat-markdown-table-container :is(th, td) {
+  max-width: none;
+}
+
+:root .surface-bubble .chat-markdown.user-message-markdown :not(pre) > code {
+  background: var(--inline-code-fill);
+}
+
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
