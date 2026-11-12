@@ -233,11 +233,15 @@ const bootstrap = Effect.gen(function* () {
     yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
       owner: Option.getOrNull(owner),
     });
-    yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
-      "This T3 home is unavailable",
-      DesktopHomeOwner.homeOwnedMessage(owner),
-    );
-    return yield* (yield* ElectronApp.ElectronApp).quit;
+    if (!(yield* DesktopHomeOwner.offerLocalEnvironmentOff(owner))) {
+      return yield* (yield* ElectronApp.ElectronApp).quit;
+    }
+    // Nothing local has started yet, so continue as if Local environment were already off.
+    yield* logBootstrapInfo("bootstrap turned off local environment for the home's owner");
+    if (!(yield* Ref.get(state.quitting))) {
+      yield* desktopWindow.createMainIfBackendReady;
+    }
+    return;
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);

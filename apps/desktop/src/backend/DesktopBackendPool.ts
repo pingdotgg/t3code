@@ -116,7 +116,11 @@ export const layer = Layer.effect(
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
     const homeOwnerContext = yield* Effect.context<
-      FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
+      | FileSystem.FileSystem
+      | Path.Path
+      | DesktopEnvironment.DesktopEnvironment
+      | DesktopAppSettings.DesktopAppSettings
+      | ElectronDialog.ElectronDialog
     >();
 
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
@@ -181,14 +185,18 @@ export const layer = Layer.effect(
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
         DesktopHomeOwner.readLiveHomeOwner().pipe(
-          Effect.flatMap((owner) =>
-            electronDialog.showErrorBox(
-              "This T3 home is unavailable",
-              DesktopHomeOwner.homeOwnedMessage(owner),
-            ),
-          ),
+          Effect.flatMap(DesktopHomeOwner.offerLocalEnvironmentOff),
           Effect.provideContext(homeOwnerContext),
-          Effect.andThen(electronApp.quit),
+          Effect.flatMap((turnedOff) =>
+            turnedOff
+              ? electronApp.relaunch({}).pipe(Effect.andThen(electronApp.quit))
+              : electronApp.quit,
+          ),
+          Effect.catch((error) =>
+            logBackendPoolWarning("failed to turn off local environment", {
+              error: error.message,
+            }).pipe(Effect.andThen(electronApp.quit)),
+          ),
         ),
     });
 
