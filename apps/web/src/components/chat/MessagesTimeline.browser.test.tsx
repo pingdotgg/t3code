@@ -1283,7 +1283,22 @@ describe("MessagesTimeline agent messages", () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
-      [message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID })],
+      [
+        message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }),
+        // Sent from a linked environment this client does not reach.
+        message(
+          "Linked review finished",
+          {
+            createdBy: "agent",
+            linkedSender: {
+              environmentId: EnvironmentId.make("environment-linked"),
+              threadId: SENDER_THREAD_ID,
+              title: "Release lead",
+            },
+          },
+          "message-linked",
+        ),
+      ],
       { onOpenThread },
     );
     const row = screen.button(/^Agent/);
@@ -1299,23 +1314,9 @@ describe("MessagesTimeline agent messages", () => {
 
     await click(screen.button(/^Agent/));
     expect(screen.text()).not.toContain("drops the index");
-  });
 
-  it("names a sender in a linked environment it cannot reach by the title it sent", async () => {
-    setup();
-    await using screen = await renderTimeline([
-      message(AGENT_MESSAGE, {
-        createdBy: "agent",
-        linkedSender: {
-          environmentId: EnvironmentId.make("environment-linked"),
-          threadId: SENDER_THREAD_ID,
-          title: "Release lead",
-        },
-      }),
-    ]);
+    // The linked sender shows the title it sent, and its thread cannot be opened from here.
     await click(screen.button(/^Release lead/));
-    expect(screen.text()).toContain("drops the index");
-    // This client cannot open a thread in an environment it does not reach.
     expect(screen.buttons("Open thread")).toHaveLength(0);
   });
 
