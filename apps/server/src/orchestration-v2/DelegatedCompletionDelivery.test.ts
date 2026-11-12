@@ -17,6 +17,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -3709,268 +3710,407 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 
 const layerRestartTest = Layer.merge(layerTest, ProviderContinuationRequests.layer);
 it.layer(layerRestartTest)("delegated tasks across a server restart", (it) => {
-  it.effect("queues a child result without creating a provider history handoff", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread:result-message-parent");
-      const projectId = ProjectId.make("project:result-message");
-      const runId = RunId.make("run:result-message-parent");
-      const rootNodeId = NodeId.make("node:result-message-parent");
-      yield* seedParentWithTerminalTask({
-        threadId,
-        projectId,
-        runId,
-        rootNodeId,
-        taskId: NodeId.make("node:result-message-seed"),
-        deliveryState: "acknowledged",
-        now,
-      });
-      const child = yield* seedRestartCancelledChild({
-        parentThreadId: threadId,
-        projectId,
-        parentRunId: runId,
-        rootNodeId,
-        name: "result-message-child",
-        completionWake: "always",
-        continuationPending: false,
-        runStatus: "completed",
-        now,
-      });
-      const parent = yield* orchestrator.getThreadProjection(threadId);
-      const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
-      const providerThreadId = ProviderThreadId.make("provider-thread:result-message-child");
-      yield* eventSink.write({
-        commandId: CommandId.make("command:result-message-child-provider"),
-        events: [
-          {
-            id: EventId.make("event:result-message-child-provider"),
-            type: "provider-thread.updated",
-            threadId: child.childThreadId,
-            occurredAt: now,
-            payload: {
-              ...parent.providerThreads[0]!,
-              id: providerThreadId,
-              appThreadId: child.childThreadId,
-            },
-          },
-          {
-            id: EventId.make("event:result-message-child-run"),
-            type: "run.updated",
-            threadId: child.childThreadId,
-            runId: child.childRunId,
-            occurredAt: now,
-            payload: { ...childProjection.runs[0]!, providerThreadId },
-          },
-        ],
-      });
-
-      yield* orchestrator.recoverDelegatedTasks;
-      const recovered = yield* orchestrator.getThreadProjection(threadId);
-      const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
-      assert.equal(task.status, "completed");
-      assert.isNotNull(task.result);
-      assert.isEmpty(recovered.contextHandoffs);
-      assert.equal(recovered.contextTransfers.length, 1);
-
-      const delivery = recovered.runs.find((candidate) => candidate.id === runId)!
-        .delegatedCompletion!.delivery!;
-      const messageId = delivery.messageId;
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("command:result-message-delivery"),
-        threadId,
-        messageId,
-        text: "Delegated task finished.",
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "server",
-        delegatedCompletion: {
+  it.effect.each([
+    { name: "releases", key: "", pendingBackgroundTasks: [], released: true },
+    {
+      name: "keeps while an unawaited background command runs",
+      key: "-background",
+      pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" as const }],
+      released: false,
+    },
+  ])(
+    "queues a child result without creating a provider history handoff and $name its process",
+    ({ key, pendingBackgroundTasks, released }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:result-message${key}-parent`);
+        const projectId = ProjectId.make(`project:result-message${key}`);
+        const runId = RunId.make(`run:result-message${key}-parent`);
+        const rootNodeId = NodeId.make(`node:result-message${key}-parent`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make(`node:result-message${key}-seed`),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
           parentRunId: runId,
-          generation: delivery.generation,
-          taskIds: [child.taskId],
-        },
-      });
-      const queued = yield* orchestrator.getThreadProjection(threadId);
-      assert.include(
-        queued.messages.find((message) => message.id === messageId)?.text ?? "",
-        task.result!,
-      );
-      const offeredRun = queued.runs.find((run) => run.userMessageId === messageId)!;
-      const offeredMessage = queued.messages.find((message) => message.id === messageId)!;
-      const offeredTurnId = ProviderTurnId.make("provider-turn:offered-completion");
-      const offeredAttemptId = RunAttemptId.make("attempt:offered-completion");
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("event:offer-completion"),
-            type: "run.updated",
-            threadId,
-            runId: offeredRun.id,
-            occurredAt: now,
-            payload: {
-              ...offeredRun,
-              boundaryOffer: {
-                id: "offered-completion",
-                targetRunId: runId,
-                providerTurnId: offeredTurnId,
+          rootNodeId,
+          name: `result-message${key}-child`,
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const providerThreadId = ProviderThreadId.make(
+          `provider-thread:result-message${key}-child`,
+        );
+        yield* eventSink.write({
+          commandId: CommandId.make(`command:result-message${key}-child-provider`),
+          events: [
+            {
+              id: EventId.make(`event:result-message${key}-child-session`),
+              type: "provider-session.attached",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: {
+                id: ProviderSessionId.make(`provider-session:result-message${key}-child`),
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                status: "ready",
+                cwd: "/repo",
+                model: modelSelection.model,
+                capabilities: {
+                  ...CodexProviderCapabilitiesV2,
+                  sessions: {
+                    ...CodexProviderCapabilitiesV2.sessions,
+                    supportsMultipleProviderThreadsPerSession: false,
+                  },
+                },
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
               },
             },
+            {
+              id: EventId.make(`event:result-message${key}-child-provider`),
+              type: "provider-thread.updated",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: {
+                ...parent.providerThreads[0]!,
+                id: providerThreadId,
+                appThreadId: child.childThreadId,
+                pendingBackgroundTasks,
+              },
+            },
+            {
+              id: EventId.make(`event:result-message${key}-child-run`),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              occurredAt: now,
+              payload: { ...childProjection.runs[0]!, providerThreadId },
+            },
+          ],
+        });
+
+        yield* orchestrator.recoverDelegatedTasks;
+        const recovered = yield* orchestrator.getThreadProjection(threadId);
+        const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
+        assert.equal(task.status, "completed");
+        assert.isNotNull(task.result);
+        assert.isEmpty(recovered.contextHandoffs);
+        assert.equal(recovered.contextTransfers.length, 1);
+        // A one-process-per-thread child releases its process once its result is recorded,
+        // unless background work it did not await would die with it.
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(child.childThreadId)).providerSessions.length,
+          released ? 0 : 1,
+        );
+
+        const delivery = recovered.runs.find((candidate) => candidate.id === runId)!
+          .delegatedCompletion!.delivery!;
+        const messageId = delivery.messageId;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`command:result-message${key}-delivery`),
+          threadId,
+          messageId,
+          text: "Delegated task finished.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: runId,
+            generation: delivery.generation,
+            taskIds: [child.taskId],
           },
-          {
-            id: EventId.make("event:offered-completion-attempt"),
-            type: "run-attempt.updated",
-            threadId,
-            runId,
-            occurredAt: now,
-            payload: {
-              id: offeredAttemptId,
+        });
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        assert.include(
+          queued.messages.find((message) => message.id === messageId)?.text ?? "",
+          task.result!,
+        );
+      }),
+  );
+
+  it.effect(
+    "a boundary-offered completion preserves its message and offers one successor after receipt",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:boundary-result-message-parent");
+        const projectId = ProjectId.make("project:boundary-result-message");
+        const runId = RunId.make("run:boundary-result-message-parent");
+        const rootNodeId = NodeId.make("node:boundary-result-message-parent");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:boundary-result-message-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "boundary-result-message-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const providerThreadId = ProviderThreadId.make(
+          "provider-thread:boundary-result-message-child",
+        );
+        yield* eventSink.write({
+          commandId: CommandId.make("command:boundary-result-message-child-provider"),
+          events: [
+            {
+              id: EventId.make("event:boundary-result-message-child-provider"),
+              type: "provider-thread.updated",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: {
+                ...parent.providerThreads[0]!,
+                id: providerThreadId,
+                appThreadId: child.childThreadId,
+              },
+            },
+            {
+              id: EventId.make("event:boundary-result-message-child-run"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              occurredAt: now,
+              payload: { ...childProjection.runs[0]!, providerThreadId },
+            },
+          ],
+        });
+
+        yield* orchestrator.recoverDelegatedTasks;
+        const recovered = yield* orchestrator.getThreadProjection(threadId);
+        const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
+        assert.equal(task.status, "completed");
+        assert.isNotNull(task.result);
+        assert.isEmpty(recovered.contextHandoffs);
+        assert.equal(recovered.contextTransfers.length, 1);
+
+        const delivery = recovered.runs.find((candidate) => candidate.id === runId)!
+          .delegatedCompletion!.delivery!;
+        const messageId = delivery.messageId;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("command:boundary-result-message-delivery"),
+          threadId,
+          messageId,
+          text: "Delegated task finished.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: runId,
+            generation: delivery.generation,
+            taskIds: [child.taskId],
+          },
+        });
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        assert.include(
+          queued.messages.find((message) => message.id === messageId)?.text ?? "",
+          task.result!,
+        );
+        const offeredRun = queued.runs.find((run) => run.userMessageId === messageId)!;
+        const offeredMessage = queued.messages.find((message) => message.id === messageId)!;
+        const offeredTurnId = ProviderTurnId.make("provider-turn:offered-completion");
+        const offeredAttemptId = RunAttemptId.make("attempt:offered-completion");
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:offer-completion"),
+              type: "run.updated",
+              threadId,
+              runId: offeredRun.id,
+              occurredAt: now,
+              payload: {
+                ...offeredRun,
+                boundaryOffer: {
+                  id: "offered-completion",
+                  targetRunId: runId,
+                  providerTurnId: offeredTurnId,
+                },
+              },
+            },
+            {
+              id: EventId.make("event:offered-completion-attempt"),
+              type: "run-attempt.updated",
+              threadId,
               runId,
-              attemptOrdinal: 1,
-              rootNodeId,
-              providerInstanceId: modelSelection.instanceId,
-              providerThreadId: parent.providerThreads[0]!.id,
-              providerTurnId: offeredTurnId,
-              reason: "initial",
-              status: "running",
-              startedAt: now,
-              completedAt: null,
+              occurredAt: now,
+              payload: {
+                id: offeredAttemptId,
+                runId,
+                attemptOrdinal: 1,
+                rootNodeId,
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: parent.providerThreads[0]!.id,
+                providerTurnId: offeredTurnId,
+                reason: "initial",
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
             },
-          },
-          {
-            id: EventId.make("event:offered-completion-turn"),
-            type: "provider-turn.updated",
-            threadId,
-            occurredAt: now,
-            payload: {
-              id: offeredTurnId,
-              providerThreadId: parent.providerThreads[0]!.id,
-              nodeId: rootNodeId,
-              runAttemptId: offeredAttemptId,
-              nativeTurnRef: null,
-              ordinal: 1,
-              status: "running",
-              startedAt: now,
-              completedAt: null,
+            {
+              id: EventId.make("event:offered-completion-turn"),
+              type: "provider-turn.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: offeredTurnId,
+                providerThreadId: parent.providerThreads[0]!.id,
+                nodeId: rootNodeId,
+                runAttemptId: offeredAttemptId,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
             },
-          },
-        ],
-      });
-      const later = yield* seedRestartCancelledChild({
-        parentThreadId: threadId,
-        projectId,
-        parentRunId: runId,
-        rootNodeId,
-        name: "result-message-later-child",
-        completionWake: "always",
-        continuationPending: false,
-        runStatus: "completed",
-        now,
-      });
-      yield* orchestrator.recoverDelegatedTasks;
-      const afterLater = yield* orchestrator.getThreadProjection(threadId);
-      assert.deepEqual(
-        afterLater.messages.find((message) => message.id === messageId),
-        offeredMessage,
-      );
-      assert.equal(
-        afterLater.subagents.find((row) => row.id === later.taskId)?.completionDelivery?.state,
-        "pending",
-      );
-      const beforeReceipt = afterLater.runs.find((run) => run.id === runId)!;
-      const checkpointId = CheckpointId.make("checkpoint:receipt-first-completion");
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("event:receipt-first-completion-waiting"),
-            type: "run.updated",
-            threadId,
-            runId,
-            occurredAt: now,
-            payload: { ...beforeReceipt, status: "waiting" },
-          },
-        ],
-      });
-      const commit = eventSink.commitCommand;
-      const receiptCommandId = CommandId.make("receipt-first-completion");
-      const offeredSuccessors: MessageId[] = [];
-      const offer = requests.offer;
-      yield* Effect.acquireUseRelease(
-        Effect.sync(() => [
-          vi.spyOn(requests, "offer").mockImplementation((request) => {
-            if (request.delegatedCompletion !== undefined)
-              offeredSuccessors.push(request.delegatedCompletion.messageId);
-            return offer(request);
-          }),
-          vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
-            Effect.gen(function* () {
-              if (input.commandId === receiptCommandId) {
-                yield* commit({
-                  commandId: CommandId.make("command:receipt-first-completion-checkpoint"),
-                  threadId,
-                  commandType: "checkpoint.capture",
-                  acceptedAt: now,
-                  effects: [],
-                  events: [
-                    {
-                      id: EventId.make("event:receipt-first-completion-checkpoint"),
-                      type: "run.updated",
-                      threadId,
-                      runId,
-                      occurredAt: now,
-                      payload: {
-                        ...beforeReceipt,
-                        status: "completed",
-                        completedAt: now,
-                        checkpointId,
-                      },
-                    },
-                  ],
-                });
-              }
-              return yield* commit(input);
+          ],
+        });
+        const later = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "boundary-result-message-later-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const afterLater = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          afterLater.messages.find((message) => message.id === messageId),
+          offeredMessage,
+        );
+        assert.equal(
+          afterLater.subagents.find((row) => row.id === later.taskId)?.completionDelivery?.state,
+          "pending",
+        );
+        const beforeReceipt = afterLater.runs.find((run) => run.id === runId)!;
+        const checkpointId = CheckpointId.make("checkpoint:receipt-first-completion");
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:receipt-first-completion-waiting"),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...beforeReceipt, status: "waiting" },
+            },
+          ],
+        });
+        const commit = eventSink.commitCommand;
+        const receiptCommandId = CommandId.make("receipt-first-completion");
+        const offeredSuccessors: MessageId[] = [];
+        const offer = requests.offer;
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() => [
+            vi.spyOn(requests, "offer").mockImplementation((request) => {
+              if (request.delegatedCompletion !== undefined)
+                offeredSuccessors.push(request.delegatedCompletion.messageId);
+              return offer(request);
             }),
-          ),
-        ]),
-        () =>
-          orchestrator.dispatch({
-            type: "queued-message.promote-to-steer",
-            commandId: receiptCommandId,
-            threadId,
-            queuedRunId: offeredRun.id,
-            targetRunId: runId,
-            boundaryOffer: { id: "offered-completion", step: "receipt" },
-          }),
-        (spies) =>
-          Effect.sync(() => {
-            for (const spy of spies) spy.mockRestore();
-          }),
-      );
-      const received = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        received.subagents.find((row) => row.id === child.taskId)?.completionDelivery?.state,
-        "delivered",
-      );
-      assert.equal(
-        received.subagents.find((row) => row.id === later.taskId)?.completionDelivery?.state,
-        "claimed",
-      );
-      assert.deepEqual(
-        received.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery?.taskIds,
-        [later.taskId],
-      );
-      const receivedParent = received.runs.find((run) => run.id === runId)!;
-      assert.deepEqual(offeredSuccessors, [
-        receivedParent.delegatedCompletion!.delivery!.messageId,
-      ]);
-      assert.deepEqual(
-        [receivedParent.status, receivedParent.completedAt, receivedParent.checkpointId],
-        ["completed", now, checkpointId],
-      );
-    }),
+            vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
+              Effect.gen(function* () {
+                if (input.commandId === receiptCommandId) {
+                  yield* commit({
+                    commandId: CommandId.make("command:receipt-first-completion-checkpoint"),
+                    threadId,
+                    commandType: "checkpoint.capture",
+                    acceptedAt: now,
+                    effects: [],
+                    events: [
+                      {
+                        id: EventId.make("event:receipt-first-completion-checkpoint"),
+                        type: "run.updated",
+                        threadId,
+                        runId,
+                        occurredAt: now,
+                        payload: {
+                          ...beforeReceipt,
+                          status: "completed",
+                          completedAt: now,
+                          checkpointId,
+                        },
+                      },
+                    ],
+                  });
+                }
+                return yield* commit(input);
+              }),
+            ),
+          ]),
+          () =>
+            orchestrator.dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: receiptCommandId,
+              threadId,
+              queuedRunId: offeredRun.id,
+              targetRunId: runId,
+              boundaryOffer: { id: "offered-completion", step: "receipt" },
+            }),
+          (spies) =>
+            Effect.sync(() => {
+              for (const spy of spies) spy.mockRestore();
+            }),
+        );
+        const received = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          received.subagents.find((row) => row.id === child.taskId)?.completionDelivery?.state,
+          "delivered",
+        );
+        assert.equal(
+          received.subagents.find((row) => row.id === later.taskId)?.completionDelivery?.state,
+          "claimed",
+        );
+        assert.deepEqual(
+          received.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery?.taskIds,
+          [later.taskId],
+        );
+        const receivedParent = received.runs.find((run) => run.id === runId)!;
+        assert.deepEqual(offeredSuccessors, [
+          receivedParent.delegatedCompletion!.delivery!.messageId,
+        ]);
+        assert.deepEqual(
+          [receivedParent.status, receivedParent.completedAt, receivedParent.checkpointId],
+          ["completed", now, checkpointId],
+        );
+      }),
   );
 
   it.effect("holds a restart-cancelled child for its continuation's result", () =>

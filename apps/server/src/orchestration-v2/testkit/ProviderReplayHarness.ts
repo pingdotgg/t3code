@@ -430,6 +430,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerContinuationRequests,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );

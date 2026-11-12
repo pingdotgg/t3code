@@ -56,6 +56,7 @@ import {
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
@@ -622,6 +623,7 @@ export const layer: Layer.Layer<
   | McpAppModelContext.McpAppModelContext
   | PreviewAgentActivity.PreviewAgentActivity
   | TurnItemPositionStore.TurnItemPositionStoreV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -637,6 +639,7 @@ export const layer: Layer.Layer<
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1113,6 +1116,7 @@ export const layer: Layer.Layer<
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
+        let rootTurnOwnershipChecked = false;
         const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
@@ -1624,7 +1628,47 @@ export const layer: Layer.Layer<
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
           );
-          if (deliveredEvent) {
+          const startedRootTurn =
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId === input.attempt.id &&
+            event.providerTurn.providerThreadId === input.providerThread.id &&
+            !isTerminalProviderTurnStatus(event.providerTurn.status) &&
+            !rootTurnOwnershipChecked
+              ? event.providerTurn
+              : undefined;
+          const shouldStartProviderTurn = input.shouldStartProviderTurn;
+          if (deliveredEvent && startedRootTurn !== undefined && shouldStartProviderTurn) {
+            rootTurnOwnershipChecked = true;
+            // Stop plans under this lock from stored turns. Storing the first turn and rechecking
+            // the attempt under it means Stop either saw the turn or already settled the run.
+            const [stored, owned] = yield* threadCommands.withLock(
+              input.run.threadId,
+              Effect.all([
+                ingestDelivered(event, deliveredEvent),
+                shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => true)),
+              ]),
+            );
+            storedEventCount = stored;
+            if (!owned) {
+              yield* Ref.get(latestProviderThread).pipe(
+                Effect.flatMap((providerThread) =>
+                  input.session.interruptTurn({
+                    providerThread,
+                    providerTurnId: startedRootTurn.id,
+                  }),
+                ),
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (cause) =>
+                    Effect.logWarning(
+                      "orchestration V2 failed to interrupt a provider turn that started after Stop",
+                      { runId: input.run.id, cause },
+                    ),
+                ),
+                Effect.forkIn(scope),
+              );
+            }
+          } else if (deliveredEvent) {
             storedEventCount = yield* ingestDelivered(event, deliveredEvent);
           } else if (
             event.type === "turn_item.updated" &&
