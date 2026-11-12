@@ -2671,6 +2671,40 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
   }),
 );
 
+it.effect("a finished turn leaves another project's cached listing in place", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            reads.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+    const webListing = { state: "open" as const, projectId: "p1" as ProjectId };
+    const everyListing = { state: "open" as const };
+
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    reads.length = 0;
+    yield* service.refreshAfterTurn("p2" as ProjectId);
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
+
+    yield* service.refreshAfterTurn("p2" as ProjectId, { pushed: true });
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/web"]);
+  }),
+);
+
 it.effect("a refresh or a finished turn drops the provider's own change request reads", () =>
   Effect.gen(function* () {
     const forgotten: Array<{ readonly repository: string; readonly number?: number } | undefined> =
@@ -3395,6 +3429,27 @@ it.effect(
       assert.strictEqual(summary.reviewDecision, "approved");
       assert.strictEqual(summary.checksState, "passing");
     }),
+);
+
+it.effect("preserves merge queue removal details from the provider", () =>
+  Effect.gen(function* () {
+    const removal = { id: "RMQE_1", removedAt: "2026-07-02T00:00:00Z", reason: "CI failed" };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("body"), mergeQueueRemoval: removal }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.deepStrictEqual(detail.mergeQueueRemoval, removal);
+  }),
 );
 
 it.effect("notifies linked threads when detail changes draft status in either direction", () =>
@@ -4318,6 +4373,26 @@ it.effect("leaves a mark alone when the host could not say what the head has of 
         { path: "src/past-the-cut.ts", state: "viewed" },
       ],
     );
+  }),
+);
+
+it.effect("reports a file pushed to after the diff the reader ticked was drawn as changed", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "shown-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.filesViewed(GITLAB_REFERENCE);
+    yield* TestClock.adjust("61 seconds");
+    revisions.set("src/a.ts", "pushed-a");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "shown-a" }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
   }),
 );
 

@@ -35,6 +35,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import {
   normalizeDesktopUpdateReleaseNotes,
@@ -59,7 +60,7 @@ import {
 const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
@@ -369,6 +370,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -816,17 +818,23 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
-          // Stop pooled backends before quitAndInstall can outrun their scope finalizers.
+          // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
           const runningInstances = yield* Effect.filter(instances, (instance) =>
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
-          yield* Effect.forEach(
-            instances,
-            (instance) =>
-              instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
+          yield* Effect.all(
+            [
+              Effect.forEach(
+                instances,
+                (instance) =>
+                  instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
+                { concurrency: "unbounded" },
+              ),
+              sshEnvironment.closeAllTunnels,
+            ],
             { concurrency: "unbounded" },
           );
           yield* electronUpdater.quitAndInstall({

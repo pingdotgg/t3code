@@ -57,7 +57,7 @@ the nightly train, run your installed `t3` (for example `t3 connect`), not
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+([Install vp](../operations/development.md#first-checkout)):
 
 ```bash
 git clone https://github.com/pingdotgg/t3code
@@ -76,6 +76,7 @@ or use a package manager:
 | Platform           | Install                                                      |
 | ------------------ | ------------------------------------------------------------ |
 | Windows            | `winget install T3Tools.T3Code`                              |
+| Windows (Scoop)    | `scoop install extras/t3code`                                |
 | macOS              | `brew install --cask t3-code`                                |
 | Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb`                           |
 | Arch Linux         | `yay -S t3code-bin`                                          |
@@ -158,6 +159,13 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
+### Drop a folder on the sidebar
+
+Drag one or more folders from Finder, Explorer, or your file manager onto the
+sidebar. Each one opens as a project on this computer, the same as `t3 app`.
+Files dropped on a thread still attach to that thread. Browsers do not share
+folder paths, so in the web app use **Add project** instead.
+
 ## Mobile app
 
 Install T3 Code from the
@@ -224,6 +232,10 @@ Update a CLI installed with Nix through Nix.
 Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
 compare against the version their package manager offers, which can trail the
 npm release; update Claude installed with Chocolatey through Chocolatey.
+
+The managed runtimes for Antigravity and for Codex connected through ChatGPT
+first install the release T3 Code tested. When T3 Code finds a newer compatible
+release, their setup in **Settings → Providers** offers an update.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
