@@ -18,7 +18,9 @@ export const PANE_TAB_CLASS =
   "inline-flex h-7 min-w-0 max-w-80 items-center gap-1.75 rounded-control surface-pane-tab px-2.5 text-control text-strong-foreground outline-none [-webkit-app-region:no-drag] focus-visible:inset-ring-2 focus-visible:inset-ring-ring";
 
 export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
-export const PANE_INACTIVE_TAB_TITLE_CLASS = "max-w-40 truncate";
+/** The connected pane tabs widen it to the active title's, so activating a tab moves nothing. */
+export const PANE_INACTIVE_TAB_TITLE_CLASS =
+  "max-w-[var(--pane-inactive-tab-title-max,10rem)] truncate";
 /** A ghost tab's title (`LayoutTab.ghostOf`): italic until the tab is kept, as preview tabs are. */
 export const PANE_GHOST_TAB_TITLE_CLASS = "italic";
 
