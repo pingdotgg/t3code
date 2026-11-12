@@ -118,7 +118,7 @@ export function PullRequestCommentForm({
         // Lock while posting because success clears the draft.
         disabled={locked}
         readOnly={speech.freezesEditor}
-        value={body}
+        value={speech.displayText}
         rows={3}
         placeholder="Leave a comment"
         aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}

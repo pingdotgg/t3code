@@ -103,6 +103,7 @@ function ShortcutTooltip(props: {
 
 function ComposerSpeechCancelButton(props: {
   inPill?: boolean;
+  size?: "default" | "compact" | undefined;
   state: VoiceInputState;
   shortcutLabel?: string | null;
   onCancel(): void;
@@ -125,7 +126,7 @@ function ComposerSpeechCancelButton(props: {
       ) : (
         <Button
           type="button"
-          size="icon-sm-pill"
+          size={props.size === "compact" ? "icon-xs" : "icon-sm-pill"}
           variant="ghost"
           aria-label={label}
           onPointerDown={keepFocus}
@@ -295,6 +296,7 @@ export function ComposerSpeechButton(props: {
       {phase !== "idle" && dictation ? (
         <ComposerSpeechCancelButton
           inPill={inPill}
+          size={props.size}
           state={props.state}
           shortcutLabel="Esc"
           onCancel={dictation.onCancel}
