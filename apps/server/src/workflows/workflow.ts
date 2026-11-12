@@ -291,12 +291,24 @@ export interface WorkflowDefinition {
   /** How long a paused run rests before it is resumed by itself, per pause in a row. */
   readonly resumeAfter: ReadonlyArray<Duration.Input>;
   readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger>;
+  /** Fails with the reason as text: by here nothing reads the error but a person. */
+  readonly onEnd: ((payload: never, end: RunEnd) => Effect.Effect<void, string>) | undefined;
   // The registry holds workflows of every payload type; `workflow` is where the types are checked.
   readonly body: (
     payload: never,
     run: { readonly id: string },
   ) => Effect.Effect<unknown, StepFailed | WorkflowStop, InRun>;
 }
+
+/** How a run ended, as its `onEnd` is told. A paused run has not ended. */
+export interface RunEnd {
+  readonly id: string;
+  readonly outcome: "completed" | "stopped" | "cancelled";
+  readonly reason: string | undefined;
+}
+
+/** The step `onEnd` runs as. */
+export const END_STEP = "onEnd";
 
 const DEFAULT_RESUME_AFTER: ReadonlyArray<Duration.Input> = [
   "5 minutes",
@@ -311,7 +323,7 @@ const DEFAULT_RESUME_AFTER: ReadonlyArray<Duration.Input> = [
  * result, register the new body under a higher version and keep the old one registered until its
  * runs have ended.
  */
-export const workflow = <P, PI, A = void, AI = void>(
+export const workflow = <P, PI, A = void, AI = void, EndError = never>(
   name: string,
   options: {
     readonly version: number;
@@ -320,6 +332,12 @@ export const workflow = <P, PI, A = void, AI = void>(
     readonly resumeAfter?: ReadonlyArray<Duration.Input>;
     /** What starts a run by itself. Each must give what `payload` takes. */
     readonly triggers?: ReadonlyArray<Trigger<P>>;
+    /**
+     * Runs once when the run ends, however it ends, to give back what the run took: a machine, a
+     * lock. It gets the payload and the run's id, not the body's values, so name what the run
+     * takes after its id. It must be safe to run for a run that took nothing.
+     */
+    readonly onEnd?: (payload: P, end: RunEnd) => Effect.Effect<unknown, EndError>;
   },
   body: (
     payload: P,
@@ -335,6 +353,10 @@ export const workflow = <P, PI, A = void, AI = void>(
   returns: (options.returns ?? Schema.UndefinedOr(Schema.Json)) as Schema.Codec<unknown, unknown>,
   resumeAfter: options.resumeAfter ?? DEFAULT_RESUME_AFTER,
   triggers: options.triggers ?? [],
+  onEnd:
+    options.onEnd === undefined
+      ? undefined
+      : (payload, end) => options.onEnd!(payload, end).pipe(Effect.asVoid, Effect.mapError(text)),
   body,
 });
 
@@ -373,11 +395,11 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
           version: definition.version,
           engineTag: engineTag(definition),
           idempotencyKey: payload.idempotencyKey,
+          input: payload.input,
         }),
       });
-      const outcome = yield* decodePayload(payload.input).pipe(
-        Effect.orDie,
-        Effect.flatMap((input) => definition.body(input as never, { id: runId })),
+      const input = (yield* Effect.orDie(decodePayload(payload.input))) as never;
+      const outcome = yield* definition.body(input, { id: runId }).pipe(
         Effect.flatMap((value) => Effect.orDie(encodeResult(value))),
         Effect.map((value): typeof Outcome.Type => ({
           outcome: "completed",
@@ -391,6 +413,20 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
               reason: stopped.reason,
             }),
         }),
+        // A step like any other: a cleanup that fails pauses the run, and resuming tries it again.
+        Effect.tap((ended) =>
+          definition.onEnd === undefined
+            ? Effect.void
+            : step(
+                END_STEP,
+                { returns: Schema.Void },
+                definition.onEnd(input, {
+                  id: runId,
+                  outcome: ended.outcome,
+                  reason: ended.reason,
+                }),
+              ),
+        ),
         Effect.provideService(
           RunContext,
           RunContext.of({ runId, workflow: definition.name, store, names: new Set() }),

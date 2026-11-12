@@ -35,6 +35,10 @@ as the request id, so a replay finds the thread it already started. The run is n
 modes to pass on, so the link's access is the only ceiling on what it starts there. Making and
 linking machines is the workflow author's own code in a `step`; nothing here knows how.
 
+**`onEnd` gets the payload and the run's id, not the body's values.** A cancelled run's body is
+gone, so its cleanup runs outside the engine and has only what the run was started with. Inside
+the engine `onEnd` is an ordinary last step.
+
 ## Traps
 
 **A workflow body is replayed.** After a restart or a wait, the body runs again from the top and

@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import Migration0092 from "../../apps/server/src/persistence/Migrations/092_Workflows.ts";
 import Migration0093 from "../../apps/server/src/persistence/Migrations/093_WorkflowTriggers.ts";
 import Migration0094 from "../../apps/server/src/persistence/Migrations/094_WorkflowStepEnvironment.ts";
+import Migration0095 from "../../apps/server/src/persistence/Migrations/095_WorkflowRunInput.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -70,7 +71,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-eval-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
-    Effect.andThen(Migration0092, Effect.andThen(Migration0093, Migration0094)),
+    Effect.all([Migration0092, Migration0093, Migration0094, Migration0095], { discard: true }),
     database,
   );
   const turns: Array<AgentTurnInput> = [];

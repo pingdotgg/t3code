@@ -20,6 +20,7 @@ import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./Workflow
 import Migration0092 from "../persistence/Migrations/092_Workflows.ts";
 import Migration0093 from "../persistence/Migrations/093_WorkflowTriggers.ts";
 import Migration0094 from "../persistence/Migrations/094_WorkflowStepEnvironment.ts";
+import Migration0095 from "../persistence/Migrations/095_WorkflowRunInput.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
@@ -35,6 +36,28 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
       Effect.map((all) => all[name]!),
     );
   return [
+    workflow(
+      "owned",
+      {
+        version: 1,
+        payload: Schema.Struct({ mode: Schema.Literals(["finish", "stop", "hold"]) }),
+        // Counted by how the run ended, and failing for as long as `failures` says.
+        onEnd: (payload, end) =>
+          Effect.flatMap(
+            Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
+            (left) =>
+              left > 0
+                ? Effect.fail("the machine would not go")
+                : count(`end:${payload.mode}:${end.outcome}:${end.reason ?? ""}`),
+          ),
+      },
+      (payload) =>
+        Effect.gen(function* () {
+          yield* step("take", { returns: Schema.Number, ...once }, count("take"));
+          if (payload.mode === "stop") return yield* stop("no need");
+          if (payload.mode === "hold") yield* wait("go", { returns: Schema.String });
+        }),
+    ),
     workflow(
       "flaky",
       { version: 1, payload: Schema.Struct({ id: Schema.String }), returns: Schema.String },
@@ -212,7 +235,7 @@ const harness = Effect.gen(function* () {
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
-    Effect.andThen(Migration0092, Effect.andThen(Migration0093, Migration0094)),
+    Effect.all([Migration0092, Migration0093, Migration0094, Migration0095], { discard: true }),
     database,
   );
   const counts = yield* Ref.make<Record<string, number>>({});
@@ -557,6 +580,73 @@ it.effect(
           assert.sameMembers(
             results.map((result) => String(result).split(", ")[1]),
             ["merge: false", "merge: true"],
+          );
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "onEnd runs once however the run ends, and a cancelled run's is tried until it works",
+  () =>
+    Effect.gen(function* () {
+      const { boot, counts, failures } = yield* harness;
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const finished = yield* workflows.start(
+            "owned",
+            { mode: "finish" },
+            { idempotencyKey: "f" },
+          );
+          const stopped = yield* workflows.start(
+            "owned",
+            { mode: "stop" },
+            { idempotencyKey: "s" },
+          );
+          yield* workflows.waitFor(finished.runId, status("completed"));
+          yield* workflows.waitFor(stopped.runId, status("stopped"));
+
+          const held = yield* workflows.start("owned", { mode: "hold" }, { idempotencyKey: "h" });
+          yield* workflows.waitFor(held.runId, status("waiting"));
+          yield* Ref.set(failures, 1);
+          yield* workflows.cancel(held.runId, "not needed");
+          const ended = (step: { readonly name: string }) => step.name === "onEnd";
+          // The first try failed, which is on the run for a person to see.
+          const firstTry = (yield* workflows.get(held.runId)).steps.find(ended);
+          assert.deepStrictEqual(
+            [firstTry?.status, firstTry?.detail],
+            ["failed", "the machine would not go"],
+          );
+          yield* workflows.sweep;
+          const { steps } = yield* workflows.get(held.runId);
+          assert.deepStrictEqual(
+            steps.map((step) => [step.name, step.status, step.attempts]),
+            [
+              ["take", "completed", 1],
+              ["go", "failed", 1],
+              ["onEnd", "completed", 2],
+            ],
+          );
+          // Nothing is left to do, so another look changes nothing.
+          yield* workflows.sweep;
+          // A cleanup that works the first time is told why the run was cancelled, too.
+          const second = yield* workflows.start(
+            "owned",
+            { mode: "hold" },
+            { idempotencyKey: "h2" },
+          );
+          yield* workflows.waitFor(second.runId, status("waiting"));
+          yield* workflows.cancel(second.runId, "changed my mind");
+          const all = yield* Ref.get(counts);
+          assert.deepStrictEqual(
+            Object.entries(all).filter(([name]) => name.startsWith("end:")),
+            [
+              ["end:finish:completed:", 1],
+              ["end:stop:stopped:no need", 1],
+              ["end:hold:cancelled:not needed", 1],
+              ["end:hold:cancelled:changed my mind", 1],
+            ],
           );
         }),
       );

@@ -91,8 +91,10 @@ modules (`node:fs`, `node:crypto`) can be imported as usual.
 | `returns`     | The Schema of what the body returns. Optional: without it, the run's result is whatever JSON the body returned. |
 | `triggers`    | What starts a run by itself. Optional.                                                                          |
 | `resumeAfter` | How long a paused run rests before it is tried again. Optional.                                                 |
+| `onEnd`       | `(payload, { id, outcome, reason }) => Effect`: gives back what the run took. Optional (see below).             |
 
-The body is `Effect.fn(function* (payload) { … })`. Use `yield*` on every call below.
+The body is `Effect.fn(function* (payload, run) { … })`; `run.id` is the run's id. Use `yield*` on
+every call below.
 
 `Schema` is Effect's, version 4. These are all a workflow file usually needs:
 
@@ -152,7 +154,37 @@ in Settings → Labs. What the agent may do there is set by the access the link 
 
 To use a machine per run, make and link it in a `step` with your own script and return its id:
 `t3 auth pairing create --json` on the new machine gives a code, and
-`t3 environment link <url> --pairing-code <code> --access <access>` here links it.
+`t3 environment link <url> --pairing-code <code> --access <access>` here links it. Delete it in
+`onEnd`.
+
+### Cleaning up
+
+`onEnd` runs once when the run completes, stops or is cancelled; not when it pauses. It gets the
+payload and the run's id, not values from the body, so name what the run takes after its id. It
+also runs for a run that was cancelled before it took anything, so it must not fail on that.
+
+```ts
+workflow(
+  "fix",
+  {
+    version: 1,
+    payload: Issue,
+    onEnd: (issue, end) => exec("machines.sh", ["delete", `fix-${end.id}`]),
+  },
+  Effect.fn(function* (issue, run) {
+    const environment = yield* step(
+      "machine",
+      { returns: Schema.String },
+      exec("machines.sh", ["create-and-link", `fix-${run.id}`]),
+    );
+    yield* agent("fix", { environment, project: "/home/user/app", brief: issue.title });
+  }),
+);
+```
+
+`exec` here is your own function that runs a command and returns an Effect; it is not part of the
+API. If `onEnd` fails, a finished run pauses at the `onEnd` step, and a cancelled run's is tried
+again up to five times; `show` has the error.
 
 ## Triggers
 
