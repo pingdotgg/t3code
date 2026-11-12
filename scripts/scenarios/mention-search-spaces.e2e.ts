@@ -21,7 +21,12 @@ test(
     await expect(screen.getByRole("option").first()).toBeVisible();
     for (const character of "Subsidiaries") await composer.press(character);
     await expect(screen.getByText("Foreign Unrelated.md", { exact: true })).toBeHidden();
+    await expect(screen.getByRole("option", "Foreign Subsidiaries", { exact: true })).toBeVisible();
     await composer.press("Enter");
-    await expect(composer).toContainText("Foreign Subsidiaries");
+    await expect(
+      screen.getByRole("button", "Preview Foreign Subsidiaries", { exact: true }),
+    ).toBeVisible();
+    await expect(screen.getByRole("listbox", "Files and folders")).toBeHidden();
+    await app.screenshot("accepted-mention");
   },
 );
