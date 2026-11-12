@@ -9,6 +9,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   OrchestrationV2AppThread,
+  OrchestrationV2Run,
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -97,6 +98,24 @@ const items = Schema.decodeUnknownSync(Schema.Array(OrchestrationV2TurnItem))(
     updatedAt: now,
   })),
 );
+
+const rolledBackRun = Schema.decodeSync(OrchestrationV2Run)({
+  id: "run:rolled-back",
+  threadId: "source-thread",
+  ordinal: 1,
+  providerInstanceId: "codex",
+  modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+  providerThreadId: null,
+  userMessageId: "message:rolled-back",
+  rootNodeId: null,
+  activeAttemptId: null,
+  status: "rolled_back",
+  requestedAt: now,
+  startedAt: now,
+  completedAt: now,
+  checkpointId: null,
+  contextHandoffId: null,
+});
 
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
 const serveOrchestrationHttp = (allowed: () => boolean) =>
@@ -277,7 +296,8 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       WHERE turn_item_id = ${commandItemId}
     `;
     yield* setCommandPayload(sql`json_set(
-      replace(payload_json, ${deepField}, ''), '$.output',
+      replace(payload_json, ${deepField}, ''), '$.type', 'dynamic_tool', '$.toolName', NULL,
+      '$.output',
       json_array(json_object('type', 'text', 'text', ${fill(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)}))
     )`);
     const reads: Array<string> = [];
@@ -291,6 +311,28 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     ).toBeInstanceOf(ThreadManagementService.ThreadTranscriptTooLargeError);
     expect(reads).toEqual([expect.stringContaining("octet_length(payload_json)")]);
     expect((yield* read(thread.id)).status).toBe(400);
+    // The export leaves a rolled back run out, so its output cannot reject it.
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("create-rolled-back-run"),
+          type: "run.created",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: rolledBackRun,
+        },
+      ],
+    });
+    yield* sql`
+      UPDATE orchestration_v2_projection_turn_items SET run_id = ${rolledBackRun.id}
+      WHERE turn_item_id = ${commandItemId}
+    `;
+    yield* setCommandPayload(sql`json_set(payload_json, '$.runId', ${rolledBackRun.id})`);
+    const withoutRolledBackRun = yield* read(thread.id);
+    expect(withoutRolledBackRun.status).toBe(200);
+    expect(
+      (yield* decodeTranscript(yield* Effect.promise(() => withoutRolledBackRun.json()))).items,
+    ).toHaveLength(199);
 
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;

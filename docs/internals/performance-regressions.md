@@ -72,8 +72,9 @@ send and caps the decoded bytes and rows of the bounded snapshot and one older p
 agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. It
 also caps the bytes and the node, subagent, plan, provider turn and checkpoint counts of the
 bounded snapshot for a thread of 40 finished runs behind one working run, so finished runs cannot
-ride along with a window. When clients gain an opt-in, add it to the test's client queries and give
-a fixture the data it saves.
+ride along with a window. The working run has a ready context handoff, so its history cannot ride
+along either. When clients gain an opt-in, add it to the test's client queries and give a fixture
+the data it saves.
 
 ## Event store and startup
 
