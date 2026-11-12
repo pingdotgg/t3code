@@ -555,6 +555,9 @@ function SpreadsheetGrid(props: {
             info = nextLayout.info;
             chartWidth = nextLayout.chartWidth;
             chartHeight = nextLayout.chartHeight;
+            painted?.frame.bitmap.close();
+            painted = undefined;
+            grid = undefined;
             sent += 1;
             received = sent;
             requested = "";

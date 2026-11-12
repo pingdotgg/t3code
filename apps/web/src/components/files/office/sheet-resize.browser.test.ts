@@ -1,5 +1,9 @@
-import { expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import JSZip from "jszip";
+import "~/index.css";
+import { act, render } from "../../../../test/render";
+import Spreadsheet from "./Spreadsheet";
 import { createWorkerClient } from "./worker-rpc";
 import type { SheetMethods } from "./sheet-protocol";
 import { maximumTrackSize } from "./sheet-sizing";
@@ -140,3 +144,82 @@ it.each([false, true])(
     }
   },
 );
+
+it("requests current dimensions after resizing and scrolling away and back before a frame arrives", async () => {
+  const archive = new JSZip();
+  archive.file(
+    "xl/workbook.xml",
+    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sample" sheetId="1" r:id="sheet"/></sheets></workbook>',
+  );
+  archive.file(
+    "xl/_rels/workbook.xml.rels",
+    '<Relationships><Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+  );
+  archive.file(
+    "xl/worksheets/sheet1.xml",
+    '<worksheet><sheetData><row r="1"><c r="A1"><v>42</v></c></row><row r="1000"><c r="A1000"><v>99</v></c></row></sheetData></worksheet>',
+  );
+  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const container = document.createElement("div");
+  Object.assign(container.style, { display: "flex", width: "500px", height: "300px" });
+  const onError = vi.fn();
+  await using screen = await render(
+    createElement(Spreadsheet, {
+      bytes,
+      view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+      onDetails: vi.fn(),
+      onError,
+    }),
+    { container },
+  );
+  await expect.element(screen.getByRole("grid", { name: "Sample" })).toBeVisible();
+  const root = screen.getByRole("grid", { name: "Sample" }).element();
+  const canvas = root.querySelector("canvas")!;
+  await vi.waitFor(() => {
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeGreaterThan(0);
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeLessThan(255);
+  });
+  const postMessage = Worker.prototype.postMessage;
+  const pending: { worker: Worker; message: unknown; options: unknown }[] = [];
+  using _frames = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+    this: Worker,
+    message: unknown,
+    options?: Transferable[] | StructuredSerializeOptions,
+  ) {
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "method" in message &&
+      message.method === "frame"
+    ) {
+      pending.push({ worker: this, message, options });
+      return;
+    }
+    Reflect.apply(postMessage, this, [message, options]);
+  });
+  // Synthetic pointer events have no browser pointer to capture.
+  using _capture = vi.spyOn(root, "setPointerCapture").mockImplementation(() => {});
+  using _release = vi.spyOn(root, "releasePointerCapture").mockImplementation(() => {});
+  const rect = canvas.getBoundingClientRect();
+  const pointer = { bubbles: true, pointerId: 1, button: 0, clientY: rect.top + 10 };
+  await act(() => {
+    root.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: rect.left + 108 }));
+    root.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX: rect.left + 148 }));
+    root.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: rect.left + 148 }));
+  });
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  await act(() => root.scrollTo({ top: 2000 }));
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  await act(() => root.scrollTo({ top: 0 }));
+  await vi.waitFor(() => expect(pending).toHaveLength(3));
+  expect(pending[2]!.message).toMatchObject({ input: { x: 0, y: 0 } });
+  const frame = pending[2]!;
+  Reflect.apply(postMessage, frame.worker, [frame.message, frame.options]);
+  await expect.element(screen.getByRole("status")).not.toBeInTheDocument();
+  const ratio = window.devicePixelRatio || 1;
+  expect([
+    ...canvas.getContext("2d")!.getImageData(Math.round(140 * ratio), Math.round(5 * ratio), 1, 1)
+      .data,
+  ]).toEqual([211, 236, 221, 255]);
+  expect(onError).not.toHaveBeenCalled();
+});
