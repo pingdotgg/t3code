@@ -947,8 +947,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* Effect.sleep(SILENT_SOCKET_RECHECK_EVERY);
       }
       if (!(yield* socketSilent)) return "alive" as const;
-      // The host takes fresh requests, so a replacement can connect while the
-      // socket keeps its remaining window to prove itself alive.
+      // The host takes fresh requests, so a replacement starts connecting now.
+      // It takes over as soon as it connects; a frame before then keeps the socket.
       yield* onHostAnswered;
       if (!answersQuickly(routeKind) && !longResume) {
         const silentFor = (yield* Clock.monotonicTimeNanos) - startedAt;
