@@ -74,7 +74,9 @@ const DETAILS_CLOSE_PATTERN = /<\/details\s*>/giu;
 const DETAILS_OPEN_TAG_PATTERN = /^\s*<details\b((?:[^<>"']|"[^"]*"|'[^']*')*)>/iu;
 /** Deeper folds stay markdown, so a crafted body cannot recurse once per nesting level. */
 const DETAILS_MAX_DEPTH = 8;
-const SUMMARY_PATTERN = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/iu;
+const SUMMARY_PATTERN = /^\s*<summary\b(?:[^<>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/summary\s*>/iu;
+/** A one-line link reference definition, which markdown resolves across the whole body. */
+const REFERENCE_DEFINITION_PATTERN = /^ {0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*\S/u;
 
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
 const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
@@ -257,7 +259,29 @@ function fenceAfter(openFence: string | null, line: string): string | null | und
 }
 
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
-  return splitBodyAt(body, 0, 0);
+  const segments = splitBodyAt(body, 0, 0);
+  if (!segments.some((segment) => segment.kind === "details")) return segments;
+  // A fold renders apart from the body around it, so its prose gets the body's definitions.
+  const definitions: string[] = [];
+  let openFence: string | null = null;
+  for (const line of body.split("\n")) {
+    const fence = fenceAfter(openFence, line);
+    if (fence !== undefined) openFence = fence;
+    else if (openFence === null && REFERENCE_DEFINITION_PATTERN.test(line)) {
+      definitions.push(line.replace(/\r$/u, ""));
+    }
+  }
+  if (definitions.length === 0) return segments;
+  const suffix = `\n\n${definitions.join("\n")}`;
+  const withDefinitions = (segment: PullRequestBodySegment): PullRequestBodySegment =>
+    segment.kind === "markdown"
+      ? { ...segment, text: segment.text + suffix }
+      : segment.kind === "details"
+        ? { ...segment, segments: segment.segments.map(withDefinitions) }
+        : segment;
+  return segments.map((segment) =>
+    segment.kind === "details" ? withDefinitions(segment) : segment,
+  );
 }
 
 /** `baseOffset` is where `body` starts in the whole body, so a table cell's edits write back. */

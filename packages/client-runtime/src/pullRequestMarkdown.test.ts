@@ -184,6 +184,35 @@ describe("pull request body segmentation", () => {
     }
   });
 
+  it("gives a fold's prose the body's link definitions and reads a quoted > in its summary", () => {
+    const body = [
+      "[ticket]: https://example.com/issue/42",
+      "",
+      "<details open>",
+      '<summary title="before > after">Videos</summary>',
+      "",
+      "See [ticket] before watching.",
+      "",
+      "https://example.com/a.mp4",
+      "",
+      "</details>",
+    ].join("\n");
+    expect(splitPullRequestBody(body)).toMatchObject([
+      { kind: "markdown", text: "[ticket]: https://example.com/issue/42" },
+      {
+        kind: "details",
+        summary: "Videos",
+        segments: [
+          {
+            kind: "markdown",
+            text: "See [ticket] before watching.\n\n[ticket]: https://example.com/issue/42",
+          },
+          { kind: "attachment", url: "https://example.com/a.mp4" },
+        ],
+      },
+    ]);
+  });
+
   it("does not close a fold on a closing tag inside fenced code", () => {
     const body = [
       "<details>",
