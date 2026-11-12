@@ -632,7 +632,9 @@ function PullRequestCodeTab({
       }),
     );
     // oxlint-disable-next-line react/set-state-in-effect -- Advance only after invalidating the cached next page.
-    setSliceState((current) => ({ ...current, cursor: last.nextCursor }));
+    setSliceState((current) =>
+      current.refreshing?.at(-1) === last ? { ...current, cursor: last.nextCursor } : current,
+    );
   }, [
     sliceState.refreshing,
     cursor,
