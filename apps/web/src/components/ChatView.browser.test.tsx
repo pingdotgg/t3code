@@ -19,7 +19,6 @@ import * as Stream from "effect/Stream";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
-import "~/index.css";
 // Menu options need real layout to be clickable.
 import "~/index.css";
 import { AppRoot } from "~/AppRoot";
