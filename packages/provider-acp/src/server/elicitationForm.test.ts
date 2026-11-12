@@ -79,5 +79,22 @@ describe("parseElicitationForm", () => {
       q0: "Yes",
       q1__other: "Only on Fridays",
     });
+
+    // A multi-select answer can carry options and free text together, so both fields stay.
+    const multi = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: { type: "array", title: "Databases?", items: { anyOf: [{ const: "Postgres" }] } },
+          q0__other: { type: "string", title: "Other (type your own)" },
+        },
+      },
+      "Databases?",
+    );
+    assert(multi !== undefined);
+    assert.deepStrictEqual(multi.content({ q0: ["Postgres"], q0__other: "SQLite" }), {
+      q0: ["Postgres"],
+      q0__other: "SQLite",
+    });
   });
 });
