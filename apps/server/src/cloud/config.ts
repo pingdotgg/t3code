@@ -50,8 +50,12 @@ export function isAgentActivityPublishingEnabledValue(value: string | null): boo
  */
 export const readAgentActivityPublishingActive: (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
+  backgroundRelayConfigured: boolean,
 ) => Effect.Effect<boolean> = Effect.fn("config.readAgentActivityPublishingActive")(
-  function* (secrets: ServerSecretStore.ServerSecretStore["Service"]) {
+  function* (
+    secrets: ServerSecretStore.ServerSecretStore["Service"],
+    backgroundRelayConfigured: boolean,
+  ) {
     const readSecretString = (name: string) =>
       secrets
         .get(name)
@@ -60,18 +64,16 @@ export const readAgentActivityPublishingActive: (
             Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null,
           ),
         );
-    const [enabled, url, environmentCredential] = yield* Effect.all([
-      readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET),
+    const enabled = yield* readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET);
+    if (!isAgentActivityPublishingEnabledValue(enabled)) return false;
+    if (backgroundRelayConfigured) return true;
+    const [url, environmentCredential] = yield* Effect.all([
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
     ]);
     // Match the publisher, which treats empty strings as unconfigured.
     return (
-      isAgentActivityPublishingEnabledValue(enabled) &&
-      url !== null &&
-      url !== "" &&
-      environmentCredential !== null &&
-      environmentCredential !== ""
+      url !== null && url !== "" && environmentCredential !== null && environmentCredential !== ""
     );
   },
   Effect.orElseSucceed(() => false),
