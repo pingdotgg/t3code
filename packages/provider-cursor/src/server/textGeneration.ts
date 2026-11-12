@@ -147,12 +147,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           catch: sdkFailure("Cursor SDK agent could not be created."),
         });
 
-      const request = Effect.gen(function* () {
-        // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
+      const runPrompt = Effect.fn("CursorTextGeneration.runPrompt")(function* (
+        sandboxEnabled: boolean,
+      ) {
         const agent = yield* Effect.acquireRelease(
-          createCursorAgent(true).pipe(
-            Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
-          ),
+          createCursorAgent(sandboxEnabled),
           (agent) =>
             Effect.tryPromise({
               try: () => agent[Symbol.asyncDispose](),
@@ -180,7 +179,12 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           try: () => run.wait(),
           catch: sdkFailure("Cursor SDK run failed."),
         });
-      }).pipe(Effect.scoped);
+      }, Effect.scoped);
+      // The SDK may reject sandboxing in create or lazily in send. Empty cwd and setting
+      // sources isolate the unsandboxed retry from user projects.
+      const request = runPrompt(true).pipe(
+        Effect.catchIf(cursorSandboxUnsupported, () => runPrompt(false)),
+      );
       const promptResult = yield* request.pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
