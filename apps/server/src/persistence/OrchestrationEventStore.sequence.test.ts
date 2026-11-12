@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
 import * as OrchestrationEventStore from "./OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
@@ -204,4 +205,50 @@ it.effect(
       );
       assert.isAbove(liveSequence, highWater);
     }).pipe(Effect.provide(Layer.fresh(layerEventStore))),
+);
+
+it.effect("reads one thread's events through the thread index, not the V2 sequence range", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* seedEvents(
+      Arr.makeBy(40, (index) => eventRow(index, "thread", 2, index % 4 === 0 ? "target" : "other")),
+    );
+    const target = rows.filter((row) => row.stream_id === "target").map((row) => row.sequence);
+    const threadId = ThreadId.make("target");
+    const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+    const observe: Statement.Transformer = (statement) => {
+      statements.push(statement.compile());
+      return Effect.succeed(statement);
+    };
+    const byThread = yield* store
+      .readAgentEvents({ threadId })
+      .pipe(Stream.runCollect, Effect.provideService(Statement.CurrentTransformer, observe));
+    const byThreadAndType = yield* store
+      .readAgentEvents({ threadId, eventType: "provider-session.detached" })
+      .pipe(Stream.runCollect, Effect.provideService(Statement.CurrentTransformer, observe));
+    const stats = yield* store
+      .getAgentReplayStats({ threadId, afterSequence: 0, throughSequence: 1_000, maxEvents: 128 })
+      .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+    assert.deepEqual(
+      byThread.map((event) => event.sequence),
+      target,
+    );
+    assert.deepEqual(
+      byThreadAndType.map((event) => event.sequence),
+      target,
+    );
+    assert.equal(stats.eventCount, target.length);
+    assert.equal(statements.length, 3);
+    for (const [query, params] of statements) {
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${query}`,
+        params,
+      );
+      assert.include(
+        plan.map((row) => row.detail),
+        "SEARCH orchestration_events USING INDEX idx_orchestration_events_agent_stream_sequence (stream_id=? AND sequence>? AND sequence<?)",
+      );
+    }
+  }).pipe(Effect.provide(layerEventStore)),
 );

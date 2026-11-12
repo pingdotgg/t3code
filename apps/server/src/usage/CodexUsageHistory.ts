@@ -62,7 +62,9 @@ const make = Effect.gen(function* () {
         json_extract(turn.payload_json, '$.nativeTurnRef.nativeId') AS native_turn_id,
         (
           SELECT json_extract(event.payload_json, '$.modelSelection')
+          -- The planner otherwise ranges over every V2 event for each turn.
           FROM orchestration_events AS event
+            INDEXED BY idx_orchestration_events_agent_stream_sequence
           WHERE event.aggregate_kind = 'thread'
             AND event.application_event_version = 2
             AND event.stream_id = attempt.thread_id

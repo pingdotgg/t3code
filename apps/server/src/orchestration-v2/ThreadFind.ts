@@ -281,7 +281,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events
       -- The planner otherwise walks every V2 event backwards from the newest,
       -- which takes seconds for a thread that has been idle a long time.
-      INDEXED BY idx_orch_events_stream_sequence
+      INDEXED BY idx_orchestration_events_agent_stream_sequence
       WHERE application_event_version = 2 AND aggregate_kind = 'thread'
         AND stream_id IN (SELECT thread_id FROM source_threads)
     `;

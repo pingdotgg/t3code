@@ -416,12 +416,14 @@ const makeEventStore = Effect.gen(function* () {
         correlation_id
       FROM orchestration_events
       ${
-        // Otherwise the sequence index wins and command lookups scan every V2 event.
+        // Otherwise the sequence index wins and command or thread lookups scan every V2 event.
         input.commandId !== undefined
           ? sql`INDEXED BY idx_orch_events_command_id`
-          : input.onlyAgentEvents === true
-            ? sql``
-            : sql`INDEXED BY idx_orchestration_events_application_high_water`
+          : input.onlyAgentEvents !== true
+            ? sql`INDEXED BY idx_orchestration_events_application_high_water`
+            : input.threadId !== undefined
+              ? sql`INDEXED BY idx_orchestration_events_agent_stream_sequence`
+              : sql``
       }
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}
@@ -604,7 +606,8 @@ const makeEventStore = Effect.gen(function* () {
         COALESCE(MAX(event_type = 'thread.created'), 0) AS "hasCreateEvent"
       FROM (
         SELECT ${restoredPayloadJson} AS payload_json, event_type
-        FROM orchestration_events
+        -- The planner otherwise ranges over every V2 event after the cursor.
+        FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
         WHERE aggregate_kind = 'thread'
           AND stream_id = ${input.threadId}
           AND application_event_version = 2
