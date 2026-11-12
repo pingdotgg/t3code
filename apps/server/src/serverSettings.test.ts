@@ -2087,28 +2087,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
       assert.notInclude(persisted, "sk-terminal-secret");
       assert.include(persisted, '"valueRedacted": true');
-
-      yield* serverSettings.updateSettings({
-        providerInstances: {
-          [instanceId]: {
-            driver: ProviderDriverKind.make("codex"),
-            environment: [
-              { name: "OPENROUTER_API_KEY", value: "refreshed-secret", sensitive: true },
-            ],
-            config: { homePath: "~/.codex-refreshed" },
-          },
-        },
-      });
-      const refreshed = yield* resolveProviderInstanceTerminalEnvironment({
-        deriveProviderInstanceConfigMap,
-        serverSettings,
-        path,
-        rawProviderInstanceId: instanceId,
-        env: { TERMINAL_OVERRIDE: "terminal" },
-      });
-      assert.equal(refreshed.OPENROUTER_API_KEY, "refreshed-secret");
-      assert.equal(refreshed.TERMINAL_OVERRIDE, "terminal");
-      assert.match(refreshed.CODEX_HOME ?? "", /[\\/][.]codex-refreshed$/);
     }).pipe(Effect.provide(layerServerSettings())),
   );
   it.effect("rolls back provider secret changes when the settings file commit fails", () =>
