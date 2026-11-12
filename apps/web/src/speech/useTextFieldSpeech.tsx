@@ -7,9 +7,10 @@ import {
   ComposerSpeechRecordingPill,
 } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
+import { VoiceInputErrorPill } from "~/components/chat/VoiceInputErrorPill";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
-import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
+import { useEnvironmentSpeechInput, useSpeechUnavailableReason } from "./useEnvironmentSpeechInput";
 
 /** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
 export function useTextFieldSpeech(input: {
@@ -68,36 +69,68 @@ export type TextFieldSpeech = ReturnType<typeof useTextFieldSpeech>;
 export function TextFieldSpeechControls({
   speech,
   disabled = false,
+  compact = false,
 }: {
   speech: TextFieldSpeech;
   disabled?: boolean;
+  compact?: boolean;
 }) {
+  const unavailableReason = useSpeechUnavailableReason(speech);
   return (
     <>
-      {speech.preview ? (
+      {!compact && speech.preview ? (
         <p role="status" className="w-full text-body text-muted-foreground">
           {speech.preview.committed}
           <span className="opacity-70">{speech.preview.tentative}</span>
         </p>
       ) : null}
-      <div className="flex min-w-0 items-center gap-1">
-        <ComposerSpeechRecordingPill
-          state={speech.state}
-          progress={null}
-          level={speech.level}
-          finishShortcutLabel={speech.shortcutLabel}
-          cancelShortcutLabel="Esc"
-          disabled={disabled}
-          onStart={() => void speech.start()}
-          onStop={() => void speech.stop()}
-          onCancel={speech.cancel}
-          onSkipPostProcessing={speech.skipPostProcessing}
-        />
-        {speech.available ? (
+      <div
+        className={
+          compact
+            ? "flex h-8 w-17 shrink-0 items-center gap-1 sm:h-7 sm:w-15"
+            : "flex min-w-0 items-center gap-1"
+        }
+      >
+        {compact && speech.state.phase === "error" ? (
+          <VoiceInputErrorPill
+            compact
+            error={speech.state.error}
+            errorAction={speech.state.errorAction}
+            disabled={disabled}
+            cancelShortcutLabel="Esc"
+            onRetry={() => void speech.start()}
+            onDismiss={speech.cancel}
+          />
+        ) : !compact ? (
+          <ComposerSpeechRecordingPill
+            state={speech.state}
+            progress={null}
+            level={speech.level}
+            finishShortcutLabel={speech.shortcutLabel}
+            cancelShortcutLabel="Esc"
+            disabled={disabled}
+            onStart={() => void speech.start()}
+            onStop={() => void speech.stop()}
+            onCancel={speech.cancel}
+            onSkipPostProcessing={speech.skipPostProcessing}
+          />
+        ) : null}
+        {speech.available || (compact && unavailableReason !== null) ? (
           <ComposerSpeechButton
             state={speech.state}
             shortcutLabel={speech.shortcutLabel}
             disabled={disabled}
+            unavailableReason={compact ? unavailableReason : null}
+            dictation={
+              compact
+                ? {
+                    level: speech.level,
+                    onStop: () => void speech.stop(),
+                    onCancel: speech.cancel,
+                    onSkipPostProcessing: speech.skipPostProcessing,
+                  }
+                : undefined
+            }
             onStart={() => void speech.start()}
           />
         ) : null}
