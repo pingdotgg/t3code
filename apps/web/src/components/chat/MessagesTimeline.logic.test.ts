@@ -4669,9 +4669,13 @@ describe("live subagents after their parent turn settles", () => {
     expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
   });
 
-  it.each(["app_owned", "provider_native"] as const)(
-    "does not show Thinking while an open turn waits on a running foreground %s child",
-    (origin) => {
+  it.each([
+    ["app_owned", false],
+    ["provider_native", false],
+    ["provider_native", true],
+  ] as const)(
+    "does not show Thinking while an open turn waits on a running foreground %s child (commentary after: %s)",
+    (origin, commentaryAfter) => {
       const rows = deriveMessagesTimelineRows({
         timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
           visibleTurnItems: (
@@ -4688,6 +4692,18 @@ describe("live subagents after their parent turn settles", () => {
                 attachments: [],
               },
               child("child", 1, "running", origin),
+              ...(commentaryAfter
+                ? [
+                    {
+                      ...base("commentary", 2),
+                      status: "completed",
+                      type: "assistant_message",
+                      messageId: MessageId.make("commentary"),
+                      text: "Dispatching three subagents.",
+                      streaming: false,
+                    } satisfies OrchestrationV2TurnItem,
+                  ]
+                : []),
             ] satisfies OrchestrationV2TurnItem[]
           ).map(projected),
           optimisticMessages: [],
