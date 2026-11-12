@@ -229,3 +229,32 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await expect.element(page.getByText("Failed prompt")).not.toBeInTheDocument();
   expect(editor.element().textContent).toContain("Next draft");
 });
+
+it("Enter on an empty prompt resumes an interrupted thread", async () => {
+  const history = threadWithHistory("interrupted", 1);
+  const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };
+  const thread = { ...history, runs: [interruptedRun] };
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByRole("button", { name: "Resume thread" })).toBeVisible();
+
+  await userEvent.click(page.getByTestId("composer-editor"));
+  await userEvent.keyboard("{Enter}");
+
+  await vi.waitFor(() =>
+    expect(dispatchedCommands()).toContainEqual(
+      expect.objectContaining({ manualContinuationOfRunId: interruptedRun.id }),
+    ),
+  );
+});
