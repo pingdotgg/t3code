@@ -760,6 +760,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "start-new-threads-in-background",
+    title: "Start new threads in background",
+    to: "/settings/chat",
+    searchTerms: ["background send enter new thread draft keep composer open"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",

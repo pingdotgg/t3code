@@ -23,6 +23,12 @@ does the same. Change these shortcuts in **Settings → Keybindings** under
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
 
+Turn on **Settings → Chat → Start new threads in background** to make sending
+from a new thread start it in the background. `mod+Enter` or `mod+Alt+Enter` then
+opens the thread instead. When your send shortcut requires `mod+Enter`, including
+for a multiline prompt, `mod+Enter` starts the thread in the background, so use
+`mod+Alt+Enter`.
+
 When a thread has queued messages, `mod+Shift+Enter` sends the first one as a steer
 while a turn is running, or as a new turn when the thread is stopped. Change it under
 **Queue: Send First Queued Message** in Keybindings.
