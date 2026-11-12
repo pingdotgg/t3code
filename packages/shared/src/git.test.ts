@@ -27,6 +27,12 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ssh://git@github.com/T3Tools/T3Code")).toBe(
       "github.com/t3tools/t3code",
     );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git?view=compact")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git#section")).toBe(
+      "github.com/t3tools/t3code",
+    );
   });
 
   it("preserves nested group paths for providers like GitLab", () => {
