@@ -13,7 +13,7 @@ import { Popover, PopoverPopup, PopoverCreateHandle } from "../ui/popover";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { useChatCanvas } from "./ChatCanvasContext";
 import {
-  THREAD_DETAILS_CARD_GAP,
+  THREAD_DETAILS_CARD_RIGHT,
   resolveThreadDetailsCardDensity,
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
@@ -115,8 +115,7 @@ export function ThreadDetailsCard({
   const card = (
     <div
       className={cn(
-        // Keeps the card's gap from the chat's inset scrollbar.
-        "dropdown-glass relative right-(--app-scrollbar-edge-inset) isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
+        "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
@@ -182,7 +181,7 @@ export function ThreadDetailsCard({
         anchor={anchor}
         align="end"
         // Account for the find panel's 8px card padding.
-        alignOffset={THREAD_DETAILS_CARD_GAP - 8}
+        alignOffset={THREAD_DETAILS_CARD_RIGHT - 8}
         collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
         side="bottom"
         sideOffset={topInset}

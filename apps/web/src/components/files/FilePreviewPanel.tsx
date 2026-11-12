@@ -882,7 +882,7 @@ function EditableFileSurface({
     <EditProvider createEditor={createFileEditor}>
       <div ref={surfaceRef} className="flex min-h-0 flex-1">
         <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+          className="file-preview-virtualizer scrollbar-gutter-stable scrollbar-edge-inset min-h-0 flex-1 overflow-auto"
           config={{
             overscrollSize: 600,
             intersectionObserverMargin: 1200,
@@ -986,7 +986,7 @@ function RenderedMarkdownSurface({
   useFileSaveSession(saveTarget, onPendingChange);
 
   return (
-    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
+    <ScrollArea edgeInset className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}

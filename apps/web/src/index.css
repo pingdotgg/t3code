@@ -90,7 +90,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 :root {
   --app-scrollbar-edge-inset: 4px;
-  --app-scrollbar-width: calc(6px + var(--app-scrollbar-edge-inset));
+  --app-scrollbar-width: 6px;
   --appearance-contrast-base: 100%;
   --appearance-contrast-boost: 0%;
   --appearance-contrast-border-boost: 0%;
@@ -485,7 +485,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   -webkit-mask-size:
     100% calc(var(--workspace-titlebar-scroll-fade-height) + 1px),
     100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
-    var(--app-scrollbar-width) 100%;
+    var(--app-scrollbar-lane, var(--app-scrollbar-width)) 100%;
   mask-image:
     linear-gradient(
       to bottom,
@@ -503,7 +503,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   mask-size:
     100% calc(var(--workspace-titlebar-scroll-fade-height) + 1px),
     100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
-    var(--app-scrollbar-width) 100%;
+    var(--app-scrollbar-lane, var(--app-scrollbar-width)) 100%;
 }
 
 /* Virtualizers own their native scroll element, so they cannot use ScrollArea's
@@ -1866,9 +1866,19 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
-/* Keeps vertical thumbs off the window edge, where resize handles steal the
-   pointer. The transparent border keeps the gap clickable. */
-::-webkit-scrollbar-thumb:vertical {
+/* For a pane's main scroller: keeps the thumb off the pane edge, where window
+   and panel resize handles take the pointer. The gap is a transparent thumb
+   border, so a press in it still grabs the thumb. Pair it with a stable
+   scrollbar gutter, or the wider lane shifts content when it appears. */
+.scrollbar-edge-inset {
+  --app-scrollbar-lane: calc(var(--app-scrollbar-width) + var(--app-scrollbar-edge-inset));
+}
+
+.scrollbar-edge-inset::-webkit-scrollbar {
+  width: var(--app-scrollbar-lane);
+}
+
+.scrollbar-edge-inset::-webkit-scrollbar-thumb:vertical {
   border-right: var(--app-scrollbar-edge-inset) solid transparent;
   border-radius: 3px calc(3px + var(--app-scrollbar-edge-inset))
     calc(3px + var(--app-scrollbar-edge-inset)) 3px / 3px;
@@ -2170,7 +2180,7 @@ code {
 }
 
 .chat-markdown pre::-webkit-scrollbar {
-  height: 6px;
+  height: var(--app-scrollbar-width);
 }
 
 .chat-markdown pre::-webkit-scrollbar-thumb {

@@ -1,7 +1,10 @@
 import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
+import { SCROLLBAR_EDGE_INSET } from "~/lib/scrollbarEdgeInset";
 import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
 export const THREAD_DETAILS_CARD_GAP = 12;
+// Keeps the card's gap from the chat's inset scrollbar.
+export const THREAD_DETAILS_CARD_RIGHT = THREAD_DETAILS_CARD_GAP + SCROLLBAR_EDGE_INSET;
 // Keep in sync with --thread-details-panel-width.
 const THREAD_DETAILS_CARD_WIDTH = 280;
 
@@ -29,7 +32,8 @@ export function resolveThreadDetailsCardLayout({
 }) {
   const gap = THREAD_DETAILS_CARD_GAP;
   const width = THREAD_DETAILS_CARD_WIDTH;
-  const x = container.width - width - gap;
+  const right = THREAD_DETAILS_CARD_RIGHT;
+  const x = container.width - width - right;
   if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
   const y = gap + topInset;
   const height =
@@ -39,7 +43,7 @@ export function resolveThreadDetailsCardLayout({
   if (height < 160) return null;
   return {
     x,
-    right: gap,
+    right,
     width,
     y,
     height,

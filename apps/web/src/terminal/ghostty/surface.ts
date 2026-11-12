@@ -19,6 +19,7 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
+import { SCROLLBAR_EDGE_INSET } from "../../lib/scrollbarEdgeInset";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -33,6 +34,8 @@ const TERMINAL_GLYPH_FALLBACKS =
 const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
 const CONTENT_PADDING = 4;
+// The grid leaves the scrollbar's edge inset free, so the thumb stays off the last column.
+const GRID_RIGHT_RESERVE = SCROLLBAR_EDGE_INSET;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_LINK_HOVER_DELAY_MS = 250;
@@ -697,7 +700,7 @@ export class GhosttyTerminalSurface {
 
     const scrollbar = document.createElement("div");
     scrollbar.className =
-      "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
+      "group absolute top-1 right-px bottom-1 z-1 w-[calc(var(--app-scrollbar-width)+var(--app-scrollbar-edge-inset))] cursor-default touch-none";
     scrollbar.setAttribute("role", "scrollbar");
     scrollbar.setAttribute("aria-label", "Terminal scrollback");
     scrollbar.setAttribute("aria-orientation", "vertical");
@@ -720,7 +723,12 @@ export class GhosttyTerminalSurface {
     } catch {}
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
-    const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
+    const grid = terminalGridSize(
+      mount.clientWidth - GRID_RIGHT_RESERVE,
+      mount.clientHeight,
+      metrics,
+      CONTENT_PADDING,
+    );
     const core = await GhosttyTerminalCore.create(
       grid.cols,
       grid.rows,
@@ -897,7 +905,12 @@ export class GhosttyTerminalSurface {
       // A resize can return to the painted size before its queued frame runs.
       this.pendingCanvasConfiguration = null;
     }
-    const grid = terminalGridSize(width, height, this.metrics, CONTENT_PADDING);
+    const grid = terminalGridSize(
+      width - GRID_RIGHT_RESERVE,
+      height,
+      this.metrics,
+      CONTENT_PADDING,
+    );
     this.mountHeight = height;
     // onResize is the only PTY resize channel, so the first successful fit must
     // notify even when the measured grid equals the 1x1 construction sentinel.
@@ -2269,7 +2282,7 @@ export class GhosttyTerminalSurface {
       cellWidth: this.metrics.width,
       cellHeight: this.metrics.height,
       paddingLeft: CONTENT_PADDING,
-      paddingRight: CONTENT_PADDING,
+      paddingRight: CONTENT_PADDING + GRID_RIGHT_RESERVE,
       paddingTop: this.originY,
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,

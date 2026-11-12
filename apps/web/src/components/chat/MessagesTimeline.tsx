@@ -1460,7 +1460,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onItemSizeChanged={scheduleMinimapRefresh}
               onMetricsChange={scheduleMinimapRefresh}
               className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+                "messages-timeline-scroll scrollbar-gutter-both scrollbar-edge-inset h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",
               )}
               ListHeaderComponent={listHeader}

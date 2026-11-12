@@ -62,7 +62,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   return (
     <div
       data-thread-find-bar
-      className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
+      className="absolute top-3 right-[calc(--spacing(3)+var(--app-scrollbar-edge-inset))] z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem-var(--app-scrollbar-edge-inset)))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
     >
       <InputGroup
         variant="popover"

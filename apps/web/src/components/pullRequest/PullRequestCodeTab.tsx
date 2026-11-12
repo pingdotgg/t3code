@@ -1661,7 +1661,7 @@ function PullRequestCodeTab({
           {/* The viewer must own its scroll element to position virtual rows within it. */}
           <FileViewedToggleContext value={fileViewedToggle}>
             <StyledDiffCodeView<ReviewAnnotationGroup>
-              className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+              className="@container scrollbar-edge-inset h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
               viewerRef={codeViewReveal.attach}
               items={items}

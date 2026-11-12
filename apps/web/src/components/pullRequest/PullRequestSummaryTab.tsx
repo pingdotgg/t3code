@@ -827,7 +827,7 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef(node);
       }}
-      className="h-full overflow-y-auto"
+      className="scrollbar-gutter-stable scrollbar-edge-inset h-full overflow-y-auto"
       data-pull-request-summary-scroll
     >
       <section className="px-4 pt-2.5 pb-1">

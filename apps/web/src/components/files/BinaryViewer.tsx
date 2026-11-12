@@ -283,7 +283,7 @@ export default function BinaryViewer(props: {
           <ArchiveFile key={entry.path} path={entry.path} bytes={entry.bytes} />
         ) : null
       ) : archive ? (
-        <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+        <div className="scrollbar-gutter-both scrollbar-edge-inset min-h-0 flex-1 overflow-auto">
           <table
             aria-label="Archive entries"
             className="w-full border-separate border-spacing-0 text-xs"
@@ -348,7 +348,7 @@ export default function BinaryViewer(props: {
           ) : null}
         </div>
       ) : rows ? (
-        <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+        <div className="scrollbar-gutter-both scrollbar-edge-inset min-h-0 flex-1 overflow-auto">
           <table
             aria-label={`${props.name}: ${rows.table}`}
             className="min-w-full border-separate border-spacing-0 text-xs"

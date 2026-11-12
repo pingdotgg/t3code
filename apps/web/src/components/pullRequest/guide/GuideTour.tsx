@@ -95,7 +95,10 @@ export function GuideTour({
   }, [active]);
 
   return (
-    <div ref={scrollRef} className="@container/guide h-full overflow-y-auto scrollbar-gutter-both">
+    <div
+      ref={scrollRef}
+      className="@container/guide h-full overflow-y-auto scrollbar-gutter-both scrollbar-edge-inset"
+    >
       <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
         <aside className="sticky top-4 self-start @max-[56rem]/guide:hidden">
           <GuideRail stops={guide.stops} position={position} seen={tour.seen} onSelect={goTo} />

@@ -20,7 +20,7 @@ export default function MermaidViewer(props: { readonly text: string }) {
       </div>
     );
   return (
-    <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto p-6 [&_*]:animate-none!">
+    <div className="scrollbar-gutter-both scrollbar-edge-inset min-h-0 flex-1 overflow-auto p-6 [&_*]:animate-none!">
       <MermaidDiagram source={props.text} onExpand={setExpanded} />
       {expanded ? (
         <ExpandedImageDialog

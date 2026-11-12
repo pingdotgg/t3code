@@ -1451,7 +1451,7 @@ export default function DiffPanel({
                     viewerRef={attachCodeView}
                     onScroll={codeViewScroll.onScroll}
                     codeViewKey={codeViewMountKey}
-                    className="h-full min-h-0 overflow-auto"
+                    className="scrollbar-gutter-stable scrollbar-edge-inset h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
                     renderCodeViewFooter={renderLoadingBoundary}
