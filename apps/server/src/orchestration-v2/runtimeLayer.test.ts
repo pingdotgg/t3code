@@ -9339,6 +9339,9 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("thread opens", (it) 
           { query: "uploadthing docs", at: start + 60_000 },
           { query: "upl", at: start },
         ]);
+        const replay = yield* ProjectionReplay.ProjectionReplay;
+        assert.isTrue((yield* replay.rebuild).valid);
+        assert.deepEqual(yield* opens, later);
       }),
   );
 });
