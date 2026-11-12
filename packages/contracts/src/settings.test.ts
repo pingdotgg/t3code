@@ -537,11 +537,16 @@ describe("visual delivery settings", () => {
     for (const visualInstructions of [
       null,
       "",
-      "Use the requested publishing destination.",
+      "Use the requested publishing destination. 🦊",
       "界".repeat(1_000),
     ]) {
       expect(decodeServerSettingsPatch({ visualInstructions })).toEqual({ visualInstructions });
     }
     expect(() => decodeServerSettingsPatch({ visualInstructions: "x".repeat(1_001) })).toThrow();
+    for (const decode of [decodeServerSettings, decodeServerSettingsPatch]) {
+      for (const visualInstructions of ["\ud800", "\udfff", "prefix\ud800suffix"]) {
+        expect(() => decode({ visualInstructions })).toThrow();
+      }
+    }
   });
 });
