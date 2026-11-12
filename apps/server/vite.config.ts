@@ -1,8 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - Build configuration normalizes manifest paths before an Effect runtime exists.
 import "vite-plus/test/config";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown needs the asset path when it reads this config.
 import * as NodePath from "node:path";
 import { defineConfig, mergeConfig } from "vite-plus";
-import * as NodeURL from "node:url";
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
@@ -20,9 +19,9 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const serverManifestPath = NodeURL.fileURLToPath(new URL("./package.json", import.meta.url));
+const serverManifestPath = NodePath.join(import.meta.dirname, "package.json");
 const buildVersion = resolveTaggedSourceVersion(
-  NodeURL.fileURLToPath(new URL("../../", import.meta.url)),
+  NodePath.join(import.meta.dirname, "../.."),
   packageJson.version,
 );
 const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(buildVersion) ? "nightly" : "latest";

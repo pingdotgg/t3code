@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Build configuration resolves tags before an Effect runtime exists.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Build configs resolve tags before an Effect runtime exists.
 import * as NodeChildProcess from "node:child_process";
 
 export function resolveTaggedSourceVersion(

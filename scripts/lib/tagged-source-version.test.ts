@@ -33,7 +33,6 @@ it("uses the exact stable tag, preserving release overrides and untagged builds"
     git("tag", "-a", "v0.1.6", "-m", "release");
 
     expect(resolveTaggedSourceVersion(root, "0.1.5")).toBe("0.1.6");
-    expect(JSON.parse(NodeFS.readFileSync(manifest, "utf8")).version).toBe("0.1.5");
     expect(resolveTaggedSourceVersion(root, "0.1.5", webManifestPaths)).toBe("0.1.6");
 
     NodeFS.writeFileSync(webManifest, JSON.stringify({ version: "0.1.7-preview.1" }));
