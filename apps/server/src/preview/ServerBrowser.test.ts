@@ -1015,9 +1015,10 @@ it.live.each(["load", "none"] as const)(
 
         expect(status.url).toBe("http://localhost:5173/next");
         expect(navigated).toMatchObject({ _tag: "Success" });
-        // Waiting on the busy script spends the navigation's own budget.
+        // Waiting on the busy script spends half the navigation's own budget, not all of it.
         const [, gotoOptions] = contexts[0]!.page.goto.mock.calls.at(-1)!;
         expect(gotoOptions?.timeout).toBeLessThan(200);
+        expect(gotoOptions?.timeout).toBeGreaterThan(1);
         expect(waited).toMatchObject({ _tag: "Success" });
       }),
     ).pipe(Effect.provide(layer)),

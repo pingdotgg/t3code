@@ -1785,7 +1785,8 @@ const make = Effect.gen(function* () {
     timeout: number,
   ) => {
     const probeStartedAt = performance.now();
-    await ServerBrowserPage.stopUnresponsiveScript(tab.cdp, timeout);
+    // Half the budget at most: a cross-site goto leaves a hung page by itself and needs the rest.
+    await ServerBrowserPage.stopUnresponsiveScript(tab.cdp, timeout / 2);
     const navigation = tab.page.goto(url, {
       // The probe spends the caller's budget; the broker evicts a host that answers late.
       timeout: Math.max(1, timeout - (performance.now() - probeStartedAt)),
