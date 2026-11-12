@@ -719,7 +719,11 @@ export const discoverClaudeSkillCatalog = Effect.fn("discoverClaudeSkillCatalog"
         continue;
       }
       const override = root.prefix ? undefined : skillOverrides.get(name);
-      const alias = !root.prefix && frontmatter.kind === "parsed" ? frontmatter.name : undefined;
+      // Claude lists only enabled, user-invocable skills as commands.
+      const alias =
+        !root.prefix && frontmatter.kind === "parsed" && frontmatter.userInvocable !== false
+          ? frontmatter.name
+          : undefined;
       if (alias && override?.enabled !== false && !commandAliases.has(alias.toLowerCase())) {
         commandAliases.set(alias.toLowerCase(), name);
       }

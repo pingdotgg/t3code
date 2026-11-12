@@ -755,8 +755,13 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ].join("\n"),
         );
 
-        const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+        const { skills, commandAliases } = yield* discoverClaudeSkillCatalog(
+          { homePath: configDir },
+          undefined,
+        );
 
+        // Claude lists no command for a skill users cannot invoke.
+        assert.deepEqual([...commandAliases], []);
         assert.deepEqual(skills, [
           {
             name: "kane-cli",
