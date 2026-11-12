@@ -55,6 +55,7 @@ export interface FilesViewedScopeHandle {
   /** Holds the scope open while subscribed; the last reader to leave sends its last presses. */
   readonly subscribe: (listener: () => void) => () => void;
   readonly getSnapshot: () => FileViewedOverlay;
+  /** `revision` is the file's version in the diff the press was made on, when it names one. */
   readonly setViewed: (path: string, viewed: boolean, revision?: string) => void;
 }
 

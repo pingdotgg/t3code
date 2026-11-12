@@ -75,12 +75,12 @@ describe("createFilesViewedStore", () => {
     using t = setup(unchanged);
     const scope = t.store.scope(first);
     const release = scope.subscribe(() => {});
-    scope.setViewed("a.ts", true, "shown-revision");
+    scope.setViewed("a.ts", true, "shown-a");
     expect(scope.getSnapshot().get("a.ts")).toBe(true);
     await vi.advanceTimersByTimeAsync(400);
     expect(t.send).toHaveBeenCalledTimes(1);
     expect(t.send.mock.calls[0]?.[1]).toEqual([
-      { path: "a.ts", viewed: true, revision: "shown-revision" },
+      { path: "a.ts", viewed: true, revision: "shown-a" },
     ]);
 
     t.settles[0]?.(AsyncResult.success(undefined));

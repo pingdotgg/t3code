@@ -826,7 +826,7 @@ function PullRequestCodeTab({
     );
     setLastViewedFileKey(fileKey);
     for (const file of range) {
-      // Commit diffs name the commit's version rather than the current head.
+      // A commit's diff names that commit's version of the file, not the head's.
       setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
     }
     setFoldChoices((current) =>

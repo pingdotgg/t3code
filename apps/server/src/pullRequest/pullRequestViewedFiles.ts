@@ -277,7 +277,7 @@ export const make = (dependencies: Dependencies) => {
       yield* filesViewedStore
         .set({
           ...filesViewedScope(project, input.number, viewer),
-          // Missing paths have null baselines; empty revision means confirmed deletion.
+          // Shown revisions win over the head; missing paths have null baselines; empty means deleted.
           files: input.files.map((file) => ({
             path: file.path,
             revision: file.revision ?? revisions?.get(file.path) ?? null,

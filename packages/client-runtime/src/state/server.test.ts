@@ -1665,85 +1665,165 @@ describe("provider setup commands", () => {
       expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("toggles a provider while another provider's update is still running", () =>
+    Effect.gen(function* () {
+      const updateStarted = yield* Deferred.make<void>();
+      const settingsSaved = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.serverUpdateProvider]: () =>
+          Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        [WS_METHODS.serverUpdateSettings]: () =>
+          Deferred.succeed(settingsSaved, undefined).pipe(Effect.as(CONFIG.settings)),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+
+      void atoms.updateProvider.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { provider: ProviderDriverKind.make("opencode") },
+      });
+      yield* Deferred.await(updateStarted);
+      void atoms.mutateProviderInstance.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: {
+          patch: {},
+          providerInstanceMutation: {
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make("codex"),
+            instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+          },
+        },
+      });
+
+      const saved = yield* Deferred.await(settingsSaved).pipe(
+        Effect.as(true),
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(1),
+          orElse: () => Effect.succeed(false),
+        }),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Fiber.join(saved)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
 });
 
 describe("resource telemetry history", () => {
-  it.effect("refreshes an initially empty history while mounted and stops after unmount", () =>
-    Effect.gen(function* () {
-      vi.useFakeTimers();
-      try {
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            let reads = 0;
-            const client = {
-              [WS_METHODS.serverGetResourceTelemetryHistory]: () =>
-                Effect.sync(() => ({
-                  retainedSampleCount: reads++,
-                })),
-            } as unknown as WsRpcProtocolClient;
-            const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-              target: TARGET,
-              state: yield* SubscriptionRef.make<SupervisorConnectionState>({
-                ...AVAILABLE_CONNECTION_STATE,
-                phase: "connected",
-              }),
-              session: yield* SubscriptionRef.make(Option.some(session(client))),
-              prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-              connect: Effect.void,
-              disconnect: Effect.void,
-              retryNow: Effect.void,
-            });
-            const environments = EnvironmentRegistry.EnvironmentRegistry.of({
-              run: (_id, effect) =>
-                Effect.provideService(
-                  effect,
-                  EnvironmentSupervisor.EnvironmentSupervisor,
-                  supervisor,
+  it.effect.each([
+    ["resourceTelemetryHistory", WS_METHODS.serverGetResourceTelemetryHistory],
+    ["processResourceHistory", WS_METHODS.serverGetProcessResourceHistory],
+  ] as const)(
+    "%s refreshes an initially empty history while mounted and stops after unmount",
+    ([atomKey, method]) =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        try {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              let reads = 0;
+              const client = {
+                [method]: () =>
+                  Effect.sync(() => ({
+                    retainedSampleCount: reads++,
+                  })),
+              } as unknown as WsRpcProtocolClient;
+              const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+                target: TARGET,
+                state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+                  ...AVAILABLE_CONNECTION_STATE,
+                  phase: "connected",
+                }),
+                session: yield* SubscriptionRef.make(Option.some(session(client))),
+                prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+                connect: Effect.void,
+                disconnect: Effect.void,
+                retryNow: Effect.void,
+              });
+              const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+                run: (_id, effect) =>
+                  Effect.provideService(
+                    effect,
+                    EnvironmentSupervisor.EnvironmentSupervisor,
+                    supervisor,
+                  ),
+                followStream: (_id, stream) =>
+                  Stream.provideService(
+                    stream,
+                    EnvironmentSupervisor.EnvironmentSupervisor,
+                    supervisor,
+                  ),
+              } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+              const runtime = Atom.runtime(
+                Layer.merge(
+                  Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+                  Layer.succeed(Persistence.EnvironmentCacheStore, {
+                    loadServerConfig: () => Effect.succeedNone,
+                  } as unknown as Persistence.EnvironmentCacheStore["Service"]),
                 ),
-              followStream: (_id, stream) =>
-                Stream.provideService(
-                  stream,
-                  EnvironmentSupervisor.EnvironmentSupervisor,
-                  supervisor,
-                ),
-            } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-            const runtime = Atom.runtime(
-              Layer.merge(
-                Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
-                Layer.succeed(Persistence.EnvironmentCacheStore, {
-                  loadServerConfig: () => Effect.succeedNone,
-                } as unknown as Persistence.EnvironmentCacheStore["Service"]),
-              ),
-            );
-            const atoms = createServerEnvironmentAtoms(runtime, {
-              initialConfigValueAtom: () => Atom.make(CONFIG),
-            });
-            const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
-              Effect.sync(() => value.dispose()),
-            );
-            const history = atoms.resourceTelemetryHistory({
-              environmentId: TARGET.environmentId,
-              input: { windowMs: 900_000, bucketMs: 30_000 },
-            });
-            const unmount = registry.mount(history);
-            const initial = yield* AtomRegistry.getResult(registry, history, {
-              suspendOnWaiting: true,
-            });
-            expect(initial.retainedSampleCount).toBe(0);
-            yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
-            expect(reads).toBe(2);
-            const updated = yield* AtomRegistry.getResult(registry, history, {
-              suspendOnWaiting: true,
-            });
-            expect(updated.retainedSampleCount).toBe(1);
-            unmount();
-            yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
-            expect(reads).toBe(2);
-          }),
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    }),
+              );
+              const atoms = createServerEnvironmentAtoms(runtime, {
+                initialConfigValueAtom: () => Atom.make(CONFIG),
+              });
+              const registry = yield* Effect.acquireRelease(
+                Effect.sync(AtomRegistry.make),
+                (value) => Effect.sync(() => value.dispose()),
+              );
+              const history: Atom.Atom<
+                AsyncResult.AsyncResult<{ readonly retainedSampleCount: number }, Error>
+              > = atoms[atomKey]({
+                environmentId: TARGET.environmentId,
+                input: { windowMs: 900_000, bucketMs: 30_000 },
+              });
+              const unmount = registry.mount(history);
+              const initial = yield* AtomRegistry.getResult(registry, history, {
+                suspendOnWaiting: true,
+              });
+              expect(initial.retainedSampleCount).toBe(0);
+              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
+              expect(reads).toBe(2);
+              const updated = yield* AtomRegistry.getResult(registry, history, {
+                suspendOnWaiting: true,
+              });
+              expect(updated.retainedSampleCount).toBe(1);
+              unmount();
+              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+              expect(reads).toBe(2);
+            }),
+          );
+        } finally {
+          vi.useRealTimers();
+        }
+      }),
   );
 });

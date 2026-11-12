@@ -741,6 +741,37 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n");
       assert.include(plan, `USING INDEX sqlite_autoindex_orchestration_v2_projection_${table}_1`);
     }
+    // The filters every command reads with seek the rows they keep, not every row of the thread.
+    const command = traceSqlStatements();
+    yield* store
+      .getThreadRecords(threadId, ["nodes", "subagents", "turnItems", "contextTransfers"], {
+        turnItemTypes: ["user_message", "error"],
+        omitSettledLeafNodes: true,
+        omitSettledSubagents: true,
+        contextTransferStatuses: ["pending"],
+      })
+      .pipe(Effect.withTracer(command.tracer));
+    for (const [table, seeks] of [
+      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
+      ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
+      [
+        "context_transfers",
+        [
+          "source_thread_status_idx (source_thread_id=? AND status=?)",
+          "target_thread_idx (target_thread_id=? AND status=?)",
+        ],
+      ],
+    ] as const) {
+      const query = command.statements.find((statement) =>
+        statement.includes(`FROM orchestration_v2_projection_${table}`),
+      );
+      assert.isDefined(query);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+        .map((row) => row.detail)
+        .join("\n");
+      for (const seek of seeks) assert.include(plan, seek);
+    }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],
@@ -828,6 +859,16 @@ it.effect("record reads filter notification sources without dropping matching me
       plan.some((detail) => detail.includes("turn_items_user_message_idx")),
       plan.join("\n"),
     );
+    // With every user item loaded, the items give the order and the lookup does not run.
+    const withItems = traceSqlStatements();
+    const ordered = yield* store
+      .getThreadRecords(threadId, ["messages", "turnItems"], {
+        messageRoles: ["user"],
+        turnItemTypes: ["user_message"],
+      })
+      .pipe(Effect.withTracer(withItems.tracer));
+    assert.deepEqual(ordered.messages, userMessages.messages);
+    assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
     assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
@@ -9002,6 +9043,193 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
           ["local", targetThreadId, "command_execution"],
         ],
+      );
+    }),
+  );
+
+  it.effect("hides source turns rewound before the fork from a fork's visible items", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const rewoundAt = DateTime.add(now, { minutes: 1 });
+      const forkedAt = DateTime.add(now, { minutes: 2 });
+      const prefix = "projection-fork-after-rewind";
+      const projectId = ProjectId.make(`project:${prefix}`);
+      const sourceThreadId = ThreadId.make(`thread:${prefix}:source`);
+      const targetThreadId = ThreadId.make(`thread:${prefix}:target`);
+      const sourceProviderThreadId = ProviderThreadId.make(`provider-thread:${prefix}:source`);
+      const runIds = [1, 2, 3].map((ordinal) => RunId.make(`run:${prefix}:${ordinal}`));
+      const nodeIds = [1, 2, 3].map((ordinal) => NodeId.make(`node:${prefix}:${ordinal}`));
+      const threadPayload = (input: {
+        readonly id: ThreadId;
+        readonly forkedFrom: { type: "run"; threadId: ThreadId; runId: RunId } | null;
+        readonly createdAt: DateTime.Utc;
+      }) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: input.id,
+        projectId,
+        title: input.id,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: sourceProviderThreadId,
+        lineage:
+          input.forkedFrom === null
+            ? { parentThreadId: null, relationshipToParent: null, rootThreadId: sourceThreadId }
+            : {
+                parentThreadId: sourceThreadId,
+                relationshipToParent: "fork" as const,
+                rootThreadId: sourceThreadId,
+              },
+        forkedFrom: input.forkedFrom,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      const runPayload = (index: number, status: "completed" | "rolled_back") => ({
+        id: runIds[index]!,
+        threadId: sourceThreadId,
+        ordinal: index + 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: sourceProviderThreadId,
+        userMessageId: MessageId.make(`message:${prefix}:user:${index + 1}`),
+        rootNodeId: nodeIds[index]!,
+        activeAttemptId: null,
+        status,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: status === "rolled_back" ? rewoundAt : now,
+        checkpointId: null,
+        contextHandoffId: null,
+      });
+
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${prefix}:source-thread`),
+        type: "thread.created",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: threadPayload({ id: sourceThreadId, forkedFrom: null, createdAt: now }),
+      });
+      for (const [index, text] of ["one", "two", "three"].entries()) {
+        const runId = runIds[index]!;
+        const nodeId = nodeIds[index]!;
+        const ordinal = index + 1;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${prefix}:run-${ordinal}`),
+          type: "run.created",
+          threadId: sourceThreadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: runPayload(index, "completed"),
+        });
+        for (const [offset, role] of (["user", "assistant"] as const).entries()) {
+          const itemBase = {
+            id: TurnItemId.make(`turn-item:${prefix}:${role}:${ordinal}`),
+            threadId: sourceThreadId,
+            runId,
+            nodeId,
+            providerThreadId: sourceProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: ordinal * 100 + offset,
+            status: "completed" as const,
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            messageId: MessageId.make(`message:${prefix}:${role}:${ordinal}`),
+          };
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${prefix}:${role}-item-${ordinal}`),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId,
+            nodeId,
+            driver,
+            occurredAt: now,
+            payload:
+              role === "user"
+                ? {
+                    ...itemBase,
+                    createdBy: "user",
+                    creationSource: "web",
+                    type: "user_message",
+                    inputIntent: "turn_start",
+                    text: `prompt ${text}`,
+                    attachments: [],
+                  }
+                : {
+                    ...itemBase,
+                    type: "assistant_message",
+                    text: `reply ${text}`,
+                    streaming: false,
+                  },
+          });
+        }
+        // Edit from here on prompt two rewinds run 2 before prompt three is sent.
+        if (ordinal === 2) {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${prefix}:run-2-rolled-back`),
+            type: "run.updated",
+            threadId: sourceThreadId,
+            runId,
+            nodeId,
+            driver,
+            occurredAt: rewoundAt,
+            payload: runPayload(index, "rolled_back"),
+          });
+        }
+      }
+
+      const forkedFrom = { type: "run" as const, threadId: sourceThreadId, runId: runIds[2]! };
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${prefix}:target-thread`),
+        type: "thread.created",
+        threadId: targetThreadId,
+        occurredAt: forkedAt,
+        payload: threadPayload({ id: targetThreadId, forkedFrom, createdAt: forkedAt }),
+      });
+
+      const visibleTexts = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
+        rows.map((row) =>
+          row.item.type === "user_message" || row.item.type === "assistant_message"
+            ? row.item.text
+            : row.item.type,
+        );
+      const source = yield* projectionStore.getThreadProjection(sourceThreadId);
+      assert.deepEqual(visibleTexts(source.visibleTurnItems), [
+        "prompt one",
+        "reply one",
+        "prompt three",
+        "reply three",
+      ]);
+      const expected = ["prompt one", "reply one", "prompt three", "reply three", "fork"];
+      const target = yield* projectionStore.getThreadProjection(targetThreadId);
+      assert.deepEqual(visibleTexts(target.visibleTurnItems), expected);
+      const page = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 10,
+      });
+      assert.deepEqual(visibleTexts(page.items), expected);
+      const window = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 10,
+      });
+      assert.deepEqual(visibleTexts(window.projection.visibleTurnItems), expected);
+      assert.equal(
+        (yield* projectionStore.getThreadShell(targetThreadId))?.visibleItemCount,
+        expected.length,
       );
     }),
   );
