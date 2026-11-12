@@ -18,6 +18,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -100,7 +101,11 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-import { retryTailscaleServe, tailscaleServeFailureHint } from "./tailscaleServeStartup.ts";
+import {
+  retryTailscaleServe,
+  TailscaleServeStatus,
+  tailscaleServeFailureHint,
+} from "./tailscaleServeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -873,6 +878,8 @@ const layerMakeServer = Layer.unwrap(
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);
+    const tailscaleServeError = yield* SubscriptionRef.make<string | undefined>(undefined);
+    const layerTailscaleServeStatus = Layer.succeed(TailscaleServeStatus, tailscaleServeError);
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
@@ -997,16 +1004,18 @@ const layerMakeServer = Layer.unwrap(
               ensureTailscaleServe({ localPort, servePort, localHost }),
               (cause) => {
                 const hint = tailscaleServeFailureHint(cause);
+                const message = `${cause.message} ${hint}`;
                 return Effect.logWarning("Failed to configure Tailscale Serve; retrying", {
                   hint,
                   cause,
                   localPort,
                   servePort,
                 }).pipe(
+                  Effect.andThen(SubscriptionRef.set(tailscaleServeError, message)),
                   Effect.andThen(
                     publishRuntimeState((current) => ({
                       ...current,
-                      tailscaleServeError: `${cause.message} ${hint}`,
+                      tailscaleServeError: message,
                     })),
                   ),
                 );
@@ -1017,6 +1026,7 @@ const layerMakeServer = Layer.unwrap(
                   serveConfigured = true;
                 }),
               ),
+              Effect.tap(() => SubscriptionRef.set(tailscaleServeError, undefined)),
               Effect.tap(() =>
                 publishRuntimeState((current) => ({ ...current, tailscaleServeError: undefined })),
               ),
@@ -1253,6 +1263,7 @@ const layerMakeServer = Layer.unwrap(
         ),
       ),
       Layer.provide(layerActivation),
+      Layer.provide(layerTailscaleServeStatus),
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),

@@ -1,7 +1,14 @@
 import type { TailscaleCommandError } from "@t3tools/tailscale";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import type * as SubscriptionRef from "effect/SubscriptionRef";
+
+/** Why requested Serve is not set up yet, with the fix; holds undefined once it is. Absent without Serve. */
+export class TailscaleServeStatus extends Context.Reference<
+  SubscriptionRef.SubscriptionRef<string | undefined> | undefined
+>("t3/TailscaleServeStatus", { defaultValue: () => undefined }) {}
 
 const TAILSCALE_SERVE_RETRY_MAX_DELAY = Duration.minutes(1);
 

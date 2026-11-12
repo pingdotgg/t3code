@@ -1002,7 +1002,7 @@ function ConnectionsSettingsContent({
       description={
         tailscaleHttpsEndpoint?.status === "available"
           ? tailscaleHttpsEndpoint.httpBaseUrl
-          : (desktopServerExposureState?.tailscaleServeError ??
+          : (primaryServerConfig?.tailscaleServeError ??
             (tailscaleHttpsEndpoint
               ? "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
               : missingTailscaleEndpointDescription(desktopServerExposureState)))
@@ -1231,7 +1231,15 @@ function ConnectionsSettingsContent({
                 {renderWslRow()}
               </>
             ) : canManageLocalBackend ? (
-              renderDisabledNetworkAccessRow()
+              <>
+                {renderDisabledNetworkAccessRow()}
+                {primaryServerConfig?.tailscaleServeError ? (
+                  <SettingsRow
+                    title={searchableSetting("tailscale-https").title}
+                    description={primaryServerConfig.tailscaleServeError}
+                  />
+                ) : null}
+              </>
             ) : null}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow

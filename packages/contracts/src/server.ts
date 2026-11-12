@@ -629,6 +629,8 @@ export const ServerConfig = Schema.Struct({
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
   /** Hints only; verify each address answers as this environment. */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
+  /** Why requested Tailscale Serve is not set up yet, with the fix. The server keeps retrying. */
+  tailscaleServeError: Schema.optionalKey(TrimmedNonEmptyString),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */

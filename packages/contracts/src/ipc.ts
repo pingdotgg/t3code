@@ -506,8 +506,6 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
   tailscaleServeEnabled: boolean;
   tailscaleServePort: number;
-  /** Why the running backend could not set up Serve, with the fix. */
-  tailscaleServeError?: string;
 }
 
 export const DesktopServerExposureStateSchema = Schema.Struct({
@@ -516,7 +514,6 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   advertisedHost: Schema.NullOr(Schema.String),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: Schema.Number,
-  tailscaleServeError: Schema.optionalKey(Schema.String),
 });
 
 export interface PickFolderOptions {

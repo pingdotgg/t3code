@@ -236,6 +236,30 @@ it.effect("resends a reveal kind and remote targets that outlast the snapshot ti
   }).pipe(Effect.scoped),
 );
 
+it.effect("resends a Tailscale Serve error when it appears and clears, not when it repeats", () =>
+  Effect.gen(function* () {
+    const error = "tailscale serve exited with code 1. Run `tailscale up`.";
+    const events = yield* withLateConfigDiscovery(
+      snapshotConfig({}),
+      Stream.empty,
+      {
+        resolveAvailableEditors: () => Effect.succeed([]),
+        resolveFileManagerRevealKind: () => Effect.undefined,
+      },
+      { resolveTargets: () => Effect.succeed([]) },
+      { resolve: () => Effect.succeed([]) },
+      Stream.make(undefined, error, error, undefined),
+    ).pipe(Stream.runCollect);
+
+    const snapshots = Array.from(events).flatMap((event) =>
+      event.type === "snapshot" ? [event.config] : [],
+    );
+    assert.equal(snapshots.length, 2);
+    assert.equal(snapshots[0]?.tailscaleServeError, error);
+    assert.equal(snapshots[1] !== undefined && "tailscaleServeError" in snapshots[1], false);
+  }),
+);
+
 it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
   Effect.gen(function* () {
     // Each discovery finishes only once the other two have started, so a

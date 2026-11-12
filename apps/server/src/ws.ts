@@ -18,6 +18,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
@@ -221,6 +222,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
+import { TailscaleServeStatus } from "./tailscaleServeStartup.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
@@ -324,6 +326,7 @@ export const withLateConfigDiscovery = <E, R>(
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
   directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
+  tailscaleServeErrors: Stream.Stream<string | undefined> = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -356,8 +359,12 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((endpoints) => ({ type: "directEndpointsResolved" as const, endpoints })),
   );
 
+  const tailscaleServeErrorChanges = tailscaleServeErrors.pipe(
+    Stream.map((error) => ({ type: "tailscaleServeErrorChanged" as const, error })),
+  );
+
   return Stream.merge(
-    liveUpdates,
+    Stream.merge(liveUpdates, tailscaleServeErrorChanges),
     Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
   ).pipe(
     Stream.mapAccum(
@@ -383,6 +390,13 @@ export const withLateConfigDiscovery = <E, R>(
               return [current, []];
             }
             const next = { ...current, directEndpoints: event.endpoints };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "tailscaleServeErrorChanged": {
+            if (current.tailscaleServeError === event.error) return [current, []];
+            const { tailscaleServeError: _previous, ...rest } = current;
+            const next =
+              event.error === undefined ? rest : { ...rest, tailscaleServeError: event.error };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1487,6 +1501,7 @@ export const layerWsRpc = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
+      const tailscaleServeStatus = yield* TailscaleServeStatus;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
@@ -1784,6 +1799,10 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
+        const currentTailscaleServeError =
+          tailscaleServeStatus === undefined
+            ? undefined
+            : yield* SubscriptionRef.get(tailscaleServeStatus);
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
@@ -1804,6 +1823,9 @@ export const layerWsRpc = (
           issues: keybindingsConfig.issues,
           providers,
           ...discovery,
+          ...(currentTailscaleServeError === undefined
+            ? {}
+            : { tailscaleServeError: currentTailscaleServeError }),
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -3347,6 +3369,9 @@ export const layerWsRpc = (
                     resolveTargets: () => Fiber.join(remoteTargets),
                   },
                   { resolve: () => Fiber.join(directResult) },
+                  tailscaleServeStatus === undefined
+                    ? Stream.empty
+                    : SubscriptionRef.changes(tailscaleServeStatus),
                 ),
               );
             }),
