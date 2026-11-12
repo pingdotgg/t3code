@@ -48,13 +48,13 @@ async function renderInThread(page: string) {
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(
     await render(
-      <div data-testid="thread" style={{ height: 300, overflow: "auto" }}>
+      <div data-testid="thread" className="h-[300px] overflow-auto">
         <HtmlRenderFrame
           environmentId={EnvironmentId.make("environment")}
           htmlRender={{ attachmentId: "attachment", title: "Report", height: 200 }}
           threadRef={undefined}
         />
-        <div style={{ height: 1000 }} />
+        <div className="h-[1000px]" />
       </div>,
       { container },
     ),
