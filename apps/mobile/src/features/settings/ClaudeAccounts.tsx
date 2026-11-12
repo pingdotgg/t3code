@@ -59,15 +59,16 @@ function useProviderInstanceMutation(environment: SettingsTarget) {
 export function ClaudeAccount({
   environment,
   provider,
+  divider,
 }: {
   readonly environment: SettingsTarget;
   readonly provider: ServerProvider;
+  readonly divider: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const { run, pending, error } = useProviderInstanceMutation(environment);
   const instance = environment.serverConfig.settings.providerInstances[provider.instanceId];
   const configDir = claudeConfigDir(instance);
-  const folder = configDir || "Default config folder";
   const name = provider.displayName ?? "Claude";
   const status = !provider.enabled
     ? "Turned off"
@@ -77,7 +78,7 @@ export function ClaudeAccount({
         ? "Not signed in"
         : !provider.installed
           ? "Not installed"
-          : null;
+          : "Sign-in not checked";
   const removable =
     provider.instanceId !== DEFAULT_CLAUDE_INSTANCE_ID &&
     !isManagedSettingPath(
@@ -114,32 +115,15 @@ export function ClaudeAccount({
     );
   }
   return (
-    <View className="border-t border-border-subtle">
+    <View className={divider ? "border-t border-border-subtle" : undefined}>
       <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
         <View className="min-w-0 shrink grow gap-0.5">
           <Text textRole="body" className="text-foreground" numberOfLines={1}>
             {name}
           </Text>
-          <View
-            accessible
-            accessibilityLabel={[status, folder].filter(Boolean).join(", ")}
-            className="flex-row"
-          >
-            {status ? (
-              <Text textRole="footnote" className="text-foreground-muted">
-                {`${status} · `}
-              </Text>
-            ) : null}
-            {/* The folder's last segments tell accounts apart, so a long path loses its start. */}
-            <Text
-              textRole="footnote"
-              className="min-w-0 shrink text-foreground-muted"
-              numberOfLines={1}
-              ellipsizeMode="head"
-            >
-              {folder}
-            </Text>
-          </View>
+          <Text textRole="footnote" className="text-foreground-muted">
+            {status}
+          </Text>
         </View>
         {editing ? null : (
           <Menu

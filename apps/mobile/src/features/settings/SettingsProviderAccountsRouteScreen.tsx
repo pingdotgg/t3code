@@ -82,33 +82,38 @@ function EnvironmentProviders({
   readonly environment: SettingsTarget;
   readonly providers: ReadonlyArray<ServerProvider>;
 }) {
-  const accounts = providers.filter(canManageProvider);
   // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
-  const claudeAccounts = providers.filter(
-    (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
+  const listed = providers.filter(
+    (provider) => canManageProvider(provider) || provider.driver === CLAUDE_DRIVER,
   );
+  const hasInAppSignIn = listed.some(canManageProvider);
+  // Providers that are turned on lead; turned-off ones follow, each group in the server's order.
+  const ordered = [
+    ...listed.filter((provider) => provider.enabled),
+    ...listed.filter((provider) => !provider.enabled),
+  ];
   const canAddClaude = isManagedDriverAllowed(
     environment.serverConfig.managedPolicy,
     CLAUDE_DRIVER,
   );
   return (
     <>
-      {accounts.map((provider, index) => (
-        <ProviderAccount
-          key={provider.instanceId}
-          environment={environment}
-          provider={provider}
-          divider={index > 0}
-        />
-      ))}
-      {accounts.length === 0 ? (
+      {hasInAppSignIn ? null : (
         <Text className="p-4 text-foreground-muted">
           Configure a provider with in-app sign-in in web or desktop Settings.
         </Text>
-      ) : null}
-      {claudeAccounts.map((provider) => (
-        <ClaudeAccount key={provider.instanceId} environment={environment} provider={provider} />
-      ))}
+      )}
+      {ordered.map((provider, index) => {
+        const Row = canManageProvider(provider) ? ProviderAccount : ClaudeAccount;
+        return (
+          <Row
+            key={provider.instanceId}
+            environment={environment}
+            provider={provider}
+            divider={index > 0 || !hasInAppSignIn}
+          />
+        );
+      })}
       {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
     </>
   );
