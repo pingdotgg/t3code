@@ -325,13 +325,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       {content}
                     </button>
                     {option.preview ? (
-                      <ChatMarkdown
-                        text={option.preview}
-                        cwd={cwd}
-                        threadRef={threadRef}
-                        lineBreaks
-                        className="ps-9 pe-2 pb-1.5 text-xs text-foreground/70 sm:ps-8"
-                      />
+                      <div className="ps-9 pe-2 pb-1.5 sm:ps-8">
+                        {/* Claude writes previews for a monospace box, so paragraphs keep their spaces and newlines to hold ASCII mockups aligned. */}
+                        <ChatMarkdown
+                          text={option.preview}
+                          cwd={cwd}
+                          threadRef={threadRef}
+                          className="rounded-lg border border-border/70 bg-secondary px-3 py-2 font-mono text-xs leading-snug text-foreground/80 dark:border-transparent dark:bg-input/32 [&_p]:whitespace-pre-wrap"
+                        />
+                      </div>
                     ) : null}
                   </div>
                 );

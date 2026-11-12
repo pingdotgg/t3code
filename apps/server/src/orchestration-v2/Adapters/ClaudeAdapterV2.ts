@@ -5007,6 +5007,21 @@ export function claudeSdkUserInputAnswers(
   );
 }
 
+// Claude Code echoes the chosen option's preview back to the model as "selected preview:".
+export function claudeSdkUserInputAnnotations(
+  questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
+  answers: NonNullable<AskUserQuestionInput["answers"]>,
+): NonNullable<AskUserQuestionInput["annotations"]> {
+  return Object.fromEntries(
+    questions.flatMap((question) => {
+      const preview = question.options.find(
+        (option) => option.label === answers[question.id],
+      )?.preview;
+      return preview === undefined ? [] : [[question.id, { preview }]];
+    }),
+  );
+}
+
 function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
@@ -11493,6 +11508,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             );
             if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
+            const sdkAnswers = claudeSdkUserInputAnswers(resolvedAnswers);
+            const annotations = claudeSdkUserInputAnnotations(questions, sdkAnswers);
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -11502,7 +11519,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   behavior: "allow",
                   updatedInput: {
                     questions: toolInput.questions,
-                    answers: claudeSdkUserInputAnswers(resolvedAnswers),
+                    answers: sdkAnswers,
+                    ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
                   },
                   toolUseID: callbackOptions.toolUseID,
                 } satisfies PermissionResult);
