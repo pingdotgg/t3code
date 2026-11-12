@@ -946,7 +946,11 @@ const make = Effect.gen(function* () {
     const fields = input.terminalOnly
       ? (["runs"] as const)
       : (["runs", "nodes", "runtimeRequests", "turnItems"] as const);
-    const filter = { turnItemTypes: ["secret_request"], omitSettledLeafNodes: true } as const;
+    const filter = {
+      turnItemTypes: ["secret_request"],
+      omitSettledLeafNodes: true,
+      runtimeRequestStatuses: ["pending"],
+    } as const;
     const target = yield* getProjectThreadRecords(input, fields, filter);
     const selectedRun =
       input.runId === undefined
