@@ -10,7 +10,6 @@ import {
 import type { TurnDiffSummary } from "../types";
 import {
   observeProactivePanelUserChoice,
-  shouldApplyProactiveChangesScope,
   resolveProactiveTurnDiffAction,
   shouldOpenProactivePullRequest,
   shouldOpenProactiveTurnDiff,
@@ -187,7 +186,7 @@ export function useProactivePanels(input: {
     ) {
       return;
     }
-    if (shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff })) {
+    if (!alreadyReviewingDiff) {
       useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
     }
     onDiffPanelOpen?.();

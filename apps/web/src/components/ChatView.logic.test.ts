@@ -65,7 +65,6 @@ import {
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
-  shouldApplyProactiveChangesScope,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
@@ -442,17 +441,6 @@ describe("deriveCommittedServerUserMessageIds", () => {
       new Set([turnStartId, steerId]),
     );
   });
-});
-
-describe("diff selection across agent turns", () => {
-  it.each([false, true])(
-    "only selects Changes when opening a new review (already open: %s)",
-    (alreadyReviewingDiff) => {
-      expect(shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff })).toBe(
-        !alreadyReviewingDiff,
-      );
-    },
-  );
 });
 
 describe("resolveThreadSwitchTimeline", () => {
