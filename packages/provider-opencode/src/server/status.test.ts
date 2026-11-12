@@ -1113,17 +1113,50 @@ const scanned: OpenCode2Workspace = {
   ],
 };
 
-it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", () =>
+it.effect(
+  "reads a loaded OpenCode 2 directory listing no commands again once its scan has ended",
+  () =>
+    Effect.gen(function* () {
+      const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
+      const scanEnded = yield* Deferred.make<void>();
+      const load = yield* loadOpenCode2Workspace(
+        Effect.sync(() => reads.shift()!),
+        Deferred.await(scanEnded),
+        Effect.succeed(true),
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      NodeAssert.equal(reads.length, 1);
+      yield* Deferred.succeed(scanEnded, undefined);
+      NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
+    }),
+);
+
+it.effect("waits for the scan of a cold OpenCode 2 directory that first lists only built-ins", () =>
   Effect.gen(function* () {
-    const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
-    const scanEnded = yield* Deferred.make<void>();
-    const load = yield* loadOpenCode2Workspace(
-      Effect.sync(() => reads.shift()!),
-      Deferred.await(scanEnded),
-    ).pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    NodeAssert.equal(reads.length, 1);
-    yield* Deferred.succeed(scanEnded, undefined);
-    NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
+    const calls: Array<string> = [];
+    const reads: Array<OpenCode2Workspace> = [
+      { commands: builtinCommands, skills: builtinSkills },
+      scanned,
+    ];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), reads.shift()!)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.sync(() => (calls.push("loaded"), false)),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["loaded", "read", "scanned", "read"]);
+  }),
+);
+
+it.effect("reads an already loaded OpenCode 2 directory once without waiting for a scan", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const workspace = yield* loadOpenCode2Workspace(
+      Effect.sync(() => (calls.push("read"), scanned)),
+      Effect.sync(() => void calls.push("scanned")),
+      Effect.succeed(true),
+    );
+    NodeAssert.deepEqual(workspace, scanned);
+    NodeAssert.deepEqual(calls, ["read"]);
   }),
 );
