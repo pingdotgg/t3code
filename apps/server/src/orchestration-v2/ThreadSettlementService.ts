@@ -363,10 +363,12 @@ export const make = Effect.gen(function* () {
       if (nowMs - readAtMs >= QUIET_SYNC_INTERVAL_MS) quietOpenReadAt.delete(key);
     }
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
+    // Subagents settle without resolveAutoSettlementAt, so keep the prior snooze park for them.
     const candidates = threads.filter(
       (thread) =>
         (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
-        isAutoSettlementCandidate(thread, nowMs),
+        isAutoSettlementCandidate(thread, nowMs) &&
+        (thread.lineage.relationshipToParent !== "subagent" || !isSnoozed(thread, nowMs)),
     );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.

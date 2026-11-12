@@ -1012,6 +1012,10 @@ describe("ThreadSettlementServiceV2 worker", () => {
           marker,
           child("pinned", { pinnedAt: DateTime.makeUnsafe(NOW) }),
           child("opted-out", { autoSettleDisabledAt: DateTime.makeUnsafe(NOW) }),
+          child("snoozed", {
+            snoozedAt: DateTime.makeUnsafe(NOW),
+            snoozedUntil: DateTime.makeUnsafe(Date.parse(NOW) + DAY_MS),
+          }),
         ]) {
           yield* store.apply({
             type: "thread.created",
