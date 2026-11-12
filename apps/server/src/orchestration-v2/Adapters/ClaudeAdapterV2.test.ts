@@ -1743,10 +1743,17 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         });
         const nativeId = "native-thread-lost";
         const openedResume: Array<string | undefined> = [];
+        let continuationOffers = 0;
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: { CLAUDE_CONFIG_DIR: configDir },
+          continuationRequests: {
+            offer: () =>
+              Effect.sync(() => {
+                continuationOffers += 1;
+              }),
+          },
           attachmentsDir: configDir,
           fileSystem,
           path,
@@ -1843,6 +1850,8 @@ describe("ClaudeAdapterV2 resumeThread", () => {
               ),
             );
             assert.deepStrictEqual(openedResume, [nativeId]);
+            // A wake continuation would take the fresh session's history handoff without sending it.
+            assert.equal(continuationOffers, 0);
             // The session manager unloads the thread on this status, so the next start reaches resumeThread.
             const update = Option.getOrThrow(yield* Fiber.join(errorUpdate));
             assert.equal(

@@ -12064,7 +12064,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         },
                       }),
                     ),
-                    Effect.andThen(handleSdkMessage({ query: querySession, message })),
+                    // Before a turn attaches, the refusal would read as a native wake and open a
+                    // continuation that consumes the fresh session's history handoff without a prompt.
+                    Effect.andThen(Ref.get(activeTurn)),
+                    Effect.flatMap((attached) =>
+                      attached === null
+                        ? Effect.void
+                        : handleSdkMessage({ query: querySession, message }),
+                    ),
                   );
                 }),
               ),
