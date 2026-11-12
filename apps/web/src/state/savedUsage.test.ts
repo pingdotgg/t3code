@@ -85,28 +85,36 @@ const month: SavedUsage = {
 };
 const week: SavedUsage = {
   input: hours("2026-09-24", "2026-09-30"),
-  summary: summary(
-    [
-      bucket("2026-09-23", "2026-09-23T23:00:00.000Z"),
-      bucket("2026-09-24", "2026-09-24T09:00:00.000Z"),
-      bucket("2026-09-30", "2026-09-30T13:00:00.000Z"),
-    ],
-    "2026-09-30T14:00:00Z",
-  ),
+  summary: summary([bucket("2026-09-24", "2026-09-24T09:00:00.000Z")], "2026-09-30T14:00:00Z"),
 };
 
 describe("pickSavedUsage", () => {
-  it("cuts the saved read that covers most of the range to that range", () => {
-    const picked = pickSavedUsage([week, month], days("2026-09-20", "2026-09-30"));
-    expect(picked?.buckets.map((entry) => entry.day)).toEqual(["2026-09-24", "2026-09-30"]);
-    // The read time stays, so the page can say when the usage is from.
+  it("does not use a partially overlapping saved read for a wider window", () => {
+    const oneDay: SavedUsage = {
+      input: days("2026-09-30", "2026-09-30"),
+      summary: {
+        ...summary([bucket("2026-09-30")], "2026-09-30T10:00:00Z"),
+        sinceDay: UsageDay.make("2026-09-30"),
+        sources: [{ ...source("/home/a/.claude"), distinctSessions: 100 }],
+      },
+    };
+    expect(pickSavedUsage([oneDay], month.input)).toBeNull();
+  });
+
+  it("answers an exact saved window", () => {
+    const picked = pickSavedUsage([week, month], month.input);
+    expect(picked?.buckets.map((entry) => entry.day)).toEqual([
+      "2026-09-01",
+      "2026-09-24",
+      "2026-09-30",
+    ]);
     expect(picked?.readAt).toBe("2026-09-30T10:00:00Z");
   });
 
-  it("answers hours only with hours on the same hour grid", () => {
+  it("answers hours only with the exact hourly window", () => {
     const sameGrid = pickSavedUsage([month, week], hours("2026-09-24", "2026-09-30"));
     expect(sameGrid?.buckets.map((entry) => entry.hourStart)).toEqual(["2026-09-24T09:00:00.000Z"]);
-    // A daily read cannot be split into hours, nor a read on another grid.
+    // A daily read and another hourly window do not answer it.
     expect(pickSavedUsage([month], hours("2026-09-24", "2026-09-30"))).toBeNull();
     const shifted = { ...hours("2026-09-24", "2026-09-30"), sinceTime: "2026-09-24T00:30:00.000Z" };
     expect(pickSavedUsage([week], shifted)).toBeNull();

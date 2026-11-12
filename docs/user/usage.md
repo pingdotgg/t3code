@@ -73,8 +73,9 @@ On web and desktop, use the environment dropdown to filter costs, tokens, and li
 environments are selected by default. The dropdown shows which environments are still scanning;
 results appear as each one responds, and figures still updating are dimmed. Cursor shows its last
 saved totals first, then updates them when Cursor's API responds. When an environment is offline,
-Usage shows the usage it last reported to this browser, marked with the time it was read, and
-switches back to live usage when the environment reconnects. Environments on one machine that read
+Usage shows its last report for the selected window when this browser saved that exact window,
+marked with the time it was read. Otherwise that environment shows no saved usage until it
+reconnects. Environments on one machine that read
 the same history folder count its newest completed scan once. When scans were read at the same time,
 the environment that attributed more of the work to T3 threads is used.
 

@@ -17,9 +17,6 @@ const DATABASE_VERSION = 1;
 const STORE_NAME = "summaries";
 /** Windows kept per environment: enough for the range buttons and a zoom. */
 const MAX_SAVED_WINDOWS = 4;
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
-
 export interface SavedUsage {
   readonly input: UsageSummaryInput;
   readonly summary: UsageSummary;
@@ -152,59 +149,13 @@ export async function clearSavedUsage(environmentId: string): Promise<void> {
   }
 }
 
-const dayNumber = (day: string) => Date.parse(`${day}T00:00:00Z`) / DAY_MS;
-
-/** How much of a window a saved read shares with it, in milliseconds or days; null if it cannot. */
-function overlapOf(saved: UsageSummaryInput, input: UsageSummaryInput): number | null {
-  if (input.resolution === "hour") {
-    const since = Date.parse(input.sinceTime ?? "");
-    const until = Date.parse(input.untilTime ?? "");
-    const savedSince = Date.parse(saved.sinceTime ?? "");
-    const savedUntil = Date.parse(saved.untilTime ?? "");
-    // Hourly buckets start on the window's own hour grid; another grid cannot be split.
-    if ([since, until, savedSince, savedUntil].some(Number.isNaN)) return null;
-    if ((since - savedSince) % HOUR_MS !== 0) return null;
-    return Math.min(until, savedUntil) - Math.max(since, savedSince);
-  }
-  return (
-    Math.min(dayNumber(saved.untilDay), dayNumber(input.untilDay)) -
-    Math.max(dayNumber(saved.sinceDay), dayNumber(input.sinceDay)) +
-    1
-  );
-}
-
-/**
- * The saved read that best covers a window, cut to it. Only a read at the
- * window's own resolution and model filter answers it, and an hourly read
- * only on the same hour grid.
- */
+/** A saved read answers only the exact window whose source aggregates it contains. */
 export function pickSavedUsage(
   saved: readonly SavedUsage[],
   input: UsageSummaryInput,
 ): UsageSummary | null {
-  let best: { entry: SavedUsage; amount: number } | null = null;
-  for (const entry of saved) {
-    if (entry.input.timeZone !== input.timeZone) continue;
-    if ((entry.input.resolution ?? "day") !== (input.resolution ?? "day")) continue;
-    // A read under another model filter counts models this one excludes, or misses some.
-    if (JSON.stringify(entry.input.modelFilter) !== JSON.stringify(input.modelFilter)) continue;
-    const overlap = overlapOf(entry.input, input);
-    if (overlap === null || !(overlap > 0)) continue;
-    if (best === null || overlap > best.amount) best = { entry, amount: overlap };
-  }
-  if (best === null) return null;
-  const { summary } = best.entry;
-  const since = input.sinceTime === undefined ? null : Date.parse(input.sinceTime);
-  const until = input.untilTime === undefined ? null : Date.parse(input.untilTime);
-  return {
-    ...summary,
-    buckets: summary.buckets.filter((bucket) => {
-      if (bucket.day < input.sinceDay || bucket.day > input.untilDay) return false;
-      if (bucket.hourStart === undefined || since === null || until === null) return true;
-      const start = Date.parse(bucket.hourStart);
-      return start >= since && start < until;
-    }),
-  };
+  const key = windowKey(input);
+  return saved.find((entry) => windowKey(entry.input) === key)?.summary ?? null;
 }
 
 const fingerprintKey = (fingerprint: UsageSourceFingerprint) =>
