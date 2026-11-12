@@ -1,3 +1,4 @@
+import { i18n } from "../../i18nCore";
 import { useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useSyncExternalStore } from "react";
 
@@ -10,7 +11,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   describeUpdateCapsule,
   formatUpdateElapsed,
-  RUN_STATUS_LABELS,
+  runStatusLabel,
   resolveUpdateRunMachineStatus,
   type UpdateEverythingRun,
   type UpdateRunLocalState,
@@ -46,13 +47,17 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
 
 function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {
   if (run.phase === "countdown" && run.restartAt !== null) {
-    return `restarts in ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
+    return i18n.t("sidebar:update.restartsIn", {
+      seconds: Math.max(0, Math.ceil((run.restartAt - now) / 1000)),
+    });
   }
-  if (run.phase === "installing") return "restarting";
+  if (run.phase === "installing") return i18n.t("sidebar:update.restartingLocal");
   if (local?.status === "downloading") {
-    return `downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`;
+    return i18n.t("sidebar:update.downloadingLocal", {
+      percent: local.percent === null ? "" : ` ${Math.floor(local.percent)}%`,
+    });
   }
-  return "restarts after the servers";
+  return i18n.t("sidebar:update.restartsAfterServers");
 }
 
 export function SidebarUpdateCapsule({
@@ -77,7 +82,11 @@ export function SidebarUpdateCapsule({
   const settled = !hasActiveMachine && run.localVersion === null;
 
   const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
+    view.action === "later"
+      ? i18n.t("sidebar:update.later")
+      : view.action === "retry"
+        ? i18n.t("sidebar:update.retry")
+        : i18n.t("sidebar:update.dismiss");
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
     else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
@@ -130,16 +139,16 @@ export function SidebarUpdateCapsule({
         <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>{i18n.t("sidebar:update.thisApp")}</span>
               <span className="text-muted-foreground tabular-nums">
                 {localStatusLabel(run, local, now)}
               </span>
             </div>
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>{i18n.t("sidebar:update.thisApp")}</span>
               <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-                Restart to update
+                {i18n.t("sidebar:update.restartToUpdate")}
               </Button>
             </div>
           ) : null}
@@ -153,7 +162,7 @@ export function SidebarUpdateCapsule({
                     status === "failed" ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
-                  {RUN_STATUS_LABELS[status]}
+                  {runStatusLabel(status)}
                   {status !== "done" && status !== "failed" && status !== "waiting"
                     ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
                     : ""}
@@ -168,11 +177,11 @@ export function SidebarUpdateCapsule({
             <div className="mt-1 flex justify-end gap-1">
               {view.action === "retry" ? (
                 <Button size="xs" variant="outline" onClick={runAction}>
-                  Retry
+                  {i18n.t("sidebar:update.retry")}
                 </Button>
               ) : null}
               <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                Dismiss
+                {i18n.t("sidebar:update.dismiss")}
               </Button>
             </div>
           ) : null}

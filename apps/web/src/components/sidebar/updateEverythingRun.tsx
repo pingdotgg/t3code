@@ -1,3 +1,4 @@
+import { i18n } from "../../i18nCore";
 import { useAtomValue } from "@effect/atom-react";
 import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -91,7 +92,7 @@ export function retryFailedUpdateRunServers(
           ? providerFailure
           : outcome.status === "failed"
             ? outcome.message
-            : "Could not start the update",
+            : i18n.t("sidebar:update.startFailed"),
         { serverUpdated: outcome.status === "updated" },
       ),
     );
@@ -303,7 +304,12 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       }
     };
     const timer = setTimeout(
-      () => settle(`Not back after ${HANDOFF_TIMEOUT_MS / 60_000} minutes`),
+      () =>
+        settle(
+          i18n.t("sidebar:update.notBackAfter", {
+            minutes: HANDOFF_TIMEOUT_MS / 60_000,
+          }),
+        ),
       server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
     );
     const unsubscribe = appAtomRegistry.subscribe(
@@ -341,8 +347,11 @@ export function startDesktopUpdateLaunchNotice(): () => void {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Update did not apply",
-          description: `T3 Code is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
+          title: i18n.t("sidebar:update.notApplied"),
+          description: i18n.t("sidebar:update.notAppliedDescription", {
+            version: APP_VERSION,
+            target: notAppliedVersion,
+          }),
         }),
       );
     },

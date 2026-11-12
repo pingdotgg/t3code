@@ -1,3 +1,4 @@
+import { i18n } from "../i18nCore";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -29,13 +30,24 @@ type UndoNotice = {
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
 function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): string {
-  const noun = notice.action === "Discarded" ? "draft" : "thread";
-  return `${notice.action} ${notice.count} ${noun}${notice.count === 1 ? "" : "s"}`;
+  const actionKeys = {
+    Settled: "sidebar:undo.settled",
+    Snoozed: "sidebar:undo.snoozed",
+    Unpinned: "sidebar:undo.unpinned",
+    Archived: "sidebar:undo.archived",
+    Discarded: "sidebar:undo.discarded",
+  } as const;
+  const key =
+    notice.action === "Discarded" ? "sidebar:undo.summaryDraft" : "sidebar:undo.summaryThread";
+  return i18n.t(key, {
+    action: i18n.t(actionKeys[notice.action]),
+    count: notice.count,
+  });
 }
 
 export function threadUndoLabel(keybindings: Parameters<typeof shortcutLabelForCommand>[0]) {
   const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
-  return shortcut ? `${shortcut} to undo` : "Undo";
+  return shortcut ? i18n.t("sidebar:undo.toUndo", { shortcut }) : i18n.t("sidebar:undo.undo");
 }
 
 let announcedSummary: string | null = null;

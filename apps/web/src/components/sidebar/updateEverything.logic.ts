@@ -1,3 +1,4 @@
+import { i18n } from "../../i18nCore";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   type DesktopUpdateChannel,
@@ -460,7 +461,11 @@ export function describeUpdateCapsule(
 ): UpdateCapsuleView {
   if (run.phase === "countdown" && run.restartAt !== null) {
     const seconds = Math.max(0, Math.ceil((run.restartAt - now) / 1000));
-    return { tone: "default", label: `Restart in ${seconds}s`, action: "later" };
+    return {
+      tone: "default",
+      label: i18n.t("sidebar:update.restartIn", { seconds }),
+      action: "later",
+    };
   }
   if (run.phase === "installing") {
     return { tone: "default", label: "Restarting…", action: null };
@@ -472,7 +477,7 @@ export function describeUpdateCapsule(
       tone: "slow",
       label: slowest.machine.label,
       slow: {
-        status: RUN_STATUS_LABELS[slowest.status],
+        status: runStatusLabel(slowest.status),
         elapsed: formatUpdateElapsed(now - slowest.machine.startedAt),
       },
       action: null,
@@ -480,12 +485,18 @@ export function describeUpdateCapsule(
   }
   const done = machines.filter(({ status }) => status === "done").length;
   if (machines.some(({ status }) => isActive(status))) {
-    return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
+    return {
+      tone: "default",
+      label: i18n.t("sidebar:update.doneOfTotal", { done, total: machines.length }),
+      action: null,
+    };
   }
   if (local?.status === "downloading") {
     return {
       tone: "default",
-      label: `Downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`,
+      label: i18n.t("sidebar:update.downloading", {
+        percent: local.percent === null ? "" : ` ${Math.floor(local.percent)}%`,
+      }),
       action: null,
     };
   }
@@ -503,14 +514,18 @@ export function describeUpdateCapsule(
   return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
 }
 
-export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
-  providers: "updating providers",
-  waiting: "waiting",
-  downloading: "downloading",
-  restarting: "restarting",
-  done: "done",
-  failed: "failed",
-};
+const RUN_STATUS_LABEL_KEYS = {
+  providers: "sidebar:update.statusProviders",
+  waiting: "sidebar:update.statusWaiting",
+  downloading: "sidebar:update.statusDownloading",
+  restarting: "sidebar:update.statusRestarting",
+  done: "sidebar:update.statusDone",
+  failed: "sidebar:update.statusFailed",
+} as const satisfies Record<UpdateRunMachineStatus, string>;
+
+export function runStatusLabel(status: UpdateRunMachineStatus): string {
+  return i18n.t(RUN_STATUS_LABEL_KEYS[status]);
+}
 
 export interface UpdateEverythingResult {
   readonly localVersion: string | null;
@@ -538,7 +553,7 @@ export function collectUpdateEverythingResult(input: {
     updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
     restarting: [],
     failures: [
-      ...input.localFailures.map((failure) => `This app: ${failure}`),
+      ...input.localFailures.map((failure) => i18n.t("sidebar:update.thisAppFailure", { failure })),
       ...input.servers.flatMap(({ label, outcome }) =>
         outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
       ),
@@ -563,20 +578,21 @@ export function getUpdateEverythingToastView(
   const restarting =
     result.restarting.length === 0
       ? []
-      : [
-          `${joinList(result.restarting)} ${result.restarting.length === 1 ? "is" : "are"} still restarting.`,
-        ];
+      : [i18n.t("sidebar:update.stillRestarting", { names: joinList(result.restarting) })];
   if (result.failures.length === 0) {
     if (parts.length === 0) return null;
     return {
       type: "success",
-      title: `Updated ${joinList(parts)}`,
+      title: i18n.t("sidebar:update.updated", { names: joinList(parts) }),
       ...(restarting.length === 0 ? {} : { description: restarting.join("\n") }),
     };
   }
   return {
     type: "error",
-    title: parts.length === 0 ? "Update failed" : `Updated ${joinList(parts)}`,
+    title:
+      parts.length === 0
+        ? i18n.t("sidebar:update.updateFailed")
+        : i18n.t("sidebar:update.updated", { names: joinList(parts) }),
     description: [...result.failures, ...restarting].join("\n"),
   };
 }
@@ -627,13 +643,25 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     (count, machine) => count + machine.providers.length,
     0,
   );
-  const summary = `Update ${joinList(
-    [
-      plan.localVersion ? "this app" : null,
-      countLabel(plan.servers.length, "server"),
-      countLabel(providerCount, "provider"),
-    ].filter((part) => part !== null),
-  )}`;
+  const summary = i18n.t("sidebar:update.updateSummary", {
+    parts: joinList(
+      [
+        plan.localVersion ? i18n.t("sidebar:update.summaryThisApp") : null,
+        countLabel(
+          plan.servers.length,
+          i18n.t("sidebar:update.summaryServers", {
+            count: plan.servers.length,
+          }),
+        ),
+        countLabel(
+          providerCount,
+          i18n.t("sidebar:update.summaryProviders", {
+            count: providerCount,
+          }),
+        ),
+      ].filter((part) => part !== null),
+    ),
+  });
 
   const rows = new Map<EnvironmentId | null, UpdateEverythingRow>();
   const update = (
@@ -651,7 +679,8 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     rows.set(environmentId, { ...row, ...change });
   };
   if (plan.localVersion) {
-    if (plan.localMachines.length === 0) update(null, "This app", { app: "this-app" });
+    if (plan.localMachines.length === 0)
+      update(null, i18n.t("sidebar:update.thisApp"), { app: "this-app" });
     for (const machine of plan.localMachines) {
       update(machine.environmentId, machine.label, { app: "this-app" });
     }

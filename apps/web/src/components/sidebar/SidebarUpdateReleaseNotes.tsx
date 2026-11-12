@@ -1,3 +1,4 @@
+import { i18n } from "../../i18nCore";
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
 
@@ -98,7 +99,7 @@ export function SidebarUpdateReleaseNotes({
           const linkLabel =
             releaseNote.stats ??
             (omittedItemCount === 0
-              ? "View release on GitHub"
+              ? i18n.t("sidebar:releaseNotes.viewOnGitHub")
               : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
 
           const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
@@ -114,7 +115,9 @@ export function SidebarUpdateReleaseNotes({
                 )
               ) : (
                 <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+                  {index === 0
+                    ? i18n.t("sidebar:releaseNotes.whatsChanged")
+                    : i18n.t("sidebar:releaseNotes.changesIn", { version: releaseNote.version })}
                 </h3>
               )}
               {releaseNote.intro ? (

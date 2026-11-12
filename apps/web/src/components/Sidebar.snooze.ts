@@ -1,3 +1,4 @@
+import { i18n } from "../i18nCore";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -39,8 +40,8 @@ export function pickSnoozePreset(
   if (!picked) {
     toastManager.add({
       type: "warning",
-      title: "Could not snooze thread",
-      description: "That snooze time has passed. Choose another time.",
+      title: i18n.t("sidebar:toasts.snoozeExpired"),
+      description: i18n.t("sidebar:toasts.snoozeExpiredDescription"),
     });
   }
   return picked;
