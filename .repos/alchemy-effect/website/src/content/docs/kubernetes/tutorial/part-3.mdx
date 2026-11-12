@@ -6,7 +6,7 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 In [Part 2](/kubernetes/tutorial/part-2) you configured podinfo in its
 own namespace. Now you'll write your own code and run it on the
@@ -22,7 +22,7 @@ namespace, and the Deployment. Move them out of `alchemy.run.ts` into
 
 ```typescript
 // src/infra.ts
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
 
 export const Cluster = Kubernetes.LocalCluster("Cluster", {
@@ -74,7 +74,7 @@ Replace the inline declarations in `alchemy.run.ts`:
 
 ```diff lang="typescript"
 import * as Alchemy from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
 +import { Cluster, Web } from "./src/infra.ts";
 
@@ -112,7 +112,7 @@ takes two Effects, one for its props and one for its implementation:
 
 ```typescript
 // src/SmokeTest.ts
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
 import { Cluster, Namespace } from "./infra.ts";
 
@@ -148,7 +148,7 @@ Inside the cluster, a Service is reachable at
 Deployment's attributes in the Job's implementation:
 
 ```diff lang="typescript"
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 +import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 -import { Cluster, Namespace } from "./infra.ts";
@@ -268,20 +268,7 @@ return {
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 <Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { pipe } from "effect/Function";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { make as makeJsonSchemaGenerator } from "@effect/openapi-generator/JsonSchemaGenerator";
@@ -144,7 +145,46 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  // Newer custom Codex binaries emit partial answers before additional tools or text.
+  MessagePhase: {
+    description:
+      'Classifies an assistant message as interim commentary or final answer text.\n\nProviders do not emit this consistently, so callers must treat `None` as "phase unknown" and keep compatibility behavior for legacy models.',
+    oneOf: [
+      {
+        type: "string",
+        enum: ["commentary"],
+        description:
+          "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+      },
+      {
+        type: "string",
+        enum: ["partial_answer"],
+        description: "Stable answer text that may be followed by more assistant output or tools.",
+      },
+      {
+        type: "string",
+        enum: ["final_answer"],
+        description: "The assistant's terminal answer text for the current turn.",
+      },
+    ],
+  },
 };
+
+// Codex sends error codes this ref does not list yet (e.g. `modelNotFound`). A closed enum
+// fails the whole notification decode, which drops a failed `turn/completed` and leaves the turn running.
+const OpenStringEnumDefinitions = new Set(["CodexErrorInfo"]);
+
+function openStringEnum(schema: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(schema) || !Array.isArray(schema.oneOf)) return schema;
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((variant: Schema.Json) =>
+      isJsonSchemaNode(variant) && variant.type === "string" && Array.isArray(variant.enum)
+        ? { type: "string" }
+        : variant,
+    ),
+  };
+}
 
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
@@ -163,12 +203,13 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
   yield* fs.makeDirectory(generatedDir, { recursive: true });
 });
 
+const githubToken = process.env.GITHUB_TOKEN;
+
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
-    token && url.startsWith("https://api.github.com/")
-      ? HttpClientRequest.bearerToken(token)
+    githubToken && url.startsWith("https://api.github.com/")
+      ? HttpClientRequest.bearerToken(githubToken)
       : (request) => request,
     HttpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -292,13 +333,9 @@ function isJsonSchemaNode(value: Schema.Json | undefined): value is JsonSchemaNo
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-// Adapts Codex's JSON Schema to Effect's importer, visiting only schema
-// positions so a field literally named "properties" is left alone:
-// - Effect imports an object without additionalProperties as an open record.
-//   Codex omits it for plain structs, so close objects that list properties.
-// - Effect cannot intersect shared object fields with object alternatives,
-//   which Codex uses for "one of these keys plus shared fields"
-//   (image_url | file_id). Fold the shared fields into each alternative.
+// Visit only schema positions so fields literally named properties stay untouched.
+// Close Codex structs that omit additionalProperties; Effect otherwise imports open records.
+// Fold shared fields into each object alternative because Effect cannot intersect them.
 function adaptSchemaForEffect(value: Schema.Json): Schema.Json {
   if (!isJsonSchemaNode(value)) {
     return value;
@@ -640,15 +677,18 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     );
 
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
-      aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
-        normalizeNullableTypes(
-          rewriteExternalRefs(
-            DefinitionOverrides[definitionName] ?? definitionSchema,
-            localDefinitionNames,
-            file.namespace,
-            exportNameByQualifiedName,
-          ),
+      aggregateSchemas[localDefinitionNames.get(definitionName)!] = pipe(
+        rewriteExternalRefs(
+          DefinitionOverrides[definitionName] ??
+            (OpenStringEnumDefinitions.has(definitionName)
+              ? openStringEnum(definitionSchema)
+              : definitionSchema),
+          localDefinitionNames,
+          file.namespace,
+          exportNameByQualifiedName,
         ),
+        normalizeNullableTypes,
+        stripNullDefaults,
       );
     }
 
@@ -659,15 +699,15 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       }
     }
 
-    aggregateSchemas[file.exportName] = stripNullDefaults(
-      normalizeNullableTypes(
-        rewriteExternalRefs(
-          topLevelSchema,
-          localDefinitionNames,
-          file.namespace,
-          exportNameByQualifiedName,
-        ),
+    aggregateSchemas[file.exportName] = pipe(
+      rewriteExternalRefs(
+        topLevelSchema,
+        localDefinitionNames,
+        file.namespace,
+        exportNameByQualifiedName,
       ),
+      normalizeNullableTypes,
+      stripNullDefaults,
     );
   }
 

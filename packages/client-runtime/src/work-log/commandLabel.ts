@@ -1361,7 +1361,6 @@ export function commandProgramName(command: string, depth = 0): string | null {
 // Escape bytes and other control characters render as invisible gaps; display
 // shows them as Unicode control pictures (ESC becomes ␛) instead. Tab, newline
 // and carriage return lay out as whitespace, so CRLF scripts stay unmarked.
-// oxlint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
 
 export function commandDisplayText(command: string): string {

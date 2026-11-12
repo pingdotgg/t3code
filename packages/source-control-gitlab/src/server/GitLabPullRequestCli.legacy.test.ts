@@ -27,7 +27,6 @@ const file = {
   b_mode: "100644",
   diff: "@@ -1 +1 @@\n-before\n+after\n",
 };
-/** Supplies JSON at the process boundary while retaining the real CLI adapter and decoder. */
 function output(body: unknown, stdoutTruncated = false) {
   return Effect.succeed({
     exitCode: ChildProcessSpawner.ExitCode(0),
@@ -37,7 +36,6 @@ function output(body: unknown, stdoutTruncated = false) {
     stderrTruncated: false,
   });
 }
-/** Supplies the failure classification produced by VcsProcess for an unsuccessful glab call. */
 function failure(failureKind: "not-found" | "authentication" | "rate-limited" | "command-failed") {
   return Effect.fail(
     new VcsProcessExitError({

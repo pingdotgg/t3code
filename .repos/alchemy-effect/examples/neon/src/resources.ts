@@ -1,4 +1,4 @@
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -32,9 +32,7 @@ export const resources = Effect.gen(function* () {
       send_verification_email_on_sign_up: false,
     },
   });
-  const appOrigin = yield* Effect.sync(
-    () => process.env.UPLOAD_APP_ORIGIN ?? "*",
-  );
+  const appOrigin = yield* Effect.sync(() => process.env.UPLOAD_APP_ORIGIN ?? "*");
   const publicAssets = yield* Neon.Bucket("PublicAssets", {
     branch,
     access: "public_read",

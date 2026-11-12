@@ -80,6 +80,7 @@ describe("azureDevOpsFilePatch", () => {
     expect(patch.section).toBe(
       [
         "diff --git a/docs/old.md b/docs/new.md",
+        "similarity index 100%",
         "rename from docs/old.md",
         "rename to docs/new.md",
         "--- a/docs/old.md",
@@ -209,6 +210,7 @@ describe("a file Azure names something a patch header cannot carry plainly", () 
     expect(patch.section).toBe(
       [
         'diff --git "a/docs/old\\tname.md" "b/docs/new\\tname.md"',
+        "similarity index 100%",
         'rename from "docs/old\\tname.md"',
         'rename to "docs/new\\tname.md"',
         '--- "a/docs/old\\tname.md"',

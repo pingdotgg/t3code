@@ -1,8 +1,4 @@
-/**
- * Asking the CLI beats scanning the filesystem because the catalog honors Grok's own skill
- * config (ignore lists, disabled skills) and includes plugin skills, which live three levels
- * deep under `~/.grok/installed-plugins/` where a flat scan cannot see them.
- */
+// The CLI catalog honors ignored/disabled skills and nested plugin skills that flat scans miss.
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { GrokSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";

@@ -54,7 +54,6 @@ describe("renderWebhookPrompt", () => {
       { ...githubPullRequest, bodyText: JSON.stringify({ text }) },
       "id",
     );
-    // The adapters' pattern finds only the template's own mention.
     const mentions = [...rendered.prompt.matchAll(SKILL_MENTION_PATTERN)].map((match) => match[2]);
     assert.deepEqual(mentions, ["review"]);
     // Codex and Pi read `$name` after any character, digits included.

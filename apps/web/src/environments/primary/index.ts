@@ -1,17 +1,8 @@
 export {
-  resetPrimaryEnvironmentDescriptorForTests,
-  resolveInitialPrimaryEnvironmentDescriptor,
-} from "./context";
-
-export {
-  createServerPairingCredential,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,
   PrimaryEnvironmentRequestError,
   resolveInitialServerAuthGateState,
-  revokeOtherServerClientSessions,
-  revokeServerClientSession,
-  revokeServerPairingLink,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
   takePairingTokenFromUrl,
@@ -19,8 +10,6 @@ export {
   type ServerPairingLinkRecord,
   __resetServerAuthBootstrapForTests,
 } from "./auth";
-
-export { usePrimarySessionState } from "./sessionState";
 
 export {
   DesktopEnvironmentBootstrapIncompleteError,
