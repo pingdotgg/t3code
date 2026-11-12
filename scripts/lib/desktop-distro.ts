@@ -56,7 +56,7 @@ const MUNIM: DesktopDistroIdentity = {
   // existing install keeps its data and links.
   productName: "T3 Code",
   packageName: "mtcode",
-  artifactName: "MT-Code-${version}-${arch}.${ext}",
+  artifactName: "T3-Code-Fork-${version}-${arch}.${ext}",
   description: "T3 Code desktop build",
   author: "T3 Code fork",
   updateRepository: "munimtechnologies/mtcode",

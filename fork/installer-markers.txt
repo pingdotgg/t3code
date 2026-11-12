@@ -6,3 +6,4 @@ suggested next messages, including skills and commands
 Add to your message
 w-0 border-b border-border/60 font-medium text-muted-foreground
 t3/compose
+T3 Code is adding its Chrome extension

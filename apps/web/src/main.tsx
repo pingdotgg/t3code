@@ -83,7 +83,7 @@ export const startup = Promise.all([clerkGateModule, router.load()])
   })
   .catch((error: unknown) => {
     if (reloadScheduled) return;
-    console.error("MT Code failed to load its startup chunks.", error);
+    console.error("T3 Code failed to load its startup chunks.", error);
     const bootShell = document.getElementById("boot-shell");
-    if (bootShell) bootShell.textContent = "MT Code could not load. Reload to try again.";
+    if (bootShell) bootShell.textContent = "T3 Code could not load. Reload to try again.";
   });

@@ -39,7 +39,7 @@ This is a one-person fork built for my own use. It's public in case the features
 
 Get the newest release from **[GitHub Releases](https://github.com/ryankhart/t3code/releases/latest)**:
 
-- **Windows** (x64): `MT-Code-<version>-x64.exe` (the file keeps MT Code's name; the installed app is called T3 Code)
+- **Windows** (x64): `T3-Code-Fork-<version>-x64.exe`
 - **Android**: `T3-Code-Fork-<version>.apk`, sideloaded. It installs as a separate app named "T3 Code Fork", next to the official T3 Code app, and pairs with the desktop app like the official one does.
 
 There are no macOS or Linux builds. The Windows installer is unsigned: if SmartScreen warns, choose **More info → Run anyway**.

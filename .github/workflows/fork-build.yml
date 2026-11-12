@@ -217,7 +217,7 @@ jobs:
           [ ${#files[@]} -ge 3 ] || { echo "missing release files: ${files[*]}"; exit 1; }
           notes="Built from MT Code ${BASE_TAG#munim-v} plus this fork's commits ($(git rev-list --count "$BASE_TAG..HEAD") commits). See FORK.md."
           gh release create "v$VERSION" "${files[@]}" --target "${{ needs.sync.outputs.sha }}" \
-            --title "T3 Code $VERSION (MT Code ${BASE_TAG#munim-v} + fork)" --notes "$notes" --latest
+            --title "T3 Code Fork $VERSION" --notes "$notes" --latest
           echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Promote candidate to main

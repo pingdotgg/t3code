@@ -36,7 +36,7 @@ import { ensureChromeNativeHostRegistered } from "./nativeHost.ts";
 import { isChromeExtensionInstalled } from "./permissions.ts";
 
 const STATE_FILE = "chrome-extension-setup.json";
-const MARKER_TITLE = "MT Code is adding its Chrome extension";
+const MARKER_TITLE = "T3 Code is adding its Chrome extension";
 /** Launch-time attempts before MT Code stops trying on its own. */
 const MAX_AUTOMATIC_ATTEMPTS = 3;
 /** Let the window, backend and the user's own startup settle first. */
@@ -173,14 +173,14 @@ async function runInstall(stateDir: string): Promise<ChromeExtensionInstallResul
   if (!chrome) return { ok: false, detail: "Google Chrome is not installed." };
   const binary = resolveDesktopMcpBinaryPathSync();
   if (!binary)
-    return { ok: false, detail: "MT Code's desktop control is missing from this install." };
+    return { ok: false, detail: "T3 Code's desktop control is missing from this install." };
   if (
     process.platform === "darwin" &&
     !Electron.systemPreferences.isTrustedAccessibilityClient(false)
   ) {
     return {
       ok: false,
-      detail: "MT Code needs the Accessibility permission to set up the Chrome extension.",
+      detail: "T3 Code needs the Accessibility permission to set up the Chrome extension.",
     };
   }
   const extensionDir = syncChromeExtensionCopySync(stateDir);
@@ -231,7 +231,7 @@ async function runInstall(stateDir: string): Promise<ChromeExtensionInstallResul
       seenInstalled: true,
       installedAt: new Date().toISOString(),
     });
-    return { ok: true, detail: "Added the MT Code extension to Chrome." };
+    return { ok: true, detail: "Added the T3 Code extension to Chrome." };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     writeState(stateDir, { ...readState(stateDir), lastError: detail });
@@ -286,8 +286,8 @@ export function scheduleChromeExtensionAutoInstall(options: {
           lastAttemptAt: new Date().toISOString(),
         });
         notify(
-          "Adding the MT Code Chrome extension",
-          "Chrome will open for a moment while MT Code sets it up.",
+          "Adding the T3 Code Chrome extension",
+          "Chrome will open for a moment while T3 Code sets it up.",
         );
         const result = await installChromeExtensionNow(options.stateDir);
         notify(
