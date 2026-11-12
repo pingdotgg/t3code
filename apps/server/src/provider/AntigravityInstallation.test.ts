@@ -132,6 +132,7 @@ interface HarnessOptions {
   readonly native?: boolean;
   readonly nativeVersion?: string;
   readonly nativeManifest?: (manifest: { version: string; url: string; sha512: string }) => unknown;
+  readonly beforeManifest?: Effect.Effect<void>;
   readonly updateChecksEnabled?: Effect.Effect<boolean>;
 }
 
@@ -210,6 +211,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
           requests.push(request.url);
           if (request.url.includes("/manifests/")) {
             return Effect.gen(function* () {
+              yield* options.beforeManifest ?? Effect.void;
               const version = options.nativeVersion ?? "1.5.7";
               const folder = platform === "win32" ? "windows-x64" : "linux-x64";
               const manifest = {
@@ -318,7 +320,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           platform,
           nativeVersion: "1.5.6",
         });
-        yield* restarted.installation.start;
+        expect(yield* restarted.installation.start).toMatchObject({
+          phase: "verifying",
+          message: "Checking the installed runtime.",
+        });
         expect(yield* terminalState(restarted.installation)).toMatchObject({
           phase: "succeeded",
           installedVersion: "1.5.7",
@@ -1144,14 +1149,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
 
   it.effect("keeps leased releases available while new sessions resolve the new release", () =>
     Effect.gen(function* () {
-      const { installation, fs, stagingReleased } = yield* makeHarness({ previous: true });
+      const manifestEntered = yield* Deferred.make<void>();
+      const releaseManifest = yield* Deferred.make<void>();
+      const { installation, fs, stagingReleased } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        archive: Buffer.from(serverContents),
+        previous: true,
+        beforeManifest: Deferred.succeed(manifestEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseManifest)),
+        ),
+      });
       const processScope = yield* Scope.make();
       const oldExecutable = yield* installation.acquire().pipe(Scope.provide(processScope));
-      yield* installation.start;
+      const starting = yield* installation.start.pipe(Effect.forkScoped);
+      yield* Deferred.await(manifestEntered);
+      const concurrent = yield* installation.acquire().pipe(Scope.provide(processScope));
+      expect(concurrent.executablePath).toBe(oldExecutable.executablePath);
+      yield* Deferred.succeed(releaseManifest, undefined);
+      yield* Fiber.join(starting);
       expect((yield* terminalState(installation)).phase).toBe("succeeded");
       yield* Deferred.await(stagingReleased);
       const current = yield* installation.resolve();
-      expect(current.version).toBe("fixture-new");
+      expect(current.version).toBe("1.5.7");
       expect(current.executablePath).not.toBe(oldExecutable.executablePath);
       expect(yield* fs.readFileString(oldExecutable.executablePath)).toBe(serverContents);
       expect(yield* installation.remove().pipe(Effect.flip)).toMatchObject({ operation: "remove" });

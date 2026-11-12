@@ -965,8 +965,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     );
   });
 
-  const start = gate
-    .withPermit(
+  const start = Effect.gen(function* () {
+    const current = yield* SubscriptionRef.get(state);
+    if (isRunning(current)) return current;
+    yield* refreshRelease(true);
+    return yield* gate.withPermit(
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
         if (isRunning(current)) return current;
@@ -976,7 +979,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
           );
         }
-        yield* refreshRelease(true);
         const asset =
           releaseAsset !== null && !(yield* isWithdrawn(releaseAsset.version))
             ? releaseAsset
@@ -998,13 +1000,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         const next: ProviderInstallState = {
           driver: DRIVER,
           operationId,
-          phase: "downloading",
+          phase: reuse === undefined ? "downloading" : "verifying",
           downloadedBytes: 0,
           totalBytes: asset !== null && "archiveBytes" in asset ? asset.archiveBytes : null,
           version: reuse?.version ?? asset?.version ?? null,
           installedVersion: current.installedVersion,
           canRemove: current.canRemove,
-          message: "Downloading Google's official Antigravity runtime.",
+          message:
+            reuse === undefined
+              ? "Downloading Google's official Antigravity runtime."
+              : "Checking the installed runtime.",
         };
         yield* SubscriptionRef.set(state, next);
         const work = (
@@ -1057,8 +1062,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         running = { operationId, fiber };
         return next;
       }).pipe(Effect.uninterruptible),
-    )
-    .pipe(Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")));
+    );
+  }).pipe(Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")));
 
   const cancel = Effect.fn("AntigravityInstallation.cancel")(function* (operationId: string) {
     return yield* gate.withPermit(
