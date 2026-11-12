@@ -720,7 +720,13 @@ const fakeHttpServer = HttpServer.HttpServer.of({
 
 const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-provider-session-manager")),
-  getDescriptor: Effect.die("unused"),
+  getDescriptor: Effect.succeed({
+    environmentId: EnvironmentId.make("environment-provider-session-manager"),
+    label: "Test environment",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "0.0.0-test",
+    capabilities: { repositoryIdentity: true },
+  }),
 });
 
 const layerTestMcpRegistry = Layer.effect(
