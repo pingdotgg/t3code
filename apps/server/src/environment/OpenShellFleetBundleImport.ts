@@ -22,7 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 /**
  * Drains a worker bundle into an ARCHIVED read-only thread (spec 7.4): the snapshot's projection
  * replays through the EventSink (lossless; no lossy AgentSessionImporter fallback). Idempotency:
- * migration-083 rows mark {environmentId, drainId, snapshotSequence} — same sequence skips,
+ * migration-085 rows mark {environmentId, drainId, snapshotSequence} — same sequence skips,
  * changed supersedes via projection upserts; crashes before the marker only warn (content stays).
  */ /** One attachment file recorded in a bundle envelope's manifest. */
 export interface BundleAttachmentManifestEntry {
@@ -72,16 +72,8 @@ const decodeEnvelopeJson = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
       threadId: Schema.optional(Schema.String),
-      snapshot: Schema.optional(Schema.Unknown),
-      pages: Schema.optional(
-        Schema.Array(
-          Schema.Struct({
-            items: Schema.optional(
-              Schema.Array(Schema.Struct({ item: Schema.optional(Schema.Unknown) })),
-            ),
-          }),
-        ),
-      ),
+      /** The copied thread as JSON: `{ threadId, snapshot, pages }`. */
+      body: Schema.optional(Schema.String),
       attachments: Schema.optional(
         Schema.Array(
           Schema.Struct({
@@ -92,6 +84,23 @@ const decodeEnvelopeJson = Schema.decodeEffect(
         ),
       ),
       attachmentsSkipped: Schema.optional(Schema.Boolean),
+    }),
+  ),
+);
+
+const decodeBodyJson = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      snapshot: Schema.optional(Schema.Unknown),
+      pages: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            items: Schema.optional(
+              Schema.Array(Schema.Struct({ item: Schema.optional(Schema.Unknown) })),
+            ),
+          }),
+        ),
+      ),
     }),
   ),
 );
@@ -234,10 +243,8 @@ export interface FleetBundleImporterShape {
 
 interface BundleEnvelope {
   readonly threadId?: string | undefined;
-  readonly snapshot?: unknown;
-  readonly pages?:
-    | ReadonlyArray<{ items?: ReadonlyArray<{ item?: unknown }> | undefined }>
-    | undefined;
+  /** The copied thread as JSON: `{ threadId, snapshot, pages }`. */
+  readonly body?: string | undefined;
   readonly attachments?: ReadonlyArray<BundleAttachmentManifestEntry> | undefined;
   readonly attachmentsSkipped?: boolean | undefined;
 }
@@ -273,7 +280,9 @@ export const makeFleetBundleImporter = (input: {
       let imported = 0;
       let skipped = 0;
       const warnings: string[] = [];
-      for (const file of entries.filter((name) => /^thread-.*\.json$/.test(name))) {
+      for (const file of entries.filter(
+        (name) => /^thread-.*\.json$/.test(name) && !name.startsWith("thread-worktree%3A"),
+      )) {
         const outcome = yield* Effect.gen(function* () {
           const raw = yield* fs.readFileString(path.join(bundleDir, file)).pipe(
             Effect.mapError(
@@ -297,13 +306,33 @@ export const makeFleetBundleImporter = (input: {
           );
           const envelope: BundleEnvelope = decodedEnvelope;
           const threadId = envelope.threadId;
-          if (threadId === undefined || envelope.snapshot === undefined) {
+          // Checkout artifacts share the thread-*.json naming but hold no thread.
+          if (threadId !== undefined && threadId.startsWith("worktree:")) return "skipped" as const;
+          if (threadId === undefined || envelope.body === undefined) {
             return yield* new FleetDrainImportError({
               operation: "decode",
               message: `Bundle ${file} is not a drained thread copy.`,
             });
           }
-          const snapshot = yield* decodeSnapshot(envelope.snapshot).pipe(
+          const body = yield* decodeBodyJson(envelope.body).pipe(
+            Effect.mapError(
+              (cause) =>
+                new FleetDrainImportError({
+                  operation: "decode",
+                  threadId: ThreadId.make(threadId),
+                  message: `Bundle ${file} does not hold a readable thread snapshot.`,
+                  cause,
+                }),
+            ),
+          );
+          if (body.snapshot === undefined) {
+            return yield* new FleetDrainImportError({
+              operation: "decode",
+              threadId: ThreadId.make(threadId),
+              message: `Bundle ${file} does not hold a readable thread snapshot.`,
+            });
+          }
+          const snapshot = yield* decodeSnapshot(body.snapshot).pipe(
             Effect.mapError(
               (cause) =>
                 new FleetDrainImportError({
@@ -340,7 +369,7 @@ export const makeFleetBundleImporter = (input: {
           });
           const turnItems = [
             ...snapshot.projection.turnItems,
-            ...(envelope.pages ?? []).flatMap((page) =>
+            ...(body.pages ?? []).flatMap((page) =>
               (page.items ?? []).flatMap((entry) =>
                 entry.item === undefined ? [] : [entry.item as OrchestrationV2TurnItem],
               ),
@@ -425,7 +454,7 @@ export const makeFleetBundleImporter = (input: {
 };
 
 /**
- * The sqlite-backed import-state store over migration 083's table; tests run
+ * The sqlite-backed import-state store over migration 085's table; tests run
  * it on the in-memory sqlite layer like the other persistence stores.
  */
 export const sqliteFleetDrainImportStore = (sql: SqlClient.SqlClient): FleetDrainImportStore => {
