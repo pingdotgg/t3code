@@ -7295,6 +7295,74 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
+        // Claude Code records the effort a subagent ran at only in its transcript, after it settles.
+        const recordSubagentTranscriptEffort = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          taskId: string,
+        ) {
+          const cwd = context.input.runtimePolicy.cwd;
+          if (cwd === null) return;
+          const configured = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
+          const configDir = configured ? path.resolve(cwd, configured) : undefined;
+          const read = yield* readWorkflowAgentTranscript({
+            transcriptDir: path.join(
+              configDir ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
+              "projects",
+              cwd.replace(/[^a-zA-Z0-9]/g, "-"),
+              context.nativeThreadId,
+              "subagents",
+            ),
+            agentId: taskId,
+            cursor: initialWorkflowAgentTranscriptCursor,
+            ...(configDir === undefined ? {} : { configDir }),
+          }).pipe(Effect.option);
+          const effort = Option.isSome(read)
+            ? mergeWorkflowAgentMetadata(read.value.lines).effort
+            : undefined;
+          if (effort === undefined) return;
+          yield* sdkMessageLock.withPermits(1)(
+            Effect.gen(function* () {
+              const current = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+              if (
+                current === undefined ||
+                current.task.status === "running" ||
+                current.effort !== undefined
+              ) {
+                return;
+              }
+              const task = {
+                ...current.task,
+                modelSelection: claudeSubagentModelSelection(
+                  modelCatalog,
+                  current.task.providerInstanceId,
+                  current.task.model || context.input.modelSelection.model,
+                  effort,
+                ),
+              } satisfies OrchestrationV2Subagent;
+              const next = { ...current, task, effort } satisfies ActiveClaudeSubagent;
+              yield* Ref.update(sessionSubagentsByTaskId, (subagents) =>
+                subagents.get(taskId) === current
+                  ? new Map(subagents).set(taskId, next)
+                  : subagents,
+              );
+              if (context.subagentsByTaskId.get(taskId) === current) {
+                context.subagentsByTaskId.set(taskId, next);
+              }
+              if (
+                current.runToolUseId !== null &&
+                context.subagentsByToolUseId.get(current.runToolUseId) === current
+              ) {
+                context.subagentsByToolUseId.set(current.runToolUseId, next);
+              }
+              yield* emitProviderEvent({
+                type: "subagent.updated",
+                driver: CLAUDE_PROVIDER,
+                subagent: task,
+              });
+            }),
+          );
+        });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -7398,7 +7466,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             workflow === undefined
               ? undefined
               : withWorkflowMemberThreadIds(workflow, childThreadId);
-          // Unstated effort stays unknown: a custom agent definition may override the owner's.
+          // Unstated effort stays unknown until the transcript reports it: a custom agent definition may override the owner's.
           const effort = existingSubagent === undefined ? input.effort : existingSubagent.effort;
           const model = input.model ?? priorTask?.model ?? null;
           const task = {
@@ -7584,6 +7652,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             subagent: task,
           });
+          if (
+            effort === undefined &&
+            lifecycleChanged &&
+            input.status !== "running" &&
+            subagent.nativeTaskType !== CLAUDE_WORKFLOW_TASK_TYPE
+          ) {
+            yield* recordSubagentTranscriptEffort(input.context, input.taskId).pipe(
+              Effect.forkIn(sessionScope),
+            );
+          }
           if (lifecycleChanged) {
             yield* emitProviderEvent({
               type: "node.updated",
