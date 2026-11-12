@@ -2579,6 +2579,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       type === "session.execution.failed" ||
       type === "session.execution.interrupted";
 
+    // Steers enter the inbox; release foreground observation so the parent can read them.
+    const releaseForeground = (sessionId: string) =>
+      client.session.background({ sessionID: Session.ID.make(sessionId) }).pipe(
+        Effect.timeout(REQUEST_REPLY_TIMEOUT),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not background OpenCode tools for an accepted steer.", cause),
+        ),
+      );
+
     const startCall = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
@@ -2651,7 +2660,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             call.agent = stringField(input, "agent");
             call.model = stringField(input, "model") ?? call.model;
             call.background = input["background"] === true;
-            return yield* emitSubagent(call);
+            yield* emitSubagent(call);
+            // A steer still in the inbox would wait this call out; HTTP must not hold the event lock.
+            if (!call.background && !turn.interrupted && turn.steers.size > 0) {
+              yield* Effect.forkIn(releaseForeground(state.sessionId), sessionScope);
+            }
+            return;
           }
           const tool = turn.tools.get(event.data.id);
           if (tool !== undefined) tool.input = event.data.input;
@@ -4802,17 +4816,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               (call) => !call.background && isOrchestrationV2WorkActive(call.status),
             )
           ) {
-            // Steers enter the inbox; release foreground observation so the parent can read them.
-            yield* client.session
-              .background({ sessionID: Session.ID.make(sessionId) })
-              .pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning(
-                    "Could not background OpenCode tools for an accepted steer.",
-                    cause,
-                  ),
-                ),
-              );
+            yield* releaseForeground(sessionId);
           }
         },
         (effect, steerInput) =>
