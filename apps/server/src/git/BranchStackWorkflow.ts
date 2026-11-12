@@ -879,6 +879,8 @@ export const make = Effect.gen(function* () {
         });
       const status = yield* inspect(cwd);
       if (input.action === "untrack") {
+        for (const layer of status.layers)
+          yield* git(cwd, ["config", `branch.${layer.branch}.t3-stack-disabled`, "true"]);
         const all = (yield* read(cwd, files.state, SavedState)) ?? [];
         yield* write(
           cwd,
@@ -893,7 +895,6 @@ export const make = Effect.gen(function* () {
         return yield* inspect(cwd);
       }
       yield* assertIdle(cwd);
-      yield* assertClean(cwd);
       if (input.action === "edit" && !status.managed)
         return yield* failure(cwd, "Adopt this branch stack before editing its layers.");
       const branches = input.branches ?? status.layers.map((layer) => layer.branch);
@@ -960,6 +961,12 @@ export const make = Effect.gen(function* () {
         { base, baseRef, remote: status.remote, layers },
         existing?.layers.map((layer) => layer.branch) ?? [],
       );
+      for (const layer of existing?.layers ?? []) {
+        if (!branches.includes(layer.branch))
+          yield* git(cwd, ["config", `branch.${layer.branch}.t3-stack-disabled`, "true"]);
+      }
+      for (const layer of layers)
+        yield* git(cwd, ["config", `branch.${layer.branch}.t3-stack-disabled`, "false"]);
       return yield* inspect(cwd);
     },
     (
@@ -977,6 +984,18 @@ export const make = Effect.gen(function* () {
         ),
       ),
   );
+  const canAutoTrack = Effect.fn("BranchStack.canAutoTrack")(function* (
+    cwd: string,
+    branches: readonly string[],
+  ) {
+    const result = yield* git(
+      cwd,
+      ["config", "--get-regexp", "^branch\\..*\\.t3-stack-disabled$"],
+      true,
+    );
+    const disabled = new Set(result.stdout.trim().split("\n"));
+    return !branches.some((branch) => disabled.has(`branch.${branch}.t3-stack-disabled true`));
+  });
   const pushCurrent = Effect.fn("BranchStack.pushCurrent")(
     function* (cwd: string, branch: string, forceWithLease = false) {
       yield* assertIdle(cwd);
@@ -1019,5 +1038,5 @@ export const make = Effect.gen(function* () {
         ),
       ),
   );
-  return { inspect, manage, update, assertIdle, pushCurrent };
+  return { inspect, manage, update, assertIdle, pushCurrent, canAutoTrack };
 });

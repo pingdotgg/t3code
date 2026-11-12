@@ -73,13 +73,11 @@ export function createGitEnvironmentAtoms<R, E>(
           {
             operation: "manage_stack",
             label:
-              target.input.action === "adopt"
-                ? "Adopting branch stack..."
-                : target.input.action === "edit"
-                  ? "Editing branch stack..."
-                  : target.input.action === "abort"
-                    ? "Aborting stack update..."
-                    : "Updating branch stack...",
+              target.input.action === "adopt" || target.input.action === "edit"
+                ? "Saving stack layers..."
+                : target.input.action === "abort"
+                  ? "Aborting stack update..."
+                  : "Updating branch stack...",
           },
           () => manageStack.run(registry, target),
         ),

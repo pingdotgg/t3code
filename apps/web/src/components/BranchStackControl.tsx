@@ -142,7 +142,7 @@ export function BranchStackControl({
             <p className="text-xs text-destructive">{query.error}</p>
           ) : (
             <Button size="xs" variant="ghost-muted" disabled>
-              Adopt branch stack
+              Edit layers
             </Button>
           )}
         </div>
@@ -295,15 +295,13 @@ export function BranchStackControl({
               setAdopting(true);
             }}
           >
-            Adopt branch stack
+            Edit layers
           </Button>
         )}
         <Dialog open={adopting} onOpenChange={setAdopting}>
           <DialogPopup>
             <DialogHeader>
-              <DialogTitle>
-                {status.managed ? "Edit stack layers" : "Adopt branch stack"}
-              </DialogTitle>
+              <DialogTitle>Edit layers</DialogTitle>
               <DialogDescription>
                 {status.managed
                   ? "Choose existing branches in base-to-tip order. Editing the hierarchy preserves commits; branches must already follow this order."
@@ -408,7 +406,7 @@ export function BranchStackControl({
                 }
                 onClick={() => run(status.managed ? "edit" : "adopt")}
               >
-                {status.managed ? "Save layers" : "Adopt stack"}
+                Save layers
               </Button>
             </DialogFooter>
           </DialogPopup>

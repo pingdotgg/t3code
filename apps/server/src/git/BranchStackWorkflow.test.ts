@@ -89,6 +89,7 @@ it.layer(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))("branch 
         });
         expect(trimmed.baseIsDefault).toBe(false);
         expect(trimmed.layers.map((layer) => layer.branch)).toEqual(["b", "c"]);
+        expect(yield* f.stacks.canAutoTrack(f.cwd, ["a"])).toBe(false);
         yield* f.git(["branch", "-D", "inserted"]);
         expect(yield* f.git(["show-ref", "--heads"])).toBe(original);
       }).pipe(Effect.scoped),

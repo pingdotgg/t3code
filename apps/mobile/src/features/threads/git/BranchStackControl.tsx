@@ -203,9 +203,7 @@ export function BranchStackControl({
         </>
       ) : adopting ? (
         <>
-          <Text className="font-t3-medium text-foreground">
-            {status.managed ? "Edit stack layers" : "Adopt branch stack"}
-          </Text>
+          <Text className="font-t3-medium text-foreground">Edit layers</Text>
           <Text className="text-foreground-secondary">Base branch</Text>
           <StackBranchPicker
             environmentId={environmentId}
@@ -278,7 +276,7 @@ export function BranchStackControl({
           <View className="flex-row flex-wrap gap-2">
             <Button
               size="compact"
-              label={status.managed ? "Save layers" : "Adopt"}
+              label="Save layers"
               disabled={
                 busy ||
                 !permitted ||
@@ -294,7 +292,7 @@ export function BranchStackControl({
       ) : (
         <Button
           size="compact"
-          label="Adopt branch stack"
+          label="Edit layers"
           tone="text"
           disabled={busy || !permitted}
           onPress={() => {

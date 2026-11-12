@@ -448,7 +448,7 @@ out from the matching organization and repository.
 
 ## Maintaining a local branch stack
 
-Use **Adopt branch stack** in the Git sidebar to give T3 an ordered list of existing branches,
+Use **Edit layers** in the Git sidebar to give T3 an ordered list of existing branches,
 from the oldest layer to the newest, and their base branch. T3 can suggest the order from local
 branch ancestry, recorded parent relationships, or `glab` stack metadata. Adoption preserves branches and commits; afterward,
 use T3 rather than another stack manager to maintain that stack.
