@@ -166,6 +166,24 @@ describe("resolveBoundEndpoints", () => {
     }
   });
 
+  it("omits Windows hotspot adapters and 198.18.0.0/15 VPN tunnels from a wildcard bind", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "Local Area Connection* 2": virtualInterface("192.168.137.1"),
+      "LAN-Verbindung* 10": virtualInterface("192.168.137.2"),
+      utun40: virtualInterface("198.19.2.2"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+    expect(
+      resolveBoundEndpoints({ platform: "darwin", host: "198.19.2.2", port: 3773, interfaces }),
+    ).toEqual([{ kind: "lan", httpBaseUrl: "http://198.19.2.2:3773/" }]);
+  });
+
   it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
     const interfaces = {
       en0: INTERFACES.en0,

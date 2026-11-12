@@ -23,7 +23,12 @@ import {
 } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
-import { isLoopbackHost, isPrivateNetworkAddress, VIRTUAL_INTERFACE } from "../startupAccess.ts";
+import {
+  isLoopbackHost,
+  isPrivateNetworkAddress,
+  isVpnTunnelAddress,
+  VIRTUAL_INTERFACE,
+} from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -75,6 +80,7 @@ export function resolveBoundEndpoints(input: {
             !entry.internal &&
             entry.family === "IPv4" &&
             isAdvertisableAddress(entry.address) &&
+            !isVpnTunnelAddress(entry.address) &&
             !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
