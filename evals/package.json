@@ -7,8 +7,10 @@
     "mcp-tool-use:trim-capture": "node mcp-tool-use/trim-capture.ts",
     "mcp-tool-use:regrade": "node mcp-tool-use/regrade.ts",
     "thread-titles": "node --env-file-if-exists=../.env thread-titles/run.ts",
+    "pr-content": "node --env-file-if-exists=../.env pr-content/run.ts",
+    "voice-cleanup": "node --env-file-if-exists=../.env voice-cleanup/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
@@ -21,7 +23,6 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "typescript": "catalog:",
     "vite-plus": "catalog:"
   }
 }
