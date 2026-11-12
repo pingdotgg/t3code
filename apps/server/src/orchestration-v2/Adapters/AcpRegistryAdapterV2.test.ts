@@ -1868,6 +1868,92 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect(
+    "settles Copilot's run on assistant.idle while an attached shell holds its prompt",
+    () =>
+      Effect.gen(function* () {
+        // Copilot CLI 1.0.105 holds session/prompt until an attached async shell exits.
+        const gate = makeProviderReplayGate(["shell-exit"]);
+        const sessionEvent = (type: string) => ({
+          type: "emit_inbound",
+          frame: {
+            kind: "notification",
+            method: "github.com/copilot/sessionEvent",
+            params: { sessionId: "copilot-session", type, data: {} },
+          },
+        });
+        const update = (sessionUpdate: Record<string, unknown>) =>
+          claudeFrames.update("copilot-session", sessionUpdate);
+        const session = yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/new",
+                result: { sessionId: "copilot-session" },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            sessionEvent("assistant.turn_start"),
+            update({
+              sessionUpdate: "tool_call",
+              toolCallId: "shell-1",
+              title: "sleep 90",
+              kind: "execute",
+              status: "completed",
+              rawInput: { command: "sleep 90", mode: "async", detach: false },
+            }),
+            update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+            sessionEvent("assistant.idle"),
+            update({ sessionUpdate: "session_info_update", title: "foreground idle" }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+              label: "shell-exit",
+            },
+          ],
+          gate,
+          false,
+          "github-copilot-cli",
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        const seen = yield* session.until(
+          (event) =>
+            event.type === "turn.terminal" ||
+            (event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.title === "foreground idle"),
+        );
+        const settled = seen.findLast((event) => event.type === "turn.terminal");
+        assert.isDefined(settled, "the run settles once Copilot reports assistant.idle");
+        if (settled?.type !== "turn.terminal") throw new Error("Missing terminal");
+        assert.equal(settled.status, "completed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("retains streamed child tool output through the generic Devin route", () =>
     Effect.gen(function* () {
       const { update } = claudeFrames;
