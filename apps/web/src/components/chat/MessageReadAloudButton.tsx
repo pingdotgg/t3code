@@ -1,7 +1,6 @@
 import { memo } from "react";
-import { LoaderCircle, Square, Volume2 } from "lucide";
+import { LoaderCircleIcon, SquareIcon, Volume2Icon } from "lucide-react";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { startReadAloud, stopReadAloud, useReadAloudState } from "~/readAloud/readAloudPlayer";
@@ -21,6 +20,7 @@ export const MessageReadAloudButton = memo(function MessageReadAloudButton({
   const status = isThisMessage ? readAloud.status : "idle";
   const active = status !== "idle";
   const label = active ? "Stop reading" : "Read aloud";
+  const Icon = status === "playing" ? SquareIcon : Volume2Icon;
   const note = readAloud.fallbackReason
     ? `${readAloud.fallbackReason} Using the basic Windows voice.`
     : null;
@@ -42,10 +42,11 @@ export const MessageReadAloudButton = memo(function MessageReadAloudButton({
           />
         }
       >
-        <MorphIcon
-          className={cn("size-3", active && "text-primary", status === "loading" && "animate-spin")}
-          icon={status === "loading" ? LoaderCircle : status === "playing" ? Square : Volume2}
-        />
+        {status === "loading" ? (
+          <LoaderCircleIcon className="size-3 animate-spin text-primary" />
+        ) : (
+          <Icon className={cn("size-3", active && "text-primary")} />
+        )}
       </TooltipTrigger>
       <TooltipPopup>
         <p>{label}</p>
