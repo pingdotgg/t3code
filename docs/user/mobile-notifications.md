@@ -20,6 +20,18 @@ If your custom mobile build uses a separate background relay, configure its publ
 use the same destination. The relay must already accept your mobile sign-in and have push credentials
 for that build; see the [custom build setup](../operations/connect-setup.md#separate-background-delivery-relay).
 
+Obtain the environment credential through your custom relay's authenticated linking flow:
+
+1. Sign in as the mobile app's Clerk user and request a challenge from the background relay's
+   `POST /v1/client/environment-link-challenges`, enabling notifications and Live Activities and
+   setting `managedTunnelsEnabled` to `false`.
+2. Send that challenge, the background relay issuer, and the environment's endpoint/origin to the
+   environment's authenticated `POST /api/connect/link-proof` endpoint to obtain its signed proof.
+3. Send the proof and the same capability flags to the background relay's
+   `POST /v1/client/environment-links`. The response's `environmentCredential` is the value to store
+   in the publishing server's secret configuration. Linking registers that environment's signing
+   key for the signed-in account; the primary relay's credential is not a substitute.
+
 On each publishing server, supply these runtime environment variables through its service's secret
 configuration, then restart the server:
 
