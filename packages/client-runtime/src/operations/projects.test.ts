@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
+  addProjectRemoteSourceProvider,
   findExistingAddProject,
   getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
@@ -53,6 +54,14 @@ describe("add project shared logic", () => {
     expect(
       githubIncompleteOwnerRepositoryMessage(SourceControlProviderKind.make("forgejo"), "owner/"),
     ).toBeNull();
+  });
+
+  it("clones an SSH URL as entered instead of looking it up on the chosen host", () => {
+    const github = SourceControlProviderKind.make("github");
+    expect(addProjectRemoteSourceProvider(github, "git@gh-work:owner/repo.git")).toBeNull();
+    expect(addProjectRemoteSourceProvider(github, "ssh://git@gh-work/owner/repo.git")).toBeNull();
+    expect(addProjectRemoteSourceProvider(github, "owner/repo")).toBe(github);
+    expect(addProjectRemoteSourceProvider(github, "https://github.com/owner/repo")).toBe("github");
   });
 
   it("routes owner/repository shorthand to GitHub over HTTPS", () => {

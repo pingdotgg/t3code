@@ -2093,7 +2093,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source);
+      const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source, rawRepository);
       if (!provider) {
         const remoteUrl = normalizePastedCloneUrl(rawRepository);
         const destinationPath = getDefaultCloneDestination(

@@ -851,7 +851,7 @@ export function AddProjectRepositoryScreen(props: {
     }
     setError(null);
     setIsSubmitting(true);
-    const provider = addProjectRemoteSourceProvider(source);
+    const provider = addProjectRemoteSourceProvider(source, repositoryInput);
     if (!provider) {
       const remoteUrl = normalizePastedCloneUrl(repositoryInput);
       navigation.dispatch(

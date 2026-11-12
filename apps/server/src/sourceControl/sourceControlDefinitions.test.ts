@@ -28,6 +28,7 @@ it.each([
 const sshConfig: Record<string, string> = {
   "gh-work": "github.com",
   "gh-443": "ssh.github.com",
+  "github.work": "github.com",
   "lab.work": "gitlab.com",
   "github.com": "ssh.github.com",
   "github.corp.com": "ghe-ssh.corp.com",
@@ -44,6 +45,7 @@ it.each([
   ["gh-work:owner/repo", "github", "github.com/owner/repo"],
   ["ssh://git@gh-work:22/owner/repo.git", "github", "github.com/owner/repo"],
   ["git@gh-443:owner/repo.git", "github", "github.com/owner/repo"],
+  ["git@github.work:owner/repo.git", "github", "github.com/owner/repo"],
   ["git@lab.work:group/repo.git", "gitlab", "gitlab.com/group/repo"],
   // A forge host keeps its name, and so does an alias to no known forge, an address or HTTPS.
   ["git@github.com:owner/repo.git", "github", "github.com/owner/repo"],

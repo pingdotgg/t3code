@@ -12,6 +12,7 @@ import type {
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
 import { newProjectFolderName } from "@t3tools/shared/path";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -82,10 +83,13 @@ export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): 
   return source === "url" ? "URL" : sourceControlClients.get(source).repositoryPathHint;
 }
 
+/** The host to look `repository` up on, or null to clone it as entered. */
 export function addProjectRemoteSourceProvider(
   source: AddProjectRemoteSource,
+  repository: string,
 ): SourceControlProviderKind | null {
-  return source === "url" ? null : source;
+  // An SSH URL can name an ssh_config alias that only it carries, so it is cloned as written.
+  return source === "url" || isSshRemoteUrl(repository) ? null : source;
 }
 
 export function parseAddProjectRemoteSource(

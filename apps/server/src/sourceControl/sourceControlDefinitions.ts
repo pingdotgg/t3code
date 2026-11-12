@@ -30,7 +30,7 @@ const SSH_ALIAS_TTL_MS = 5 * 60_000;
 // SSH-only endpoints for getting through firewalls; the forge's API and web host is the other name.
 const SSH_ENDPOINT_HOSTS: Readonly<Record<string, string>> = { "ssh.github.com": "github.com" };
 
-/** An SSH remote on a host no forge claims, read on the forge its `ssh_config` alias leads to. */
+/** An SSH remote read on the forge its `ssh_config` alias leads to. */
 export function withSshHostAliases(
   registry: SourceControlDefinitionRegistry,
   resolveHostName: (host: string) => string | null,
@@ -42,16 +42,16 @@ export function withSshHostAliases(
     const match = pattern.exec(trimmed);
     const host = match?.[2]?.toLowerCase();
     if (match === null || host === undefined || !SSH_CONFIG_HOST.test(host)) return remoteUrl;
-    // A host a forge already claims keeps its name; its SSH endpoint may be named differently.
-    if (NodeNet.isIP(host) !== 0 || registry.recognizeRemote(trimmed)?.kind !== "unknown") {
-      return remoteUrl;
-    }
+    if (NodeNet.isIP(host) !== 0) return remoteUrl;
     const resolved = resolveHostName(host)?.toLowerCase();
     const hostName =
       resolved === undefined ? undefined : (SSH_ENDPOINT_HOSTS[resolved] ?? resolved);
     if (!hostName || hostName === host) return remoteUrl;
     const aliased = `${match[1]}${hostName}${trimmed.slice(match[0].length)}`;
-    // Only a forge the alias leads to is worth the rename; anything else keeps what the alias said.
+    // A public forge always wins. Otherwise a host a forge claims by name keeps it, since its SSH
+    // endpoint may be named differently, and an alias is renamed only to a host a forge claims.
+    if (registry.findByPublicHost(hostName) !== undefined) return aliased;
+    if (registry.recognizeRemote(trimmed)?.kind !== "unknown") return remoteUrl;
     return registry.recognizeRemote(aliased)?.kind === "unknown" ? remoteUrl : aliased;
   };
   return {
