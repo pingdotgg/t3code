@@ -6,6 +6,8 @@ describe("isSshRemoteUrl", () => {
   it.each([
     "git@github.com:owner/repo.git",
     "ssh://git@github.com/owner/repo.git",
+    "git+ssh://git@github.com/owner/repo.git",
+    "ssh+git://git@github.com/owner/repo.git",
     "github.com:owner/repo.git",
     "github-work:owner/repo.git",
   ])("reads %s as SSH", (remoteUrl) => {

@@ -123,6 +123,12 @@ describe("GitLab remotes", () => {
       name: "GitLab Self-Hosted",
       baseUrl: "https://gitlab.example.test",
     });
+    expect(recognize("git+ssh://git@gitlab.example.test:24/group/repo.git")?.baseUrl).toBe(
+      "https://gitlab.example.test",
+    );
+    expect(recognize("ssh+git://git@gitlab.example.test:24/group/repo.git")?.baseUrl).toBe(
+      "https://gitlab.example.test",
+    );
     expect(recognize("gitlab@gitlab.example.com:group/project.git")?.baseUrl).toBe(
       "https://gitlab.example.com",
     );

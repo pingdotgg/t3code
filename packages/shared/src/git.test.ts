@@ -54,6 +54,12 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ssh://git@gitlab.company.com:2222/team/project.git")).toBe(
       "gitlab.company.com/team/project",
     );
+    expect(normalizeGitRemoteUrl("git+ssh://git@gitlab.company.com:2222/team/project.git")).toBe(
+      "gitlab.company.com/team/project",
+    );
+    expect(normalizeGitRemoteUrl("ssh+git://git@gitlab.company.com:2222/team/project.git")).toBe(
+      "gitlab.company.com/team/project",
+    );
   });
 
   it("normalizes SCP-like remotes with non-git SSH users", () => {
