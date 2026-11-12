@@ -1112,9 +1112,7 @@ export function GeneralSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value={SYSTEM_LANGUAGE}>
-                  {m(TIMESTAMP_FORMAT_LABELS.locale)}
-                </SelectItem>
+                <SelectItem value={SYSTEM_LANGUAGE}>{m(TIMESTAMP_FORMAT_LABELS.locale)}</SelectItem>
                 {SUPPORTED_LOCALES.map((locale) => (
                   <SelectItem key={locale} value={locale}>
                     {nativeLanguageName(locale)}
@@ -1157,15 +1155,9 @@ export function GeneralSettingsPanel() {
                 <SelectValue>{m(TIMESTAMP_FORMAT_LABELS[settings.timestampFormat])}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="locale">
-                  {m(TIMESTAMP_FORMAT_LABELS.locale)}
-                </SelectItem>
-                <SelectItem value="12-hour">
-                  {m(TIMESTAMP_FORMAT_LABELS["12-hour"])}
-                </SelectItem>
-                <SelectItem value="24-hour">
-                  {m(TIMESTAMP_FORMAT_LABELS["24-hour"])}
-                </SelectItem>
+                <SelectItem value="locale">{m(TIMESTAMP_FORMAT_LABELS.locale)}</SelectItem>
+                <SelectItem value="12-hour">{m(TIMESTAMP_FORMAT_LABELS["12-hour"])}</SelectItem>
+                <SelectItem value="24-hour">{m(TIMESTAMP_FORMAT_LABELS["24-hour"])}</SelectItem>
               </SelectPopup>
             </Select>
           }

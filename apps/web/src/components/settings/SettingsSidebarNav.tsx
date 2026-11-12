@@ -360,7 +360,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     >
                       <SettingsSectionIcon to={item.to} />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-label text-inherit">{m(item.title)}</span>
+                        <span className="block truncate text-label text-inherit">
+                          {m(item.title)}
+                        </span>
                         <span
                           className={cn(
                             "block truncate text-caption",
