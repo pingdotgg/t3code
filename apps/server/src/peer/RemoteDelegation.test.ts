@@ -1193,6 +1193,37 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a task naming another driver there never runs its model on the parent's instance", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+
+      const result = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        target: {
+          environmentId: box.environmentId,
+          driverKind: "claudeAgent",
+          model: "claude-sonnet-4-6",
+        },
+      });
+      // Either it resolves to a Claude instance there or it is refused; never Codex.
+      if (!result.isError) {
+        expect((yield* Ref.get(thread.launchedWith))?.modelSelection.instanceId).not.toBe(
+          instanceId,
+        );
+      }
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("refuses worktree isolation for a task there before launching anything", () =>
   Effect.scoped(
     Effect.gen(function* () {
