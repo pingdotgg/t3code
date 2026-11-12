@@ -609,6 +609,29 @@ it.effect.each([
   }),
 );
 
+it.effect.each(["javascript:alert(1)", "https://", "not a link"])(
+  "manageMcpServer refuses the sign-in link %s",
+  (authorizationUrl) =>
+    Effect.gen(function* () {
+      const { threadId, provide } = yield* liveRuntimeFixture("mcp-server-link", "live", {
+        mcpServerAuth: {
+          list: () => Effect.succeed([]),
+          authenticate: () => Effect.succeed({ authorizationUrl, callbackExpected: false }),
+          reconnect: () => Effect.die("unexpected reconnect"),
+        },
+      });
+      const result = yield* Effect.gen(function* () {
+        const service = yield* ThreadManagementService.ThreadManagementService;
+        return yield* service
+          .manageMcpServer({ threadId, action: "authenticate", server: "linear" })
+          .pipe(Effect.result);
+      }).pipe(provide);
+      expect(result).toMatchObject({
+        failure: { _tag: "ThreadManagementMcpServerError", reason: "invalid-link" },
+      });
+    }),
+);
+
 it.effect("manageMcpServer routes each action to the thread's active provider thread", () =>
   Effect.gen(function* () {
     const calls: Array<unknown> = [];

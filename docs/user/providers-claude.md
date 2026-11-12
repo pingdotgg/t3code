@@ -114,8 +114,10 @@ row in the thread; open it to see every step.
 When an MCP server shows `needs-auth`, ask Claude to sign in to it. Claude
 replies with a link; open it and log in. If your browser runs on another machine
 than the T3 Code environment, copy the address it ends on after login and paste it
-back in the thread. There is no need to run `/mcp` in a terminal. Codex can do the
-same; its login finishes on its own.
+back in the thread. There is no need to run `/mcp` in a terminal. Codex threads
+sign in the same way, but there is no address to paste back; see
+[Sign in to MCP servers](providers-codex.md#sign-in-to-mcp-servers) for remote
+access.
 
 ## Claude in Chrome
 

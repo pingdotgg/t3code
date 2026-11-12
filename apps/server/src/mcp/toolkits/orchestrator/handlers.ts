@@ -103,32 +103,18 @@ const handlers = {
           : action === "callback"
             ? { action, server: server!, callbackUrl: callbackUrl! }
             : { action, server: server! };
-      const result = yield* threads
-        .manageMcpServer({ threadId: caller.thread.threadId, ...request })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorMcpFailure({
-                code:
-                  cause.reason === "unsupported" || cause.reason === "callback-unsupported"
-                    ? "invalid_request"
-                    : "orchestration_error",
-                message: cause.message,
-              }),
-          ),
-        );
-      // The link comes from the server's own OAuth metadata; only a browser link is safe to show.
-      if (
-        "authorizationUrl" in result &&
-        result.authorizationUrl !== undefined &&
-        !/^https?:\/\//i.test(result.authorizationUrl)
-      ) {
-        return yield* new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: "The sign-in link was not an http(s) address, so it was not shown.",
-        });
-      }
-      return result;
+      return yield* threads.manageMcpServer({ threadId: caller.thread.threadId, ...request }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorMcpFailure({
+              code:
+                cause.reason === "unsupported" || cause.reason === "callback-unsupported"
+                  ? "invalid_request"
+                  : "orchestration_error",
+              message: cause.message,
+            }),
+        ),
+      );
     }),
   ),
   schedule_task: McpToolAccess.either(

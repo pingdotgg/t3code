@@ -333,7 +333,13 @@ export class ThreadManagementMcpServerError extends Schema.TaggedError<ThreadMan
   "ThreadManagementMcpServerError",
   {
     threadId: ThreadId,
-    reason: Schema.Literals(["unsupported", "callback-unsupported", "unavailable", "failed"]),
+    reason: Schema.Literals([
+      "unsupported",
+      "callback-unsupported",
+      "invalid-link",
+      "unavailable",
+      "failed",
+    ]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -341,6 +347,8 @@ export class ThreadManagementMcpServerError extends Schema.TaggedError<ThreadMan
     switch (this.reason) {
       case "unsupported":
         return "This provider cannot sign in to MCP servers for the agent.";
+      case "invalid-link":
+        return "The sign-in link was not an http(s) address, so it was not shown.";
       case "callback-unsupported":
         return "This provider finishes sign-in on its own; there is no callback URL to submit.";
       case "unavailable":
@@ -1576,8 +1584,19 @@ const make = Effect.gen(function* () {
     switch (input.action) {
       case "list":
         return { servers: yield* run(auth.list({ providerThread })) };
-      case "authenticate":
-        return yield* run(auth.authenticate({ providerThread, server: input.server }));
+      case "authenticate": {
+        const result = yield* run(auth.authenticate({ providerThread, server: input.server }));
+        // The link comes from the MCP server's own OAuth metadata; only a browser link is safe to show.
+        if (result.authorizationUrl !== undefined) {
+          const link = URL.canParse(result.authorizationUrl)
+            ? new URL(result.authorizationUrl)
+            : null;
+          if (link === null || !/^https?:$/.test(link.protocol) || link.host === "") {
+            return yield* error("invalid-link");
+          }
+        }
+        return result;
+      }
       case "callback": {
         if (auth.submitCallback === undefined) return yield* error("callback-unsupported");
         yield* run(
