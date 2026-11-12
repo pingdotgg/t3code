@@ -17,10 +17,11 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
-import { setWslBackendEnabled, setWslDistro, setWslOnly } from "./wsl.ts";
+import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./wsl.ts";
 
 const decodeWslState = Schema.decodeUnknownEffect(DesktopWslStateSchema);
 
+const invokeGetWslState = getWslState.handler().pipe(Effect.flatMap(decodeWslState));
 const invokeSetWslBackendEnabled = (enabled: boolean) =>
   setWslBackendEnabled.handler(enabled).pipe(Effect.flatMap(decodeWslState));
 const invokeSetWslDistro = (distro: string | null) =>
@@ -84,6 +85,26 @@ const layerUnusedLifecycleRuntime = Layer.mergeAll(
 );
 
 describe("WSL IPC", () => {
+  it.effect("does not list distros while the WSL backend is off", () => {
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        wslBackendEnabled: false,
+      }),
+      DesktopWslEnvironment.layerTest({
+        isAvailable: true,
+        distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+      }),
+      layerWslBackend(),
+    );
+
+    return Effect.gen(function* () {
+      const state = yield* invokeGetWslState;
+      assert.equal(state.available, true);
+      assert.deepEqual(state.distros, []);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("stages WSL-only preferences and relaunches only after enabling", () => {
     const relaunchReasons: Array<string> = [];
     const layer = Layer.mergeAll(
