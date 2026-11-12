@@ -108,3 +108,13 @@ describe("DesktopHomeOwner.isHomeOwnershipLocked", () => {
     ),
   );
 });
+
+describe("DesktopHomeOwner.homeOwnedMessage", () => {
+  it("points a current background service's owner at turning off Local environment, not reinstalling", () => {
+    const message = DesktopHomeOwner.homeOwnedMessage(
+      Option.some({ pid: 4242, port: 3773, serviceManaged: true, serverVersion: "0.1.9" }),
+    );
+    assert.include(message, "Local environment");
+    assert.notInclude(message, "t3 service uninstall");
+  });
+});
