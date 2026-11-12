@@ -144,8 +144,9 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
-import { decideProofJudgeCommand, type ProofJudgeCommand } from "./ProofJudgeDecider.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as PermissionRouting from "./PermissionRouting.ts";
+import { buildWorkReviewArtifacts } from "./WorkReview.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -199,7 +200,6 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as PermissionRouting from "./PermissionRouting.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -618,10 +618,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
-    case "proof-judge.request":
-    case "proof-judge.accept":
-    case "proof-judge.reject":
-    case "proof-judge.reopen":
+    case "work-review.request":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -3678,39 +3675,77 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* releaseGuestAttachments(command, thread.guestShare, decided.success.guestShare, effects);
   });
 
-  const dispatchProofJudges = Effect.fn("orchestrationV2.dispatch.proofJudges")(function* (
-    command: ProofJudgeCommand,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) {
-    const projection = yield* projectionStore
-      .getThreadRecords(command.threadId, [])
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-        ),
-      );
-    const thread = projection.thread;
-    const now = yield* DateTime.now;
-    const decided = decideProofJudgeCommand({ thread, command, now });
-    if (Result.isFailure(decided)) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: decided.failure,
+  const dispatchWorkReviewRequest = Effect.fn("orchestrationV2.dispatch.workReviewRequest")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "work-review.request" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["turnItems"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const thread = projection.thread;
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
+      if (thread.archivedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Archived threads cannot request work review.",
+        });
+      }
+      const adapter = yield* providerAdapters
+        .get(thread.providerInstanceId)
+        .pipe(mapDispatchError(command));
+      const now = yield* DateTime.now;
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      const artifacts = yield* buildWorkReviewArtifacts({
+        threadId: command.threadId,
+        criteria: command.criteria,
+        ...(command.name === undefined ? {} : { name: command.name }),
+        ...(command.note === undefined ? {} : { note: command.note }),
+        ...(command.deliverable === undefined ? {} : { deliverable: command.deliverable }),
+        driver: adapter.driver,
+        ordinal: yield* nextTurnItemOrdinal(projection),
+        policy: PermissionRouting.permissionRoutingPolicyOf(settings),
+        now,
+        idAllocator,
+      }).pipe(mapDispatchError(command));
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "node.updated",
+        threadId: command.threadId,
+        nodeId: artifacts.node.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: artifacts.node,
       });
-    }
-    if (decided.success === thread) return;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.proof-judges-updated",
-      threadId: command.threadId,
-      providerInstanceId: thread.providerInstanceId,
-      occurredAt: now,
-      payload: decided.success,
-    });
-  });
+      yield* emitEvent({
+        type: "runtime-request.updated",
+        threadId: command.threadId,
+        nodeId: artifacts.node.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: artifacts.request,
+      });
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        nodeId: artifacts.node.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: artifacts.turnItem,
+      });
+    },
+  );
 
   // Emitted before the message so the send and the status change commit together, and so
   // `dispatchMessage`, which reads pending events, keeps the updated share.
@@ -4013,18 +4048,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const blockingRequestExists = pendingRequests.some(
         (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
       );
-      const openProofJudges = (projection.thread.proofJudges ?? []).some(
-        (judge) => judge.status === "requested" || judge.status === "rejected",
-      );
       const blocker = blockingRequestExists
         ? "is waiting on an approval or question. Answer it before settling."
         : runningRunExists
           ? "is still running. Stop it before settling."
           : queuedMessageExists
             ? "has a queued message. Send it or remove it from the queue before settling."
-            : openProofJudges
-              ? "has an open proof judge. Accept every judge before settling."
-              : null;
+            : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -10418,7 +10448,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               subject: session.subject,
               connected: session.connected,
               scopes: session.scopes,
-              permissions: session.permissions,
+              ...(session.permissions === undefined ? {} : { permissions: session.permissions }),
               authenticated: true as const,
             })),
           ),
@@ -10440,6 +10470,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           payload: routed,
           nodeId: routed.nodeId,
+          occurredAt: now,
         });
       }
       const resolvedBy = PermissionRouting.resolveNobodyPermit({ request: routed, sessions });
@@ -14252,11 +14283,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
-      case "proof-judge.request":
-      case "proof-judge.accept":
-      case "proof-judge.reject":
-      case "proof-judge.reopen":
-        yield* dispatchProofJudges(command, events);
+      case "work-review.request":
+        yield* dispatchWorkReviewRequest(command, events);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);

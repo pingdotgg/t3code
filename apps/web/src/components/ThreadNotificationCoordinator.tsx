@@ -8,6 +8,7 @@ import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { DEFAULT_QUIET_HOURS, isWithinQuietHours } from "@t3tools/contracts/settings";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -139,7 +140,13 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const {
+      notificationMode: mode,
+      inAppNotificationsEnabled,
+      quietHours = DEFAULT_QUIET_HOURS,
+    } = getClientSettings();
+    const now = new Date();
+    const quiet = isWithinQuietHours(quietHours, now.getHours() * 60 + now.getMinutes());
     const active = activeThread();
     const title =
       kind === "completion"
@@ -153,7 +160,8 @@ export function startThreadNotifications(
               : status === "request"
                 ? "Guest request"
                 : "Input needed";
-    if (hasNotificationSound(mode)) {
+    // Quiet hours defer routine desktop/sound; in-app toasts and in-thread cards still show.
+    if (!quiet && hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
       );
@@ -200,6 +208,7 @@ export function startThreadNotifications(
       return;
     }
     if (
+      quiet ||
       !hasDesktopNotifications(mode) ||
       (document.visibilityState === "visible" && document.hasFocus()) ||
       typeof Notification === "undefined" ||

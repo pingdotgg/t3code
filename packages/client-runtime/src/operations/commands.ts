@@ -27,7 +27,6 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
-  type ProofJudgeId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -525,32 +524,6 @@ export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMe
     dispatchMode: { type: "queue_after_active" },
     createdBy: "user",
     creationSource: input.creationSource ?? "web",
-  });
-});
-
-export interface DecideProofJudgeInput extends ThreadCommandInput {
-  readonly judgeId: ProofJudgeId;
-  readonly decision: "accept" | "reject" | "reopen";
-  readonly note?: string;
-}
-export const decideProofJudge = Effect.fn("EnvironmentCommands.decideProofJudge")(function* (
-  input: DecideProofJudgeInput,
-) {
-  const commandId = yield* allocateCommandId(input);
-  if (input.decision === "reopen") {
-    return yield* dispatch({
-      type: "proof-judge.reopen",
-      commandId,
-      threadId: input.threadId,
-      judgeId: input.judgeId,
-    });
-  }
-  return yield* dispatch({
-    type: input.decision === "accept" ? "proof-judge.accept" : "proof-judge.reject",
-    commandId,
-    threadId: input.threadId,
-    judgeId: input.judgeId,
-    ...(input.note === undefined ? {} : { note: input.note }),
   });
 });
 

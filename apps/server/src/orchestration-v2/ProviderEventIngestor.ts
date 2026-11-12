@@ -585,7 +585,7 @@ export const layer: Layer.Layer<
               ];
             case "runtime_request.updated": {
               const now = yield* DateTime.now;
-              const policy = yield* PermissionRouting.readPermissionRoutingPolicy;
+              const policy = yield* PermissionRouting.readPermissionRoutingPolicy();
               const runtimeRequest = PermissionRouting.stampPendingApprovalRouting({
                 request: input.event.runtimeRequest,
                 policy,

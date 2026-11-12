@@ -15,8 +15,8 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
-  ProofJudge,
-  ProofJudgeId,
+  OrchestrationV2RuntimeRequest,
+  WorkReviewDeliverable,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -110,24 +110,35 @@ const QueueTool = Tool.make("t3_queue", {
   ]),
 }).annotate(Tool.Destructive, true);
 
-const PROOF_JUDGE_READ_ACTIONS = ["list", "read"] as const;
-const ProofJudgeTool = Tool.make("t3_proof_judge", {
+const WORK_REVIEW_READ_ACTIONS = ["list", "read"] as const;
+const WorkReviewSummary = Schema.Struct({
+  requestId: RuntimeRequestId,
+  status: OrchestrationV2RuntimeRequest.fields.status,
+  criteria: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  note: Schema.optional(Schema.String),
+  decision: Schema.optional(OrchestrationV2RuntimeRequest.fields.decision),
+  deliverable: Schema.optional(WorkReviewDeliverable),
+  createdAt: OrchestrationV2RuntimeRequest.fields.createdAt,
+});
+const WorkReviewTool = Tool.make("t3_work_review", {
   ...commandTool,
   description:
-    "Named proof judges on a thread: work is not finished until they accept (OpenRig-style). Omit `threadId` for this thread. list/read. request: `name` (+ optional `criteria`). accept/reject/reopen: `judgeId` (+ optional `note`).",
+    "Ask for human review of unfinished work as a pending approval card. Omit `threadId` for this thread. list/read pending or recent reviews. request: `criteria` (+ optional `name`, `note`, `deliverable`). accept/reject: `requestId` (+ optional `note` as feedback). Decline clears the ask so you can fix and request again; Accept records acceptance.",
   parameters: Schema.Struct({
-    action: Schema.Literals([...PROOF_JUDGE_READ_ACTIONS, "request", "accept", "reject", "reopen"]),
+    action: Schema.Literals([...WORK_REVIEW_READ_ACTIONS, "request", "accept", "reject"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
-    judgeId: Schema.optional(ProofJudgeId),
+    requestId: Schema.optional(RuntimeRequestId),
     name: Schema.optional(TrimmedNonEmptyString),
     criteria: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
     note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    deliverable: Schema.optional(WorkReviewDeliverable),
     openOnly: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Union([
-    Schema.Struct({ judges: Schema.Array(ProofJudge) }),
-    ProofJudge,
+    Schema.Struct({ reviews: Schema.Array(WorkReviewSummary) }),
+    WorkReviewSummary,
     OrchestrationV2DispatchCommandResult,
   ]),
 }).annotate(Tool.Destructive, true);
@@ -269,5 +280,5 @@ export const ThreadToolkit = Toolkit.make(
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,
-  ProofJudgeTool,
+  WorkReviewTool,
 );

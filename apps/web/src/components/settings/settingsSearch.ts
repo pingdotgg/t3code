@@ -682,6 +682,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "quiet-hours",
+    title: "Quiet hours",
+    to: "/settings/general",
+    searchTerms: ["quiet hours mute defer night notification sound desktop"],
+  },
+  {
     id: "in-app-notifications",
     title: msg("In-app notifications"),
     to: "/settings/general",

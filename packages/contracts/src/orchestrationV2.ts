@@ -21,7 +21,6 @@ import {
   MessageId,
   EnvironmentId,
   NodeId,
-  ProofJudgeId,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
@@ -45,7 +44,6 @@ import {
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
-import { ProofJudge } from "./proofJudges.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
   OrchestrationSearchThreadsInput,
@@ -496,8 +494,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
-  /** Absent on threads written before proof judges existed; read as empty. */
-  proofJudges: Schema.optional(Schema.Array(ProofJudge)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1249,7 +1245,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   nativeRequestRef: Schema.NullOr(OrchestrationV2ProviderRef),
   kind: Schema.Union([
     ProviderRequestKind,
-    Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh"]),
+    Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh", "work_review"]),
   ]),
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
@@ -1259,6 +1255,8 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
       supportsFeedback: Schema.optional(Schema.Boolean),
     }),
     Schema.Struct({ type: Schema.Literal("message") }),
+    /** Durable approval with no provider session; resolve stays in orchestration. */
+    Schema.Struct({ type: Schema.Literal("orchestration") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
   ]),
   createdAt: Schema.DateTimeUtc,
@@ -1266,12 +1264,32 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   decision: Schema.optional(ProviderApprovalDecision),
   feedback: Schema.optional(Schema.String),
   answers: Schema.optional(ProviderUserInputAnswers),
+  /** Optional owned-work link; coordinates with OwnedWorkItemId when that lands. */
+  deliverable: Schema.optionalKey(
+    Schema.Struct({
+      kind: Schema.Literal("owned_work"),
+      itemId: TrimmedNonEmptyString,
+    }),
+  ),
   /** Absent on older events and non-approval requests. */
   routing: Schema.optionalKey(PermissionRequestRouting),
   /** Who closed the ask; absent on older events. */
   resolvedBy: Schema.optionalKey(PermissionRequestResolvedBy),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
+
+export const WorkReviewDeliverable = Schema.Struct({
+  kind: Schema.Literal("owned_work"),
+  itemId: TrimmedNonEmptyString,
+});
+export type WorkReviewDeliverable = typeof WorkReviewDeliverable.Type;
+
+/** Approval card kinds: provider policy asks plus orchestration work review. */
+export const ApprovalRequestKind = Schema.Union([
+  ProviderRequestKind,
+  Schema.Literal("work_review"),
+]);
+export type ApprovalRequestKind = typeof ApprovalRequestKind.Type;
 
 const SubagentNotificationSource = Schema.Struct({
   kind: Schema.Literal("subagent"),
@@ -1754,7 +1772,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("approval_request"),
     requestId: RuntimeRequestId,
-    requestKind: ProviderRequestKind,
+    requestKind: ApprovalRequestKind,
     prompt: Schema.optional(Schema.String),
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
@@ -1955,7 +1973,6 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
-      "thread.proof-judges-updated",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -2176,8 +2193,6 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
-  /** Open proof judges (requested or rejected). Absent from older servers. */
-  openProofJudgeCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   /** Excludes wakes and agent messages that advance latestUserMessageAt through the user role. */
@@ -2611,7 +2626,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("approval_request"),
     requestId: RuntimeRequestId,
-    requestKind: ProviderRequestKind,
+    requestKind: ApprovalRequestKind,
     prompt: Schema.optional(Schema.String),
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
@@ -2863,7 +2878,6 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
-      "thread.proof-judges-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -3105,36 +3119,14 @@ export const OrchestrationV2Command = Schema.Union([
     tagged: Schema.Boolean,
   }),
   Schema.Struct({
-    type: Schema.Literal("proof-judge.request"),
+    type: Schema.Literal("work-review.request"),
     commandId: CommandId,
     threadId: ThreadId,
-    judgeId: ProofJudgeId,
-    name: TrimmedNonEmptyString,
+    /** What the reviewer should check; shown as the approval card prompt. */
     criteria: Schema.String,
-    requestedByThreadId: ThreadId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("proof-judge.accept"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    judgeId: ProofJudgeId,
+    name: Schema.optional(TrimmedNonEmptyString),
+    deliverable: Schema.optional(WorkReviewDeliverable),
     note: Schema.optional(Schema.String),
-    /** Defaults to user when omitted (UI). Agents pass their thread id. */
-    actorThreadId: Schema.optional(ThreadId),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("proof-judge.reject"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    judgeId: ProofJudgeId,
-    note: Schema.optional(Schema.String),
-    actorThreadId: Schema.optional(ThreadId),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("proof-judge.reopen"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    judgeId: ProofJudgeId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),

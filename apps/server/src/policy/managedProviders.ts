@@ -400,6 +400,9 @@ export function makeManagedProviders(
       reviewGuideModelSelection: allowedSelection(settings, settings.reviewGuideModelSelection)
         ? settings.reviewGuideModelSelection
         : null,
+      workReviewModelSelection: allowedSelection(settings, settings.workReviewModelSelection)
+        ? settings.workReviewModelSelection
+        : null,
     };
     cache.set(settings, result);
     return result;

@@ -26,6 +26,7 @@ const APPROVAL_PRESENTATION = {
     label: "App access approval",
     detailLabel: "App access request",
   },
+  work_review: { icon: "list-todo", label: "Review", detailLabel: "Review" },
 } satisfies Record<
   PendingApproval["requestKind"],
   { icon: WorkEntryIconName; label: string; detailLabel: string }
@@ -38,7 +39,8 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
 }) {
   const { respondingRequestIds, canOperateThread, onRespondToApproval } = use(TimelineRowCtx);
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
-  const canRespond = approval.responseCapability === "live";
+  const canRespond =
+    approval.responseCapability === "live" || approval.responseCapability === "orchestration";
   return (
     <WorkLogRow
       role="group"

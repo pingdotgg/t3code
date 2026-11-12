@@ -6,11 +6,8 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
-  ProofJudgeId,
-  OPEN_PROOF_JUDGE_STATUSES,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -335,78 +332,93 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }),
     ),
   ),
-  t3_proof_judge: McpToolAccess.either(
+  t3_work_review: McpToolAccess.either(
     (input) => input.action === "list" || input.action === "read",
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
-        const { projection } = yield* readThread(input.threadId);
-        const judges = projection.thread.proofJudges ?? [];
-        if (input.action === "list") {
+        // Default MCP thread reads only load user_input turn items; approval cards need their own fetch.
+        const context = yield* readThread(input.threadId, ["runtimeRequests"]);
+        const projection = yield* context.threads
+          .getProjectThreadRecords(
+            {
+              projectId: context.projection.thread.projectId,
+              threadId: context.projection.thread.id,
+            },
+            ["runtimeRequests", "turnItems"],
+            { turnItemTypes: ["approval_request"] },
+          )
+          .pipe(Effect.mapError(unavailable));
+        const summarize = (requestId: RuntimeRequestId) => {
+          const request = projection.runtimeRequests.find(
+            (candidate) => candidate.id === requestId && candidate.kind === "work_review",
+          );
+          if (request === undefined) return undefined;
+          const item = projection.turnItems.findLast(
+            (candidate) =>
+              candidate.type === "approval_request" && candidate.requestId === request.id,
+          );
           return {
-            judges:
-              input.openOnly === true
-                ? judges.filter((judge) => OPEN_PROOF_JUDGE_STATUSES.has(judge.status))
-                : judges,
+            requestId: request.id,
+            status: request.status,
+            ...(item?.type === "approval_request" && item.prompt ? { criteria: item.prompt } : {}),
+            ...(item?.type === "approval_request" && item.title ? { name: item.title } : {}),
+            ...(item?.type === "approval_request" && item.reason ? { note: item.reason } : {}),
+            ...(request.decision === undefined ? {} : { decision: request.decision }),
+            ...(request.deliverable === undefined ? {} : { deliverable: request.deliverable }),
+            createdAt: request.createdAt,
           };
+        };
+        if (input.action === "list") {
+          const reviews = projection.runtimeRequests
+            .filter((request) => request.kind === "work_review")
+            .filter((request) => (input.openOnly === true ? request.status === "pending" : true))
+            .flatMap((request) => {
+              const summary = summarize(request.id);
+              return summary === undefined ? [] : [summary];
+            });
+          return { reviews };
         }
-        const judgeId = yield* required(input.judgeId, "judgeId");
-        const judge = judges.find((candidate) => candidate.id === judgeId);
+        const requestId = yield* required(input.requestId, "requestId");
         return (
-          judge ??
+          summarize(requestId) ??
           (yield* new OrchestratorMcpFailure({
             code: "invalid_request",
-            message: "The proof judge was not found.",
+            message: "The work review was not found.",
           }))
         );
       }),
     ),
     writesThread((input) =>
       Effect.gen(function* () {
-        const { projection, caller } = yield* readThread(input.threadId);
-        const actorThreadId = caller?.id ?? projection.thread.id;
         switch (input.action) {
           case "request": {
-            const name = yield* required(input.name, "name");
-            const random = yield* SecureRandom.SecureRandom;
-            const judgeId =
-              input.judgeId ?? ProofJudgeId.make(`proof-judge:${yield* random.uuidV4()}`);
+            const criteria = yield* required(input.criteria, "criteria");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
-              type: "proof-judge.request",
-              judgeId,
-              name,
-              criteria: input.criteria ?? "",
-              requestedByThreadId: actorThreadId,
+              type: "work-review.request",
+              criteria,
+              ...(input.name === undefined ? {} : { name: input.name }),
+              ...(input.note === undefined ? {} : { note: input.note }),
+              ...(input.deliverable === undefined ? {} : { deliverable: input.deliverable }),
             }));
           }
-          case "accept": {
-            const judgeId = yield* required(input.judgeId, "judgeId");
-            return yield* dispatch(input.threadId, (common) => ({
-              ...common,
-              type: "proof-judge.accept",
-              judgeId,
-              note: input.note,
-              actorThreadId,
-            }));
-          }
+          case "accept":
           case "reject": {
-            const judgeId = yield* required(input.judgeId, "judgeId");
+            const requestId = yield* required(input.requestId, "requestId");
+            // Orchestration work reviews resolve without a live provider session, so decline
+            // feedback is not supported on this path; `note` is only used when requesting.
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
-              type: "proof-judge.reject",
-              judgeId,
-              note: input.note,
-              actorThreadId,
+              type: "runtime-request.respond",
+              requestId,
+              decision: input.action === "accept" ? ("accept" as const) : ("decline" as const),
             }));
           }
-          default: {
-            const judgeId = yield* required(input.judgeId, "judgeId");
-            return yield* dispatch(input.threadId, (common) => ({
-              ...common,
-              type: "proof-judge.reopen",
-              judgeId,
-            }));
-          }
+          default:
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "Unsupported work review action.",
+            });
         }
       }),
     ),

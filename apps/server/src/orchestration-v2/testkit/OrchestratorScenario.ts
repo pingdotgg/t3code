@@ -152,10 +152,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
-    case "proof-judge.request":
-    case "proof-judge.accept":
-    case "proof-judge.reject":
-    case "proof-judge.reopen":
+    case "work-review.request":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":

@@ -376,15 +376,18 @@ const layerPermissionRoutingHooks = Layer.effect(
   Effect.gen(function* () {
     const threads = yield* ThreadManagementService.ThreadManagementService;
     return PermissionRouting.PermissionRoutingHooks.of({
-      onPendingApprovalRouted: ({ threadId, requestId }) =>
-        threads
+      onPendingApprovalRouted: Effect.fn(
+        "PermissionRouting.PermissionRoutingHooks.onPendingApprovalRouted",
+      )(function* ({ threadId, requestId }) {
+        yield* threads
           .dispatch({
             type: "permission-routing.consider",
             commandId: CommandId.make(`permission-routing:${requestId}`),
             threadId,
             requestId,
           })
-          .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid),
+          .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid);
+      }),
     });
   }),
 ).pipe(Layer.provide(layerThreadManagementProvided));
