@@ -43,7 +43,6 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   GuestShareId,
-  ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
 } from "@t3tools/contracts";
@@ -77,6 +76,7 @@ import {
   NodeId,
   ProjectId,
   ProviderInstanceId,
+  ProviderThreadId,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -98,6 +98,11 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
+import {
+  javascriptTrimWhitespace,
+  userCommandMessageIndex,
+  userCommandPrefix,
+} from "./userCommandMessageIndex.ts";
 import {
   isFoldableWorkItem,
   isThreadHistoryUserTurn,
@@ -634,7 +639,6 @@ export interface ProjectionStoreV2Shape {
       | "runs"
       | "attempts"
       | "nodes"
-      | "subagents"
       | "providerSessions"
       | "providerThreads"
       | "providerTurns"
@@ -643,7 +647,13 @@ export interface ProjectionStoreV2Shape {
       | "contextHandoffs"
       | "contextTransfers"
       | "turnItems"
-    > & { readonly hasConversation: boolean },
+    > & {
+      readonly hasConversation: boolean;
+      /** Completed subagents only, with the fields routing reads. */
+      readonly subagents: ReadonlyArray<
+        Pick<OrchestrationV2Subagent, "status" | "childThreadId" | "providerThreadId">
+      >;
+    },
     ProjectionStoreV2Error
   >;
   readonly getTurnStartHistory: (
@@ -4984,10 +4994,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
-    // SQLite trim defaults to ASCII spaces; compact recognition uses JavaScript trim.
-    const javascriptTrimWhitespace =
-      " \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
-
     const getTurnStartContext: ProjectionStoreV2Shape["getTurnStartContext"] = (threadId, runId) =>
       sql
         .withTransaction(
@@ -5007,10 +5013,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               INDEXED BY sqlite_autoindex_orchestration_v2_projection_nodes_1
               WHERE thread_id = ${threadId} AND node_id IN (SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId} AND run_id = ${runId}) ORDER BY node_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeNodePayload, threadId)));
-            const subagents = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_subagents
-              WHERE thread_id = ${threadId} AND status NOT IN ('interrupted','failed','cancelled') ORDER BY subagent_id ASC
-            `.pipe(Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)));
+            // Turn start routes only to completed subagents (RunExecutionService.canRouteRelatedSubagent).
+            const subagents = (yield* sql<{
+              readonly child_thread_id: string | null;
+              readonly provider_thread_id: string | null;
+            }>`
+              SELECT child_thread_id, provider_thread_id FROM orchestration_v2_projection_subagents
+              INDEXED BY orchestration_v2_projection_subagents_routing_idx
+              WHERE thread_id = ${threadId} AND status = 'completed' ORDER BY subagent_id ASC
+            `).map((row) => ({
+              status: "completed" as const,
+              childThreadId:
+                row.child_thread_id === null ? null : ThreadId.make(row.child_thread_id),
+              providerThreadId:
+                row.provider_thread_id === null
+                  ? null
+                  : ProviderThreadId.make(row.provider_thread_id),
+            }));
             const providerThreads = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_provider_threads
               WHERE thread_id = ${threadId} ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
@@ -5027,9 +5046,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT payload_json FROM orchestration_v2_projection_context_handoffs
               WHERE thread_id = ${threadId} ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextHandoffPayload, threadId)));
+            // Turn start reads the transfers its handoffs name and the forks into this thread.
             const contextTransfers = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_context_transfers
-              WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId} ORDER BY rowid ASC
+              WHERE context_transfer_id IN (SELECT value FROM json_each(${encodeIdList(
+                contextHandoffs.flatMap((handoff) =>
+                  handoff.transferId == null ? [] : [handoff.transferId],
+                ),
+              )}))
+                OR (target_thread_id = ${threadId} AND type = 'fork')
+              ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextTransferPayload, threadId)));
             const turnItems = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_turn_items
@@ -5044,15 +5070,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE bindings.thread_id = ${threadId}
               ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderSessionPayload, threadId)));
-            const messages = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_messages
-              WHERE thread_id = ${threadId} AND (
-                message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
-                  WHERE thread_id = ${threadId} AND run_id = ${runId})
-                OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
-                -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
-                OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
-              ) ORDER BY created_at ASC, message_id ASC
+            const messages = yield* sql<
+              PayloadRow & { readonly created_at: string; readonly message_id: string }
+            >`
+              SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
+              WHERE thread_id = ${threadId} AND message_id IN (
+                SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId} AND run_id = ${runId})
+              UNION
+              SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
+              INDEXED BY ${sql.literal(userCommandMessageIndex)}
+              WHERE thread_id = ${threadId} AND role = 'user'
+                AND ${sql.literal(userCommandPrefix)} IN ('/comp', '/goal')
+                AND (lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact'
+                  -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
+                  OR trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
+              ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`
               SELECT EXISTS(
