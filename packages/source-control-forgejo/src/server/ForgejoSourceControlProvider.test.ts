@@ -2036,3 +2036,76 @@ it.effect("explains a slow fj instead of advising an install when tea is absent"
     ),
   ),
 );
+
+it.effect("does not call a valid fj login on an HTTP-only server unauthenticated", () =>
+  Effect.gen(function* () {
+    const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
+      Effect.provide(ForgejoCli.layer),
+    );
+    assert.strictEqual(spec.type, "managed-cli");
+    if (spec.type !== "managed-cli") return;
+    const result = yield* spec.probe("/repo");
+    assert.strictEqual(result.executable, "fj");
+    assert.notStrictEqual(result.auth.status, "unauthenticated");
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        // fj stores the host without the scheme the login used.
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forgejo.local:3000": { type: "Application", token: "test-token" } },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        request.url.startsWith("http://")
+          ? Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(encodeJson({ login: "maria" }), { status: 200 }),
+              ),
+            )
+          : Effect.die(new Error("received corrupt message of type InvalidContentType")),
+      ),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            // Settings has no project in scope, so there is no origin remote.
+            if (input.command === "git")
+              return Effect.succeed(
+                processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
+              );
+            if (input.command !== "fj")
+              return Effect.fail(
+                new VcsProcessSpawnError({
+                  operation: input.operation,
+                  command: input.command,
+                  cwd: input.cwd,
+                  cause: new Error("not installed"),
+                }),
+              );
+            if (input.args[0] === "version") return Effect.succeed(processOutput("fj v0.7.0"));
+            const host = input.args[input.args.indexOf("--host") + 1] ?? "";
+            return Effect.succeed(
+              host.startsWith("http://")
+                ? processOutput("currently signed into maria@forgejo.local:3000")
+                : processOutput("", {
+                    exitCode: ChildProcessSpawner.ExitCode(1),
+                    stderr: `Error: error sending request for url (${host}/api/v1/user?)\nCaused by:\n   0: client error (Connect)\n   1: received corrupt message of type InvalidContentType`,
+                  }),
+            );
+          },
+        },
+      }),
+    ),
+    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+  ),
+);
