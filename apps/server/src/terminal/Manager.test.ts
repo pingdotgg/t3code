@@ -1,3 +1,4 @@
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -9,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  retainedTerminalHistory,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -2054,6 +2056,7 @@ it.layer(
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        deriveProviderInstanceConfigMap,
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",
@@ -2320,6 +2323,57 @@ it.layer(
 
       yield* Deferred.await(restored);
       expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 15 });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends bounded attach streams only the history the client retains", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const maxHistoryBytes = 9;
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const published = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "yz\n"
+          ? Deferred.succeed(published, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("aaaa\nx名😀");
+      process.emitData("yz\n");
+      yield* Deferred.await(published);
+      unsubscribe();
+
+      const full = yield* Stream.toPull(manager.attachOutputStream(openInput(), "full"));
+      const bounded = yield* Stream.toPull(
+        manager.attachOutputStream({ ...openInput(), maxHistoryBytes }, "bounded"),
+      );
+      const expectRetained = Effect.fnUntraced(function* () {
+        const [fullEvents, boundedEvents] = [yield* full, yield* bounded];
+        const fullSnapshot = fullEvents.at(-1);
+        if (fullSnapshot?.type !== "snapshot") throw new Error("Expected a full snapshot");
+        expect(boundedEvents.at(-1)).toEqual({
+          ...fullSnapshot,
+          snapshot: {
+            ...fullSnapshot.snapshot,
+            history: retainedTerminalHistory(fullSnapshot.snapshot.history, maxHistoryBytes),
+          },
+        });
+        return fullSnapshot.snapshot.history;
+      });
+
+      expect(yield* expectRetained()).toBe("aaaa\nx名😀yz\n");
+      // The cap starts inside 名, so the tail begins at the next code point.
+      expect(retainedTerminalHistory("aaaa\nx名😀yz\n", maxHistoryBytes)).toBe("😀yz\n");
+      process.emitData("after\n");
+      expect(yield* full).toEqual(yield* bounded);
+
+      yield* publishPastOutputBudget(manager, process);
+      expect(yield* expectRetained()).toMatch(/last\n$/);
+
+      process.emitExit({ exitCode: 0, signal: 0 });
+      expect(yield* full).toEqual(yield* bounded);
+      yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
+      yield* expectRetained();
     }).pipe(Effect.scoped),
   );
 
