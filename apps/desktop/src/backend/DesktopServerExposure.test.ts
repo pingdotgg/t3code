@@ -93,7 +93,9 @@ function layerEnvironmentFor(baseDir: string, env: Record<string, string | undef
 
 function layer(input: {
   readonly baseDir: string;
-  readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
+  readonly networkInterfaces?:
+    | DesktopNetworkInterfaces.NetworkInterfaces
+    | (() => DesktopNetworkInterfaces.NetworkInterfaces);
   readonly env?: Record<string, string | undefined>;
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
@@ -102,7 +104,11 @@ function layer(input: {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
   const layerEnvironment = layerEnvironmentFor(input.baseDir, env);
   const layerNetwork = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
-    read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
+    read: Effect.sync(() =>
+      typeof input.networkInterfaces === "function"
+        ? input.networkInterfaces()
+        : (input.networkInterfaces ?? emptyNetworkInterfaces),
+    ),
   });
 
   return DesktopServerExposure.layer.pipe(
@@ -118,7 +124,9 @@ function layer(input: {
 }
 
 const withHarness = <A, E, R>(
-  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+  networkInterfaces:
+    | DesktopNetworkInterfaces.NetworkInterfaces
+    | (() => DesktopNetworkInterfaces.NetworkInterfaces),
   effect: Effect.Effect<
     A,
     E,
@@ -201,6 +209,26 @@ describe("DesktopServerExposure", () => {
       }),
     ),
   );
+
+  it.effect("recovers saved network access when an address appears after launch", () => {
+    let current = emptyNetworkInterfaces;
+    return withHarness(
+      () => current,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        current = { ...lanNetworkInterfaces, ...tailnetNetworkInterfaces };
+
+        const state = yield* serverExposure.getState;
+        assert.equal(state.mode, "network-accessible");
+        assert.equal(state.endpointUrl, "http://192.168.1.20:4173/");
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
+      }),
+    );
+  });
 
   it.effect("starts local-only, Serve off, when a managed policy keeps clients local", () =>
     withHarness(
