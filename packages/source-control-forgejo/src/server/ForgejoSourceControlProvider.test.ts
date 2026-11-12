@@ -2109,3 +2109,74 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
   ),
 );
+
+it.effect(
+  "looks up a branch without a pull request in requests that do not grow with a Gitea repository's pull request count",
+  () =>
+    Effect.gen(function* () {
+      // Gitea ignores `head=` on the pull request list, so every page holds other branches' pull requests.
+      const lookupRequests = (pullRequestCount: number) => {
+        let requests = 0;
+        return Effect.gen(function* () {
+          const provider = yield* ForgejoSourceControlProvider.make;
+          yield* provider.listChangeRequests({ cwd: "/repo", headSelector: "no-pr", state: "all" });
+          return requests;
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+              TestSourceControlHost.layer({ process: {} }),
+              Layer.mock(ForgejoCli.ForgejoCli)({
+                resolveRepository: () =>
+                  Effect.succeed({
+                    login: "work",
+                    repository: "maria/project",
+                    baseUrl: "https://gitea.test",
+                  }),
+                api: (input) => {
+                  requests++;
+                  const [path = "", query] = input.path.split("?");
+                  if (!path.endsWith("/pulls"))
+                    return Effect.fail(
+                      new ForgejoCli.ForgejoCliError({
+                        command: "tea",
+                        cwd: "/repo",
+                        detail: "Not found",
+                        httpStatus: 404,
+                      }),
+                    );
+                  const page = Number(new URLSearchParams(query).get("page"));
+                  const repo = { full_name: "maria/project", owner: { login: "maria" } };
+                  const numbers = Array.from(
+                    { length: 50 },
+                    (_, index) => (page - 1) * 50 + index + 1,
+                  );
+                  return encodeJsonEffect(
+                    numbers
+                      .filter((number) => number <= pullRequestCount)
+                      .map((number) => ({
+                        number,
+                        title: `PR ${number}`,
+                        html_url: `https://gitea.test/maria/project/pulls/${number}`,
+                        state: "open",
+                        merged: false,
+                        base: { ref: "main", label: "main", sha: "base", repo },
+                        head: {
+                          ref: `branch-${number}`,
+                          label: `branch-${number}`,
+                          sha: "head",
+                          repo,
+                        },
+                      })),
+                  ).pipe(Effect.orDie, Effect.map(processOutput));
+                },
+              }),
+            ),
+          ),
+        );
+      };
+      const small = yield* lookupRequests(100);
+      const large = yield* lookupRequests(3_000);
+      assert.strictEqual(large, small);
+    }),
+);
