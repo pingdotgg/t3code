@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   type ManagedPolicySummary,
@@ -11,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -78,8 +81,9 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const layerWithPolicy = (policy?: ManagedPolicySummary) =>
+const layerWithPolicy = (policy?: ManagedPolicySummary, workspaceRoot = "/project-root") =>
   RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(NodeServices.layer),
     Layer.provide(ServerSettings.layerTest({}, policy)),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -96,7 +100,7 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
           Effect.succeedSome({
             projectId,
             title: "Project",
-            workspaceRoot: "/project-root",
+            workspaceRoot,
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             autoPull: false,
@@ -157,6 +161,27 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 });
+
+it.effect("starts a worktree thread in the project's subdirectory of the worktree", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "runtime-policy-subdir-" });
+    // A clone's `.git` is a directory; a linked worktree's is a file.
+    const repoRoot = path.join(base, "repo");
+    const worktreePath = path.join(base, "worktree");
+    yield* fileSystem.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(repoRoot, "ios"), { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(worktreePath, "ios"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(worktreePath, ".git"), "gitdir: elsewhere\n");
+    const now = yield* DateTime.now;
+    const resolved = yield* Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      return yield* policy.resolve({ thread: makeThread({ now, worktreePath }), modelSelection });
+    }).pipe(Effect.provide(layerWithPolicy(undefined, path.join(repoRoot, "ios"))));
+    assert.equal(resolved.cwd, path.join(worktreePath, "ios"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.layer(
   layerWithPolicy({
