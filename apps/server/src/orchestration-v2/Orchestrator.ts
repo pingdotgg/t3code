@@ -6186,19 +6186,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events, {
       keepRunIds,
     });
-    // Replacing the target's input settles the wake it carried, which needs that wake's parent run.
-    const targetWakeParentRunId = projection.messages.find(
-      (message) =>
-        message.id === projection.runs.find((run) => run.id === targetRunId)?.userMessageId,
-    )?.delegatedCompletion?.parentRunId;
-    if (
-      targetWakeParentRunId !== undefined &&
-      !projection.runs.some((run) => run.id === targetWakeParentRunId)
-    ) {
-      projection = yield* getProjectionWithPendingEvents(command.threadId, events, {
-        keepRunIds: [...keepRunIds, targetWakeParentRunId],
-      });
-    }
+    // Replacing a run's input settles the wake it carried, which needs that wake's parent run.
+    const keepWakeParentOf = Effect.fnUntraced(function* (runId: RunId | undefined) {
+      const parentRunId = projection.messages.find(
+        (message) => message.id === projection.runs.find((run) => run.id === runId)?.userMessageId,
+      )?.delegatedCompletion?.parentRunId;
+      if (parentRunId === undefined || projection.runs.some((run) => run.id === parentRunId))
+        return;
+      keepRunIds.push(parentRunId);
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events, { keepRunIds });
+    });
+    yield* keepWakeParentOf(targetRunId);
     if (yield* isStaleQuestionWake(projection, command.messageId, command.notification)) {
       yield* emit(
         events,
@@ -6468,6 +6466,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
+      yield* keepWakeParentOf(dispatchMode.targetRunId);
+    }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);

@@ -1592,6 +1592,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   >,
   siblingFinishesFirst: boolean,
   userRunBeforeWake = false,
+  intentNamesTarget = false,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1801,7 +1802,9 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
     text: "also check the logs",
     attachments: [],
     modelSelection: runSelection,
-    dispatchMode: { type: "steer_active", targetRunId: wake.runId },
+    ...(intentNamesTarget
+      ? { dispatchMode: { type: "start_immediately" as const }, deliveryIntent: "restart" as const }
+      : { dispatchMode: { type: "steer_active" as const, targetRunId: wake.runId } }),
     createdBy: "user",
     creationSource: "web",
   });
@@ -1894,26 +1897,33 @@ it.effect("wakes the parent for a sibling result after a steer restarts the comp
   ),
 );
 
-it.effect("settles a steered completion wake whose parent run is before the last compaction", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const harness = yield* nextTurnSelectionHarness("steered-wake-after-compaction", true, false);
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const { threadId, steered, firstTaskId, finishTurn } = yield* restartCompletionWake(
-          harness,
-          false,
+it.effect.each([false, true])(
+  "settles a steered completion wake whose parent run is before the last compaction (restart by intent: %s)",
+  (intentNamesTarget) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* nextTurnSelectionHarness(
+          `steered-wake-after-compaction-${intentNamesTarget}`,
           true,
+          false,
         );
-        yield* finishTurn(steered);
-        const tasks = (yield* orchestrator.getThreadProjection(threadId)).subagents;
-        assert.equal(
-          tasks.find((task) => task.id === firstTaskId)?.completionDelivery?.state,
-          "delivered",
-        );
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  ),
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const { threadId, steered, firstTaskId, finishTurn } = yield* restartCompletionWake(
+            harness,
+            false,
+            true,
+            intentNamesTarget,
+          );
+          yield* finishTurn(steered);
+          const tasks = (yield* orchestrator.getThreadProjection(threadId)).subagents;
+          assert.equal(
+            tasks.find((task) => task.id === firstTaskId)?.completionDelivery?.state,
+            "delivered",
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }),
+    ),
 );
 
 it.effect(
