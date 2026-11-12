@@ -343,7 +343,7 @@ export function quizAnswerGrade(text: string): "right" | "wrong" | "unknown" | u
 }
 
 export type ParsedCardAnswer =
-  | { readonly kind: "skipped" }
+  | { readonly kind: "skipped"; readonly label: string }
   | {
       readonly kind: "quiz";
       readonly answer: string | null;
@@ -363,7 +363,8 @@ export type ParsedCardAnswer =
     };
 
 export function parseCardAnswer(text: string): ParsedCardAnswer | undefined {
-  if (text.trim() === "I don't know.") return { kind: "skipped" };
+  if (text.trim() === "I don't know." || text === CARD_SKIPPED)
+    return { kind: "skipped", label: text.trim() };
   if (text.startsWith("Quiz answer: I don't know.")) {
     return { kind: "quiz", answer: null, grade: "unknown" };
   }
@@ -410,6 +411,8 @@ function epochMillis(value: unknown) {
   return 0;
 }
 
+const CARD_SKIPPED = "Skipped.";
+
 export function answeredCardAnswers(
   messages: Iterable<{
     readonly role: string;
@@ -424,23 +427,20 @@ export function answeredCardAnswers(
     .sort((left, right) => left.at - right.at || left.index - right.index)
     .map(({ message }) => message);
   const answers = new Map<string, string>();
-  const cards = chronological.flatMap((message, index) =>
-    message.role === "assistant" && message.id?.endsWith(":reply")
-      ? [{ id: message.id.slice(0, -":reply".length), index }]
-      : [],
-  );
+  const isCardReply = (message: (typeof chronological)[number]) =>
+    message.role === "assistant" && message.id?.endsWith(":reply") === true;
+  const isFreeMessage = (message: (typeof chronological)[number]) =>
+    message.role === "user" && !CARD_ANSWER_TAG.test(message.text);
   for (const message of chronological) {
-    if (message.role !== "user") continue;
-    const match = CARD_ANSWER_TAG.exec(message.text);
-    if (match === null) continue;
-    answers.set(match[1]!, message.text.slice(0, match.index));
+    const match = message.role === "user" ? CARD_ANSWER_TAG.exec(message.text) : null;
+    if (match !== null) answers.set(match[1]!, message.text.slice(0, match.index));
   }
-  // A newer card posted after the learner spoke closes older cards they left open.
-  const lastCard = cards.at(-1)?.index ?? 0;
-  for (const card of cards) {
-    if (answers.has(card.id)) continue;
-    if (chronological.slice(card.index + 1, lastCard).some((message) => message.role === "user"))
-      answers.set(card.id, "Skipped.");
+  // A newer card after a message that answered no card closes the cards left open before it.
+  const lastCard = chronological.findLastIndex(isCardReply);
+  const cutoff = chronological.slice(0, lastCard).findLastIndex(isFreeMessage);
+  for (const message of chronological.slice(0, Math.max(cutoff, 0))) {
+    const id = isCardReply(message) ? message.id!.slice(0, -":reply".length) : undefined;
+    if (id !== undefined && !answers.has(id)) answers.set(id, CARD_SKIPPED);
   }
   return answers;
 }

@@ -94,6 +94,7 @@ describe("CourseService", () => {
         assert.strictEqual(skipped.problemSets[0]?.solution, "Solution");
         assert.deepStrictEqual(skipped.problemSets[0]?.references, [reference]);
         assert.include(skipped.problemSets[0]?.note ?? "", "**Skipped, not graded.**");
+        assert.notInclude(skipped.problemSets[0]?.note ?? "", "graded against");
       }),
     ),
   );

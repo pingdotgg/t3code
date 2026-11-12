@@ -618,8 +618,6 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
     return yield* locked(
       Effect.gen(function* () {
         const course = yield* read(input.courseId);
-        if (input.skip && input.pset === undefined)
-          return yield* failure("pset is required with skip");
         const attribution = course.attribution ? { attribution: course.attribution } : {};
         if (!course.problemSets)
           return {
@@ -658,7 +656,10 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
                   }
                 : {}),
             };
-            const references = yield* readReferences(path.join(root, course.id), number);
+            const references =
+              input.pset === undefined
+                ? undefined
+                : yield* readReferences(path.join(root, course.id), number);
             const referencesNote =
               references === undefined
                 ? ""
@@ -669,7 +670,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               references === undefined
                 ? undefined
                 : references.length === 0
-                  ? "No published solution was found online; graded against my own working."
+                  ? "No published solution was found online."
                   : `Checked against ${references.map(({ label, url }) => `[${label}](${url})`).join(", ")}.`;
             const referenceFields =
               references === undefined ? {} : { references, cite, note: referencesNote.trim() };
@@ -678,7 +679,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               return {
                 ...item,
                 text: yield* fs.readFileString(psetFile(path.join(root, course.id), number)),
-                ...(input.pset === undefined ? {} : referenceFields),
+                ...referenceFields,
               };
             }
             const text = yield* fs.readFileString(psetFile(path.join(root, course.id), number));
@@ -696,7 +697,17 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               text,
               solution,
               ...referenceFields,
-              note: `${input.skip ? "The learner asked for the answer, so this problem is skipped; the visible reply must begin with the line **Skipped, not graded.**, then the final answer, then every step of the working. Do not ask the learner to answer this part again. " : ""}${solution === null ? `No official solution exists; work the problem yourself and check against the listed worked-example units where they match (${examples || "none listed"}). Say plainly where your work disagrees, and tell the learner: graded against my own worked solution, not MIT's. ` : ""}${referencesNote}`.trim(),
+              ...(input.skip
+                ? {
+                    note: `The learner asked for the answer, so this problem is skipped; the visible reply must begin with the line **Skipped, not graded.**, then the final answer, then every step of the working, then the cite line if there is one. Do not grade it or ask the learner to answer this part again.${solution === null ? " No official solution exists; work it yourself." : ""}`,
+                  }
+                : solution === null
+                  ? {
+                      note: `No official solution exists; work the problem yourself and check against the listed worked-example units where they match (${examples || "none listed"}). Say plainly where your work disagrees, and tell the learner: graded against my own worked solution, not MIT's. ${referencesNote}`.trim(),
+                    }
+                  : referencesNote
+                    ? { note: referencesNote.trim() }
+                    : {}),
             };
           }),
         );

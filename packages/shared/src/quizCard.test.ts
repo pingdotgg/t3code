@@ -45,6 +45,31 @@ describe("quiz cards", () => {
     ).toBe("Skipped.");
   });
 
+  it("keeps a card open when the message before the newer card answered another card", () => {
+    const replies = answeredCardAnswers([
+      { role: "assistant", id: "a:reply", text: "a", createdAt: "2026-01-01T00:00:00Z" },
+      { role: "assistant", id: "b:reply", text: "b", createdAt: "2026-01-01T00:00:00Z" },
+      { role: "user", text: cardAnswerMessage("4", "a"), createdAt: "2026-01-01T00:01:00Z" },
+      { role: "assistant", id: "c:reply", text: "c", createdAt: "2026-01-01T00:02:00Z" },
+      { role: "user", text: "and now?", createdAt: "2026-01-01T00:03:00Z" },
+    ]);
+    expect(replies.get("a")).toBe("4");
+    expect(replies.has("b")).toBe(false);
+    expect(replies.has("c")).toBe(false);
+  });
+
+  it("keeps a superseded card closed after the learner speaks again", () => {
+    const replies = answeredCardAnswers([
+      { role: "assistant", id: "old:reply", text: "old", createdAt: "2026-01-01T00:00:00Z" },
+      { role: "user", text: "just tell me", createdAt: "2026-01-01T00:01:00Z" },
+      { role: "assistant", id: "new:reply", text: "new", createdAt: "2026-01-01T00:02:00Z" },
+      { role: "user", text: "wait, what?", createdAt: "2026-01-01T00:03:00Z" },
+    ]);
+    expect(replies.get("old")).toBe("Skipped.");
+    expect(parseCardAnswer(replies.get("old")!)).toEqual({ kind: "skipped", label: "Skipped." });
+    expect(replies.has("new")).toBe(false);
+  });
+
   it("keeps cards posted together open", () => {
     const replies = answeredCardAnswers([
       { role: "assistant", id: "old:reply", text: "old", createdAt: "2026-01-01T00:00:00Z" },
@@ -118,7 +143,11 @@ describe("quiz cards", () => {
         ],
       },
     ],
-    ["skipped", cardAnswerMessage("I don't know.", "skipped-1"), { kind: "skipped" }],
+    [
+      "skipped",
+      cardAnswerMessage("I don't know.", "skipped-1"),
+      { kind: "skipped", label: "I don't know." },
+    ],
   ] as const)("parses %s learner answers and keeps stable card text", (_kind, text, expected) => {
     const [cardId] = text.match(/\(card (\S+)\)$/u)?.slice(1) ?? [];
     expect(parseCardAnswer(text.slice(0, text.lastIndexOf("\n\n(card ")))).toEqual(expected);

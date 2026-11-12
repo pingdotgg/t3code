@@ -1635,7 +1635,7 @@ function AnsweredQuestionCard(props: {
     <View className="mb-3 rounded-2xl border border-border bg-card p-4">
       <Text className="font-t3-medium text-base">{props.card.question}</Text>
       {answer?.kind === "skipped" ? (
-        <Text className="mt-2 text-sm text-foreground-muted">I don't know.</Text>
+        <Text className="mt-2 text-sm text-foreground-muted">{answer.label}</Text>
       ) : answer?.kind === "number" ? (
         <Text
           className={cn("mt-2 text-sm", answer.grade === "right" ? "text-success" : "text-danger")}
