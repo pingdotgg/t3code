@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
   environments: {} as Record<string, { label: string }>,
+  queryPending: false,
 }));
 
 vi.mock(import("../../state/query"), async (original) => ({
@@ -21,7 +22,9 @@ vi.mock(import("../../state/query"), async (original) => ({
   useEnvironmentQuery: ((atom: unknown) =>
     atom === null
       ? { data: null, isSuccess: false, isPending: false }
-      : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
+      : state.queryPending
+        ? { data: null, isSuccess: false, isPending: true, error: null }
+        : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
@@ -71,6 +74,7 @@ function setup() {
   state.threadTitles = { source: "Source" };
   state.archivedThreads = [];
   state.environments = {};
+  state.queryPending = false;
   state.projection = {
     thread: {
       id: threadId,
@@ -376,12 +380,19 @@ it("shows a delegated-from thread's full title in its tooltip even when its envi
 });
 
 it.each([
-  { parent: "deleted", titles: {}, path: "/environment/fork" },
-  { parent: "live", titles: { "parent-thread": "Parent" }, path: "/parent-env/parent-thread" },
+  { parent: "deleted", titles: {}, pending: false, path: "/environment/fork" },
+  { parent: "still being looked up", titles: {}, pending: true, path: "/environment/fork" },
+  {
+    parent: "live",
+    titles: { "parent-thread": "Parent" },
+    pending: false,
+    path: "/parent-env/parent-thread",
+  },
 ])("opens a delegated-from parent only when it is not deleted ($parent)", async (row) => {
   setup();
   state.environments = { "parent-env": { label: "Linked" } };
   state.threadTitles = row.titles;
+  state.queryPending = row.pending;
   state.projection = {
     ...(state.projection as Record<string, unknown>),
     thread: {

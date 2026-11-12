@@ -358,6 +358,8 @@ function DelegatedFromRow(props: {
     lookup.isSuccess &&
     !lookup.isPending &&
     lookup.data?.[delegatedFrom.threadId] === undefined;
+  const lookupUnsettled =
+    parent === null && (lookup.isPending || (!lookup.isSuccess && lookup.error === null));
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
   return (
@@ -372,7 +374,7 @@ function DelegatedFromRow(props: {
               part="row"
               aria-disabled={environment === null || parentGone || undefined}
               onClick={() => {
-                if (environment === null) return;
+                if (environment === null || lookupUnsettled) return;
                 if (parentGone) {
                   toastManager.add({ type: "info", title: "This thread is no longer available" });
                   return;
