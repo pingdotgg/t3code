@@ -151,6 +151,7 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
       },
       historyOrigin: "v1_import",
       linkOrigin,
+      tags: ["private"],
     };
     const sourceRun = makeSourceRun("completed");
     const result = yield* planFork(sourceRun, {
@@ -168,6 +169,7 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.isUndefined(result.targetThread.delegatedFrom);
     assert.equal(result.targetThread.historyOrigin, "v1_import");
     assert.deepEqual(result.targetThread.linkOrigin, linkOrigin);
+    assert.deepEqual(result.targetThread.tags, ["private"]);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
     assert.equal(result.targetThread.providerInstanceId, sourceThread.providerInstanceId);
     assert.deepEqual(result.targetThread.modelSelection, sourceThread.modelSelection);
@@ -291,14 +293,31 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
   }),
 );
 
-it.effect("marks only requested forks as supervised side chats", () =>
+it.effect("marks only requested forks as side chats and inherits parent permissions", () =>
   Effect.gen(function* () {
     const sourceRun = makeSourceRun("completed");
     const sideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
       sideChat: true,
     });
     assert.isTrue(sideChat.targetThread.lineage.sideChat);
-    assert.equal(sideChat.targetThread.runtimeMode, "approval-required");
+    assert.equal(sideChat.targetThread.runtimeMode, "full-access");
+    for (const runtimeMode of [
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access",
+    ] as const) {
+      const source = makeSourceProjection(sourceRun);
+      const inherited = yield* planFork(
+        sourceRun,
+        {
+          ...source,
+          thread: { ...source.thread, runtimeMode },
+        },
+        { sideChat: true },
+      );
+      assert.equal(inherited.targetThread.runtimeMode, runtimeMode);
+    }
 
     const sideChatSource = makeSourceProjection(sourceRun);
     const sideChatProjection = {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
-} from "../features/workspace/android-workspace-tabs";
+} from "../features/layout/workspace/android-workspace-tabs";
 import {
   linkedThreadStep,
   parentThreadIsBelow,
