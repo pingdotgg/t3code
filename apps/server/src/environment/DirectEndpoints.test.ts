@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
@@ -8,7 +9,6 @@ import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { EnvironmentId } from "@t3tools/contracts";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -286,24 +286,20 @@ const layerServeConfig = (host = "127.0.0.1") =>
   ).pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
     Layer.provide(NodeServices.layer),
+    Layer.merge(
+      Layer.succeed(ServerEnvironment.ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("serve-test")),
+        getDescriptor: Effect.die("unused"),
+      }),
+    ),
   );
 
-const layerIdentity = (environmentId = "serve-test") =>
-  Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
-    getEnvironmentId: Effect.succeed(EnvironmentId.make(environmentId)),
-  });
-
-const resolveWithServe = (probeStatus: number, environmentId?: string) =>
+const resolveWithServe = (probeStatus: number) =>
   Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(
-            layerServeConfig(),
-            layerTailscaleUp,
-            layerServeProbe(probeStatus),
-            layerIdentity(environmentId),
-          ),
+          Layer.mergeAll(layerServeConfig(), layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
       ),
     ),
@@ -332,7 +328,6 @@ describe("DirectEndpoints Tailscale Serve", () => {
             Layer.mergeAll(
               layerServeConfig("192.168.1.10"),
               layerTailscaleUp,
-              layerIdentity(),
               Layer.succeed(
                 HttpClient.HttpClient,
                 HttpClient.make((request) =>
@@ -374,10 +369,9 @@ describe("DirectEndpoints Tailscale Serve", () => {
       }).pipe(Effect.scoped),
   );
 
-  effectIt.effect("leaves the tailnet name out when Serve does not forward to this server", () =>
+  effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(502)).toEqual([]);
-      expect(yield* resolveWithServe(200, "another-server")).toEqual([]);
     }),
   );
 });

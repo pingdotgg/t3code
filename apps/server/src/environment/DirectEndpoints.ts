@@ -121,8 +121,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
-  const environmentId = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity)
-    .getEnvironmentId;
+  const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.

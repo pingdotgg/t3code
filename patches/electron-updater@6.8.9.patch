@@ -1,5 +1,5 @@
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..3932b6607ca41e6663aae001111c9b18594ed37a 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..c298ffe7808c421c29e16f1e2ba8510f0cd31142 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
 @@ -61,6 +61,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
@@ -38,3 +38,65 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..3932b6607ca41e6663aae001111c9b18
      addRedirectHandlers(request, options, reject, redirectCount, handler) {
          request.on("redirect", (statusCode, method, redirectUrl) => {
              // no way to modify request options, abort old and make a new one
+diff --git a/out/providers/GitHubProvider.js b/out/providers/GitHubProvider.js
+index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..34a0759220c0cce052285204b2d14fdf0db905e5 100644
+--- a/out/providers/GitHubProvider.js
++++ b/out/providers/GitHubProvider.js
+@@ -107,6 +107,12 @@ class GitHubProvider extends BaseGitHubProvider {
+         catch (e) {
+             throw (0, builder_util_runtime_1.newError)(`Cannot parse releases feed: ${e.stack || e.message},\nXML:\n${feedXml}`, "ERR_UPDATER_INVALID_RELEASE_FEED");
+         }
++        // The atom feed lists only the 10 newest releases, which other prereleases can fill.
++        let apiRelease = null;
++        if (tag == null && this.updater.allowPrerelease && this.updater.channel) {
++            apiRelease = await this.getLatestChannelRelease(this.updater.channel, cancellationToken);
++            tag = apiRelease === null ? null : apiRelease.tag_name;
++        }
+         if (tag == null) {
+             throw (0, builder_util_runtime_1.newError)(`No published versions on GitHub`, "ERR_UPDATER_NO_PUBLISHED_VERSIONS");
+         }
+@@ -144,6 +150,14 @@ class GitHubProvider extends BaseGitHubProvider {
+             }
+         }
+         const result = (0, Provider_1.parseUpdateInfo)(rawData, channelFile, channelFileUrl);
++        if (apiRelease !== null) {
++            if (result.releaseName == null) {
++                result.releaseName = apiRelease.name || apiRelease.tag_name;
++            }
++            if (result.releaseNotes == null) {
++                result.releaseNotes = apiRelease.body || "";
++            }
++        }
+         if (result.releaseName == null) {
+             result.releaseName = latestRelease.elementValueOrEmpty("title");
+         }
+@@ -155,6 +169,29 @@ class GitHubProvider extends BaseGitHubProvider {
+             ...result,
+         };
+     }
++    async getLatestChannelRelease(channel, cancellationToken) {
++        for (let page = 1; page <= 5; page++) {
++            const url = new url_1.URL(`${this.computeGithubBasePath(`/repos/${this.options.owner}/${this.options.repo}/releases`)}?per_page=100&page=${page}`, this.baseApiUrl);
++            const rawData = await this.httpRequest(url, { Accept: "application/vnd.github+json" }, cancellationToken);
++            const releases = rawData == null ? [] : JSON.parse(rawData);
++            if (!Array.isArray(releases)) {
++                return null;
++            }
++            for (const release of releases) {
++                if (release == null || release.draft || typeof release.tag_name !== "string" || !semver.valid(release.tag_name)) {
++                    continue;
++                }
++                const releaseChannel = semver.prerelease(release.tag_name);
++                if (releaseChannel !== null && releaseChannel[0] === channel) {
++                    return release;
++                }
++            }
++            if (releases.length < 100) {
++                return null;
++            }
++        }
++        return null;
++    }
+     async getLatestTagName(cancellationToken) {
+         const options = this.options;
+         // do not use API for GitHub to avoid limit, only for custom host or GitHub Enterprise
