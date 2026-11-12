@@ -280,17 +280,43 @@ it("adds the failing checks to a given composer instead of opening a new thread"
   );
 });
 
-it("merges a linked pull request with its own project's default, not the thread's", async () => {
+const repositoryClone = {
+  ...repositoryProject,
+  id: ProjectId.make("clone"),
+  workspaceRoot: "/work/clone",
+};
+
+it.each([
+  {
+    name: "the project holding its repository, not the No project thread's",
+    thread: scratchProject,
+    repository: "owner/repo",
+    expected: "rebase",
+  },
+  {
+    name: "the thread's own project when it holds the repository too",
+    thread: repositoryClone,
+    repository: "owner/repo",
+    expected: "merge",
+  },
+  {
+    name: "the thread's project when no project holds the repository",
+    thread: scratchProject,
+    repository: "owner/other",
+    expected: "squash",
+  },
+])("merges a linked pull request with $name", async ({ thread, repository, expected }) => {
   await using screen = await setup();
   state.mergeMethods = ["merge", "squash", "rebase"];
-  state.projects = [scratchProject, repositoryProject];
-  state.projectMergeMethods = { scratch: "squash", repository: "rebase" };
+  state.projects = [scratchProject, repositoryProject, repositoryClone];
+  state.projectMergeMethods = { scratch: "squash", repository: "rebase", clone: "merge" };
+  useUiStateStore.getState().setPullRequestMergeMethod("squash");
   state.pullRequests = [
     {
       host: "github.com",
-      repository: "owner/repo",
+      repository,
       number: 1,
-      url: "https://github.com/owner/repo/pull/1",
+      url: `https://github.com/${repository}/pull/1`,
       source: "manual",
       linkedAt: "2026-10-30T00:00:00.000Z",
       snapshot: null,
@@ -299,9 +325,11 @@ it("merges a linked pull request with its own project's default, not the thread'
   ];
   await act(async () => {
     await screen.rerender(
-      <ThreadDetailsThreadPrRows threadRef={threadRef} project={scratchProject as never} />,
+      <ThreadDetailsThreadPrRows threadRef={threadRef} project={thread as never} />,
     );
   });
   await clickButton(screen.container, "Merge");
-  expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain("using rebase");
+  expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain(
+    `using ${expected}`,
+  );
 });
