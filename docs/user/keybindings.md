@@ -174,6 +174,9 @@ shortcut; assign one in **Settings → Keybindings**.
 `thread.regenerateTitle` generates a new title for the focused thread, like
 **Regenerate title** in the thread menu. It has no default shortcut.
 
+`chat.citeSelection` cites the text you selected in an assistant message, like
+the **Cite** button that appears over the selection. It has no default shortcut.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive
