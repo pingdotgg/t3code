@@ -3048,7 +3048,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               driver: CODEX_PROVIDER,
               nativeItemId: `${input.nativeItemId}:thread-root`,
             });
-            const childThreadId = idAllocator.derive.threadFromProviderThread({
+            const childThreadId = idAllocator.derive.subagentThread({
               driver: CODEX_PROVIDER,
               nativeThreadId: input.nativeThreadId,
             });

@@ -21,6 +21,9 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- derive ids are synchronous, so the hash must be too.
+import * as NodeCrypto from "node:crypto";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -140,6 +143,11 @@ export interface IdAllocatorV2Derive {
     readonly nativeThreadId: string;
     readonly providerInstanceId?: ProviderInstanceId;
   }) => ThreadId;
+  readonly subagentThread: (input: {
+    readonly driver: ProviderDriverKind;
+    readonly nativeThreadId: string;
+    readonly providerInstanceId?: ProviderInstanceId;
+  }) => ThreadId;
   readonly run: (input: { readonly threadId: ThreadId; readonly ordinal: number }) => RunId;
   readonly runAttempt: (input: {
     readonly runId: RunId;
@@ -212,6 +220,20 @@ export function deriveThreadFromProviderThread(input: {
   );
 }
 
+// Agents quote subagent thread ids back to thread tools, and the native id often
+// nests the parent's encoded ids, so hash it to a short stable id instead.
+function deriveSubagentThread(input: {
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId?: ProviderInstanceId;
+  readonly nativeThreadId: string;
+}): ThreadId {
+  const digest = NodeCrypto.createHash("sha256")
+    .update(deriveThreadFromProviderThread(input))
+    .digest("hex")
+    .slice(0, 16);
+  return ThreadId.make(`thread:subagent:${digest}`);
+}
+
 export function deriveProviderThread(input: {
   readonly driver: ProviderDriverKind;
   readonly providerInstanceId?: ProviderInstanceId;
@@ -266,6 +288,7 @@ export const derive: IdAllocatorV2Derive = {
   createdThreadTurnItem: (input) =>
     TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
   threadFromProviderThread: deriveThreadFromProviderThread,
+  subagentThread: deriveSubagentThread,
   run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
   runAttempt: (input) =>
     RunAttemptId.make(joinId("run-attempt", "run", input.runId, "attempt", input.attemptOrdinal)),
