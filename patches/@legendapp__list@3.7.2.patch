@@ -78,3 +78,363 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55
    var _a3, _b, _c;
    const state = ctx.state;
    const { idsInView, positions, props } = state;
+diff --git a/react.js b/react.js
+index 515545471e08426fc90856256db9491db0ca4b92..e76cc1e4d13c9c18e6c109234e9c2d3e8457a09c 100644
+--- a/react.js
++++ b/react.js
+@@ -6921,8 +6921,8 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+       const listPos = getExternalListPosition();
+       return horizontal ? scroll.x - listPos.left : scroll.y - listPos.top;
+     }
+-    return (_a4 = horizontal ? element == null ? void 0 : element.scrollLeft : element == null ? void 0 : element.scrollTop) != null ? _a4 : 0;
+-  }, [externalTarget, getExternalListPosition, horizontal, isExternalScroll]);
++    return ((_a4 = horizontal ? element == null ? void 0 : element.scrollLeft : element == null ? void 0 : element.scrollTop) != null ? _a4 : 0) + getHeldScrollAdjust(ctx.state);
++  }, [ctx, externalTarget, getExternalListPosition, horizontal, isExternalScroll]);
+   const clampScrollOffset2 = React3.useCallback(
+     (offset) => {
+       const maxOffset = getMaxScrollOffset();
+@@ -6941,6 +6941,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+   }, [clampScrollOffset2, getRawScrollOffset, isExternalScroll]);
+   const scrollToLocalOffset = React3.useCallback(
+     (offset, animated) => {
++      flushTouchScrollHold(ctx.state);
+       const target = getScrollTarget();
+       if (!target || typeof target.scrollTo !== "function") {
+         return;
+@@ -6994,6 +6995,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+       isScrollInRange,
+       isWindowScroll: () => isWindowScroll,
+       scrollBy: (x, y) => {
++        flushTouchScrollHold(ctx.state);
+         const target = getScrollTarget();
+         if (!target || typeof target.scrollBy !== "function") {
+           return;
+@@ -7433,6 +7435,19 @@ function getScrollAdjustTarget(ctx, contentNode) {
+   }
+   return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
+ }
++// T3 patch: iOS WebKit scrolls overflow elements off the main thread, so a scrollBy while a
++// finger drags is overwritten and one during momentum lands twice. While a touch scroll runs,
++// corrections move the content with a transform and land in one absolute scroll once it ends.
++var holdScrollAdjustDuringTouch = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-touch-callout", "none");
++var TOUCH_SCROLL_SETTLE_FALLBACK_MS = 600;
++function getHeldScrollAdjust(state) {
++  var _a3;
++  return ((_a3 = state == null ? void 0 : state.touchScrollHold) == null ? void 0 : _a3.held) || 0;
++}
++function flushTouchScrollHold(state) {
++  var _a3;
++  (_a3 = state == null ? void 0 : state.touchScrollHold) == null ? void 0 : _a3.flush();
++}
+ function scrollAdjustBy(el, left, top) {
+   el.scrollBy({ behavior: "auto", left, top });
+ }
+@@ -7463,7 +7478,8 @@ function ScrollAdjust() {
+         const axis = getScrollAdjustAxis(horizontal);
+         const { contentNode, scrollElement: el } = target;
+         const scroller = ctx.state.refScroller.current;
+-        const parentScroll = horizontal ? el.scrollLeft : el.scrollTop;
++        const touchScrollHold = ctx.state.touchScrollHold;
++        const parentScroll = (horizontal ? el.scrollLeft : el.scrollTop) + getHeldScrollAdjust(ctx.state);
+         const isExternal = ctx.state.props.hasExternalScroll;
+         const currentScroll = (_b = isExternal ? (_a3 = scroller == null ? void 0 : scroller.getCurrentScrollOffset) == null ? void 0 : _a3.call(scroller) : void 0) != null ? _b : parentScroll;
+         const isOutsideList = ((_c = scroller == null ? void 0 : scroller.isScrollInRange) == null ? void 0 : _c.call(scroller)) === false;
+@@ -7473,7 +7489,11 @@ function ScrollAdjust() {
+         const shouldScroll = !isOutsideList && Math.abs(scrollDelta) > 0.01;
+         const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
+         contentNodeRef.current = contentNode;
+-        if (shouldScroll && contentNode) {
++        if (shouldScroll && contentNode && (touchScrollHold == null ? void 0 : touchScrollHold.active)) {
++          touchScrollHold.held += signalScrollDelta;
++          contentNode.style.transform = `translateY(${-touchScrollHold.held}px)`;
++          touchScrollHold.settleAtEdge();
++        } else if (shouldScroll && contentNode) {
+           const totalSize = isExternal ? el[axis.contentSizeKey] : contentNode[axis.contentSizeKey];
+           const viewportSize = el[axis.viewportSizeKey];
+           const nextScroll = parentScroll + scrollDelta;
+@@ -7514,6 +7534,105 @@ function ScrollAdjust() {
+       lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
+     }
+   }, [clearTemporaryScrollAdjust, ctx]);
++  React3__namespace.useEffect(() => {
++    var _a3;
++    const el = (_a3 = getScrollAdjustTarget(ctx, null)) == null ? void 0 : _a3.scrollElement;
++    if (!holdScrollAdjustDuringTouch || !el || ctx.state.props.horizontal || ctx.state.props.hasExternalScroll) {
++      return;
++    }
++    const hold = {
++      active: false,
++      held: 0,
++      flush() {
++        const held = hold.held;
++        hold.held = 0;
++        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
++        if (!target) return;
++        // Read the offset first: dropping a positive transform can shrink the range and clamp it.
++        const top = target.scrollElement.scrollTop + held;
++        if (target.contentNode) target.contentNode.style.transform = "";
++        if (Math.abs(held) > 0.01) {
++          target.scrollElement.scrollTo({ behavior: "instant", top });
++        }
++      }
++    };
++    // The held content sits off its scroll position, so at an edge it would hide rows or show
++    // blank space. Settle there: before the offset clamps, so the content does not move.
++    hold.settleAtEdge = () => {
++      const scrollTop = el.scrollTop;
++      const logical = scrollTop + hold.held;
++      const max = el.scrollHeight - el.clientHeight;
++      if (hold.held !== 0 && (Math.min(scrollTop, logical) <= 0 || Math.max(scrollTop, logical) >= max)) {
++        hold.flush();
++      }
++    };
++    ctx.state.touchScrollHold = hold;
++    // A touch's touchend goes to the element it started on, which may have left the list by then.
++    const touchTargets = /* @__PURE__ */ new Map();
++    let scrolled = false;
++    let settleTimer;
++    const settle = () => {
++      clearTimeout(settleTimer);
++      if (touchTargets.size > 0 || !hold.active) return;
++      hold.active = false;
++      hold.flush();
++    };
++    const onTouchEnd = (event) => {
++      for (const touch of Array.from(event.changedTouches)) {
++        const target = touchTargets.get(touch.identifier);
++        touchTargets.delete(touch.identifier);
++        if (target && !Array.from(touchTargets.values()).includes(target)) {
++          target.removeEventListener("touchend", onTouchEnd);
++          target.removeEventListener("touchcancel", onTouchEnd);
++        }
++      }
++      if (touchTargets.size > 0) return;
++      if (scrolled) {
++        clearTimeout(settleTimer);
++        settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
++      } else {
++        settle();
++      }
++    };
++    const onTouchStart = (event) => {
++      clearTimeout(settleTimer);
++      const down = new Set(Array.from(event.touches, (touch) => touch.identifier));
++      for (const id of Array.from(touchTargets.keys())) {
++        if (!down.has(id)) onTouchEnd({ changedTouches: [{ identifier: id }] });
++      }
++      if (touchTargets.size === 0) scrolled = false;
++      for (const touch of Array.from(event.changedTouches)) {
++        touchTargets.set(touch.identifier, touch.target);
++        touch.target.addEventListener("touchend", onTouchEnd, { passive: true });
++        touch.target.addEventListener("touchcancel", onTouchEnd, { passive: true });
++      }
++      hold.active = true;
++    };
++    const onScroll = () => {
++      hold.settleAtEdge();
++      if (!hold.active) return;
++      scrolled = true;
++      if (touchTargets.size === 0) {
++        clearTimeout(settleTimer);
++        settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
++      }
++    };
++    el.addEventListener("touchstart", onTouchStart, { passive: true });
++    el.addEventListener("scroll", onScroll, { passive: true });
++    el.addEventListener("scrollend", settle);
++    return () => {
++      el.removeEventListener("touchstart", onTouchStart);
++      el.removeEventListener("scroll", onScroll);
++      el.removeEventListener("scrollend", settle);
++      for (const target of new Set(touchTargets.values())) {
++        target.removeEventListener("touchend", onTouchEnd);
++        target.removeEventListener("touchcancel", onTouchEnd);
++      }
++      touchTargets.clear();
++      settle();
++      if (ctx.state.touchScrollHold === hold) ctx.state.touchScrollHold = void 0;
++    };
++  }, [ctx]);
+   useValueListener$("scrollAdjust", callback);
+   useValueListener$("scrollAdjustUserOffset", callback);
+   React3__namespace.useLayoutEffect(() => {
+diff --git a/react.mjs b/react.mjs
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..e4476ac4456b30d96771fbb9a5d1f2a43eaa514a 100644
+--- a/react.mjs
++++ b/react.mjs
+@@ -6900,8 +6900,8 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+       const listPos = getExternalListPosition();
+       return horizontal ? scroll.x - listPos.left : scroll.y - listPos.top;
+     }
+-    return (_a4 = horizontal ? element == null ? void 0 : element.scrollLeft : element == null ? void 0 : element.scrollTop) != null ? _a4 : 0;
+-  }, [externalTarget, getExternalListPosition, horizontal, isExternalScroll]);
++    return ((_a4 = horizontal ? element == null ? void 0 : element.scrollLeft : element == null ? void 0 : element.scrollTop) != null ? _a4 : 0) + getHeldScrollAdjust(ctx.state);
++  }, [ctx, externalTarget, getExternalListPosition, horizontal, isExternalScroll]);
+   const clampScrollOffset2 = useCallback(
+     (offset) => {
+       const maxOffset = getMaxScrollOffset();
+@@ -6920,6 +6920,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+   }, [clampScrollOffset2, getRawScrollOffset, isExternalScroll]);
+   const scrollToLocalOffset = useCallback(
+     (offset, animated) => {
++      flushTouchScrollHold(ctx.state);
+       const target = getScrollTarget();
+       if (!target || typeof target.scrollTo !== "function") {
+         return;
+@@ -6973,6 +6974,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+       isScrollInRange,
+       isWindowScroll: () => isWindowScroll,
+       scrollBy: (x, y) => {
++        flushTouchScrollHold(ctx.state);
+         const target = getScrollTarget();
+         if (!target || typeof target.scrollBy !== "function") {
+           return;
+@@ -7412,6 +7414,19 @@ function getScrollAdjustTarget(ctx, contentNode) {
+   }
+   return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
+ }
++// T3 patch: iOS WebKit scrolls overflow elements off the main thread, so a scrollBy while a
++// finger drags is overwritten and one during momentum lands twice. While a touch scroll runs,
++// corrections move the content with a transform and land in one absolute scroll once it ends.
++var holdScrollAdjustDuringTouch = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-touch-callout", "none");
++var TOUCH_SCROLL_SETTLE_FALLBACK_MS = 600;
++function getHeldScrollAdjust(state) {
++  var _a3;
++  return ((_a3 = state == null ? void 0 : state.touchScrollHold) == null ? void 0 : _a3.held) || 0;
++}
++function flushTouchScrollHold(state) {
++  var _a3;
++  (_a3 = state == null ? void 0 : state.touchScrollHold) == null ? void 0 : _a3.flush();
++}
+ function scrollAdjustBy(el, left, top) {
+   el.scrollBy({ behavior: "auto", left, top });
+ }
+@@ -7442,7 +7457,8 @@ function ScrollAdjust() {
+         const axis = getScrollAdjustAxis(horizontal);
+         const { contentNode, scrollElement: el } = target;
+         const scroller = ctx.state.refScroller.current;
+-        const parentScroll = horizontal ? el.scrollLeft : el.scrollTop;
++        const touchScrollHold = ctx.state.touchScrollHold;
++        const parentScroll = (horizontal ? el.scrollLeft : el.scrollTop) + getHeldScrollAdjust(ctx.state);
+         const isExternal = ctx.state.props.hasExternalScroll;
+         const currentScroll = (_b = isExternal ? (_a3 = scroller == null ? void 0 : scroller.getCurrentScrollOffset) == null ? void 0 : _a3.call(scroller) : void 0) != null ? _b : parentScroll;
+         const isOutsideList = ((_c = scroller == null ? void 0 : scroller.isScrollInRange) == null ? void 0 : _c.call(scroller)) === false;
+@@ -7452,7 +7468,11 @@ function ScrollAdjust() {
+         const shouldScroll = !isOutsideList && Math.abs(scrollDelta) > 0.01;
+         const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
+         contentNodeRef.current = contentNode;
+-        if (shouldScroll && contentNode) {
++        if (shouldScroll && contentNode && (touchScrollHold == null ? void 0 : touchScrollHold.active)) {
++          touchScrollHold.held += signalScrollDelta;
++          contentNode.style.transform = `translateY(${-touchScrollHold.held}px)`;
++          touchScrollHold.settleAtEdge();
++        } else if (shouldScroll && contentNode) {
+           const totalSize = isExternal ? el[axis.contentSizeKey] : contentNode[axis.contentSizeKey];
+           const viewportSize = el[axis.viewportSizeKey];
+           const nextScroll = parentScroll + scrollDelta;
+@@ -7493,6 +7513,105 @@ function ScrollAdjust() {
+       lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
+     }
+   }, [clearTemporaryScrollAdjust, ctx]);
++  React3.useEffect(() => {
++    var _a3;
++    const el = (_a3 = getScrollAdjustTarget(ctx, null)) == null ? void 0 : _a3.scrollElement;
++    if (!holdScrollAdjustDuringTouch || !el || ctx.state.props.horizontal || ctx.state.props.hasExternalScroll) {
++      return;
++    }
++    const hold = {
++      active: false,
++      held: 0,
++      flush() {
++        const held = hold.held;
++        hold.held = 0;
++        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
++        if (!target) return;
++        // Read the offset first: dropping a positive transform can shrink the range and clamp it.
++        const top = target.scrollElement.scrollTop + held;
++        if (target.contentNode) target.contentNode.style.transform = "";
++        if (Math.abs(held) > 0.01) {
++          target.scrollElement.scrollTo({ behavior: "instant", top });
++        }
++      }
++    };
++    // The held content sits off its scroll position, so at an edge it would hide rows or show
++    // blank space. Settle there: before the offset clamps, so the content does not move.
++    hold.settleAtEdge = () => {
++      const scrollTop = el.scrollTop;
++      const logical = scrollTop + hold.held;
++      const max = el.scrollHeight - el.clientHeight;
++      if (hold.held !== 0 && (Math.min(scrollTop, logical) <= 0 || Math.max(scrollTop, logical) >= max)) {
++        hold.flush();
++      }
++    };
++    ctx.state.touchScrollHold = hold;
++    // A touch's touchend goes to the element it started on, which may have left the list by then.
++    const touchTargets = /* @__PURE__ */ new Map();
++    let scrolled = false;
++    let settleTimer;
++    const settle = () => {
++      clearTimeout(settleTimer);
++      if (touchTargets.size > 0 || !hold.active) return;
++      hold.active = false;
++      hold.flush();
++    };
++    const onTouchEnd = (event) => {
++      for (const touch of Array.from(event.changedTouches)) {
++        const target = touchTargets.get(touch.identifier);
++        touchTargets.delete(touch.identifier);
++        if (target && !Array.from(touchTargets.values()).includes(target)) {
++          target.removeEventListener("touchend", onTouchEnd);
++          target.removeEventListener("touchcancel", onTouchEnd);
++        }
++      }
++      if (touchTargets.size > 0) return;
++      if (scrolled) {
++        clearTimeout(settleTimer);
++        settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
++      } else {
++        settle();
++      }
++    };
++    const onTouchStart = (event) => {
++      clearTimeout(settleTimer);
++      const down = new Set(Array.from(event.touches, (touch) => touch.identifier));
++      for (const id of Array.from(touchTargets.keys())) {
++        if (!down.has(id)) onTouchEnd({ changedTouches: [{ identifier: id }] });
++      }
++      if (touchTargets.size === 0) scrolled = false;
++      for (const touch of Array.from(event.changedTouches)) {
++        touchTargets.set(touch.identifier, touch.target);
++        touch.target.addEventListener("touchend", onTouchEnd, { passive: true });
++        touch.target.addEventListener("touchcancel", onTouchEnd, { passive: true });
++      }
++      hold.active = true;
++    };
++    const onScroll = () => {
++      hold.settleAtEdge();
++      if (!hold.active) return;
++      scrolled = true;
++      if (touchTargets.size === 0) {
++        clearTimeout(settleTimer);
++        settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
++      }
++    };
++    el.addEventListener("touchstart", onTouchStart, { passive: true });
++    el.addEventListener("scroll", onScroll, { passive: true });
++    el.addEventListener("scrollend", settle);
++    return () => {
++      el.removeEventListener("touchstart", onTouchStart);
++      el.removeEventListener("scroll", onScroll);
++      el.removeEventListener("scrollend", settle);
++      for (const target of new Set(touchTargets.values())) {
++        target.removeEventListener("touchend", onTouchEnd);
++        target.removeEventListener("touchcancel", onTouchEnd);
++      }
++      touchTargets.clear();
++      settle();
++      if (ctx.state.touchScrollHold === hold) ctx.state.touchScrollHold = void 0;
++    };
++  }, [ctx]);
+   useValueListener$("scrollAdjust", callback);
+   useValueListener$("scrollAdjustUserOffset", callback);
+   React3.useLayoutEffect(() => {
