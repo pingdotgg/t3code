@@ -28,7 +28,6 @@ export function ThreadTabAddButton({ threadKey }: { threadKey: string }) {
           <Button
             variant="ghost"
             size="icon-xs"
-            className="shrink-0"
             aria-label="Add as tab"
             data-thread-tab-add
             onClick={() => addTab(threadKey)}
@@ -73,8 +72,7 @@ function ThreadTabStripContent({ activeThreadKey }: { activeThreadKey: string | 
   };
 
   return (
-    <div
-      role="tablist"
+    <nav
       aria-label="Thread tabs"
       data-thread-tabs
       className={cn(
@@ -92,7 +90,7 @@ function ThreadTabStripContent({ activeThreadKey }: { activeThreadKey: string | 
           onClose={() => removeTab(tab.key)}
         />
       ))}
-    </div>
+    </nav>
   );
 }
 
@@ -135,8 +133,7 @@ function ThreadTabItem({
           render={
             <button
               type="button"
-              role="tab"
-              aria-selected={active}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex h-full min-w-0 items-center gap-1.5 rounded-md pl-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                 closable ? "pr-5.5" : "pr-2",
@@ -162,7 +159,7 @@ function ThreadTabItem({
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="bottom">
-          {tab.auto ? `${label}. Goes away once you have seen it.` : label}
+          {tab.auto ? `${label}. Goes away once it is done and you have seen it.` : label}
         </TooltipPopup>
       </Tooltip>
       {closable ? (
