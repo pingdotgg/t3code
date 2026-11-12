@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  handoffCoverage,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -176,6 +177,21 @@ describe("handoff budget", () => {
     assert.deepEqual(selected.messages, messages);
     assert.equal(selected.omittedItems, 2);
     assert.isAtMost(historyCost(selected.messages, selected.context), 3_000);
+  });
+
+  it("points history recovery at the omitted items instead of a read from the thread's start", () => {
+    const omitted = message("item:omitted", "assistant", "o".repeat(4_000));
+    const selected = selectHistory({
+      messages: [
+        messages[0]!,
+        omitted,
+        ...Array.from({ length: 3 }, (_, i) => message(`item:recent-${i}`, "assistant", "recent")),
+      ],
+      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 46 }, items: [] }),
+      budget: 3_000,
+    });
+    assert.deepEqual(selected.omittedItemIds, [omitted.itemId]);
+    assert.include(selected.context, omitted.itemId);
   });
 
   it("counts JSON escaping and UTF-8 bytes across many messages", () => {
