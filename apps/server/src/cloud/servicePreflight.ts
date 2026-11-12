@@ -1,3 +1,4 @@
+import { skippedV2Migrations } from "../persistence/Migrations.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
 import {
@@ -41,7 +42,13 @@ export function runServicePreflight(input: {
     };
   }
 
-  const newer = newerRecordedMigrations(input.databasePath);
+  const recorded = recordedMigrations(input.databasePath);
+  const newer =
+    recorded === null
+      ? null
+      : recorded
+          .filter(({ id }) => id > BUILD_MIGRATION_HEAD)
+          .map(({ id, name }) => `${id}_${name}`);
   if (newer === null) {
     return {
       status: "blocked",
@@ -57,16 +64,16 @@ export function runServicePreflight(input: {
     };
   }
 
-  return { status: "ready", version, launcherProtocol };
-}
+  const skipped = skippedV2Migrations(recorded ?? []);
+  if (skipped.length > 0) {
+    return {
+      status: "blocked",
+      version,
+      reason: `This database has incompatible migration history: ${skipped.join(", ")}. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
+    };
+  }
 
-/** Migrations a newer build recorded, or null when the database exists but cannot be read.
- * Startup already handles renamed ids this build knows. */
-function newerRecordedMigrations(databasePath: string): ReadonlyArray<string> | null {
-  const recorded = recordedMigrations(databasePath);
-  return recorded === null
-    ? null
-    : recorded.filter(({ id }) => id > BUILD_MIGRATION_HEAD).map(({ id, name }) => `${id}_${name}`);
+  return { status: "ready", version, launcherProtocol };
 }
 
 export function decodeServicePreflightResult(
