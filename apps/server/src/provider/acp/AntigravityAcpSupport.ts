@@ -126,9 +126,13 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   SecureRandom.SecureRandom | Scope.Scope
 > {
+  const processGroupPlatform = yield* HostProcess.Platform;
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
+      // Stop tears down the agent's process group to end commands session/cancel leaves running.
+      ownDetachedProcessGroup: true,
+      processGroupPlatform,
       authMethodId: input.authMethod ?? "oauth-personal",
       authenticateEagerly: true,
       resumeMethod: "resume",
