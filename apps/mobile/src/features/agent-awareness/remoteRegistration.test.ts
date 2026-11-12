@@ -2585,14 +2585,14 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     expect(original.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
     const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
 
-    clock.mockReturnValue(now + 60_000);
+    clock.mockReturnValue(now + 30_000);
     const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
     setTestAtom(environmentCatalog.catalogValueAtom, { ...catalog });
     expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications);
 
     setLiveShell("running");
     expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
-      now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS,
+      now + 30_000 + AGENT_ACTIVITY_FRESHNESS_MS,
     );
     expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications + 1);
   });
@@ -2684,12 +2684,12 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       const original = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
       expect(original.expiresAt).toBe(now + 60 * 60_000);
 
-      clock.mockReturnValue(now + 60_000);
-      yield* TestClock.setTime(now + 60_000);
+      clock.mockReturnValue(now + 30_000);
+      yield* TestClock.setTime(now + 30_000);
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
       const renewed = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
       expect(renewed.activities).toEqual(original.activities);
-      expect(renewed.expiresAt).toBe(now + 60_000 + 60 * 60_000);
+      expect(renewed.expiresAt).toBe(now + 30_000 + 60 * 60_000);
       const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
 
       clock.mockReturnValue(now + 120_000);

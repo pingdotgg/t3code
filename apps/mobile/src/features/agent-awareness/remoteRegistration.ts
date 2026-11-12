@@ -573,7 +573,7 @@ function publishRegularWidget(props: AgentActivityProps): void {
       ? [...props.observedEnvironmentIds].sort()
       : undefined,
     isStale: props.isStale,
-    expiresAt: props.expiresAt === undefined ? undefined : Math.floor(props.expiresAt / 60_000),
+    expiresAt: props.expiresAt,
     activities: props.activities.map(({ updatedAt: _updatedAt, ...row }) => row),
   });
   if (content === publishedWidgetContent) return;
