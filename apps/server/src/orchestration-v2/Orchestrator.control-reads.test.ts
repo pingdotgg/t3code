@@ -815,6 +815,13 @@ it.effect(
           assert.isUndefined(
             closed.item?.type === "user_input_request" ? closed.item.questionAnswer : undefined,
           );
+          const notices = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId} AND type = 'error'`;
+          assert.deepEqual(
+            notices.map((row) => JSON.parse(row.payload_json).title),
+            ["Answer not delivered"],
+          );
         }
       }
       yield* orchestrator.dispatch({

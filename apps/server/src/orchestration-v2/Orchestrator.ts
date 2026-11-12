@@ -726,6 +726,8 @@ function delegatedTasksStopEffect(command: {
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
+const RUNTIME_REQUEST_CLOSED_MESSAGE =
+  "The agent closed this question before your answer reached it. Reply in the chat to answer again.";
 
 function withoutPreparationResult(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>,
@@ -10634,7 +10636,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   /**
    * Respond resolves the request before delivery. A failed delivery cannot tell whether
    * the provider is still waiting, so the answer stays recorded and the timeline shows the
-   * failure. A request the provider closed first never got the answer, so it shows cancelled.
+   * failure. A request the provider closed first never got the answer, so it is cancelled too.
    */
   const dispatchRuntimeRequestDeliveryFail = Effect.fn(
     "Orchestrator.dispatchRuntimeRequestDeliveryFail",
@@ -10693,8 +10695,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...question, status: "cancelled", completedAt: now, updatedAt: now },
         });
       }
-      return;
     }
+    const closed = command.closed === true;
     yield* emit(
       events,
       command,
@@ -10716,14 +10718,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentItemId: null,
         ordinal: yield* nextTurnItemOrdinal({ thread }),
         status: "failed",
-        title: "Answer delivery not confirmed",
+        title: closed ? "Answer not delivered" : "Answer delivery not confirmed",
         startedAt: now,
         completedAt: now,
         updatedAt: now,
         type: "error",
         failure: {
           class: "transport_error",
-          message: RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE,
+          message: closed
+            ? RUNTIME_REQUEST_CLOSED_MESSAGE
+            : RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE,
           code: null,
           retryable: null,
         },
