@@ -11,6 +11,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -55,6 +56,8 @@ const KIRO_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 const KIRO_API_KEY_ENV = "KIRO_API_KEY";
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
+// `whoami` asks Kiro's servers for the account on every run, and they sometimes take over 10 s.
+const WHOAMI_PROBE_TIMEOUT_MS = 30_000;
 
 /**
  * The agent picker is not a model trait, but the composer reads options per
@@ -403,15 +406,26 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
     });
   }
 
-  const whoamiResult = yield* runKiroCli(
+  const [whoamiElapsed, whoamiResult] = yield* runKiroCli(
     settings,
     ["whoami", "--format", "json"],
     probeEnvironment,
-  ).pipe(Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS), Effect.result);
+  ).pipe(Effect.timeoutOption(WHOAMI_PROBE_TIMEOUT_MS), Effect.result, Effect.timed);
   const auth = kiroAuthFromWhoami(
     Result.isSuccess(whoamiResult) ? Option.getOrUndefined(whoamiResult.success) : undefined,
     environment,
   );
+  // How long Kiro took to confirm the sign-in, so slow answers show up in traces.
+  yield* Effect.annotateCurrentSpan({
+    "kiro.whoami.durationMs": Math.round(Duration.toMillis(whoamiElapsed)),
+    "kiro.whoami.outcome": Result.isFailure(whoamiResult)
+      ? "failed"
+      : Option.match(whoamiResult.success, {
+          onNone: () => "timed out",
+          onSome: (output) => `exit ${output.code}`,
+        }),
+    "kiro.whoami.auth": auth.status,
+  });
   if (auth.status === "unauthenticated") {
     return snapshot(settings, checkedAt, {
       installed: true,

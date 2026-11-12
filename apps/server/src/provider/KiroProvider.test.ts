@@ -162,6 +162,39 @@ describe("KiroProvider", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      label: "answers after 13 s",
+      delay: "13 seconds",
+      status: "ready",
+      auth: "authenticated",
+      message: undefined,
+    },
+    {
+      label: "never answers",
+      delay: "Infinity",
+      status: "warning",
+      auth: "unknown",
+      message: "Could not confirm the Kiro sign-in. Run `kiro-cli whoami` to check.",
+    },
+  ] as const)("gives `kiro-cli whoami` 30 s when it $label", (row) =>
+    Effect.gen(function* () {
+      const fiber = yield* check({
+        "--version": { stdout: "kiro-cli 2.27.0\n", code: 0 },
+        "whoami --format json": {
+          stdout: '{"accountType":"ApiKey","email":null}\n',
+          code: 0,
+          delay: row.delay,
+        },
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      const { snapshot } = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, row.status);
+      assert.equal(snapshot.auth.status, row.auth);
+      assert.equal(snapshot.message, row.message);
+    }),
+  );
+
   it.effect("reports a CLI whose version probe exits nonzero as failing to run", () =>
     Effect.gen(function* () {
       const { snapshot, invoked } = yield* check({
