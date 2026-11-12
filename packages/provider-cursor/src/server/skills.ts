@@ -241,6 +241,9 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const roots = [
     ...(cwd ? rootsBelow(cwd, "project") : []),
     ...rootsBelow(userHome, "user"),
+    // Installed plugins: local ones, and marketplace or team ones Cursor extracts to its cache.
+    { directory: path.join(userHome, ".cursor", "plugins", "local"), scope: "user" as const },
+    { directory: path.join(userHome, ".cursor", "plugins", "cache"), scope: "user" as const },
     // Cursor syncs its built-in skills here; same-named user and project skills win.
     { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "system" as const },
   ];
