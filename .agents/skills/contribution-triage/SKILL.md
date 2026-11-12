@@ -129,14 +129,16 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
 - **Closure warranted.** The assessment is complete and establishes a specific policy violation.
   Prepare a clear explanation under [closure and reconsideration](../../../CONTRIBUTING.md#closure-and-reconsideration),
   post it, then read the repository variable `PR_LIMITS_ENFORCE`
-  (`gh variable get PR_LIMITS_ENFORCE -R pingdotgg/t3code`). When it is `true`, apply
-  `triage:closing`, verify that the explanation and the label are present, and do not close the PR
-  yourself: [pr-limits.yml](../../../.github/workflows/pr-limits.yml) closes it 72 hours after the
-  label. An author reply or a push to the PR removes the label first; treat that as new evidence,
-  reassess, and apply the label again only if the finding still holds. When the variable is unset
-  or has any other value, nothing would close a labeled PR: close it yourself and verify that the
-  explanation is present and the PR is closed. If the variable cannot be read, report the closure
-  as incomplete. The comment
+  (`gh variable get PR_LIMITS_ENFORCE -R pingdotgg/t3code`). When it prints `true`, apply
+  `triage:closing` as the last thing you do to the PR, verify that the explanation and the label
+  are present, and do not close the PR yourself:
+  [pr-limits.yml](../../../.github/workflows/pr-limits.yml) closes it 72 hours after the label. Any
+  activity on the PR after the label, including a further comment or label from you, removes the
+  label; treat an author's reply or push as new evidence, reassess, and apply the label again only
+  if the finding still holds. When the command prints any other value, or fails saying the variable
+  was not found, the variable is off and nothing would close a labeled PR: close it yourself and
+  verify that the explanation is present and the PR is closed. Only another failure, such as a
+  permission error, means the variable cannot be read; then report the closure as incomplete. The comment
   must name the violated rule, cite supporting submission evidence, link the maintained guide section,
   and give a concrete remedy. Missing contributor evidence can warrant closure; explain what must be
   established. Missing product approval calls for maintainer discussion, not an agent's product decision.

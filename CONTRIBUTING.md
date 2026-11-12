@@ -158,9 +158,9 @@ limit for that PR.
 <a id="conflict-window"></a>
 
 A PR labeled `vouch:unvouched` that conflicts with its base branch gets a request to rebase and the
-`needs-rebase` label. A push removes the label. A PR that still conflicts 7 days after the request,
-with no push since, is closed. The conflict window does not start, and stops, once someone in
-[TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) has commented or submitted a review.
+`needs-rebase` label. The label comes off once the PR no longer conflicts. A PR that still conflicts
+after 7 days with no activity is closed. Any activity on the PR, such as a push, a comment, or a
+review from anyone, restarts the 7 days.
 
 <a id="closure-and-reconsideration"></a>
 
@@ -173,9 +173,9 @@ posted, such as an earlier notice, do not count, even when they came from a main
 This protection does not imply eligibility or review approval.
 
 A policy-based closure starts with a notice. Triage posts the explanation and applies
-`triage:closing`, and the PR closes 72 hours later. A reply from the author or a push to the PR within that time
-removes the label and sends the PR back to triage, which reassesses it with the new evidence. A
-comment or review from a maintainer after the notice also stops the close.
+`triage:closing`, and the PR closes 72 hours later. Any activity on the PR within that time, such as
+a reply, a push, or a maintainer's comment, removes the label and sends the PR back to triage, which
+reassesses it with the new evidence.
 
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.
