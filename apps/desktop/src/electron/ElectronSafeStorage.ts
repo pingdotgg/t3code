@@ -66,7 +66,8 @@ export class ElectronSafeStorage extends Context.Service<
 >()("@t3tools/desktop/electron/ElectronSafeStorage") {}
 
 // Linux keyring keys tag ciphertext "v11". Without a usable keyring the async encryptor
-// silently falls back to Chromium's fixed "v10" key, which protects nothing.
+// silently falls back to Chromium's fixed "v10" key, which protects nothing. Empty
+// plaintext encrypts to an empty buffer, so availability probes with a nonempty string.
 const LINUX_KEYRING_CIPHERTEXT_PREFIX = Buffer.from("v11");
 
 const isLinuxKeyringCiphertext = (ciphertext: Buffer) =>
@@ -77,7 +78,8 @@ const isLinuxKeyringCiphertext = (ciphertext: Buffer) =>
 // The sync API blocks the Linux main loop while a locked keyring waits to be unlocked.
 const makeLinux = () => ({
   isEncryptionAvailable: Effect.tryPromise({
-    try: async () => isLinuxKeyringCiphertext(await Electron.safeStorage.encryptStringAsync("")),
+    try: async () =>
+      isLinuxKeyringCiphertext(await Electron.safeStorage.encryptStringAsync("probe")),
     catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
   }),
   encryptString: Effect.fn("ElectronSafeStorage.encryptString")(function (value: string) {

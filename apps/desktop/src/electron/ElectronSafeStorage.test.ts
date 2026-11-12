@@ -23,7 +23,8 @@ it.effect("waits for a locked Linux keyring without calling the blocking sync AP
     const unlocked = Promise.withResolvers<void>();
     safeStorage.encryptStringAsync.mockImplementation(async (value: string) => {
       await unlocked.promise;
-      return Buffer.from(`v11${value}`);
+      // Chromium encrypts empty plaintext to an empty buffer, with no version prefix.
+      return value === "" ? Buffer.alloc(0) : Buffer.from(`v11${value}`);
     });
     safeStorage.decryptStringAsync.mockImplementation(async (value: Buffer) => ({
       result: value.subarray(3).toString(),
