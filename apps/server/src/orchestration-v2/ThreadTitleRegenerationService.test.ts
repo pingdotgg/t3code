@@ -638,23 +638,34 @@ describe("ThreadTitleRegenerationService", () => {
       const harness = makeHarness();
       yield* Effect.gen(function* () {
         const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
         const threadId = yield* createThread({
           command: "command:title:off:create",
           thread: "thread:title:off",
         });
+        const first = "command:title:off:1";
         yield* dispatchUserMessage({
-          command: "command:title:off:1",
+          command: first,
           threadId,
           text: "First ask",
           titleSeed: "First ask",
         });
-        yield* dispatchUserMessage({ command: "command:title:off:2", threadId, text: "Second" });
-        assert.deepEqual(
-          (yield* outbox.listByCommandId(CommandId.make("command:title:off:2"))).filter(
-            (effect) => effect.request.type === "thread-title.generate",
-          ),
-          [],
-        );
+        // Finish the first title so only the missing interval can hold regeneration back.
+        yield* service.execute({
+          threadId,
+          requestId: CommandId.make(first),
+          kind: { type: "initial", messageId: MessageId.make(`${first}:message`) },
+        });
+        for (const step of [2, 3, 4, 5]) {
+          const command = `command:title:off:${step}`;
+          yield* dispatchUserMessage({ command, threadId, text: `Message ${step}` });
+          assert.deepEqual(
+            (yield* outbox.listByCommandId(CommandId.make(command))).filter(
+              (effect) => effect.request.type === "thread-title.generate",
+            ),
+            [],
+          );
+        }
       }).pipe(Effect.provide(harness.layer));
     }),
   );
