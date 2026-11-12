@@ -671,6 +671,16 @@ describe("folder actions", () => {
       ["unsettle", old.id],
     ]);
     expect(state.familyReads).toEqual([old.id, "archived"]);
+
+    state.requests = [];
+    await useThreadListActions().deleteFolder(folder, true);
+    await state.dialogs.at(-1)!.onConfirm();
+    await vi.waitFor(() => expect(state.folderRequests).toHaveLength(1));
+    expect(state.requests.map(({ action, input }) => [action, input.threadId])).toEqual([
+      ["delete", loaded.id],
+      ["delete", old.id],
+      ["delete", active.id],
+    ]);
   });
 
   it("reorders only within the folder's environment and rejects moves at the ends", async () => {

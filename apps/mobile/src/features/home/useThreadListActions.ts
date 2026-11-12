@@ -234,7 +234,7 @@ export function useThreadListActions(): {
   ) => Promise<boolean>;
   readonly createFolder: (thread: EnvironmentThreadShell) => void;
   readonly renameFolder: (folder: EnvironmentThreadFolder) => void;
-  readonly deleteFolder: (folder: EnvironmentThreadFolder, withThreads: boolean) => void;
+  readonly deleteFolder: (folder: EnvironmentThreadFolder, withThreads: boolean) => Promise<void>;
   readonly moveFolder: (
     folder: EnvironmentThreadFolder,
     direction: "up" | "down",
@@ -324,10 +324,9 @@ export function useThreadListActions(): {
       ),
     );
   };
-  const settleFolder = async (folder: EnvironmentThreadFolder, settled: boolean) => {
-    let allMembers: ReadonlyArray<EnvironmentThreadShell>;
+  const loadFolderMembers = async (folder: EnvironmentThreadFolder) => {
     try {
-      allMembers = await readThreadFolderMembers(
+      const members = await readThreadFolderMembers(
         folder,
         appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
         async (threadId) => {
@@ -345,17 +344,17 @@ export function useThreadListActions(): {
           );
         },
       );
+      return members.filter((thread) => thread.archivedAt === null && thread.deletedAt === null);
     } catch {
       Dialog.alert("Could not change folder", "Could not load every thread. Try again.");
-      return false;
+      return null;
     }
+  };
+  const settleFolder = async (folder: EnvironmentThreadFolder, settled: boolean) => {
+    const allMembers = await loadFolderMembers(folder);
+    if (allMembers === null) return false;
     const members = allMembers.filter(
-      (thread) =>
-        thread.environmentId === folder.environmentId &&
-        folder.threadIds.includes(thread.id) &&
-        thread.archivedAt === null &&
-        thread.deletedAt === null &&
-        (thread.settledOverride === "settled") !== settled,
+      (thread) => (thread.settledOverride === "settled") !== settled,
     );
     const results = await Promise.all(
       members.map((thread) => (settled ? settleThread(thread) : unsettleThread(thread))),
@@ -402,16 +401,10 @@ export function useThreadListActions(): {
       },
     });
   };
-  const deleteFolder = (folder: EnvironmentThreadFolder, withThreads: boolean) => {
+  const deleteFolder = async (folder: EnvironmentThreadFolder, withThreads: boolean) => {
     if (!checkThreadOperationPermission(folder, "Could not delete folder")) return;
-    const threads = withThreads
-      ? appAtomRegistry
-          .get(environmentThreadShells.threadShellsAtom)
-          .filter(
-            (thread) =>
-              thread.environmentId === folder.environmentId && folder.threadIds.includes(thread.id),
-          )
-      : [];
+    const threads = withThreads ? await loadFolderMembers(folder) : [];
+    if (threads === null) return;
     Dialog.confirm({
       title: withThreads
         ? `Delete folder and ${threads.length} thread${threads.length === 1 ? "" : "s"}?`

@@ -117,7 +117,7 @@ async function createFolderAndRename(environmentId: EnvironmentId, threadIds: re
   requestThreadFolderRename(scopedThreadFolderKey({ environmentId, id }));
 }
 
-async function moveThreadBatches(input: {
+export async function moveThreadBatches(input: {
   readonly environmentId: EnvironmentId;
   readonly threadIds: readonly ThreadId[];
   readonly folderId: ThreadFolderId | null;

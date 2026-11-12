@@ -16,7 +16,6 @@ import {
   isAddingRelatedThreads,
   useThreadFolders,
   mutateThreadFolders,
-  moveThreadsToFolder,
   readEnvironmentSupportsThreadFolders,
   requestThreadFolderRename,
 } from "../state/threadFolders";
@@ -24,6 +23,7 @@ import {
   buildMoveToFolderMenuItem,
   buildMultiSelectFolderMenuItems,
   isThreadFolderMenuId,
+  moveThreadBatches,
   runThreadFolderMenuAction,
 } from "../hooks/threadFolderMenu";
 import {
@@ -1816,30 +1816,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
+  // Every live member, including ones the sidebar does not list (other projects, older pages).
+  const loadThreadFolderMembers = async (folder: EnvironmentThreadFolder) => {
+    try {
+      return (
+        await readThreadFolderMembers(folder, threads, async (threadId) => {
+          const result = await executeAtomQuery(
+            appAtomRegistry,
+            orchestrationEnvironment.threadFamily({
+              environmentId: folder.environmentId,
+              input: { threadId },
+            }),
+            { refresh: true, reportFailure: false },
+          );
+          if (result._tag !== "Success") throw new Error("Could not load folder threads.");
+          return result.value.threads.map((thread) =>
+            presentThreadShell(folder.environmentId, thread),
+          );
+        })
+      ).filter((thread) => thread.archivedAt === null && thread.deletedAt === null);
+    } catch {
+      toastManager.add({ type: "error", title: "Could not load folder threads" });
+      return null;
+    }
+  };
   const handleThreadFolderSettle = useStableCallback(
     async (folder: EnvironmentThreadFolder, action: "settle" | "unsettle") => {
-      let members: ReadonlyArray<EnvironmentThreadShell>;
-      try {
-        members = (
-          await readThreadFolderMembers(folder, threads, async (threadId) => {
-            const result = await executeAtomQuery(
-              appAtomRegistry,
-              orchestrationEnvironment.threadFamily({
-                environmentId: folder.environmentId,
-                input: { threadId },
-              }),
-              { refresh: true, reportFailure: false },
-            );
-            if (result._tag !== "Success") throw new Error("Could not load folder threads.");
-            return result.value.threads.map((thread) =>
-              presentThreadShell(folder.environmentId, thread),
-            );
-          })
-        ).filter((thread) => thread.archivedAt === null && thread.deletedAt === null);
-      } catch {
-        toastManager.add({ type: "error", title: "Could not load folder threads" });
-        return;
-      }
+      const members = await loadThreadFolderMembers(folder);
+      if (members === null) return;
       if (action === "settle") {
         const coSettlingKeys = new Set(members.map(threadShellKey));
         for (const thread of members) {
@@ -2020,7 +2024,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           });
           return;
         case "delete-threads": {
-          const count = members.length;
+          const allMembers = await loadThreadFolderMembers(folder);
+          if (allMembers === null) return;
+          const count = allMembers.length;
           if (confirmThreadDelete) {
             const confirmed = await settlePromise(() =>
               api.dialogs.confirm(
@@ -2033,9 +2039,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;
           }
-          if (!checkThreadOperations(members)) return;
-          const { firstFailure } = await deleteSelectedThreadEntries({
-            entries: members.map((thread) => ({
+          if (!checkThreadOperations(allMembers)) return;
+          const { deletedThreadKeys, firstFailure } = await deleteSelectedThreadEntries({
+            entries: allMembers.map((thread) => ({
               threadKey: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
               thread,
             })),
@@ -2053,6 +2059,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             );
             return;
           }
+          // An interrupted run stops early without a failure; keep the folder so it can be retried.
+          if (deletedThreadKeys.size < allMembers.length) return;
           void mutateThreadFolders(folder.environmentId, {
             type: "folder.delete",
             folderId: folder.id,
@@ -2310,7 +2318,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const ref = parseScopedThreadKey(candidate);
         return ref && ref.environmentId === thread.environmentId ? [ref.threadId] : [];
       });
-      void moveThreadsToFolder({
+      void moveThreadBatches({
         environmentId: thread.environmentId,
         threadIds,
         folderId:
