@@ -2023,6 +2023,40 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect("keeps the live session until a better route that answered has connected", () =>
+    Effect.gen(function* () {
+      const lanReachable = yield* Ref.make(false);
+      const releasesAtLanAttempt = yield* Deferred.make<number>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? "answered" : "silent")),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) =>
+          target._tag === "BearerConnectionTarget"
+            ? Ref.get(harness.releaseCount).pipe(
+                Effect.flatMap((releases) => Deferred.succeed(releasesAtLanAttempt, releases)),
+                Effect.andThen(Effect.fail(transient("WebSocket upgrade failed."))),
+              )
+            : Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* Ref.set(lanReachable, true);
+      yield* TestClock.adjust("60 seconds");
+
+      expect(yield* Deferred.await(releasesAtLanAttempt)).toBe(0);
+    }),
+  );
+
   it.effect("keeps checking a LAN route every minute when it answers but cannot be prepared", () =>
     Effect.gen(function* () {
       const lanPreflights = yield* Ref.make(0);
