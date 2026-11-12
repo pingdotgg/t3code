@@ -14,7 +14,4 @@ declare module "vite-plus/test/browser" {
 // running and can move the mouse after its own afterEach.
 beforeEach(async () => {
   await commands.resetPointer();
-  // Every test file shares one origin, so a sidebar another file collapsed would start collapsed here.
-  localStorage.clear();
-  sessionStorage.clear();
 });
