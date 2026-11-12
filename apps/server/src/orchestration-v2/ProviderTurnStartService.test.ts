@@ -1350,7 +1350,12 @@ effectIt.effect(
       yield* harness.start;
 
       expect(harness.interruptTurn).toHaveBeenCalledOnce();
-      expect(harness.projection().providerTurns[0]).toMatchObject({
+      // The steered attempt's turn was already interrupted in the fixture; the
+      // repair this asserts is the running turn left on the superseded attempt.
+      const abandoned = harness
+        .projection()
+        .providerTurns.find((turn) => turn.id === ProviderTurnId.make("previous-provider-turn"));
+      expect(abandoned).toMatchObject({
         status: "interrupted",
         completedAt: expect.anything(),
       });
