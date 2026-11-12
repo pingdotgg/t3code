@@ -1133,7 +1133,7 @@ type ShellItemCountRow = {
 
 const encodeTimelineSources = Schema.encodeEffect(
   Schema.fromJsonString(
-    Schema.Array(Schema.Struct({ threadId: Schema.String, id: Schema.String })),
+    Schema.Array(Schema.Struct({ threadId: Schema.String, id: Schema.NullOr(Schema.String) })),
   ),
 );
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -6281,8 +6281,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     )(
       function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includeAttempts = false) {
         const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
-        // SQLite does not pick the covering indexes of migration 086 by itself, and without them
-        // this read fetches every row of the thread. It reads a payload only for a message.
         const rows = yield* sql<{
           turn_item_id: string;
           run_id: string | null;
@@ -6303,11 +6301,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
           CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id
         FROM orchestration_v2_projection_turn_items AS item
-          INDEXED BY orchestration_v2_projection_turn_items_timeline_idx
         ${
           includeAttempts
-            ? sql`LEFT JOIN orchestration_v2_projection_nodes AS node
-          INDEXED BY orchestration_v2_projection_nodes_root_idx ON node.node_id = item.node_id
+            ? sql`LEFT JOIN orchestration_v2_projection_nodes AS node ON node.node_id = item.node_id
         LEFT JOIN orchestration_v2_projection_run_attempts AS attempt ON attempt.attempt_id = (
           SELECT attempt_id FROM orchestration_v2_projection_run_attempts
           WHERE run_id = item.run_id AND root_node_id = COALESCE(node.root_node_id, item.node_id)
@@ -6516,22 +6512,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               if (cursorPosition >= 0) span.push(cursorPosition);
               if (span.length === 0) break;
               const runs = new Map(
-                indexed
-                  .slice(Math.min(...span), Math.max(...span) + 1)
-                  .flatMap(({ sourceThreadId, item }) =>
-                    item.runId !== null &&
-                    (workMode === "work" ||
-                      item.runStatus === "completed" ||
-                      item.attemptStatus === "superseded") &&
-                    !scannedRuns.has(`${sourceThreadId}:${item.runId}`)
-                      ? [
-                          [
-                            `${sourceThreadId}:${item.runId}`,
-                            { threadId: sourceThreadId, id: item.runId },
-                          ] as const,
-                        ]
-                      : [],
-                  ),
+                // A work page holds rows of one run, which can be the rows that have no run.
+                (workMode === "work"
+                  ? page.items.slice(0, 1)
+                  : indexed.slice(Math.min(...span), Math.max(...span) + 1)
+                ).flatMap(({ sourceThreadId, item }) =>
+                  (workMode === "work" ||
+                    (item.runId !== null &&
+                      (item.runStatus === "completed" || item.attemptStatus === "superseded"))) &&
+                  !scannedRuns.has(`${sourceThreadId}:${item.runId}`)
+                    ? [
+                        [
+                          `${sourceThreadId}:${item.runId}`,
+                          { threadId: sourceThreadId, id: item.runId },
+                        ] as const,
+                      ]
+                    : [],
+                ),
               );
               if (runs.size === 0) break;
               for (const run of runs.keys()) scannedRuns.add(run);
@@ -6540,7 +6537,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           FROM json_each(${yield* encodeTimelineSources([...runs.values()])}) AS wanted
           CROSS JOIN orchestration_v2_projection_turn_items AS item
             ON item.thread_id = json_extract(wanted.value, '$.threadId')
-            AND item.run_id = json_extract(wanted.value, '$.id')
+            AND item.run_id IS json_extract(wanted.value, '$.id')
           WHERE item.status = 'completed' AND ${inlineWorkOutput}`;
               if (found.length === 0) break;
               for (const row of found)

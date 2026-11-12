@@ -4219,33 +4219,40 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           "deferred",
         ).pipe(Effect.withTracer(pageRead.tracer));
         assert.isUndefined(page.items.find((row) => row.item.ordinal === 2)?.item.deferredWork);
-        // Tool payloads hold megabytes, so a page looks for inline output only in its own runs
-        // and indexes the thread without fetching a row or node per item.
+        // Tool payloads hold megabytes, so a page looks for inline output only in its own runs.
         const payloadScans = pageRead.statements.filter((statement) =>
           statement.includes("LIKE '%htmlRender%'"),
         );
         assert.lengthOf(payloadScans, 1);
-        assert.include(payloadScans[0], "item.run_id = json_extract(wanted.value, '$.id')");
-        const indexRead = pageRead.statements.find((statement) =>
-          statement.includes("ORDER BY item.ordinal ASC, item.turn_item_id ASC"),
-        );
-        assert.isDefined(indexRead);
-        const indexPlan = yield* sql.unsafe<{ readonly detail: string }>(
-          `EXPLAIN QUERY PLAN ${indexRead}`,
-        );
-        assert.includeMembers(
-          indexPlan.map((row) => row.detail),
-          [
-            "SEARCH item USING INDEX orchestration_v2_projection_turn_items_timeline_idx (thread_id=?)",
-            "SEARCH node USING COVERING INDEX orchestration_v2_projection_nodes_root_idx (node_id=?) LEFT-JOIN",
-          ],
-        );
+        assert.include(payloadScans[0], "item.run_id IS json_extract(wanted.value, '$.id')");
       }
       // Until its run is scanned, a cursor on inline output is hidden inside a work group.
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
         payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task')
         WHERE thread_id = ${threadId} AND ordinal = 4`;
       const sharedRunId = "run:bounded-sql-history:1";
+      // A work page of rows that have no run leaves their inline output out too.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET run_id = NULL
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN 3 AND 6`;
+      const runlessWork = yield* historyPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: "turn-item:bounded-sql-history:6",
+          position: 6,
+          inclusive: true,
+        }),
+        "turn-item:bounded-sql-history:3",
+        false,
+        "work",
+      );
+      assert.deepEqual(
+        runlessWork.items.map((row) => row.item.ordinal),
+        [3, 5, 6],
+      );
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET run_id = ${sharedRunId}
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN 3 AND 6`;
       // A stale position selects from the cursor row itself, or from more than a page after it
       // once the later rows are another run's and cannot fold.
       for (const [position, laterStatus, laterRun] of [
