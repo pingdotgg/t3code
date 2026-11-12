@@ -714,14 +714,12 @@ it.effect("reads config for a repository that does not exist yet without the enc
     const path = yield* Path.Path;
     const cwd = yield* makeTmpDir();
     yield* initRepoWithCommit(cwd);
-    yield* git(cwd, ["config", "filter.lfs.process", "git-lfs filter-process"]);
+    // A key no global config sets; machines with git-lfs installed set filter.lfs.process globally.
+    yield* git(cwd, ["config", "t3code.test-enclosing", "true"]);
     const driver = yield* GitVcsDriver.GitVcsDriver;
     const gitDir = path.join(cwd, "clone", ".git");
-    assert.equal(
-      yield* driver.readConfigValue(cwd, "filter.lfs.process"),
-      "git-lfs filter-process",
-    );
-    assert.isNull(yield* driver.readConfigValue(cwd, "filter.lfs.process", { gitDir }));
+    assert.equal(yield* driver.readConfigValue(cwd, "t3code.test-enclosing"), "true");
+    assert.isNull(yield* driver.readConfigValue(cwd, "t3code.test-enclosing", { gitDir }));
   }).pipe(Effect.provide(layerTest)),
 );
 
