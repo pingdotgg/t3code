@@ -1209,7 +1209,10 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         yield* TestClock.adjust("10 seconds");
         const snapshot = yield* Fiber.join(snapshotFiber);
         assert.deepStrictEqual(snapshot.skills, []);
-        assert.deepStrictEqual(snapshot.slashCommands, []);
+        assert.include(
+          snapshot.slashCommands.map((command) => command.name),
+          "compact",
+        );
         assert.isUndefined(snapshot.optionDescriptors);
       }).pipe(Effect.scoped),
     );
