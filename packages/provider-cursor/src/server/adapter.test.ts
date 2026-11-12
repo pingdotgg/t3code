@@ -2081,6 +2081,7 @@ describe("CursorAdapterV2", () => {
             "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
             "unset-env": { "command": "node", "env": { "CONFIG": "\${env:T3_MCP_UNSET}" } },
             "wrapped": { "command": "proto", "args": ["run", "node", "--", "\${workspaceFolder}/server.mjs"] },
+            "label": { "command": "node", "args": ["server.mjs", "--label", "\${workspaceFolder}/client"] },
             "env-file": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "envFile": ".env.mcp" },
             "tool-filter": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "enabledTools": ["read_file"] },
             "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
@@ -2234,11 +2235,6 @@ describe("CursorAdapterV2", () => {
             cwd: projectRoot,
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
-          wrapped: {
-            command: "proto",
-            args: ["run", "node", "--", `${projectRoot}/server.mjs`],
-            cwd: projectRoot,
-          },
         };
         // The agent is created with T3's server only; the resolved servers go with each turn.
         assert.deepEqual(openedWith?.mcpServers, t3Servers);

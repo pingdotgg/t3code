@@ -15,6 +15,8 @@ const PLACEHOLDER_PATTERN = /\$\{(?:env:([A-Za-z_][A-Za-z0-9_]*)|([^:}]+)(?::-([
 const WORKSPACE_VARIABLE_PATTERN =
   /\$\{(?:workspaceFolder|workspaceFolderBasename|userHome|pathSeparator|\/)\}/;
 const WORKSPACE_PATH_PATTERN = /^\$\{(?:workspaceFolder|userHome)\}[\\/]/;
+// These exit when their script argument is missing; other arguments may be labels a server ignores.
+const SCRIPT_INTERPRETERS = new Set(["node", "bun", "tsx", "python", "python3"]);
 
 const StringRecord = Schema.Record(Schema.String, Schema.String);
 const CursorMcpFile = Schema.Struct({
@@ -62,8 +64,11 @@ function needsWorkspaceExpansion(server: unknown): boolean {
     [command, cwd].some(
       (text) => typeof text === "string" && WORKSPACE_VARIABLE_PATTERN.test(text),
     ) ||
-    (Array.isArray(args) &&
-      args.some((arg) => typeof arg === "string" && WORKSPACE_PATH_PATTERN.test(arg)))
+    (typeof command === "string" &&
+      SCRIPT_INTERPRETERS.has(command.replace(/^.*[\\/]/, "").replace(/\.exe$/i, "")) &&
+      Array.isArray(args) &&
+      typeof args[0] === "string" &&
+      WORKSPACE_PATH_PATTERN.test(args[0]))
   );
 }
 
