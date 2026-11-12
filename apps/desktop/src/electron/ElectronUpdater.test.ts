@@ -1,59 +1,118 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Fake Electron net request and response emitters.
-import * as NodeEvents from "node:events";
-import { ElectronHttpExecutor } from "electron-updater/out/electronHttpExecutor.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off -- Intercepts the spawn electron-updater requires natively.
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { autoUpdater } from "electron-updater";
+import type * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
+import { vi } from "vite-plus/test";
 
-function startRequest() {
-  const request = Object.assign(new NodeEvents.EventEmitter(), { abort: vi.fn() });
-  const response = new NodeEvents.EventEmitter();
-  const reject = vi.fn();
-  new ElectronHttpExecutor().addErrorAndTimeoutHandlers(request, reject);
-  // Electron's net.ClientRequest emits these as soon as the request body is sent, before any response.
-  request.emit("finish");
-  request.emit("close");
-  return { request, response, reject };
-}
-
-describe("ElectronHttpExecutor idle timeout", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("aborts a request that receives no response for 60 seconds", () => {
-    const { request, reject } = startRequest();
-
-    vi.advanceTimersByTime(59_999);
-    expect(reject).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-
-    expect(request.abort).toHaveBeenCalledOnce();
-    expect(reject).toHaveBeenCalledWith(new Error("Request timed out"));
-  });
-
-  it("keeps a slow download alive while data keeps arriving", () => {
-    const { request, response, reject } = startRequest();
-    request.emit("response", response);
-
-    for (let elapsed = 0; elapsed < 180_000; elapsed += 30_000) {
-      vi.advanceTimersByTime(30_000);
-      response.emit("data", Buffer.alloc(1));
-    }
-
-    expect(request.abort).not.toHaveBeenCalled();
-    expect(reject).not.toHaveBeenCalled();
-  });
-
-  it("stops the timer once the response ends", () => {
-    const { request, response, reject } = startRequest();
-    request.emit("response", response);
-
-    response.emit("end");
-    vi.advanceTimersByTime(600_000);
-
-    expect(request.abort).not.toHaveBeenCalled();
-    expect(reject).not.toHaveBeenCalled();
-  });
+// electron-updater requires Electron natively, outside vi.mock's reach, and builds its
+// autoUpdater singleton as soon as it is imported.
+vi.hoisted(() => {
+  const NodeModule = process.getBuiltinModule("node:module");
+  const NodeEvents = process.getBuiltinModule("node:events");
+  const require = NodeModule.createRequire(import.meta.url);
+  const electronPath = NodeModule.createRequire(require.resolve("electron-updater")).resolve(
+    "electron",
+  );
+  const electronModule = new NodeModule.Module(electronPath);
+  electronModule.filename = electronPath;
+  electronModule.loaded = true;
+  electronModule.exports = {
+    app: {
+      getVersion: () => "1.0.0",
+      getName: () => "T3 Code",
+      isPackaged: true,
+      quit: () => undefined,
+      once: () => undefined,
+    },
+    autoUpdater: new NodeEvents.EventEmitter(),
+  };
+  require.cache[electronPath] = electronModule;
 });
+
+import * as ElectronUpdater from "./ElectronUpdater.ts";
+
+const childProcess = NodeModule.createRequire(import.meta.url)("node:child_process") as {
+  spawn: (
+    command: string,
+    args: ReadonlyArray<string>,
+    options: NodeChildProcess.SpawnOptions,
+  ) => NodeChildProcess.ChildProcess;
+};
+
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "ElectronUpdater AppImage install",
+  () => {
+    it.live("relaunches the installed AppImage without the updating process's descriptors", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-appimage-install-" });
+        const appImagePath = path.join(dir, "T3-Code.AppImage");
+        const stagedPath = path.join(dir, "T3-Code-1.0.1.AppImage");
+        const fdReportPath = path.join(dir, "relaunched-fds.txt");
+        yield* fileSystem.writeFileString(appImagePath, "old AppImage");
+        yield* fileSystem.writeFileString(
+          stagedPath,
+          `#!/bin/sh\nls /proc/self/fd > '${fdReportPath}'\n`,
+        );
+        yield* fileSystem.chmod(stagedPath, 0o755);
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubEnv("APPIMAGE", appImagePath)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        autoUpdater.logger = null;
+        Object.assign(autoUpdater, {
+          downloadedUpdateHelper: {
+            file: stagedPath,
+            downloadedFileInfo: { isAdminRightsRequired: false },
+          },
+        });
+
+        // Electron's main process holds the AppImage runtime's keepalive pipe and some
+        // Chromium files without O_CLOEXEC. Node cannot hold such a descriptor, so the
+        // relaunch runs with fd 7 opened that way to stand in for them.
+        const relaunched = yield* Deferred.make<void>();
+        const realSpawn = childProcess.spawn;
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            childProcess.spawn = (command, args, options) => {
+              const child = realSpawn(
+                "bash",
+                ["-c", 'exec 7</dev/null; exec "$@"', "leaky-parent", command, ...args],
+                options,
+              );
+              child.once("exit", () => Deferred.doneUnsafe(relaunched, Effect.void));
+              return child;
+            };
+            NodeModule.syncBuiltinESMExports();
+          }),
+          () =>
+            Effect.sync(() => {
+              childProcess.spawn = realSpawn;
+              NodeModule.syncBuiltinESMExports();
+            }),
+        );
+
+        const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
+        yield* electronUpdater.quitAndInstall({ isSilent: true, isForceRunAfter: true });
+        yield* Deferred.await(relaunched);
+
+        const descriptors = (yield* fileSystem.readFileString(fdReportPath)).trim().split("\n");
+        assert.notInclude(
+          descriptors,
+          "7",
+          `relaunched AppImage inherited the updating process's fd 7 (open fds: ${descriptors.join(" ")})`,
+        );
+      }).pipe(Effect.provide([ElectronUpdater.layer, NodeServices.layer])),
+    );
+  },
+);
