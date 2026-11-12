@@ -3875,7 +3875,6 @@ export default function ChatView(props: ChatViewProps) {
                               stashHost={composerStashHost}
                               trayControlsHost={composerTrayControlsHost}
                               onComposerOverlayHeightChange={publishComposerOverlayHeightStable}
-                              permissionsShownInStrip={showComposerContextStrip && !isServerThread}
                               promptRef={promptRef}
                               composerImagesRef={composerImagesRef}
                               composerFilesRef={composerFilesRef}
