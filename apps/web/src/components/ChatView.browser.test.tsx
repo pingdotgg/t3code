@@ -15,7 +15,6 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
-import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
@@ -24,6 +23,7 @@ import {
   dispatchedCommands,
   installFakeEnvironment,
   rejectPendingCommand,
+  releaseSideChatFork,
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
@@ -41,7 +41,10 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
 
 it("opens and focuses a side chat when /side is picked from the slash menu", async () => {
   const thread = threadWithHistory("side-menu", 1);
-  using _environment = installFakeEnvironment([thread], { sideChats: true });
+  using _environment = installFakeEnvironment([thread], {
+    sideChats: true,
+    holdCommand: (command) => command.type === "thread.fork",
+  });
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -51,8 +54,6 @@ it("opens and focuses a side chat when /side is picked from the slash menu", asy
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
   );
   await router.load();
-  // appInit starts this in the app; it moves focus into a panel the user opens.
-  using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
   const container = document.createElement("div");
   container.style.cssText = "height: 900px; width: 1400px;";
   await using screen = await render(<AppRoot router={router} />, {
@@ -74,10 +75,11 @@ it("opens and focuses a side chat when /side is picked from the slash menu", asy
   await mainInput.fill("");
   await userEvent.type(mainInput, "/sid");
   await expect.element(sideOption).toBeVisible();
-  await userEvent.keyboard("{Enter}");
-
+  // The question is typed straight after Enter, before the side chat exists.
+  await userEvent.keyboard("{Enter}a side");
+  await releaseSideChatFork();
   await expect.element(sideInput).toHaveFocus();
-  await userEvent.keyboard("a side question");
+  await userEvent.keyboard(" question");
   await expect.element(sideInput).toHaveTextContent("a side question");
   await expect.element(mainInput).toHaveTextContent("");
 });
