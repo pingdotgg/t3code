@@ -372,6 +372,12 @@ export interface ProjectionRecordFilter {
    * run is active or `except` names them.
    */
   readonly omitSettledSubagents?: true | { readonly except: ReadonlyArray<NodeId> };
+  /**
+   * Also skips the provider thread of each subagent that `omitSettledSubagents: true` skips, and
+   * with `omitSettledLeafNodes` its node. A provider thread that shares a provider session with
+   * the thread stays.
+   */
+  readonly omitSettledSubagentRecords?: boolean;
 }
 
 // A fork inherits its source's history before it has messages of its own,
@@ -436,6 +442,8 @@ export interface ActiveShellIndexEntry extends Pick<
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
+  /** Whether it delegated a task to a linked environment, whose clients nest that task under it. */
+  readonly hasRemoteTasks: boolean;
 }
 
 export interface OlderSettledThreadsQuery {
@@ -2098,6 +2106,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       )
     )`;
 
+    // The settled index holds every column the check reads, so the settled tasks are dropped
+    // there and their rows, each with a full prompt, stay unread.
+    const unsettledSubagentRowids = (threadId: ThreadId) => sql`
+      SELECT candidate.rowid
+      FROM orchestration_v2_projection_subagents AS candidate
+        INDEXED BY orchestration_v2_projection_subagents_settled_idx
+      WHERE candidate.thread_id = ${threadId}
+        AND NOT ${settledSubagent(sql`candidate`)}
+    `;
+
     // A todo list is never closed when its run ends, so a long thread holds an active one per
     // old run. Counting those as live work drags each run's nodes and subagents into every window.
     const todoListOfSettledRun = (row: Statement.Fragment) => sql`(
@@ -3738,6 +3756,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND (kind IN ('tool_call', 'assistant_message', 'reasoning')
                         AND status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                         AND run_id IS NOT NULL) = 0
+                    ${
+                      filter.omitSettledSubagentRecords === true
+                        ? // A subagent's node shares its id. Both indexes hold every column
+                          // read here, so no settled subagent or node row is fetched.
+                          sql`EXCEPT
+                    SELECT settled_node.rowid
+                    FROM orchestration_v2_projection_subagents AS settled
+                      INDEXED BY orchestration_v2_projection_subagents_thread_idx
+                    CROSS JOIN orchestration_v2_projection_nodes AS settled_node
+                      ON settled_node.node_id = settled.subagent_id
+                    WHERE settled.thread_id = ${threadId}
+                      AND settled.rowid NOT IN (${unsettledSubagentRowids(threadId)})`
+                        : sql``
+                    }
                     UNION ALL
                     SELECT rowid FROM orchestration_v2_projection_nodes
                     WHERE thread_id = ${threadId}
@@ -3780,15 +3812,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
               ${
                 filter?.omitSettledSubagents === true
-                  ? // The settled index holds every column this check reads, so the settled
-                    // tasks are dropped there and their rows, each with a full prompt, stay unread.
-                    sql`AND subagent.rowid IN (
-                      SELECT candidate.rowid
-                      FROM orchestration_v2_projection_subagents AS candidate
-                        INDEXED BY orchestration_v2_projection_subagents_settled_idx
-                      WHERE candidate.thread_id = ${threadId}
-                        AND NOT ${settledSubagent(sql`candidate`)}
-                    )`
+                  ? sql`AND subagent.rowid IN (${unsettledSubagentRowids(threadId)})`
                   : filter?.omitSettledSubagents !== undefined
                     ? sql`AND (
                       subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.omitSettledSubagents.except)}))
@@ -3838,12 +3862,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_provider_threads
             WHERE (thread_id = ${threadId}
                OR owner_node_id IN (${nodesOwningProviderThreads(threadId)})
-               OR provider_thread_id IN (
+               OR ${
+                 filter?.omitSettledSubagentRecords === true
+                   ? // A dispatcher thread holds thousands of settled tasks. Their provider
+                     // threads belong to the child threads; only a session this thread also
+                     // uses is probed for background work when the thread detaches it.
+                     sql`provider_thread_id IN (
+                 SELECT provider_thread_id
+                 FROM orchestration_v2_projection_subagents
+                 WHERE rowid IN (${unsettledSubagentRowids(threadId)})
+                   AND provider_thread_id IS NOT NULL
+               )
+               OR (provider_session_id IN (
+                   SELECT provider_session_id
+                   FROM orchestration_v2_projection_provider_session_bindings
+                   WHERE thread_id = ${threadId}
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM orchestration_v2_projection_subagents AS owner
+                   WHERE owner.provider_thread_id =
+                       orchestration_v2_projection_provider_threads.provider_thread_id
+                     AND owner.thread_id = ${threadId}
+                 ))`
+                   : sql`provider_thread_id IN (
                  SELECT provider_thread_id
                  FROM orchestration_v2_projection_subagents
                  WHERE thread_id = ${threadId}
                    AND provider_thread_id IS NOT NULL
-               ))
+               )`
+               })
               ${filter?.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))`}
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
@@ -7745,6 +7792,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly pinned_at: string | null;
         readonly snoozed_until: string | null;
         readonly may_be_live: number;
+        readonly has_remote_tasks: number;
       }>`
         SELECT
           t.thread_id,
@@ -7790,7 +7838,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
               WHERE json_type(link.value, '$.watch') IS NOT NULL
             )
-          ) AS may_be_live
+          ) AS may_be_live,
+          -- One list for the whole read, found through the child_thread_id index. A lookup per
+          -- thread would parse the payload of every subagent row.
+          t.thread_id IN (
+            SELECT subagent.thread_id FROM orchestration_v2_projection_subagents subagent
+            WHERE subagent.origin = 'app_owned'
+              AND subagent.child_thread_id IS NULL
+              AND json_type(subagent.payload_json, '$.remoteChild') = 'object'
+          ) AS has_remote_tasks
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
@@ -7817,6 +7873,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         mayBeLive: row.may_be_live === 1,
+        hasRemoteTasks: row.has_remote_tasks === 1,
       }));
     }, Effect.mapError(shellSnapshotReadError));
 

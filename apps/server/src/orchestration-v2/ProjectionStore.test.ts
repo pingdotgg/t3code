@@ -1575,6 +1575,8 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
+  const sharedSessionId = ProviderSessionId.make("session:settled-subagents:shared");
   const now = yield* DateTime.now;
   const threadId = yield* addRolledBackRecoveryCandidate("settled-leaf-nodes");
   const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
@@ -1785,7 +1787,7 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         createdBy: "agent",
         driver,
         providerInstanceId,
-        providerThreadId: null,
+        providerThreadId: ProviderThreadId.make(`provider-thread:settled-subagents:${name}`),
         childThreadId,
         nativeTaskRef: null,
         prompt: "Do the work",
@@ -1801,6 +1803,110 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         updatedAt: now,
       },
     });
+    // Each task has a node in this thread and a provider thread in its child thread.
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:node:${name}`),
+      type: "node.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: run.id,
+        rootNodeId: run.rootNodeId!,
+        parentNodeId: run.rootNodeId,
+        kind: "subagent",
+        status,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:provider-thread:${name}`),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make(`provider-thread:settled-subagents:${name}`),
+        appThreadId: ThreadId.make(`thread:settled-subagents:child:${name}`),
+        driver,
+        providerInstanceId,
+        // One settled task ran in a provider session this thread also uses.
+        providerSessionId: name === "acknowledged" ? sharedSessionId : null,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  }
+  yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
+    (provider_session_id, thread_id) VALUES (${sharedSessionId}, ${threadId})`;
+  // A command drops the node and the provider thread of each task it drops. The provider thread
+  // in the shared session stays: detaching that session probes it for background work.
+  const kept = ["active-run-delivered", "claimed", "no-delivery", "pending-delivery", "running"];
+  const commandTrace = traceSqlStatements();
+  const commandRecords = yield* store
+    .getThreadRecords(threadId, ["nodes", "providerThreads"], {
+      omitSettledLeafNodes: true,
+      omitSettledSubagentRecords: true,
+    })
+    .pipe(Effect.withTracer(commandTrace.tracer));
+  assert.deepEqual(
+    commandRecords.nodes
+      .flatMap((node) => (node.kind === "subagent" ? [node.id.split(":").at(-1)] : []))
+      .toSorted(),
+    // A subagent node that no task record names stays.
+    [...kept, "settled-subagent"],
+  );
+  assert.deepEqual(
+    commandRecords.providerThreads.map((thread) => thread.id.split(":").at(-1)).toSorted(),
+    ["acknowledged", ...kept],
+  );
+  assert.lengthOf(
+    (yield* store.getThreadRecords(threadId, ["providerThreads"])).providerThreads,
+    subagents.length,
+  );
+  // Both reads stay inside their indexes: no scan of the thread's nodes or provider threads.
+  for (const [table, seeks] of [
+    [
+      "nodes",
+      [
+        "SEARCH node USING INTEGER PRIMARY KEY",
+        "SEARCH settled USING COVERING INDEX",
+        "SEARCH settled_node USING COVERING INDEX",
+        "subagents_settled_idx (thread_id=?)",
+      ],
+    ],
+    [
+      "provider_threads",
+      ["MULTI-INDEX OR", "provider_threads_session_idx (provider_session_id=?)"],
+    ],
+  ] as const) {
+    const query = commandTrace.statements.find((statement) =>
+      statement.includes(`FROM orchestration_v2_projection_${table}`),
+    );
+    assert.isDefined(query);
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+      .map((row) => row.detail)
+      .join("\n");
+    for (const seek of seeks) assert.include(plan, seek);
+    assert.notInclude(plan, `SCAN orchestration_v2_projection_${table}`);
   }
   const subagentNames = (records: {
     readonly subagents: ReadonlyArray<{ readonly title: string | null }>;
