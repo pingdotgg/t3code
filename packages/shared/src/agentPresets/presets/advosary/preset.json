@@ -1,0 +1,30 @@
+{
+  "id": "advosary",
+  "name": "Advosary",
+  "description": "The smartest in the team but also the most expensive.",
+  "color": "#7bb5ff",
+  "icon": "sparkles",
+  "model": {
+    "provider": "claudeAgent",
+    "model": "claude-fable-5-2",
+    "reasoningEffort": "high"
+  },
+  "runtimeMode": "full-access",
+  "interactionMode": "default",
+  "skills": [
+    "agentic-harness-design",
+    "diagnose",
+    "improve-codebase-architecture",
+    "new-pattern-project",
+    "playwright-cli",
+    "principle-prove-it-works",
+    "pr",
+    "t3-agents"
+  ],
+  "setupNotes": [
+    "Requires Claude Code with access to claude-fable-5-2.",
+    "Project bootstrapping requires Git and Node.js; Go, Make and Docker are needed for generated project checks.",
+    "GitHub publication requires an authenticated GitHub CLI and explicit authorization.",
+    "Browser CLI workflows require playwright-cli and its browser dependencies."
+  ]
+}
