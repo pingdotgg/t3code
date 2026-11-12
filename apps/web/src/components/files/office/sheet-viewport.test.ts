@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { bufferedViewport, cachedViewport } from "./sheet-viewport";
+import { bufferedViewport, cachedViewport, retainCachedViewport } from "./sheet-viewport";
 
 it.each([
   { x: 150, y: 400, expected: { x: 150, y: 400 } },
@@ -33,3 +33,22 @@ it.each([
   expect(frame.y + frame.height).toBe(point.y + viewport.height + 200);
   expect(cachedViewport(frame, viewport)).toEqual(point);
 });
+
+it.each([
+  { cachedX: 0, incomingX: 1000, currentX: 0, expected: true },
+  { cachedX: 0, incomingX: 1000, currentX: 1000, expected: false },
+  { cachedX: 0, incomingX: 1000, currentX: 2000, expected: false },
+  { cachedX: 0, incomingX: 100, currentX: 200, expected: false },
+])(
+  "retains useful cached cells when a distant frame arrives at $currentX",
+  ({ cachedX, incomingX, currentX, expected }) => {
+    const size = { y: 0, width: 800, height: 800 };
+    expect(
+      retainCachedViewport(
+        { ...size, x: cachedX },
+        { ...size, x: incomingX },
+        { ...size, x: currentX, width: 400, height: 400 },
+      ),
+    ).toBe(expected);
+  },
+);

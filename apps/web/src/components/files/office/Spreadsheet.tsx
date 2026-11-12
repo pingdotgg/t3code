@@ -34,7 +34,7 @@ import {
   type Painted,
 } from "./sheet-paint";
 import { externalUrl } from "./links";
-import { bufferedViewport, cachedViewport } from "./sheet-viewport";
+import { bufferedViewport, cachedViewport, retainCachedViewport } from "./sheet-viewport";
 
 const isSupersededError = Schema.is(SupersededError);
 
@@ -165,6 +165,8 @@ function SpreadsheetGrid(props: {
   const scroller = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const spacer = useRef<HTMLDivElement>(null);
+  const columnHeaderBand = useRef<HTMLDivElement>(null);
+  const rowHeaderBand = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState("");
   const [reader, setReader] = useState<{ row: number; col: number; text: string }[]>([]);
   const [active, setActive] = useState({ row: 0, col: 0 });
@@ -178,11 +180,15 @@ function SpreadsheetGrid(props: {
     const root = scroller.current;
     const target = canvas.current;
     const space = spacer.current;
-    if (!root || !target || !space) return;
+    const columns = columnHeaderBand.current;
+    const rows = rowHeaderBand.current;
+    if (!root || !target || !space || !columns || !rows) return;
     const context = target.getContext("2d");
     if (!context) return;
     const controller = new AbortController();
     let info = layout.info;
+    let chartWidth = layout.chartWidth;
+    let chartHeight = layout.chartHeight;
     const sheet = info.activeSheet;
     const frozen = { rows: info.frozenRows, cols: info.frozenCols };
     const headers = { width: 44, height: headerHeight };
@@ -197,6 +203,7 @@ function SpreadsheetGrid(props: {
     let resizing:
       | {
           axis: "row" | "column";
+          pointerId: number;
           index: number;
           start: number;
           edge: number;
@@ -228,12 +235,11 @@ function SpreadsheetGrid(props: {
     const resizeArea = () => {
       const width = Math.min(
         (end?.x ?? Infinity) + (painted?.frame.frozen.width ?? 0),
-        Math.max(info.contentWidth, layout.chartWidth, reachX, left + root.clientWidth) +
-          root.clientWidth,
+        Math.max(info.contentWidth, chartWidth, reachX, left + root.clientWidth) + root.clientWidth,
       );
       const height = Math.min(
         (end?.y ?? Infinity) + (painted?.frame.frozen.height ?? 0),
-        Math.max(info.contentHeight, layout.chartHeight, reachY, top + root.clientHeight) +
+        Math.max(info.contentHeight, chartHeight, reachY, top + root.clientHeight) +
           root.clientHeight,
       );
       space.style.width = `${headers.width + width}px`;
@@ -245,6 +251,8 @@ function SpreadsheetGrid(props: {
       const height = root.clientHeight;
       const size = { width: width - headers.width, height: height - headers.height };
       if (size.width <= 0 || size.height <= 0) return;
+      columns.style.width = `${size.width}px`;
+      rows.style.height = `${size.height}px`;
       left = root.scrollLeft;
       top = root.scrollTop;
       resizeArea();
@@ -282,6 +290,19 @@ function SpreadsheetGrid(props: {
             received = order;
             if (!reply) {
               setNotice("These cells could not be drawn. Try scrolling to another area.");
+              return;
+            }
+            if (
+              painted &&
+              retainCachedViewport(painted.frame.viewport, reply.viewport, {
+                x: root.scrollLeft,
+                y: root.scrollTop,
+                width: root.clientWidth - headers.width,
+                height: root.clientHeight - headers.height,
+              })
+            ) {
+              reply.bitmap.close();
+              if (requested === key) requested = JSON.stringify(painted.request);
               return;
             }
             setNotice("");
@@ -451,6 +472,7 @@ function SpreadsheetGrid(props: {
         if (edge > 0 && size > 0 && Math.abs(point - edge) <= 4)
           return {
             axis,
+            pointerId: event.pointerId,
             index: indices?.[i - 1] ?? start + i - 1,
             start: axis === "column" ? event.clientX : event.clientY,
             delta: 0,
@@ -459,7 +481,7 @@ function SpreadsheetGrid(props: {
       }
     };
     const pointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || resizingPending) return;
+      if (event.button !== 0 || resizingPending || resizing) return;
       const track = resizeHit(event);
       if (track) {
         event.preventDefault();
@@ -493,6 +515,7 @@ function SpreadsheetGrid(props: {
     };
     const pointerMove = (event: PointerEvent) => {
       if (resizing) {
+        if (event.pointerId !== resizing.pointerId) return;
         const point = resizing.axis === "column" ? event.clientX : event.clientY;
         resizing.delta = Math.round(point - resizing.start);
         schedule();
@@ -512,6 +535,7 @@ function SpreadsheetGrid(props: {
     };
     const pointerUp = (event: PointerEvent) => {
       if (resizing) {
+        if (event.pointerId !== resizing.pointerId) return;
         const track = resizing;
         resizing = undefined;
         root.style.cursor = "";
@@ -526,9 +550,11 @@ function SpreadsheetGrid(props: {
             { sheet, axis: track.axis, index: track.index, delta: track.delta },
             { signal: controller.signal },
           )
-          .then((nextInfo) => {
+          .then((nextLayout) => {
             if (controller.signal.aborted) return;
-            info = nextInfo;
+            info = nextLayout.info;
+            chartWidth = nextLayout.chartWidth;
+            chartHeight = nextLayout.chartHeight;
             sent += 1;
             received = sent;
             requested = "";
@@ -625,7 +651,8 @@ function SpreadsheetGrid(props: {
       );
       reveal();
     };
-    const cancel = () => {
+    const cancel = (event: PointerEvent) => {
+      if (resizing && event.pointerId !== resizing.pointerId) return;
       drag = false;
       pressed = undefined;
       resizing = undefined;
@@ -691,7 +718,9 @@ function SpreadsheetGrid(props: {
           className="pointer-events-none absolute left-0 top-0"
         />
         <div aria-hidden="true" className="sticky left-0 top-0 h-0 w-0">
-          <canvas ref={canvas} className="absolute left-0 top-0 block touch-none" />
+          <canvas ref={canvas} className="absolute left-0 top-0 block" />
+          <div ref={columnHeaderBand} className="absolute left-11 top-0 h-5 touch-none" />
+          <div ref={rowHeaderBand} className="absolute left-0 top-5 w-11 touch-none" />
         </div>
         <div className="sr-only">
           {[...new Set(reader.map((cell) => cell.row))].map((row) => (

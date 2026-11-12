@@ -84,7 +84,7 @@ export type SheetMethods = {
       readonly index: number;
       readonly delta: number;
     },
-    SheetInfo
+    Pick<SheetLayout, "info" | "chartWidth" | "chartHeight">
   >;
   /** Paints a frame; undefined when even its smallest tiles cannot be drawn. */
   readonly frame: Method<SheetFrameRequest, SheetFrame | undefined>;

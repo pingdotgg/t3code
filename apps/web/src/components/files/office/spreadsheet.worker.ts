@@ -104,7 +104,8 @@ serveWorker<SheetMethods>({
         : { type: "setRowHeight", sheet: input.sheet, row: input.index, height: size * 0.75 };
     opened.info = opened.workbook.applyOps([operation]).sheetInfo;
     opened.ends.clear();
-    return opened.info;
+    const { chartWidth, chartHeight } = layout(opened.workbook, input.sheet);
+    return { info: opened.info, chartWidth, chartHeight };
   },
   frame: async (input) => {
     const opened = active(input.sheet);

@@ -21,15 +21,42 @@ it.each([false, true])(
         `xl/worksheets/sheet${sheet}.xml`,
         `<worksheet>${frozen ? '<sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" state="frozen" topLeftCell="B2"/></sheetView></sheetViews><cols><col min="2" max="2" width="0" hidden="1"/></cols>' : ""}<sheetData><row r="1"><c r="A1"><v>42</v></c></row>${frozen ? '<row r="2" ht="0" hidden="1"/>' : ""}</sheetData>${frozen ? '<mergeCells><mergeCell ref="A1:C1"/></mergeCells>' : ""}</worksheet>`,
       );
+    const namespace = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+    archive.file(
+      "xl/worksheets/_rels/sheet1.xml.rels",
+      '<Relationships><Relationship Id="drawing" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>',
+    );
+    archive.file(
+      "xl/drawings/drawing1.xml",
+      `<xdr:wsDr xmlns:xdr="${namespace}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:twoCellAnchor><xdr:from><xdr:col>10</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>10</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>13</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>17</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Sample chart"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="chart"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`,
+    );
+    archive.file(
+      "xl/drawings/_rels/drawing1.xml.rels",
+      '<Relationships><Relationship Id="chart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/></Relationships>',
+    );
+    archive.file(
+      "xl/charts/chart1.xml",
+      '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:cat><c:strLit><c:ptCount val="1"/><c:pt idx="0"><c:v>Sample</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="1"/><c:pt idx="0"><c:v>42</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>',
+    );
+    const sheetXml = await archive.file("xl/worksheets/sheet1.xml")!.async("string");
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      sheetXml.replace(
+        "</worksheet>",
+        '<drawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="drawing"/></worksheet>',
+      ),
+    );
     const bytes = await archive.generateAsync({ type: "arraybuffer" });
     const client = createWorkerClient<SheetMethods>(
       new Worker(new URL("./spreadsheet.worker.ts", import.meta.url), { type: "module" }),
     );
     try {
-      await client.call("open", {
+      const opened = await client.call("open", {
         bytes,
         view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       });
+      expect(opened!.layout.chartWidth).toBeGreaterThan(0);
+      expect(opened!.layout.chartHeight).toBeGreaterThan(0);
       if (frozen) {
         const viewport = {
           sheet: 0,
@@ -51,8 +78,15 @@ it.each([false, true])(
         resized!.bitmap.close();
       }
       const other = await client.call("position", { sheet: 1, cell: { row: 0, col: 0 } });
-      await client.call("resize", { sheet: 0, axis: "column", index: 0, delta: 81 });
-      await client.call("resize", { sheet: 0, axis: "row", index: 0, delta: 40 });
+      const widened = await client.call("resize", {
+        sheet: 0,
+        axis: "column",
+        index: 0,
+        delta: 81,
+      });
+      expect(widened.chartWidth - opened!.layout.chartWidth).toBeCloseTo(frozen ? 1 : 81, 0);
+      const taller = await client.call("resize", { sheet: 0, axis: "row", index: 0, delta: 40 });
+      expect(taller.chartHeight - opened!.layout.chartHeight).toBeCloseTo(frozen ? 1 : 40, 0);
       await expect(
         client.call("resize", { sheet: 0, axis: "row", index: 0, delta: NaN }),
       ).rejects.toThrow("Invalid track resize");

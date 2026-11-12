@@ -22,3 +22,16 @@ export function bufferedViewport(viewport: SheetViewport): SheetViewport {
     height: viewport.height + viewport.y - y + marginY,
   };
 }
+
+export function retainCachedViewport(
+  cached: SheetViewport,
+  incoming: SheetViewport,
+  current: SheetViewport,
+) {
+  const covers = (frame: SheetViewport) =>
+    frame.x <= current.x &&
+    frame.y <= current.y &&
+    frame.x + frame.width >= current.x + current.width &&
+    frame.y + frame.height >= current.y + current.height;
+  return covers(cached) && !covers(incoming);
+}
