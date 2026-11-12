@@ -143,7 +143,10 @@ export const makeDiscovery = Effect.gen(function* () {
         return fj;
       }
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      // Discovery keeps the install hint only for an absent executable; a slow or broken fj
+      // explains itself better than tea's install advice.
+      const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
+      return tea.status === "available" || fjAbsent ? tea : fj;
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
