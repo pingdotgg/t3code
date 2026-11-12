@@ -30,6 +30,6 @@ declare global {
     t3dev?: {
       readonly replayScenarios: () => ReadonlyArray<string>;
       readonly replay: (scenario?: string) => Promise<ThreadId>;
-    };
+    } & typeof import("./components/chat/TimelineGapRecorder").timelineGapDevApi;
   }
 }
