@@ -46,6 +46,7 @@ import {
   installAppearanceRuntime,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
+import { installUiLocaleRuntime } from "./features/settings/appearance/installUiLocaleRuntime";
 import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { subscribeComposerDraftModelReconciliation } from "./state/use-composer-drafts";
@@ -190,6 +191,7 @@ const appServiceDisposers = [
     pendingThreadIdsAtom: threadEnvironment.pendingThreadIdsAtom,
   }),
   installAppearanceRuntime(),
+  installUiLocaleRuntime(),
   installSubscriptionUsageRefresh(),
   installPermissionUpdateNotice(),
   installThreadOutboxDelivery(),
