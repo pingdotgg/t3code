@@ -450,16 +450,35 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
   );
 });
 
-export const ensureTailscaleServe = (input: {
+export class TailscaleServeHttpsDisabledError extends Schema.TaggedError<TailscaleServeHttpsDisabledError>()(
+  "TailscaleServeHttpsDisabledError",
+  {},
+) {
+  override get message(): string {
+    return "Tailscale Serve needs HTTPS enabled on the tailnet. Enable HTTPS certificates at https://login.tailscale.com/admin/dns.";
+  }
+}
+
+export const ensureTailscaleServe = Effect.fn("tailscale.ensureTailscaleServe")(function* (input: {
   readonly localPort: number;
   readonly servePort?: number;
   readonly localHost?: string;
-}): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+}): Effect.fn.Return<
+  void,
+  TailscaleCommandError | TailscaleServeHttpsDisabledError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  // Without the capability `tailscale serve` prints an enablement notice and exits 0, or blocks on
+  // it, having configured nothing either way.
+  const status = yield* Effect.option(readTailscaleStatus);
+  if (Option.isSome(status) && status.value.httpsServeEnabled === false) {
+    return yield* new TailscaleServeHttpsDisabledError();
+  }
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const localHost = input.localHost ?? "127.0.0.1";
   const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
-  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
-};
+  return yield* runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
+});
 
 /** A Serve route: a web handler at `mount` on `servePort`, or a TCP forward without one. */
 export interface TailscaleServeRoute {
