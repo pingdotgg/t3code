@@ -63,7 +63,13 @@ const filterLaunchArgs = (launchArgs: string | undefined, allowed: LaunchArgFilt
 };
 
 export const codexExecLaunchArgs = (launchArgs?: string) =>
-  filterLaunchArgs(launchArgs, EXEC_FILTER);
+  filterLaunchArgs(launchArgs, EXEC_FILTER).filter((arg, index, args) => {
+    // Feature enables override config assignments regardless of their argv order.
+    if (arg === "--enable=hooks" || arg === "--enable=codex_hooks") return false;
+    if (arg === "--enable" && (args[index + 1] === "hooks" || args[index + 1] === "codex_hooks"))
+      return false;
+    return args[index - 1] !== "--enable" || (arg !== "hooks" && arg !== "codex_hooks");
+  });
 
 export const codexMcpListLaunchArgs = (launchArgs?: string) =>
   filterLaunchArgs(launchArgs, MCP_LIST_FILTER);
