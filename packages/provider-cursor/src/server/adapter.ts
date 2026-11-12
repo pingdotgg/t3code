@@ -2254,21 +2254,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
-        const resolveWorkspaceMcp = (cwd: string | null) =>
-          cwd === null
-            ? Effect.succeed(NO_WORKSPACE_MCP)
-            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment).pipe(
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                // Unreadable Cursor state leaves startup to the SDK rather than failing the turn.
-                Effect.catch((cause) =>
-                  Effect.logWarning("orchestration-v2.cursor-workspace-mcp-unresolved", {
-                    cwd,
-                    cause,
-                  }).pipe(Effect.as(NO_WORKSPACE_MCP)),
-                ),
-              );
+        const resolveWorkspaceMcp = (cwd: string) =>
+          cursorWorkspaceMcpServers(cwd, adapterOptions.environment).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            // Unreadable Cursor state leaves startup to the SDK rather than failing the turn.
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.cursor-workspace-mcp-unresolved", {
+                cwd,
+                cause,
+              }).pipe(Effect.as(NO_WORKSPACE_MCP)),
+            ),
+          );
 
         const openAgent = Effect.fnUntraced(function* (openInput: {
           readonly operation: "create" | "resume";
@@ -2288,7 +2286,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 : input.resumeFromSession?.cwd
               : undefined) ??
             cwd;
-          const workspaceMcp = yield* resolveWorkspaceMcp(openInput.runtimePolicy.cwd);
+          // Without a cwd the SDK works in, and reads the Cursor MCP files from, process.cwd().
+          const workspaceMcp = yield* resolveWorkspaceMcp(cwd);
           const options = makeCursorAgentOptions({
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,

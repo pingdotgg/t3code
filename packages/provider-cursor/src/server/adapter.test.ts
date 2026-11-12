@@ -2191,13 +2191,13 @@ describe("CursorAdapterV2", () => {
             Effect.provideService(HostProcess.Environment, {}),
           );
         const now = yield* DateTime.now;
-        const sendTurn = (ordinal: number) =>
+        const sendTurn = (ordinal: number, policy = runtimePolicy) =>
           runtime
             .startTurn({
               threadId,
               providerThread,
               modelSelection,
-              runtimePolicy,
+              runtimePolicy: policy,
               runId: RunId.make(`cursor-mcp-run-${ordinal}`),
               runOrdinal: ordinal,
               providerTurnOrdinal: ordinal,
@@ -2286,7 +2286,29 @@ describe("CursorAdapterV2", () => {
         yield* sendTurn(5);
         assert.deepEqual(openedWith?.mcpServers, t3Servers);
         assert.equal(opens, 5, "each change to the servers or files reopens the agent once");
-        assert.deepEqual(sentWith, [undefined, undefined, undefined, undefined, undefined]);
+        // Without a cwd the SDK works in the server's directory, and still reads the user mcp.json.
+        const noCwdPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        });
+        yield* sendTurn(6, noCwdPolicy);
+        yield* sendTurn(7, noCwdPolicy);
+        assert.equal(
+          opens,
+          6,
+          "an agent without a cwd reopens for the files it reads, then stays open",
+        );
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { docs: { url: "https://docs.example/v3" } } }),
+        );
+        yield* sendTurn(8, noCwdPolicy);
+        assert.equal(opens, 7, "an edited mcp.json reopens an agent without a cwd");
+        assert.deepEqual(
+          sentWith,
+          Array.from({ length: 8 }, () => undefined),
+        );
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
