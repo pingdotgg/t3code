@@ -1871,7 +1871,8 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     commandRecords.nodes
       .flatMap((node) => (node.kind === "subagent" ? [node.id.split(":").at(-1)] : []))
       .toSorted(),
-    kept,
+    // A subagent node that no task record names stays.
+    [...kept, "settled-subagent"],
   );
   assert.deepEqual(
     commandRecords.providerThreads.map((thread) => thread.id.split(":").at(-1)).toSorted(),
@@ -1887,7 +1888,8 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
       "nodes",
       [
         "SEARCH node USING INTEGER PRIMARY KEY",
-        "nodes_ended_subagent_idx (thread_id=?)",
+        "SEARCH settled USING COVERING INDEX",
+        "SEARCH settled_node USING COVERING INDEX",
         "subagents_settled_idx (thread_id=?)",
       ],
     ],

@@ -374,8 +374,8 @@ export interface ProjectionRecordFilter {
   readonly omitSettledSubagents?: true | { readonly except: ReadonlyArray<NodeId> };
   /**
    * Also skips the provider thread of each subagent that `omitSettledSubagents: true` skips, and
-   * with `omitSettledLeafNodes` its ended node. A provider thread that shares a provider session
-   * with the thread stays.
+   * with `omitSettledLeafNodes` its node. A provider thread that shares a provider session with
+   * the thread stays.
    */
   readonly omitSettledSubagentRecords?: boolean;
 }
@@ -3756,16 +3756,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         AND run_id IS NOT NULL) = 0
                     ${
                       filter.omitSettledSubagentRecords === true
-                        ? // Drops the ended subagent nodes inside migration 086's index, whose
-                          // predicate this must match. The last branch brings back the node of
-                          // each subagent the read keeps.
+                        ? // A subagent's node shares its id. Both indexes hold every column
+                          // read here, so no settled subagent or node row is fetched.
                           sql`EXCEPT
-                    SELECT rowid FROM orchestration_v2_projection_nodes
-                      INDEXED BY orchestration_v2_projection_nodes_ended_subagent_idx
-                    WHERE thread_id = ${threadId}
-                      AND kind = 'subagent'
-                      AND status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                      AND run_id IS NOT NULL`
+                    SELECT settled_node.rowid
+                    FROM orchestration_v2_projection_subagents AS settled
+                      INDEXED BY orchestration_v2_projection_subagents_thread_idx
+                    CROSS JOIN orchestration_v2_projection_nodes AS settled_node
+                      ON settled_node.node_id = settled.subagent_id
+                    WHERE settled.thread_id = ${threadId}
+                      AND settled.rowid NOT IN (${unsettledSubagentRowids(threadId)})`
                         : sql``
                     }
                     UNION ALL
@@ -3778,16 +3778,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       )
                       AND kind IN ('tool_call', 'assistant_message', 'reasoning')
                       AND status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                    ${
-                      filter.omitSettledSubagentRecords === true
-                        ? sql`UNION ALL
-                    SELECT kept.rowid
-                    FROM orchestration_v2_projection_subagents AS owner
-                    CROSS JOIN orchestration_v2_projection_nodes AS kept
-                      ON kept.node_id = owner.subagent_id
-                    WHERE owner.rowid IN (${unsettledSubagentRowids(threadId)})`
-                        : sql``
-                    }
                   )`
                 : sql`${threadColumn(filter?.nodeIds, "node.thread_id")} = ${threadId}`
             }
