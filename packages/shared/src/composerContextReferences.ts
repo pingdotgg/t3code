@@ -10,6 +10,9 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
+import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
+import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
+
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
 const CONTEXT_KIND_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
@@ -91,6 +94,45 @@ export function threadContextRecord(ref: ScopedThreadRef, title: string): Thread
     threadId: ref.threadId,
     title: label,
   };
+}
+
+/**
+ * Turns pasted thread links into thread chip references. A record the copy carried names its
+ * chip, else the thread's title here, read by key, or the link's own label. `accept` gives the
+ * chip's id, or none to keep the link as written. A v1 link names no machine, so it stays a link.
+ */
+export function threadLinkContextReferences(
+  text: string,
+  copied: ReadonlyArray<ComposerContextRecord>,
+  title: (ref: ScopedThreadRef) => string | undefined,
+  accept: (record: ThreadContextRecord) => ComposerContextId | undefined = (record) =>
+    record.contextId,
+): { readonly text: string; readonly records: ReadonlyArray<ThreadContextRecord> } {
+  const records = new Map<ComposerContextId, ThreadContextRecord>();
+  const rewritten = replaceThreadLinks(text, (link, label) => {
+    if (link.environmentId === null) return undefined;
+    const candidates = threadLinkCandidates(link, link.environmentId);
+    const record =
+      copied.find(
+        (candidate): candidate is ThreadContextRecord =>
+          candidate.kind === "thread" &&
+          "threadId" in candidate &&
+          candidates.some(
+            (ref) =>
+              ref.environmentId === candidate.environmentId && ref.threadId === candidate.threadId,
+          ),
+      ) ??
+      candidates.flatMap((ref) => {
+        const known = title(ref);
+        return known === undefined ? [] : [threadContextRecord(ref, known)];
+      })[0] ??
+      threadContextRecord(candidates[0]!, label?.trim() || "Thread");
+    const contextId = accept(record);
+    if (contextId === undefined) return undefined;
+    records.set(record.contextId, record);
+    return formatComposerContextReference({ ...record, contextId });
+  });
+  return { text: rewritten, records: [...records.values()] };
 }
 
 export function formatComposerContextReference(reference: {
@@ -336,16 +378,18 @@ export function projectComposerContextForProvider(input: {
   records: ReadonlyArray<ComposerContextRecord>;
 }): string {
   const occurrences = collectComposerContextReferences(input.text);
-  if (occurrences.length === 0) return input.text;
+  if (occurrences.length === 0) return expandAssistantCitationsForProvider(input.text);
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   for (const record of input.records) {
     recordsById.set(record.contextId, recordsById.has(record.contextId) ? undefined : record);
   }
-  const body = replaceComposerContextReferences(input.text, (occurrence) =>
-    formatComposerContextProviderMarker(
-      recordsById.get(occurrence.contextId)?.kind ?? occurrence.kind,
-      occurrence.label,
-      occurrence.contextId,
+  const body = expandAssistantCitationsForProvider(
+    replaceComposerContextReferences(input.text, (occurrence) =>
+      formatComposerContextProviderMarker(
+        recordsById.get(occurrence.contextId)?.kind ?? occurrence.kind,
+        occurrence.label,
+        occurrence.contextId,
+      ),
     ),
   );
   const seen = new Set<ComposerContextId>();

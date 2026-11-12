@@ -84,7 +84,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         prefix: "t3-claude-fork-config-",
       });
       const projectDir = yield* writeClaudeSession(configDir);
-      const hostConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const hostConfigDir = (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
       const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
       yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
 
@@ -110,7 +110,7 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
       assert.isString(inheritedHead);
       assert.equal(forked.headMessageId, inheritedHead);
-      assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
+      assert.equal((yield* HostProcess.Environment).CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -254,6 +254,7 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
         if (typeof prompt === "string") throw new Error("Expected streaming input");
         prompts.push(prompt);
         return {
+          initializationResult: async () => ({}),
           setMcpServers: prompts.length === 1 ? firstRegistration : secondRegistration,
           close: prompts.length === 1 ? firstClose : secondClose,
           [Symbol.asyncDispose]: async () => {
@@ -297,6 +298,38 @@ it.effect("reopens a stalled MCP registration before delivering the resumed prom
   ),
 );
 
+it.effect.each([
+  { case: "a readable rule list", errors: undefined, readable: true },
+  { case: "a settings file Claude skipped", errors: [{ file: "settings.json" }], readable: false },
+  { case: "a reply without a rule list", response: {}, readable: false },
+])("reads Claude's permission rules only when no settings file was skipped: $case", (testCase) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const rules = [{ behavior: "deny" as const, rule: "mcp__probe__redeploy" }];
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            close: vi.fn(),
+            request: async () => ({
+              response:
+                "response" in testCase
+                  ? testCase.response
+                  : { state: { rules, errors: testCase.errors } },
+            }),
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+      const exit = yield* Effect.exit(session.listPermissionRules);
+      if (testCase.readable) assert.deepEqual(exit, Exit.succeed(rules));
+      else assert.isTrue(Exit.isFailure(exit));
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
 it.effect.each([true, false])("only retries after confirmed process exit: %s", (exits) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -328,6 +361,7 @@ it.effect.each([true, false])("only retries after confirmed process exit: %s", (
           cleanupProgress.resolve("retry");
         }
         return {
+          initializationResult: async () => ({}),
           setMcpServers: () => {
             registrationStarted.resolve();
             return first
@@ -378,6 +412,7 @@ it.effect("stops retrying MCP registration after two timeouts and reports the ca
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
         const started = querySpy.mock.calls.length === 1 ? firstRegistration : secondRegistration;
         return {
+          initializationResult: async () => ({}),
           setMcpServers: () => {
             started.resolve();
             return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
@@ -418,6 +453,7 @@ it.effect("cancels a stalled registration without retrying or retaining its prom
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
+            initializationResult: async () => ({}),
             setMcpServers: () => {
               registrationStarted.resolve();
               return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
@@ -448,6 +484,7 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
       const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
+            initializationResult: async () => ({}),
             setMcpServers: () => {
               registrationStarted.resolve();
               return new Promise<ClaudeSdk.McpSetServersResult>(() => {});
@@ -471,6 +508,55 @@ it.effect("does not reuse a fresh session ID after MCP registration times out", 
       assert.equal(result._tag, "Failure");
       assert.equal(querySpy.mock.calls.length, 1);
       assert.equal(disposed.mock.calls.length, 1);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
+it.effect.each([
+  ["opens after a slow CLI boot", "120 seconds", true],
+  ["times out a CLI that never boots", "5 minutes", false],
+] as const)("%s", ([, bootWait, boots]) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const waiting = Promise.withResolvers<void>();
+      const booted = Promise.withResolvers<void>();
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () => {
+              waiting.resolve();
+              return booted.promise;
+            },
+            // The CLI answers control requests only after it has booted.
+            setMcpServers: async () => {
+              waiting.resolve();
+              await booted.promise;
+              return { added: ["t3-code"], removed: [], errors: {} };
+            },
+            close: vi.fn(),
+            [Symbol.asyncDispose]: async () => {},
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { resume, ...options } = resumedMcpQueryInput.options;
+      const opening = yield* runner
+        .open({ ...resumedMcpQueryInput, options: { ...options, sessionId: resume } })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => waiting.promise);
+      yield* TestClock.adjust(bootWait);
+      if (boots) booted.resolve();
+      const result = yield* Fiber.join(opening);
+
+      assert.equal(result._tag, boots ? "Success" : "Failure");
+      if (result._tag === "Success") yield* result.success.close;
+      else
+        assert.equal(
+          makeProviderFailure({
+            cause: { _tag: "ProviderAdapterTurnStartError", cause: result.failure },
+          }).message,
+          "Claude timed out while starting up. Retry the turn; if it keeps failing, check Claude and the server logs.",
+        );
     }).pipe(Effect.provide(realQueryRunner)),
   ),
 );
@@ -547,6 +633,69 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
+  // The default AgentScope is what macOS gets: no systemd scope to catch a job outside the CLI's group.
+  it.effect("stops a job the CLI started in its own process group when the session closes", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          `perl -e 'setpgrp(0, 0); exec @ARGV' sleep 600 > "$dir/alive" &`,
+          'echo $! > "$dir/leftover.pid"',
+          "cat > /dev/null",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
+      const leftoverStarted = new Promise<void>((resolve) => alive.once("open", () => resolve()));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
+      alive.resume();
+
+      const session = yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
+      yield* Effect.promise(() => leftoverStarted);
+      yield* session.close;
+      yield* Effect.promise(() => leftoverStopped);
+    }),
+  );
+
+  // Live clock: the job is found by polling while the CLI runs, and the CLI exits on its own.
+  it.live("stops a job the CLI started in its own process group when the CLI exits", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          `perl -e 'setpgrp(0, 0); exec @ARGV' sleep 600 > "$dir/alive" &`,
+          'echo $! > "$dir/leftover.pid"',
+          "sleep 3",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
+      alive.resume();
+
+      yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
+      yield* Effect.promise(() => leftoverStopped);
+    }),
+  );
+
   const rootRefusal =
     "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
@@ -563,14 +712,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
         : "";
     });
-
-  // Claude Code refuses bypassPermissions as root and explains why only on
-  // stderr, so the turn failure has to carry that line.
-  it.effect("reports the CLI's root refusal when it exits before answering", () =>
-    Effect.gen(function* () {
-      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
-    }).pipe(Effect.provide(realQueryRunner)),
-  );
 
   // Startup stderr can carry paths, tokens, or settings, so only the known
   // refusal reaches the failure the client shows.
