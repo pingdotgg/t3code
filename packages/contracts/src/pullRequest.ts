@@ -196,6 +196,16 @@ export const PullRequestReviewThread = Schema.Struct({
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
+/** A thread on the change request as a whole, such as a GitLab overview thread. */
+export const PullRequestOverviewThread = Schema.Struct({
+  ...PullRequestReviewThread.fields,
+  path: Schema.Null,
+  line: Schema.Null,
+});
+export type PullRequestOverviewThread = typeof PullRequestOverviewThread.Type;
+
+export type PullRequestConversationThread = PullRequestReviewThread | PullRequestOverviewThread;
+
 export const PullRequestReviewerKind = Schema.Literals(["user", "team"]);
 export type PullRequestReviewerKind = typeof PullRequestReviewerKind.Type;
 
@@ -667,10 +677,19 @@ export const PullRequestActivity = Schema.Struct({
   commentsTruncated: Schema.Boolean,
   reviewThreadsTruncated: Schema.optional(Schema.Boolean),
   reviewThreads: Schema.Array(PullRequestReviewThread),
+  // Apart from reviewThreads so clients that require a thread path still decode the activity.
+  overviewThreads: Schema.optional(Schema.Array(PullRequestOverviewThread)),
   commits: Schema.Array(PullRequestCommit),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestActivity = typeof PullRequestActivity.Type;
+
+export const pullRequestConversationThreads = (
+  activity: Pick<PullRequestActivity, "reviewThreads" | "overviewThreads">,
+): ReadonlyArray<PullRequestConversationThread> =>
+  activity.overviewThreads === undefined || activity.overviewThreads.length === 0
+    ? activity.reviewThreads
+    : [...activity.reviewThreads, ...activity.overviewThreads];
 
 export const PullRequestDetailView = Schema.Struct({
   ...PullRequestDetail.fields,
