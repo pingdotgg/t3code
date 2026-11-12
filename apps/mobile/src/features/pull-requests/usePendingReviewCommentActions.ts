@@ -17,8 +17,9 @@ import {
 /** A copied link saves a private GitHub draft; discard and submit retain that host identity. */
 export function usePendingReviewCommentActions(params: PullRequestParams) {
   const target = pullRequestTarget(params);
-  const store = usePullRequestReviewDraftCommands(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
+  const scope = { ...params, viewer: detail.data?.viewer ?? null };
+  const store = usePullRequestReviewDraftCommands(scope);
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const canSave = useAtomValue(
     composerPullRequests.saveDraftComment.permissionAtom(target.environmentId),
@@ -29,13 +30,13 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
   const save = useAtomCommand(composerPullRequests.saveDraftComment, { reportFailure: false });
   const remove = useAtomCommand(composerPullRequests.discardDraftComment, { reportFailure: false });
   const copyLink = async (given: PendingReviewComment) => {
-    const comment =
-      readReviewDraft(params).comments.find((entry) => entry.id === given.id) ?? given;
+    if (!store.ready || detail.data === null || detail.error) return;
+    const comment = readReviewDraft(scope).comments.find((entry) => entry.id === given.id) ?? given;
     if (comment.hostedComment) {
       await Clipboard.setStringAsync(comment.hostedComment.url);
       return;
     }
-    if (!canSave || !setReviewDraftBusy(params, true)) return;
+    if (!canSave || !setReviewDraftBusy(scope, true)) return;
     return await (async () => {
       const result = await save({ ...target, input: { ...target.input, comment } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -57,13 +58,13 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
         );
       })
       .finally(async () => {
-        setReviewDraftBusy(params, false);
+        setReviewDraftBusy(scope, false);
       });
   };
   const discard = async (given: PendingReviewComment) => {
-    const comment =
-      readReviewDraft(params).comments.find((entry) => entry.id === given.id) ?? given;
-    if (!setReviewDraftBusy(params, true)) return false;
+    if (!store.ready || detail.data === null || detail.error) return false;
+    const comment = readReviewDraft(scope).comments.find((entry) => entry.id === given.id) ?? given;
+    if (!setReviewDraftBusy(scope, true)) return false;
     return await (async () => {
       if (comment.hostedComment) {
         if (!canDiscard) throw new Error("This connection cannot discard saved review comments.");
@@ -87,7 +88,7 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
           "The comment was removed from the host, but this device could not save the draft. Retry to finish discarding it.",
         );
       }
-      retireReviewDraftComments(params, [comment]);
+      retireReviewDraftComments(scope, [comment]);
       detail.refresh();
       activity.refresh();
       return true;
@@ -100,7 +101,7 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
         return false;
       })
       .finally(async () => {
-        setReviewDraftBusy(params, false);
+        setReviewDraftBusy(scope, false);
       });
   };
   return {

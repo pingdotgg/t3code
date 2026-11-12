@@ -122,10 +122,11 @@ export function PullRequestReviewSheet({
     submission.submit(async () => {
       if (!canSubmit)
         throw new Error("Add your feedback and check your permissions before submitting.");
-      if (!setReviewDraftBusy(params, true))
+      if (!setReviewDraftBusy(store.scope, true))
         throw new Error("Wait for the pending comment to finish saving.");
       return await (async () => {
-        const submitted = { ...store.draft, comments: store.comments };
+        const submitted = store.draft;
+        const submittedComments = store.comments;
         const response =
           reviewing && verdict
             ? await review({
@@ -135,10 +136,10 @@ export function PullRequestReviewSheet({
                   verdict: verdict.value,
                   body,
                   ...(store.pendingReviewId ? { pendingReviewId: store.pendingReviewId } : {}),
-                  ...(store.outdatedCommentIds.length
-                    ? { outdatedCommentIds: store.outdatedCommentIds }
+                  ...(store.outdatedComments.length
+                    ? { outdatedComments: store.outdatedComments }
                     : {}),
-                  comments: submitted.comments.map(
+                  comments: submittedComments.map(
                     ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
                   ),
                 },
@@ -146,7 +147,11 @@ export function PullRequestReviewSheet({
             : await comment({ ...target, input: { ...target.input, body } });
         if (response._tag === "Failure") throw squashAtomCommandFailure(response);
         if (reviewing)
-          retireReviewDraftComments(params, submitted.comments, store.outdatedCommentIds);
+          retireReviewDraftComments(
+            store.scope,
+            submittedComments,
+            store.outdatedComments.map((comment) => comment.id),
+          );
         store.update((current) =>
           reviewing
             ? clearSubmittedReview(current, submitted)
@@ -154,7 +159,7 @@ export function PullRequestReviewSheet({
         );
         await store.flush();
       })().finally(async () => {
-        setReviewDraftBusy(params, false);
+        setReviewDraftBusy(store.scope, false);
       });
     });
   const verdictMenu =

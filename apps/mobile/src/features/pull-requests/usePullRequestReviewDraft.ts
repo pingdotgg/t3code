@@ -16,6 +16,7 @@ import {
   ReviewDraftDocument,
   pullRequestReviewKey,
   type ReviewDraft,
+  type ReviewDraftScope,
 } from "./pullRequestReviewDrafts";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -35,16 +36,20 @@ const removedHostComments = Atom.make<Readonly<Record<string, ReadonlyArray<stri
 const NO_RETIRED_COMMENTS: ReadonlyArray<string> = [];
 
 export function useRetiredReviewDraftCommentIds(params: PullRequestParams) {
-  return useAtomValue(removedHostComments)[pullRequestReviewKey(params)] ?? NO_RETIRED_COMMENTS;
+  const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
+  return (
+    useAtomValue(removedHostComments)[pullRequestReviewKey(params, detail.data?.viewer ?? null)] ??
+    NO_RETIRED_COMMENTS
+  );
 }
 
 /** Keep a successful removal from reappearing in an older activity snapshot. */
 export function retireReviewDraftComments(
-  params: PullRequestParams,
+  params: ReviewDraftScope,
   comments: ReadonlyArray<ReviewDraft["comments"][number]>,
   outdatedCommentIds: ReadonlyArray<string> = [],
 ) {
-  const key = pullRequestReviewKey(params);
+  const key = pullRequestReviewKey(params, params.viewer);
   const previous = appAtomRegistry.get(removedHostComments);
   appAtomRegistry.set(removedHostComments, {
     ...previous,
@@ -60,8 +65,8 @@ export function retireReviewDraftComments(
   });
 }
 
-export function setReviewDraftBusy(params: PullRequestParams, busy: boolean) {
-  const key = pullRequestReviewKey(params);
+export function setReviewDraftBusy(params: ReviewDraftScope, busy: boolean) {
+  const key = pullRequestReviewKey(params, params.viewer);
   const current = appAtomRegistry.get(operations);
   if (busy && current.has(key)) return false;
   const next = new Set(current);
@@ -71,8 +76,11 @@ export function setReviewDraftBusy(params: PullRequestParams, busy: boolean) {
   return true;
 }
 
-export function readReviewDraft(params: PullRequestParams) {
-  return appAtomRegistry.get(state).drafts[pullRequestReviewKey(params)] ?? EMPTY_REVIEW_DRAFT;
+export function readReviewDraft(params: ReviewDraftScope) {
+  return (
+    appAtomRegistry.get(state).drafts[pullRequestReviewKey(params, params.viewer)] ??
+    EMPTY_REVIEW_DRAFT
+  );
 }
 const decodeDocument = Schema.decodeUnknownSync(ReviewDraftDocument);
 const queue = new SerializedAsyncQueue();
@@ -132,10 +140,10 @@ async function persist() {
 }
 
 function updateReviewDraft(
-  params: PullRequestParams,
+  params: ReviewDraftScope,
   transform: (current: ReviewDraft) => ReviewDraft,
 ) {
-  const key = pullRequestReviewKey(params);
+  const key = pullRequestReviewKey(params, params.viewer);
   const current = appAtomRegistry.get(state);
   if (!current.ready) return;
   appAtomRegistry.set(state, {
@@ -147,12 +155,12 @@ function updateReviewDraft(
 }
 
 /** Comment menu actions subscribe without installing another app-state persistence listener. */
-export function usePullRequestReviewDraftCommands(params: PullRequestParams) {
+export function usePullRequestReviewDraftCommands(params: ReviewDraftScope) {
   const snapshot = useAtomValue(state);
   const busyOperations = useAtomValue(operations);
   return {
     ready: snapshot.ready,
-    busy: busyOperations.has(pullRequestReviewKey(params)),
+    busy: busyOperations.has(pullRequestReviewKey(params, params.viewer)),
     update: (transform: (current: ReviewDraft) => ReviewDraft) =>
       updateReviewDraft(params, transform),
     flush: persist,
@@ -162,9 +170,10 @@ export function usePullRequestReviewDraftCommands(params: PullRequestParams) {
 export function usePullRequestReviewDraft(params: PullRequestParams) {
   const snapshot = useAtomValue(state);
   const busyOperations = useAtomValue(operations);
-  const key = pullRequestReviewKey(params);
   const target = pullRequestTarget(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
+  const scope = { ...params, viewer: detail.data?.viewer ?? null };
+  const key = pullRequestReviewKey(scope, scope.viewer);
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const retiredIds = useAtomValue(removedHostComments)[key];
   const draft = snapshot.drafts[key] ?? EMPTY_REVIEW_DRAFT;
@@ -172,7 +181,8 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
   const comments = useMemo(() => {
     const retired = new Set(retiredIds);
     for (const thread of activity.data?.reviewThreads ?? []) {
-      for (const comment of thread.comments) if (!comment.pendingReviewId) retired.add(comment.id);
+      for (const comment of thread.comments)
+        if (!comment.pendingReviewId || thread.line === null) retired.add(comment.id);
     }
     const local = draft.comments.filter(
       (comment) => !comment.hostedComment || !retired.has(comment.hostedComment.commentId),
@@ -204,8 +214,9 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
     };
   }, []);
   const update = (transform: (current: ReviewDraft) => ReviewDraft) =>
-    updateReviewDraft(params, transform);
+    updateReviewDraft(scope, transform);
   return {
+    scope,
     draft,
     comments,
     ungroupedComments: grouped.pendingComments,
@@ -214,9 +225,9 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
     activityError: activity.error,
     refreshActivity: activity.refresh,
     pendingReviewId,
-    outdatedCommentIds: identity.outdatedCommentIds,
+    outdatedComments: identity.outdatedComments,
     busy: busyOperations.has(key),
-    ready: snapshot.ready,
+    ready: snapshot.ready && detail.data !== null && detail.error === null,
     error: snapshot.error,
     update,
     flush: persist,

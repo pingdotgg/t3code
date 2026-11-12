@@ -163,8 +163,8 @@ export function PullRequestReviewForm({
         ...(submittedReviewId ? { pendingReviewId: submittedReviewId } : {}),
         body: submittedBody,
         comments: submittedComments,
-        ...(identity.outdatedCommentIds.length
-          ? { outdatedCommentIds: identity.outdatedCommentIds }
+        ...(identity.outdatedComments.length
+          ? { outdatedComments: identity.outdatedComments }
           : {}),
       },
     });
@@ -183,9 +183,18 @@ export function PullRequestReviewForm({
     // Preserve comments and summary edits made during submission.
     removeComments(
       reviewKey,
-      submittedComments.map((comment) => comment.id),
       [
-        ...identity.outdatedCommentIds,
+        ...submittedComments.map((comment) => comment.id),
+        ...(state.drafts[reviewKey] ?? [])
+          .filter((comment) =>
+            identity.outdatedComments.some(
+              (outdated) => outdated.id === comment.hostedComment?.commentId,
+            ),
+          )
+          .map((comment) => comment.id),
+      ],
+      [
+        ...identity.outdatedComments.map((comment) => comment.id),
         ...submittedComments.flatMap((comment) =>
           comment.hostedComment ? [comment.hostedComment.commentId] : [],
         ),

@@ -296,11 +296,14 @@ describe("reviewThreadReplyTarget", () => {
     expect(groupPendingReviewComments([outdatedThread], []).threads).toEqual([outdatedThread]);
     expect(pendingReviewIdentityFromThreads([outdatedThread])).toEqual({
       pendingReviewId: "private-review",
-      outdatedCommentIds: ["root", "reply"],
+      outdatedComments: [
+        { id: "root", body: "root" },
+        { id: "reply", body: "reply" },
+      ],
     });
     expect(pendingReviewIdentityFromThreads([outdatedThread], ["root", "reply"])).toEqual({
       pendingReviewId: undefined,
-      outdatedCommentIds: [],
+      outdatedComments: [],
     });
     const pending = pendingReviewCommentsFromThreads([privateThread]);
     const local = {
