@@ -77,7 +77,7 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={setContentHeight}
-            // Until the page reports, a remounted frame sits at the height cap.
+            // Only a page past the fit cap scrolls inside the frame; an unreported one is assumed to fit.
             fitted={contentHeight === undefined || contentHeight <= HTML_RENDER_MAX_FIT_HEIGHT}
             onFullscreenChange={onFullscreenChange}
           />
