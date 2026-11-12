@@ -2078,6 +2078,17 @@ describe("CursorAdapterV2", () => {
 
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-mcp-thread");
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("cursor-mcp-environment"),
+          threadId,
+          providerSessionId: "cursor-mcp-session",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer synthetic-cursor-token",
+          browserToolsAvailable: false,
+        });
+        const t3Servers = cursorMcpServers(yield* mcpSessions.read(threadId));
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -2085,6 +2096,7 @@ describe("CursorAdapterV2", () => {
           cwd,
         });
         let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
+        const sentWith: Array<Record<string, unknown> | undefined> = [];
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
           environment: {
@@ -2103,7 +2115,10 @@ describe("CursorAdapterV2", () => {
                   agentId: "native-cursor-mcp",
                   listMessages: Effect.succeed([]),
                   close: Effect.void,
-                  send: () => Effect.die("unused"),
+                  send: (sendInput) => {
+                    sentWith.push(sendInput.options?.mcpServers);
+                    return Effect.die("sent");
+                  },
                 };
               }),
           }),
@@ -2115,12 +2130,65 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
-        yield* runtime
+        const providerThread = yield* runtime
           .ensureThread({ threadId, modelSelection, runtimePolicy })
           .pipe(
             Effect.provideService(HostProcess.HomeDirectory, home),
             Effect.provideService(HostProcess.Environment, {}),
           );
+        const now = yield* DateTime.now;
+        const sendTurn = (ordinal: number) =>
+          runtime
+            .startTurn({
+              threadId,
+              providerThread,
+              modelSelection,
+              runtimePolicy,
+              runId: RunId.make(`cursor-mcp-run-${ordinal}`),
+              runOrdinal: ordinal,
+              providerTurnOrdinal: ordinal,
+              attemptId: RunAttemptId.make(`cursor-mcp-attempt-${ordinal}`),
+              rootNodeId: NodeId.make(`cursor-mcp-root-${ordinal}`),
+              appThread: {
+                id: threadId,
+                projectId: ProjectId.make("cursor-mcp-project"),
+                createdBy: "user",
+                creationSource: "web",
+                title: "Cursor MCP",
+                providerInstanceId: instanceId,
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                activeProviderThreadId: providerThread.id,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: threadId,
+                },
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              },
+              message: {
+                messageId: MessageId.make(`cursor-mcp-message-${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: "Hello.",
+                attachments: [],
+              },
+            })
+            .pipe(
+              Effect.exit,
+              Effect.provideService(HostProcess.HomeDirectory, home),
+              Effect.provideService(HostProcess.Environment, {}),
+            );
 
         const expectedServers = {
           repro: {
@@ -2148,7 +2216,18 @@ describe("CursorAdapterV2", () => {
             cwd: workspace,
           },
         };
-        assert.deepEqual(openedWith?.mcpServers, expectedServers);
+        // The agent is created with T3's server only; the resolved servers go with each turn.
+        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        yield* sendTurn(1);
+        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        // A server switched off between turns stays off on the next one.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          JSON.stringify(["off", "repro"]),
+        );
+        yield* sendTurn(2);
+        const { repro: _disabled, ...stillEnabled } = expectedServers;
+        assert.deepEqual(sentWith[1], { ...stillEnabled, ...t3Servers });
         for (const disabledState of ["[", '{"off": true}', '["off",]']) {
           yield* fileSystem.writeFileString(
             path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
