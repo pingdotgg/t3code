@@ -16207,6 +16207,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           finalSubagent?.type === "subagent.updated" && finalSubagent.subagent.status,
           "completed",
         );
+        // The row completes before the wake run exists; the roster holds the subagent until then.
+        const holdsTask = (event: ProviderAdapter.ProviderAdapterV2Event | undefined) =>
+          event?.type === "provider_thread.updated" &&
+          (event.providerThread.pendingBackgroundTasks ?? []).some(
+            (task) => task.taskId === TASK_ID && task.kind === "subagent",
+          );
+        const firstCompleted = harness.events.findIndex(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+        );
+        assert.isTrue(
+          holdsTask(
+            harness.events
+              .slice(0, firstCompleted)
+              .findLast((event) => event.type === "provider_thread.updated"),
+          ),
+        );
+        assert.isFalse(holdsTask(providerThreadRosterEvents(harness.events).at(-1)));
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

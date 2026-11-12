@@ -6080,6 +6080,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
               tasks.push(task);
           }
+          // A background subagent's row completes at its notification, before its wake run exists.
+          const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+          const nested = yield* Ref.get(nestedSubagentTaskIds);
+          for (const entry of (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? []) {
+            if (entry.type !== "system" || entry.subtype !== "task_notification") continue;
+            const registered = subagents.get(entry.task_id);
+            if (
+              registered === undefined ||
+              nested.has(entry.task_id) ||
+              tasks.some((task) => task.taskId === entry.task_id)
+            )
+              continue;
+            const description = registered.task.title?.trim();
+            tasks.push({
+              taskId: entry.task_id,
+              kind: "subagent",
+              ...(description ? { description } : {}),
+              childThreadId: registered.childThreadId,
+            });
+          }
           return tasks;
         });
 
@@ -9723,22 +9743,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Buffer wake evidence before clearing the task from the roster.
             if (message.type === "system" && message.subtype === "task_notification") {
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
-              yield* applyBackgroundTaskRosterMessage({
+              const rosterEmitted = yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
                 message,
                 activeContext: null,
               });
               const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
               const settled = settledTurnByNativeThread.get(liveQuery.nativeThreadId);
-              const hasBufferedStart =
-                (yield* Ref.get(wakeBuffers))
-                  .get(liveQuery.nativeThreadId)
-                  ?.messages.some(
-                    (entry) =>
-                      entry.type === "system" &&
-                      entry.subtype === "task_started" &&
-                      entry.task_id === message.task_id,
-                  ) ?? false;
+              const bufferedMessages =
+                (yield* Ref.get(wakeBuffers)).get(liveQuery.nativeThreadId)?.messages ?? [];
+              const hasBufferedStart = bufferedMessages.some(
+                (entry) =>
+                  entry.type === "system" &&
+                  entry.subtype === "task_started" &&
+                  entry.task_id === message.task_id,
+              );
+              // Publish the owed wake before the row completes, so a delegated task stays open.
+              if (
+                !rosterEmitted &&
+                registered !== undefined &&
+                bufferedMessages.includes(message)
+              ) {
+                yield* emitRosterUpdate(liveQuery.nativeThreadId, null);
+              }
               const canApplyOutcome =
                 subagentStopOutcomes.has(message.task_id) ||
                 (!hasBufferedStart && registered?.task.workflow === undefined);
