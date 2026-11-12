@@ -75,7 +75,7 @@ function buildActiveShellSnapshot(input: {
 type ShellTrimRow = Pick<
   OrchestrationV2ThreadShell,
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
->;
+> & { readonly hasRemoteTasks?: boolean };
 
 /**
  * What a subscriber's trims read across every active row. Computed from full shells or from the
@@ -84,6 +84,8 @@ type ShellTrimRow = Pick<
 interface ShellTrimFacts {
   readonly subagentParentIds: ReadonlySet<string>;
   readonly subagentThreadIds: Set<string>;
+  /** Only the store's index knows these; shells alone leave it empty. */
+  readonly remoteTaskParentIds: ReadonlySet<string>;
   /** Undefined when no thread is settled, so none is older. */
   readonly olderSettledBeforeMs: number | undefined;
   readonly olderSettledCounts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
@@ -94,8 +96,10 @@ const NEWEST_SETTLED_KEPT = 25;
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const subagentParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
+  const remoteTaskParentIds = new Set<string>();
   const settledTimes: Array<number> = [];
   for (const row of rows) {
+    if (row.hasRemoteTasks === true) remoteTaskParentIds.add(row.id);
     if (row.lineage.relationshipToParent === "subagent") {
       subagentThreadIds.add(row.id);
       if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
@@ -121,6 +125,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   return {
     subagentParentIds,
     subagentThreadIds,
+    remoteTaskParentIds,
     olderSettledBeforeMs,
     olderSettledCounts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
   };
@@ -171,17 +176,22 @@ function liveSubagentChainIds<T extends Pick<OrchestrationV2ThreadShell, "id" | 
 
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-  facts: Pick<ShellTrimFacts, "subagentParentIds">,
+  facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
   omitIdleSubagentParents: boolean,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const chains = omitIdleSubagentParents
-    ? liveSubagentChainIds(threads, isLiveSubagentShell)
+    ? liveSubagentChainIds(
+        threads,
+        (thread) => isLiveSubagentShell(thread) || facts.remoteTaskParentIds.has(thread.id),
+      )
     : null;
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
       (chains === null
-        ? isLiveSubagentShell(thread) || facts.subagentParentIds.has(thread.id)
+        ? isLiveSubagentShell(thread) ||
+          facts.subagentParentIds.has(thread.id) ||
+          facts.remoteTaskParentIds.has(thread.id)
         : chains.has(thread.id)),
   );
 }
@@ -192,7 +202,10 @@ function omitOlderSettledShellsWith(
     readonly snapshotSequence: number;
     readonly now: DateTime.Utc;
   },
-  facts: Pick<ShellTrimFacts, "olderSettledBeforeMs" | "olderSettledCounts">,
+  facts: Pick<
+    ShellTrimFacts,
+    "olderSettledBeforeMs" | "olderSettledCounts" | "remoteTaskParentIds"
+  >,
 ): {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly olderSettled: OrchestrationV2OlderSettledThreads;
@@ -206,7 +219,8 @@ function omitOlderSettledShellsWith(
       thread.pinnedAt != null ||
       (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
       isLiveSubagentShell(thread) ||
-      ancestorIds.has(thread.id),
+      ancestorIds.has(thread.id) ||
+      facts.remoteTaskParentIds.has(thread.id),
   );
   return {
     threads,
@@ -220,9 +234,9 @@ function omitOlderSettledShellsWith(
 
 /**
  * Idle subagent children have no sidebar row; opted-in clients read them from their thread family.
- * A child stays while it is live or the parent of another child, so shell walks never meet a gap.
- * With `omitIdleSubagentParents` it stays only while live or above a live subagent or a side chat
- * or fork, for clients that read the family of a child whose parent row is missing.
+ * A child stays while live, the parent of another child, or the parent of a task in a linked
+ * environment (its clients nest the task there). With `omitIdleSubagentParents`, a parent of
+ * another child stays only above a live subagent, a side chat, a fork, or such a task parent.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -256,8 +270,8 @@ export function activeShellRowsForSubscriber(
 /**
  * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
  * project in `olderSettled`; clients page them with `getOlderSettledThreads`. Older rows stay while
- * pinned, snoozed, live, or above a kept subagent or side chat, so walks over shell rows still find
- * them.
+ * pinned, snoozed, live, above a kept subagent or side chat, or the parent of a task in a linked
+ * environment, so walks over shell rows and other environments' tasks still find them.
  */
 export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -304,14 +318,14 @@ function shellSubscriberThreadIds(
   const facts = shellTrimFacts(index);
   const chains =
     options.omitIdleSubagents && options.omitIdleSubagentParents
-      ? liveSubagentChainIds(index, (entry) => entry.mayBeLive)
+      ? liveSubagentChainIds(index, (entry) => entry.mayBeLive || entry.hasRemoteTasks)
       : null;
   const subagents = index.filter(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
       (!options.omitIdleSubagents ||
         (chains === null
-          ? entry.mayBeLive || facts.subagentParentIds.has(entry.id)
+          ? entry.mayBeLive || entry.hasRemoteTasks || facts.subagentParentIds.has(entry.id)
           : chains.has(entry.id))),
   );
   const ancestorIds = hiddenChildAncestorIds([
@@ -331,6 +345,7 @@ function shellSubscriberThreadIds(
           entry.pinnedAt != null ||
           entry.snoozedUntil != null ||
           entry.mayBeLive ||
+          entry.hasRemoteTasks ||
           ancestorIds.has(entry.id)
         ? [entry.id]
         : [],

@@ -713,6 +713,8 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       // Idle, and kept either way: a live subagent is below it.
       shell("upper", "parent", null),
       shell("deep", "upper", "running"),
+      shell("remote-parent", null, null, 40),
+      shell("remote-child-parent", "parent", null),
     ];
     const firstSnapshot = (input: {
       readonly omitIdleSubagents?: boolean;
@@ -730,6 +732,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
                 pinnedAt: null,
                 snoozedUntil: null,
                 mayBeLive: thread.activityRunStatus !== null,
+                hasRemoteTasks: thread.id.startsWith("remote-"),
               })),
             ),
           readShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
@@ -764,6 +767,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       );
 
     const recent = threads.slice(3, 28).map((thread) => thread.id);
+    const remote = ["remote-parent", "remote-child-parent"];
     const full = yield* firstSnapshot({});
     assert.deepEqual(
       full?.threads.map((thread) => thread.id),
@@ -773,23 +777,25 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
     assert.deepEqual(
       withoutChildren?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old", "middle", "upper", "deep"],
+      ["parent", "live", ...recent, "old", "middle", "upper", "deep", ...remote],
     );
+    // A linked environment's clients nest its task under its parent, so that parent stays: an
+    // older settled thread or an idle subagent.
     const withoutIdleParents = yield* firstSnapshot({
       omitIdleSubagents: true,
       omitIdleSubagentParents: true,
     });
     assert.deepEqual(
       withoutIdleParents?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old", "upper", "deep"],
+      ["parent", "live", ...recent, "old", "upper", "deep", ...remote],
     );
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "middle", "upper", "deep"],
+      ["parent", "live", ...recent, "middle", "upper", "deep", ...remote],
     );
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
-      { projectId: ProjectId.make("project"), count: 1 },
+      { projectId: ProjectId.make("project"), count: 2 },
     ]);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
