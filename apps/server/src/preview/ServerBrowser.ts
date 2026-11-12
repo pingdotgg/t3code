@@ -609,6 +609,8 @@ const make = Effect.gen(function* () {
       .send("Page.getNavigationHistory")
       .catch(() => null)
       .then((history) => {
+        // A dropped tab's late load must not overwrite the status its crash or close left.
+        if (tab.closing) return;
         const index = history?.currentIndex ?? 0;
         const count = history?.entries.length ?? 0;
         runFork(
@@ -1103,6 +1105,7 @@ const make = Effect.gen(function* () {
     // reconnect to a fresh page, which stays blank until Reload so a crashing site cannot loop.
     page.on("crash", () => {
       if (tabs.get(key) !== tab) return;
+      tab.closing = true;
       const url = ServerBrowserPage.withoutDataPayload(page.url()).slice(0, 2048);
       runFork(
         manager

@@ -1344,14 +1344,29 @@ it.live("a tab whose renderer crashes stays open for its viewer", () =>
       yield* Effect.yieldNow;
       const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
       const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
-      yield* Effect.promise(() => contexts[0]!.page.goto("http://127.0.0.1:8765/"));
+      const page = contexts[0]!.page;
+      yield* Effect.promise(() => page.goto("http://127.0.0.1:8765/"));
+      // The load before the crash is still reading the title when the renderer dies.
+      const title = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => title.promise);
+      page.emit("load");
       yield* Queue.clear(viewer.output);
-      contexts[0]!.page.emit("crash");
+      page.emit("crash");
       let ended = yield* Queue.take(viewer.output);
       while (ended._tag !== "gone" && ended._tag !== "reconnect") {
         ended = yield* Queue.take(viewer.output);
       }
       expect(ended).toEqual({ _tag: "reconnect" });
+      // The load report then reads the crashed tab's history before it publishes.
+      const cdp = contexts[0]!.sessions[0]!;
+      const send = cdp.send.getMockImplementation()!;
+      const historyRead = Promise.withResolvers<void>();
+      cdp.send.mockImplementation(async (method, input) => {
+        if (method === "Page.getNavigationHistory") historyRead.resolve();
+        return send(method, input);
+      });
+      title.reject(new Error("Target crashed"));
+      yield* Effect.promise(() => historyRead.promise);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       expect(sessions.find((session) => session.tabId === opened.tabId)?.navStatus).toMatchObject({
         _tag: "LoadFailed",
