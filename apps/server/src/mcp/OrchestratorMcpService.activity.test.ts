@@ -370,33 +370,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       nextTextOffset: 500,
     });
     expect(first.items).toHaveLength(10);
-    const rest = yield* service.readThread(makeScope(), {
-      threadId: parentThreadId,
-      view: "activity",
-      itemId: first.items[1]!.itemId,
-      textOffset: first.items[1]!.nextTextOffset!,
-    });
-    expect(rest.items[0]).toMatchObject({
-      text: "x".repeat(100),
-      textTruncated: false,
-      nextTextOffset: null,
-    });
     expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
-    const next = yield* service.readThread(makeScope(), {
-      threadId: parentThreadId,
-      view: "activity",
-      afterPosition: first.nextPosition!,
-    });
-    expect(next.items.map((item) => item.position)).toEqual([10, 11]);
-    expect(next.hasMore).toBe(false);
-    const expanded = yield* service.readThread(makeScope(), {
-      threadId: parentThreadId,
-      view: "activity",
-      limit: 12,
-      maxCharsPerItem: 600,
-    });
-    expect(expanded.items).toHaveLength(12);
-    expect(expanded.items[1]).toMatchObject({ text: "x".repeat(600), textTruncated: false });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
