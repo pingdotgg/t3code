@@ -11,8 +11,10 @@ Source navigation is best effort. [Text selectors](../../apps/web/src/lib/assist
 refer to rendered text after whitespace normalization, measured in UTF-16 units.
 They cannot be applied to raw Markdown. The original excerpt keeps its whitespace;
 normalization is only for locating it. Repeated text needs an unambiguous context
-match, even if one occurrence still sits at the saved offsets. Guessing could
-highlight the wrong claim.
+match, even if one occurrence still sits at the saved offsets. Mobile records an
+explicit occurrence choice when the native renderer cannot identify its block;
+that choice resolves only while the rendered occurrence count and context still
+match. Guessing could highlight the wrong claim.
 
 Navigation owns the highlight's lifetime across virtual-row remounts. The source
 row must be fetched, unfolded, mounted, and measured before quote positioning

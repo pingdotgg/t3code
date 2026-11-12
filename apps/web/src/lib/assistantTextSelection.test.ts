@@ -507,3 +507,20 @@ describe("findAssistantCitationText", () => {
     });
   });
 });
+
+it("resolves a repeated native quote only while its occurrence count is unchanged", () => {
+  const repeated = "x".repeat(40) + "quote" + "x".repeat(40);
+  const text = `${repeated} / ${repeated}`;
+  const second = text.lastIndexOf("quote");
+  const citation = {
+    ...createAssistantTextSelector(text, second, second + 5)!,
+    occurrence: { index: 1, count: 2 },
+  };
+  expect(findAssistantCitationText(text, citation)).toEqual({ start: second, end: second + 5 });
+  expect(findAssistantCitationText(`${text} / ${repeated}`, citation)).toBeNull();
+  const unique = {
+    ...createAssistantTextSelector("old quote", 4, 9)!,
+    occurrence: { index: 0, count: 1 },
+  };
+  expect(findAssistantCitationText("new quote", unique)).toEqual({ start: 4, end: 9 });
+});

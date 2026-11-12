@@ -22,6 +22,15 @@ export const AssistantCitation = Schema.Struct({
   ),
   start: NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
   end: NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  occurrence: Schema.optional(
+    Schema.Struct({
+      index: NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+      count: NonNegativeInt.check(
+        Schema.isGreaterThan(0),
+        Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+      ),
+    }).check(Schema.makeFilter((value) => value.index < value.count)),
+  ),
   prefix: Schema.String.check(Schema.isMaxLength(ASSISTANT_CITATION_CONTEXT_LENGTH)),
   suffix: Schema.String.check(Schema.isMaxLength(ASSISTANT_CITATION_CONTEXT_LENGTH)),
 }).check(

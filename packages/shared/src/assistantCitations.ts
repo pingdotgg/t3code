@@ -51,6 +51,10 @@ export function formatAssistantCitationHref(citation: AssistantCitation): string
     prefix: citation.prefix,
     suffix: citation.suffix,
   });
+  if (citation.occurrence !== undefined) {
+    query.set("occurrence", String(citation.occurrence.index));
+    query.set("occurrences", String(citation.occurrence.count));
+  }
   if (citation.comment !== undefined) query.set("comment", citation.comment);
   return `${CITATION_HREF_PREFIX}${path}?${query}`;
 }
@@ -75,8 +79,14 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
     }
     const requiredKeys = ["text", "start", "end", "prefix", "suffix"];
     const comment = url.searchParams.get("comment");
+    const occurrence = url.searchParams.get("occurrence");
+    const occurrences = url.searchParams.get("occurrences");
+    if ((occurrence === null) !== (occurrences === null)) return null;
+    if (occurrence !== null && (!/^\d{1,16}$/.test(occurrence) || !/^\d{1,16}$/.test(occurrences!)))
+      return null;
     if (
-      url.searchParams.size !== requiredKeys.length + (comment === null ? 0 : 1) ||
+      url.searchParams.size !==
+        requiredKeys.length + (comment === null ? 0 : 1) + (occurrence === null ? 0 : 2) ||
       requiredKeys.some((key) => url.searchParams.getAll(key).length !== 1)
     ) {
       return null;
@@ -96,6 +106,9 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
         prefix: url.searchParams.get("prefix"),
         suffix: url.searchParams.get("suffix"),
         ...(comment === null ? {} : { comment }),
+        ...(occurrence === null
+          ? {}
+          : { occurrence: { index: Number(occurrence), count: Number(occurrences) } }),
       }),
     );
   } catch {
@@ -197,4 +210,101 @@ export function renderAssistantCitationsAsText(prompt: string): string {
     cursor = match.end;
   }
   return text + prompt.slice(cursor);
+}
+
+export type AssistantTextSelector = {
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
+  readonly prefix: string;
+  readonly suffix: string;
+  readonly occurrence?: AssistantCitation["occurrence"];
+};
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
+
+export function splitsSurrogatePair(text: string, offset: number): boolean {
+  const before = text.charCodeAt(offset - 1);
+  const after = text.charCodeAt(offset);
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+}
+
+export function createAssistantTextSelector(
+  text: string,
+  rawStart: number,
+  rawEnd: number,
+): AssistantTextSelector | null {
+  const quote = text.slice(rawStart, rawEnd);
+  if (quote.trim().length === 0) return null;
+
+  const normalized = normalizeWhitespace(text);
+  let start = normalizeWhitespace(text.slice(0, rawStart)).length;
+  if (rawStart > 0 && /\s/.test(text[rawStart - 1]!) && /\s/.test(text[rawStart]!)) {
+    start -= 1;
+  }
+  const end = normalizeWhitespace(text.slice(0, rawEnd)).length;
+  let prefixStart = Math.max(0, start - ASSISTANT_CITATION_CONTEXT_LENGTH);
+  let suffixEnd = Math.min(normalized.length, end + ASSISTANT_CITATION_CONTEXT_LENGTH);
+  // A split pair becomes a replacement character when the context enters a URL.
+  if (splitsSurrogatePair(normalized, prefixStart)) prefixStart += 1;
+  if (splitsSurrogatePair(normalized, suffixEnd)) suffixEnd -= 1;
+  return {
+    text: quote,
+    start,
+    end,
+    prefix: normalized.slice(prefixStart, start),
+    suffix: normalized.slice(end, suffixEnd),
+  };
+}
+
+/** Offsets use normalized UTF-16 units. Saved offsets may drift, so they cannot break context ties. */
+export function findAssistantCitationText(
+  text: string,
+  selector: AssistantTextSelector,
+): { start: number; end: number } | null {
+  const normalized = normalizeWhitespace(text);
+  const quote = normalizeWhitespace(selector.text);
+  if (quote.trim().length === 0) return null;
+
+  const prefix = normalizeWhitespace(selector.prefix);
+  const suffix = normalizeWhitespace(selector.suffix);
+  const matchesContext = (start: number, end: number) =>
+    normalized.slice(Math.max(0, start - prefix.length), start) === prefix &&
+    normalized.slice(end, end + suffix.length) === suffix;
+
+  let match =
+    Number.isSafeInteger(selector.start) &&
+    Number.isSafeInteger(selector.end) &&
+    selector.start >= 0 &&
+    selector.end - selector.start === quote.length &&
+    normalized.slice(selector.start, selector.end) === quote &&
+    matchesContext(selector.start, selector.end)
+      ? { start: selector.start, end: selector.end }
+      : null;
+  let onlyQuote: { start: number; end: number } | null = null;
+  let quoteCount = 0;
+  let occurrenceMatch: { start: number; end: number } | null = null;
+
+  for (
+    let start = normalized.indexOf(quote);
+    start !== -1;
+    start = normalized.indexOf(quote, start + 1)
+  ) {
+    const end = start + quote.length;
+    if (selector.occurrence?.index === quoteCount) occurrenceMatch = { start, end };
+    quoteCount += 1;
+    onlyQuote = { start, end };
+    if (!matchesContext(start, end)) continue;
+    if (match !== null && match.start !== start && selector.occurrence === undefined) return null;
+    match = { start, end };
+  }
+
+  if (selector.occurrence !== undefined) {
+    if (quoteCount !== selector.occurrence.count || occurrenceMatch === null) return null;
+    if (quoteCount === 1) return occurrenceMatch;
+    return matchesContext(occurrenceMatch.start, occurrenceMatch.end) ? occurrenceMatch : null;
+  }
+  return match ?? (quoteCount === 1 ? onlyQuote : null);
 }
