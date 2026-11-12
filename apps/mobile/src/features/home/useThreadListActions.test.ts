@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   connectedEnvironmentIds: [] as EnvironmentId[],
   pendingOrder: null as object | null,
   dropBusy: false,
+  holdingRows: false,
   failedAction: null as string | null,
   archivedRefreshes: [] as string[],
   scopes: new Map<string, Set<string>>(),
@@ -78,26 +79,28 @@ vi.mock("../../state/atom-registry", () => ({
         ? state.connectedEnvironmentIds
         : atom === "thread-drop-busy"
           ? state.dropBusy
-          : atom === "thread-shells"
-            ? state.shells
-            : atom === "queued-thread-keys"
-              ? new Set<string>()
-              : new Map(
-                  [...state.scopes.keys()].map((environmentId) => [
-                    environmentId,
-                    {
-                      environment: {
-                        capabilities: {
-                          threadSettlement: true,
-                          threadSnooze: true,
-                          threadPinning: true,
-                          threadPinReorder: true,
-                          threadTitleRegeneration: true,
+          : atom === "steady-shells-holding"
+            ? state.holdingRows
+            : atom === "thread-shells"
+              ? state.shells
+              : atom === "queued-thread-keys"
+                ? new Set<string>()
+                : new Map(
+                    [...state.scopes.keys()].map((environmentId) => [
+                      environmentId,
+                      {
+                        environment: {
+                          capabilities: {
+                            threadSettlement: true,
+                            threadSnooze: true,
+                            threadPinning: true,
+                            threadPinReorder: true,
+                            threadTitleRegeneration: true,
+                          },
                         },
                       },
-                    },
-                  ]),
-                ),
+                    ]),
+                  ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -121,10 +124,9 @@ vi.mock("../../state/thread-order", () => ({
   },
 }));
 vi.mock("../../state/threads", () => ({
-  environmentThreadShells: {
-    threadShellsAtom: "thread-shells",
-    navigationThreadShellsAtom: "thread-shells",
-  },
+  environmentThreadShells: { threadShellsAtom: "thread-shells" },
+  steadyNavigationThreadShellsAtom: "thread-shells",
+  steadyShellsHoldingAtom: "steady-shells-holding",
   threadEnvironment: Object.fromEntries(
     [
       "archive",
@@ -194,6 +196,7 @@ beforeEach(() => {
   state.archivedRefreshes = [];
   state.pendingOrder = null;
   state.dropBusy = false;
+  state.holdingRows = false;
   state.scopes = new Map([
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
     [otherEnvironmentId, new Set<string>()],
@@ -274,6 +277,12 @@ describe("pinned thread operation permissions", () => {
         pinOrderKey: "g",
       }),
     ];
+
+    // Rows that wait to show can hold order keys the server has replaced.
+    state.holdingRows = true;
+    expect(await useThreadListActions().moveThread(moved, "up")).toBe(false);
+    expect(state.requests).toEqual([]);
+    state.holdingRows = false;
 
     expect(await useThreadListActions().moveThread(moved, "up")).toBe(true);
     expect(state.requests).toEqual([
@@ -495,6 +504,25 @@ describe("thread action undo", () => {
     },
   );
 
+  it.each(["settleThread", "unpinThread"] as const)(
+    "%s plans its undo from the live row when the list holds an older one",
+    async (handler) => {
+      const held = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z", pinOrderKey: "m" });
+      const live = makeThread({
+        pinnedAt: "2026-09-02T00:00:00.000Z",
+        pinOrderKey: "t",
+        snoozedUntil: "2099-01-01T09:00:00.000Z",
+      });
+      state.shells = [live];
+      await useThreadListActions()[handler](held);
+      await readThreadUndoNotice()!.undo();
+      expect(state.requests.slice(-2)).toMatchObject([
+        { action: "pin", input: { threadId: live.id, orderKey: "t" } },
+        { action: "snooze", input: { threadId: live.id, snoozedUntil: live.snoozedUntil } },
+      ]);
+    },
+  );
+
   // regression: #21401 restore archive and thread action undo
   it("does not restore snooze if undoing an unpin fails", async () => {
     const thread = makeThread({
@@ -571,5 +599,10 @@ describe("thread archive guard", () => {
     expect(state.requests).toEqual([]);
     expect(state.archivedRefreshes).toEqual([]);
     expect(state.alerts.at(-1)?.title).toBe("Could not archive thread");
+
+    // A list can hold a row from before the run started.
+    state.shells = [thread];
+    expect(await useThreadListActions().archiveThread(makeThread())).toBe(false);
+    expect(state.requests).toEqual([]);
   });
 });
