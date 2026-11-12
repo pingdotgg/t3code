@@ -125,8 +125,9 @@ describe("sidebar collision detection", () => {
     { sourceSection: "active", pins: 1, pinsAt: 316 },
     { sourceSection: "pinned", pins: 1, pinsAt: 316 },
     { sourceSection: "settled", pins: 1, pinsAt: 316 },
-    // Active refuses a Working row, so it pins only above the divider, not on the label below.
-    { sourceSection: "working", pins: 1, pinsAt: 183 },
+    // Active refuses a Working row, so it pins anywhere above the Active label, not on it.
+    { sourceSection: "working", pins: 0, pinsAt: 299 },
+    { sourceSection: "working", pins: 1, pinsAt: 299 },
   ] as const)(
     "switches on crossing the divider row from $sourceSection with $pins pins",
     ({ sourceSection, pins, pinsAt }) => {
