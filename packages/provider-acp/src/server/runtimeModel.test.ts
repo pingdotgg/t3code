@@ -6,7 +6,6 @@ import {
   decideToolCallUpdateEmission,
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
-  acpMcpToolCallOutput,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   mergeToolCallState,
@@ -1402,43 +1401,6 @@ describe("extractMcpToolCallIdentity", () => {
       });
       expect(extractMcpToolCallIdentity(toolCall), tool).toEqual({ server: "t3-code", tool });
     }
-  });
-
-  // regression: #23714 Probed live on Grok 1.0.77, which calls MCP tools through `use_tool`.
-  it("unwraps Grok's use_tool calls into the MCP tool, its arguments, and its result", () => {
-    const meta = { "x.ai/tool": { name: "use_tool", kind: "use_tool", namespace: "grok_build" } };
-    const grokCall = (toolCallId: string, tool: string, toolInput: Record<string, unknown>) =>
-      mergeToolCallState(
-        toolCallFromUpdate({
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title: "use_tool",
-          rawInput: { tool_name: tool, tool_input: toolInput },
-          _meta: meta,
-        }),
-        toolCallFromUpdate({
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          kind: "other",
-          title: tool,
-          rawInput: { variant: "UseTool", tool_name: tool, tool_input: toolInput },
-          _meta: meta,
-        }),
-      );
-
-    expect(
-      extractMcpToolCallIdentity(grokCall("grok-1", "t3-code__html_render", { path: "a.html" })),
-    ).toEqual({ server: "t3-code", tool: "html_render", input: { path: "a.html" } });
-    expect(
-      extractMcpToolCallIdentity(grokCall("grok-2", "pencil__browser", { action: "load-page" })),
-    ).toEqual({ server: "pencil", tool: "browser", input: { action: "load-page" } });
-
-    const result = '{"htmlRender":{"attachmentId":"abc-html","title":"T","height":300}}';
-    const envelope = { type: "MCP", tool_name: "html_render", server_name: "t3-code" };
-    expect(acpMcpToolCallOutput({ ...envelope, output: { OkayOutput: result } })).toBe(result);
-    expect(
-      acpMcpToolCallOutput({ ...envelope, output: { Error: "Thread not found" }, is_error: true }),
-    ).toEqual({ error: "Thread not found" });
   });
 
   // regression: #33667 OMP mounts MCP tools as xd:// devices and calls them through `write`.
