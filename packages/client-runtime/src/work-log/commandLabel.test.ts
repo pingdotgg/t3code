@@ -60,6 +60,8 @@ describe("ignored command prefixes", () => {
     "rtk git 'unterminated",
     "rtk $(choose-command)",
     `${"rtk ".repeat(12)}git status`,
+    "rtk >out && git status",
+    "& 'C:\\Tools\\my''tool.exe' status",
   ])("keeps the original command when unwrapping is uncertain: %s", (command) => {
     expect(commandProgramName(command, prefixes)).toBe(commandProgramName(command));
     expect(commandDisplayText(command, prefixes)).toBe(commandDisplayText(command));

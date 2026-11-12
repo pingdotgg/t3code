@@ -1234,7 +1234,12 @@ function parseCommandProgramName(
       const targetIndex = index + ignoredPrefix.length;
       const target = tokens[targetIndex];
       const targetOffset = tokenOffsets?.[targetIndex];
-      if (target && !target.startsWith("-") && targetOffset !== undefined) {
+      if (
+        target &&
+        !target.startsWith("-") &&
+        indexAfterShellRedirection(tokens, targetIndex) === null &&
+        targetOffset !== undefined
+      ) {
         const remainder = firstCommand.slice(targetOffset);
         const source = command.trim();
         const sourceFirstCommand = commandSplit.firstCommand.trim();
@@ -1461,7 +1466,8 @@ function commandProgramNameInternal(
   if (segmentsRemaining <= 0) return null;
   const calledProgram = powerShellCallOperatorProgramName(command);
   if (calledProgram !== undefined) {
-    if (calledProgram && labelContext?.ignoredPrefixes.length) {
+    // Reparsing loses PowerShell quoting, so only a called prefix may replace the literal name.
+    if (calledProgram && labelContext?.ignoredPrefixes.some(([first]) => first === calledProgram)) {
       return (
         parseCommandProgramName(
           command.trimStart().slice(1).trimStart(),
