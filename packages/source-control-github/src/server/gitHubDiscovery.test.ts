@@ -22,13 +22,16 @@ const unknownContext = (baseUrl: string) => ({
 });
 
 // The default host dies on any command, so refinement never reaches `gh`.
-const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"]) =>
+const makeDiscovery = (
+  credential: GitHubRest.GitHubRest["Service"]["credential"],
+  hostOptions?: TestSourceControlHost.TestSourceControlHostOptions,
+) =>
   GitHubSourceControlProvider.makeDiscovery.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
         Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
-        TestSourceControlHost.layer(),
+        TestSourceControlHost.layer(hostOptions),
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),
@@ -100,6 +103,38 @@ it.effect.each([
     const provider = yield* discovery.refineUnknownRemote({
       cwd: "/repo",
       context: { ...unknownContext(`https://${host}`), remoteUrl },
+    });
+    assert.deepStrictEqual(provider, {
+      kind: SourceControlProviderKind.make("github"),
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+  }),
+);
+
+// The alias names no forge; only `ssh -G` knows its HostName.
+it.effect("recognizes an SSH alias whose ssh config HostName is github.com", () =>
+  Effect.gen(function* () {
+    const discovery = yield* makeDiscovery(
+      (host) =>
+        host === "github.com"
+          ? Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` })
+          : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+      {
+        process: {
+          run: (input) =>
+            input.command === "ssh" && input.args.includes("-G")
+              ? Effect.succeed(
+                  TestSourceControlHost.processOutput("user git\nhostname github.com\nport 22\n"),
+                )
+              : Effect.die(`Unexpected ${input.command} run in ${input.operation}.`),
+        },
+      },
+    );
+    if (discovery.type !== "managed-cli") return assert.fail("expected a managed CLI");
+    const provider = yield* discovery.refineUnknownRemote({
+      cwd: "/repo",
+      context: { ...unknownContext("https://gh-work"), remoteUrl: "git@gh-work:team/project.git" },
     });
     assert.deepStrictEqual(provider, {
       kind: SourceControlProviderKind.make("github"),
