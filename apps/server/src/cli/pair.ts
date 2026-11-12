@@ -37,6 +37,7 @@ import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
   isProcessAlive,
+  isRuntimeStateFromAnotherMachine,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
@@ -77,6 +78,22 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
       `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
+    ].join("\n");
+  }
+}
+
+export class ServerRunningOnAnotherMachineError extends Schema.TaggedError<ServerRunningOnAnotherMachineError>()(
+  "ServerRunningOnAnotherMachineError",
+  {
+    hostname: Schema.String,
+    statePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return [
+      `The T3 Code server for this T3 home is running on another machine (\`${this.hostname}\`).`,
+      `Its record is ${this.statePath}, visible here because this machine shares that T3 home.`,
+      `Run \`t3 pair\` on \`${this.hostname}\` to pair with it. To run a separate server on this machine, give it its own --base-dir.`,
     ].join("\n");
   }
 }
@@ -266,6 +283,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   }
 
   const checkedStatePaths: Array<string> = [];
+  let foreignServer: { readonly hostname: string; readonly statePath: string } | undefined;
   for (const baseDir of new Set(bases)) {
     for (const variant of ["userdata", "dev"] as const) {
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
@@ -277,6 +295,11 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       checkedStatePaths.push(statePath);
       const state = yield* readPersistedServerRuntimeState(statePath);
       if (Option.isNone(state)) {
+        continue;
+      }
+      // Another machine's server is not a local target, whatever its pid looks like here.
+      if (isRuntimeStateFromAnotherMachine(state.value)) {
+        foreignServer ??= { hostname: state.value.hostname ?? "unknown", statePath };
         continue;
       }
       // A dead server's port may be reused; do not mint tokens in its old database for another server.
@@ -294,6 +317,9 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
         descriptor: probed.descriptor,
       } satisfies DiscoveredPairTarget;
     }
+  }
+  if (foreignServer !== undefined) {
+    return yield* new ServerRunningOnAnotherMachineError(foreignServer);
   }
   const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
   return yield* new NoRunningServerError({

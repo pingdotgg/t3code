@@ -26,7 +26,11 @@ import { readBootstrapEnvelope } from "../bootstrap.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  isRuntimeStateFromAnotherMachine,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -348,6 +352,13 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
   if (options?.rejectRunningServer && mode === "web") {
     const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
+    // A shared T3 home makes another machine's live server look like a local record;
+    // its pid cannot be probed from here, so refuse with the machine named instead.
+    if (Option.isSome(runtime) && isRuntimeStateFromAnotherMachine(runtime.value)) {
+      return yield* new CliError.UserError({
+        cause: `The T3 Code server for this T3 home is recorded on another machine (\`${runtime.value.hostname ?? "unknown"}\`, ${runtime.value.origin}), and this machine shares that T3 home. Connect to that server, stop it on that machine, or use a different --base-dir. If that server is gone, remove ${derivedPaths.serverRuntimeStatePath} and retry.`,
+      });
+    }
     // A killed container can leave a record with the new server's own PID.
     if (
       Option.isSome(runtime) &&
