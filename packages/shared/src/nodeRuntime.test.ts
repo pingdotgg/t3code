@@ -77,7 +77,7 @@ describe("Node runtime selection", () => {
       const directory = yield* fs.makeTempDirectoryScoped();
       const platform = yield* HostProcess.Platform;
       const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
-      const env = { PATH: directory };
+      const env = { PATH: directory, T3CODE_CLI_FALLBACK_DIRS: "" };
       expect(
         Result.isFailure(
           yield* resolveNodeExecutable("Local device support", env).pipe(Effect.result),
@@ -154,10 +154,10 @@ describe("Node runtime selection", () => {
       yield* fs.writeFileString(executable, "standalone executable fixture");
       yield* fs.chmod(executable, 0o755);
       yield* fs.link(executable, node);
-      const error = yield* resolveNodeExecutable("Local device support", { PATH: directory }).pipe(
-        Effect.provideService(HostProcess.ExecutablePath, executable),
-        Effect.flip,
-      );
+      const error = yield* resolveNodeExecutable("Local device support", {
+        PATH: directory,
+        T3CODE_CLI_FALLBACK_DIRS: "",
+      }).pipe(Effect.provideService(HostProcess.ExecutablePath, executable), Effect.flip);
       expect(error._tag).toBe("NodeRuntimeUnavailableError");
       expect(error.message).toContain("Install Node.js");
     }).pipe(
@@ -175,7 +175,12 @@ describe("Node runtime selection", () => {
       const platform = yield* HostProcess.Platform;
       const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
       yield* fs.symlink(process.execPath, node);
-      expect(yield* resolveNodeExecutable("Local device support", { PATH: directory })).toBe(node);
+      expect(
+        yield* resolveNodeExecutable("Local device support", {
+          PATH: directory,
+          T3CODE_CLI_FALLBACK_DIRS: "",
+        }),
+      ).toBe(node);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.ExecutablePath, "/packaged/t3"),
@@ -196,6 +201,7 @@ describe("Node runtime selection", () => {
         yield* fs.symlink(process.execPath, node);
         const error = yield* resolveNodeExecutable("Local device support", {
           PATH: directory,
+          T3CODE_CLI_FALLBACK_DIRS: "",
         }).pipe(Effect.flip);
         expect(error.message).toContain("Install Node.js");
       }).pipe(
