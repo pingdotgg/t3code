@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpThreadSendInput,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
@@ -66,4 +67,16 @@ describe("orchestrator MCP contracts", () => {
       }),
     ).toThrow();
   });
+
+  it.each([OrchestratorMcpDelegateTaskInput, OrchestratorMcpThreadSendInput])(
+    "advertises the clientRequestId description in the encoded JSON schema",
+    (input) => {
+      const { properties } = Schema.toJsonSchemaDocument(input).schema as {
+        properties: Record<string, { description?: string }>;
+      };
+      expect(properties.clientRequestId?.description).toBe(
+        "Reuse it to retry the same call. A new call gets a new key.",
+      );
+    },
+  );
 });
