@@ -4,8 +4,11 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
+  EventId,
+  MessageId,
+  TurnItemId,
   type OrchestrationV2Run,
-  type OrchestrationV2StoredEvent,
+  OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
   ProjectId,
@@ -16,6 +19,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -84,7 +88,7 @@ const usersThread = ThreadId.make("thread:box-users-own");
 const boxThreads = (
   seen: Ref.Ref<Seen>,
   linkSession: Ref.Ref<string>,
-  blockedWait?: Deferred.Deferred<void>,
+  blockedWait?: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> },
 ) => {
   const base = { ...liveThreadShell(boxThread, { runtimeMode: "auto" }), projectId: boxProject };
   const linked = Ref.get(linkSession).pipe(
@@ -144,7 +148,9 @@ const boxThreads = (
       Ref.updateAndGet(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
         Effect.tap(() =>
           blockedWait !== undefined && input.timeoutMs > 1
-            ? Deferred.succeed(blockedWait, undefined).pipe(Effect.andThen(Effect.never))
+            ? Deferred.succeed(blockedWait.started, undefined).pipe(
+                Effect.andThen(Deferred.await(blockedWait.release)),
+              )
             : Effect.void,
         ),
         Effect.map(({ waits }) => ({
@@ -233,7 +239,7 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
 const serveBox = (
   seen: Ref.Ref<Seen>,
   linkSession: Ref.Ref<string>,
-  blockedWait?: Deferred.Deferred<void>,
+  blockedWait?: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> },
 ) =>
   servePeer(
     box,
@@ -314,7 +320,7 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
+    Layer.provideMerge(PeerForwarding.layer),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(
@@ -396,7 +402,14 @@ const makeLaptop = Effect.gen(function* () {
         ),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call, inputs, inputSubscribed };
+  return {
+    links: Context.get(linking, PeerLinks.PeerLinks),
+    call,
+    inputs,
+    inputSubscribed,
+    forwarding: Context.get(here, PeerForwarding.PeerForwarding),
+    scopeOf,
+  };
 });
 
 const failureOf = (result: McpSchema.CallToolResult) => {
@@ -404,47 +417,93 @@ const failureOf = (result: McpSchema.CallToolResult) => {
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
 
-it.effect("incoming local steering releases a forwarded wait without stopping remote work", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const seen = yield* Ref.make<Seen>(nothingSeen);
-      const linkSession = yield* Ref.make("");
-      const blocked = yield* Deferred.make<void>();
-      const b = yield* serveBox(seen, linkSession, blocked);
-      const a = yield* makeLaptop;
-      yield* linkTo(a.links, b, "auto");
-      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
-      const waiting = yield* a
-        .call("thread:laptop-full", "t3_thread_wait", {
-          environmentId: box.environmentId,
-          threadId: boxThread,
-          timeoutMs: 600_000,
-        })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(a.inputSubscribed);
-      yield* Deferred.await(blocked);
-      yield* Queue.offer(a.inputs, {
-        sequence: 1,
-        event: {
-          type: "turn-item.updated",
-          threadId: ThreadId.make("thread:laptop-full"),
-          payload: {
-            type: "user_message",
-            inputIntent: "steer",
-            messageId: "message:remote-wait-input",
-          },
-        },
-      } as unknown as OrchestrationV2StoredEvent);
-      expect((yield* Fiber.join(waiting)).structuredContent).toMatchObject({
-        status: "running",
-        timedOut: false,
-        interruptedByMessageId: "message:remote-wait-input",
-      });
-      const observed = yield* Ref.get(seen);
-      expect(observed.stops).toEqual([]);
-      expect(observed.waits.map((wait) => wait.timeoutMs)).toEqual([50_000, 1]);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+it.effect.each([true, false])(
+  "incoming steering only releases an interactive forwarded wait, interactive=%s",
+  (interactive) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const seen = yield* Ref.make<Seen>(nothingSeen);
+        const linkSession = yield* Ref.make("");
+        const blocked = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const b = yield* serveBox(seen, linkSession, blocked);
+        const a = yield* makeLaptop;
+        yield* linkTo(a.links, b, "auto");
+        yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+        const input = { threadId: boxThread, timeoutMs: 600_000, untilDelegatedWorkSettled: true };
+        const wait = interactive
+          ? a
+              .call("thread:laptop-full", "t3_thread_wait", {
+                ...input,
+                environmentId: box.environmentId,
+              })
+              .pipe(Effect.map((result) => result.structuredContent))
+          : a.forwarding.waitForThread(a.scopeOf("thread:laptop-full"), box.environmentId, input);
+        const waiting = yield* wait.pipe(Effect.forkChild);
+        yield* Effect.addFinalizer(() => Deferred.succeed(blocked.release, undefined));
+        if (interactive) yield* Deferred.await(a.inputSubscribed);
+        yield* Deferred.await(blocked.started);
+        const now = yield* DateTime.now;
+        yield* Queue.offer(
+          a.inputs,
+          OrchestrationV2StoredEvent.make({
+            sequence: 1,
+            commandId: null,
+            event: {
+              id: EventId.make("event:remote-wait-input"),
+              type: "turn-item.updated",
+              threadId: ThreadId.make("thread:laptop-full"),
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("item:remote-wait-input"),
+                threadId: ThreadId.make("thread:laptop-full"),
+                runId: RunId.make("run:laptop-full"),
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                createdBy: "agent",
+                creationSource: "mcp",
+                freshContext: false,
+                type: "user_message",
+                inputIntent: "steer",
+                messageId: MessageId.make("message:remote-wait-input"),
+                text: "Handle this first.",
+                attachments: [],
+              },
+            },
+          }),
+        );
+        if (!interactive) {
+          expect(yield* Deferred.isDone(a.inputSubscribed)).toBe(false);
+          expect(waiting.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(blocked.release, undefined);
+          expect(yield* Fiber.join(waiting)).toMatchObject({
+            status: "completed",
+            timedOut: false,
+          });
+          return;
+        }
+        expect(yield* Fiber.join(waiting)).toMatchObject({
+          status: "running",
+          timedOut: false,
+          interruptedByMessageId: "message:remote-wait-input",
+        });
+        const observed = yield* Ref.get(seen);
+        expect(observed.stops).toEqual([]);
+        expect(observed.waits.map((wait) => wait.timeoutMs)).toEqual([1, 50_000]);
+        expect(observed.waits[1]?.runId).toBe(boxRun);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("an agent here works on a linked environment's threads within its own modes", () =>
@@ -549,7 +608,7 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       expect(
         (yield* Ref.get(seen)).waits.map(({ timeoutMs, runId }) => [timeoutMs, runId]),
       ).toEqual([
-        [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, undefined],
+        [1, undefined],
         [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, boxRun],
         [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, boxRun],
       ]);

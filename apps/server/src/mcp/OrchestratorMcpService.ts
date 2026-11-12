@@ -1769,7 +1769,11 @@ const make = Effect.gen(function* () {
         Exit.isSuccess(exit) && delivered(exit.value) ? Effect.void : upgradeWake,
       ),
     );
-    if (Option.isSome(waited)) return waited.value;
+    if (
+      Option.isSome(waited) &&
+      (delivered(waited) || waited.value.interruptedByMessageId !== undefined)
+    )
+      return waited.value;
     return yield* readTask(scope, taskId, Option.isNone(waited), true);
   });
 

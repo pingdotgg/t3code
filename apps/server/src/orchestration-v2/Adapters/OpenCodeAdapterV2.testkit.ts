@@ -256,6 +256,7 @@ export class OpenCodeReplayController {
           if (entry.afterMs !== undefined && entry.afterMs > 0) {
             await Effect.runPromise(Effect.sleep(Duration.millis(entry.afterMs)));
           }
+          if (signal?.aborted) return;
           const event = materializeMessageIds(frame.event, this.messageIds);
           this.advance();
           yield event;

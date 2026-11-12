@@ -55,6 +55,8 @@ import {
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
 
+import { OpenCodeReplayController } from "./OpenCodeAdapterV2.testkit.ts";
+
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 const WORK = "/work/opencode2";
 const instanceId = ProviderInstanceId.make("opencode");
@@ -334,6 +336,7 @@ const resumed = (
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
     readonly onRequest?: (operation: string) => void;
+    readonly onResponse?: (operation: string, input: unknown) => void;
     readonly borrowers?: { current: number };
   },
 ) =>
@@ -373,6 +376,7 @@ const resumed = (
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
         ...(options?.onRequest === undefined ? {} : { onRequest: options.onRequest }),
+        ...(options?.onResponse === undefined ? {} : { onResponse: options.onResponse }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
         ...(options?.attachmentsDir === undefined
@@ -1649,6 +1653,34 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     returnedRunning("call-background"),
     event("session.execution.started", { sessionID: CHILD }),
   ];
+
+  it("a cancelled event subscription leaves its gated event for reconnect", async () => {
+    const controller = new OpenCodeReplayController({
+      provider: "opencode",
+      protocol: "opencode2-http.sse",
+      version: "2",
+      scenario: "cancel-gated-event",
+      entries: [event("session.execution.started", { sessionID: CHILD }, "cancel-gate")],
+    });
+    const entered = Promise.withResolvers<void>();
+    const abort = new AbortController();
+    const stream = controller.events(
+      abort.signal,
+      () =>
+        new Promise((resolve) => {
+          abort.signal.addEventListener("abort", () => resolve(), { once: true });
+          entered.resolve();
+        }),
+    );
+    const events = stream[Symbol.asyncIterator]();
+    const next = events.next();
+    await entered.promise;
+    abort.abort();
+    assert.isTrue((await next).done);
+    const replacement = controller.events()[Symbol.asyncIterator]();
+    assert.isFalse((await replacement.next()).done);
+    controller.assertComplete();
+  });
 
   it.effect.each([false, true])(
     "answers steering while foreground subagents keep running, active goal=%s",
@@ -6149,7 +6181,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
       const spawn = { sessionID: SESSION, assistantMessageID: "msg_reply", id: "call-spawn" };
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const gate = makeProviderReplayGate(["settled"]);
+      const stopped = Promise.withResolvers<void>();
       const { runtime, thread } = yield* resumed(
         [
           ...backgroundLaunch(CHILD),
@@ -6269,9 +6301,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.execution.started", { sessionID: SESSION }),
           out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", { interrupted: true }),
-          event("session.execution.interrupted", { sessionID: SESSION }, "settled"),
         ],
-        { replayGate: gate },
+        {
+          onResponse: (operation, input) => {
+            if (
+              operation === "session.interrupt" &&
+              typeof input === "object" &&
+              input !== null &&
+              "sessionID" in input &&
+              input.sessionID === SESSION
+            )
+              stopped.resolve();
+          },
+        },
       ).pipe(
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Effect.sync(() => void offers.push(request)),
@@ -6314,8 +6356,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           requestRuntimeRestart: true,
         });
       }
-      yield* Effect.promise(() => gate.waitForReached("settled"));
-      gate.release("settled");
+      yield* Effect.promise(() => stopped.promise);
       assert.lengthOf(offers, 1);
       assert.deepEqual(
         collected.flatMap((event) =>

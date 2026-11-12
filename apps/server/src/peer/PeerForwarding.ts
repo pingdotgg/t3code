@@ -191,10 +191,14 @@ const make = Effect.gen(function* () {
       input,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
-    "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
-    const callerThreadId = scope.thread?.threadId;
+  const waitForThread = Effect.fn("PeerForwarding.waitForThread")(function* (
+    scope: Scope,
+    environmentId: EnvironmentId,
+    input: OrchestratorMcpThreadWaitInput,
+    interruptOnSteering = false,
+  ) {
+    // Background followers must keep waiting through local input until the remote work settles.
+    const callerThreadId = interruptOnSteering ? scope.thread?.threadId : undefined;
     const afterSequence =
       callerThreadId === undefined
         ? 0
@@ -212,24 +216,35 @@ const make = Effect.gen(function* () {
       Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
     );
     let runId = input.runId;
+    const request = (timeoutMs: number) =>
+      forward<OrchestratorMcpThreadWaitResult>(
+        scope,
+        "t3_thread_wait",
+        OrchestratorMcpThreadWaitInput,
+        OrchestratorMcpThreadWaitResult,
+        environmentId,
+        { ...input, runId, timeoutMs },
+      );
+    // Pin the default run and retain its last observed state before a blocking request can stall.
+    let current: OrchestratorMcpThreadWaitResult | undefined;
+    if (callerThreadId !== undefined) {
+      const snapshot = yield* request(1).pipe(Effect.timeoutOption("5 seconds"));
+      if (Option.isNone(snapshot)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Unable to read the linked thread before waiting.",
+        });
+      }
+      current = snapshot.value;
+      remaining -= 1;
+      if (!current.timedOut || remaining <= 0) return current;
+      runId = current.runId ?? undefined;
+    }
     const wait = Effect.gen(function* () {
       while (true) {
         const chunk = Math.min(remaining, FORWARDED_WAIT_CHUNK_MS);
-        const result = yield* forward<OrchestratorMcpThreadWaitResult>(
-          scope,
-          "t3_thread_wait",
-          OrchestratorMcpThreadWaitInput,
-          OrchestratorMcpThreadWaitResult,
-          environmentId,
-          {
-            threadId: input.threadId,
-            ...(runId === undefined ? {} : { runId }),
-            timeoutMs: chunk,
-            ...(input.untilDelegatedWorkSettled === undefined
-              ? {}
-              : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
-          },
-        );
+        const result = yield* request(chunk);
+        current = result;
         remaining -= chunk;
         if (!result.timedOut || remaining <= 0) return result;
         // Later pieces wait for the run the first one picked, not a newer one.
@@ -261,17 +276,8 @@ const make = Effect.gen(function* () {
       incoming.pipe(Effect.map((messageId) => ({ type: "input" as const, messageId }))),
     );
     if (outcome.type === "result") return outcome.result;
-    // Read the target's current outcome without continuing the blocking wait.
-    const result = yield* forward<OrchestratorMcpThreadWaitResult>(
-      scope,
-      "t3_thread_wait",
-      OrchestratorMcpThreadWaitInput,
-      OrchestratorMcpThreadWaitResult,
-      environmentId,
-      { ...input, runId, timeoutMs: 1 },
-    );
-    const { next: _next, ...current } = result;
-    return { ...current, timedOut: false, interruptedByMessageId: outcome.messageId };
+    const { next: _next, ...observed } = current!;
+    return { ...observed, timedOut: false, interruptedByMessageId: outcome.messageId };
   });
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
@@ -289,6 +295,7 @@ const make = Effect.gen(function* () {
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          true,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
     return Effect.andThen(requireEnabled, forwarded);
