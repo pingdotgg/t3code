@@ -249,6 +249,22 @@ describe("claudeRateLimitEventToUpdate", () => {
     });
   });
 
+  it("maps every window in unifiedWindows when the event has no top-level utilization", () => {
+    const info = {
+      status: "allowed",
+      rateLimitType: "five_hour",
+      resetsAt: 1_793_736_600,
+      unifiedWindows: {
+        five_hour: { utilization: 0.49, resetsAt: 1_793_736_600 },
+        seven_day: { utilization: 0.11, resetsAt: 1_793_768_400 },
+      },
+    } as const;
+    expect(claudeRateLimitEventToUpdate(info, noNames)?.windows).toEqual([
+      expect.objectContaining({ id: "five_hour", usedPercent: 49 }),
+      expect.objectContaining({ id: "seven_day", usedPercent: 11 }),
+    ]);
+  });
+
   it("lands the streamed overage-included bucket on the row the probe named", () => {
     const event = {
       status: "allowed",
