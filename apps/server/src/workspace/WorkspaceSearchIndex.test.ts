@@ -1,10 +1,4 @@
-import {
-  FileFinder,
-  type FileItem,
-  type GrepCursor,
-  type GrepOptions,
-  type GrepResult,
-} from "@ff-labs/fff-node";
+import type { FileFinder, FileItem, GrepCursor, GrepOptions, GrepResult } from "@ff-labs/fff-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -13,11 +7,22 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
+import { WorkspaceFinderOpener } from "./WorkspaceFinderThread.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+const withInProcessFinder = (finder: FileFinder) =>
+  Effect.provideService(WorkspaceFinderOpener, async () => ({
+    ok: true as const,
+    value: {
+      call: async (method, ...args) =>
+        (finder[method] as (...input: typeof args) => never)(...args),
+      close: async () => undefined,
+    },
+  }));
 
 function fileItem(relativePath: string): FileItem {
   return {
@@ -53,9 +58,10 @@ it.effect("filters image searches before applying the result limit", () =>
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
         fileSearch,
       } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        withInProcessFinder(finder),
+      );
       const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
       const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
 
@@ -116,9 +122,10 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
         grep,
       } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content").pipe(
+        withInProcessFinder(finder),
+      );
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,
