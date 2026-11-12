@@ -3091,9 +3091,14 @@ function claudeBypassAvailability(
 
 function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
   // CLI-forwarded requests need a person's decision even under bypass (ask rules,
-  // safety checks, or settings fallback). Do not wait for queued init/status updates.
+  // safety checks, or settings fallback) and Auto (its review could not decide, or Claude fell
+  // back to default). The callback cannot tell which, and init/status updates may still be queued.
   const policy = context.queryPolicy;
-  return policy.installPermissionCallback || policy.permissionMode === "bypassPermissions";
+  return (
+    policy.installPermissionCallback ||
+    policy.permissionMode === "bypassPermissions" ||
+    policy.permissionMode === "auto"
+  );
 }
 
 // Only what a process fixes at launch; the permission mode and callback policy change live.

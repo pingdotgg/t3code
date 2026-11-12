@@ -6467,27 +6467,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    { runtimeMode: "auto", modelHasAuto: true, changes: ["auto", "plan"], asks: false },
-    {
-      runtimeMode: "full-access",
-      modelHasAuto: true,
-      changes: ["bypassPermissions", "plan"],
-      asks: true,
-    },
+    { runtimeMode: "auto", modelHasAuto: true, changes: ["auto", "plan"] },
+    { runtimeMode: "full-access", modelHasAuto: true, changes: ["bypassPermissions", "plan"] },
     {
       runtimeMode: "full-access",
       modelHasAuto: true,
       changes: ["default", "default"],
-      asks: true,
       launchArgs: "--permission-mode default",
       openedMode: "default",
     },
-    // Like the CLI at launch, a model without Auto runs in default, which asks.
-    { runtimeMode: "auto", modelHasAuto: false, changes: ["auto", "default", "plan"], asks: true },
+    // Like the CLI at launch, a model without Auto runs in default.
+    { runtimeMode: "auto", modelHasAuto: false, changes: ["auto", "default", "plan"] },
   ] as const)(
     "switches $runtimeMode Plan in and out on a process running a background shell (Auto: $modelHasAuto)",
     (scenario) => {
-      const { runtimeMode, modelHasAuto, changes, asks } = scenario;
+      const { runtimeMode, modelHasAuto, changes } = scenario;
       const launchArgs = "launchArgs" in scenario ? scenario.launchArgs : "";
       return Effect.scoped(
         Effect.gen(function* () {
@@ -6558,14 +6552,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
             Fiber.join(decision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
           );
-          assert.equal(first.type, asks ? "request" : "decision");
-          if (first.type === "request") {
-            yield* harness.runtime.respondToRuntimeRequest({
-              requestId: first.event.runtimeRequest.id,
-              decision: "decline",
-            });
-            yield* Fiber.join(decision);
-          }
+          // Every mode asks about a request Claude forwards once the thread has left Plan.
+          assert.equal(first.type, "request");
+          if (first.type !== "request") return;
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: first.event.runtimeRequest.id,
+            decision: "decline",
+          });
+          yield* Fiber.join(decision);
           yield* settle;
           yield* harness.runtime.startTurn(turn(3, "plan"));
           yield* settle;
@@ -6659,6 +6653,102 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           decision: "decline",
         });
         yield* Fiber.join(decision);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // regression: an Auto turn answered forwarded requests from the mode it asked for, so a
+  // process that had fallen back to default ran them unasked.
+  it.effect.each([
+    { name: "a status frame reports default mid-turn", downgrade: "status", planFirst: false },
+    { name: "a delayed init frame reports default", downgrade: "init", planFirst: false },
+    { name: "a process reused from Plan reports default", downgrade: "status", planFirst: true },
+    { name: "the downgrade frame is still queued", downgrade: "queued", planFirst: false },
+  ] as const)("asks before a forwarded Bash command in Auto when $name", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, interactionMode: "plan" | "default") => {
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-auto-downgrade:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "auto",
+              interactionMode,
+              cwd: "/workspace",
+            }),
+          });
+          return {
+            ...input,
+            appThread: { ...input.appThread, runtimeMode: "auto" as const, interactionMode },
+          };
+        };
+        if (scenario.planFirst) {
+          yield* harness.runtime.startTurn(turn(1, "plan"));
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+        }
+        const openedOptions = harness.getOpenedOptions();
+        yield* harness.runtime.startTurn(turn(scenario.planFirst ? 2 : 1, "default"));
+        if (scenario.planFirst) {
+          assert.strictEqual(harness.getOpenedOptions(), openedOptions);
+          assert.deepEqual(harness.permissionModeChanges, ["auto"]);
+        }
+        if (scenario.downgrade !== "queued") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: scenario.downgrade,
+              ...(scenario.downgrade === "status" ? { status: null } : {}),
+              permissionMode: "default",
+              uuid: "auto-downgrade",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+
+        const decision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "git push" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-auto-downgrade",
+              requestId: "request-auto-downgrade",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        assert.equal(first.type, "request", "the forwarded command ran without an approval");
+        if (first.type !== "request") return;
+        assert.equal(first.event.runtimeRequest.kind, "command");
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: first.event.runtimeRequest.id,
+          decision: "decline",
+        });
+        assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
