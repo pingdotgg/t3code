@@ -642,11 +642,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ...(Option.isSome(recorded) && recorded.value.version ? [recorded.value.version] : []),
       AGENT_DEVICE_VERSION,
     ]);
-    if (!entryPath) return;
+    if (!entryPath) {
+      // A live recorded daemon outlives its deleted CLI, so nothing here can stop it.
+      if (Option.isNone(recorded) || !recorded.value.pid) return;
+      return yield* new DeviceHost.DeviceHostError({
+        hostId,
+        step: "stopping agent tools",
+        cause: new Error("agent-device is not installed, so its running daemon cannot be stopped"),
+      });
+    }
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(HostProcess.Platform, hostPlatform),
     );
-    yield* runner.run({
+    const result = yield* runner.run({
       command: nodePath,
       args: [
         entryPath,
@@ -659,10 +667,21 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       timeout: Duration.seconds(10),
       timeoutBehavior: "timedOutResult",
     });
+    if (result.timedOut || result.code !== 0) {
+      return yield* new DeviceHost.DeviceHostError({
+        hostId,
+        step: "stopping agent tools",
+        cause: result,
+      });
+    }
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
-    Effect.ignore,
+    Effect.mapError((cause) =>
+      cause._tag === "DeviceHostError"
+        ? cause
+        : new DeviceHost.DeviceHostError({ hostId, step: "stopping agent tools", cause }),
+    ),
   );
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
@@ -872,7 +891,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       const running = yield* Ref.getAndSet(runningRef, null);
       yield* stopHub(running?.hub);
       yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
-      yield* stopAgentDeviceDaemon;
+      yield* stopAgentDeviceDaemon.pipe(Effect.ignore);
     }),
   );
 
