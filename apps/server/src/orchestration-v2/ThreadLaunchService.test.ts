@@ -1244,6 +1244,12 @@ it.effect.each([
     localBranches: [localBranch("feature/login")],
     expected: { refName: "feature/login" },
   },
+  {
+    name: "keeps an existing temporary-named branch's name",
+    baseRef: "t3/1234abcd",
+    localBranches: [localBranch("t3/1234abcd")],
+    expected: { refName: "t3/1234abcd" },
+  },
 ])("$name in a new worktree", ({ name, baseRef, localBranches, expected }) => {
   const harness = checkoutExistingHarness(localBranches);
   return Effect.gen(function* () {
@@ -1254,7 +1260,7 @@ it.effect.each([
       path: null,
       ...expected,
     });
-    assert.equal(settled.thread.branch, "feature/login");
+    assert.equal(settled.thread.branch, expected.newRefName ?? expected.refName);
     assert.equal(settled.thread.worktreePath, "/repo-worktrees/feature-login");
     assert.equal(harness.generateBranchName.mock.calls.length, 0);
   }).pipe(Effect.provide(harness.layer));

@@ -618,8 +618,10 @@ const make = Effect.gen(function* () {
       }
       workspaceRecorded = true;
 
+      // An opened branch existed before this launch, so its name is the user's, even a temporary one.
       if (
         reused === undefined &&
+        !checkoutExisting &&
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
