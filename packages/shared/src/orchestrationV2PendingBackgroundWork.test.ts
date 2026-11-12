@@ -3,6 +3,7 @@ import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  monitorHoldsWakeCompletion,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("backgroundWorkHoldsCompletion", () => {
@@ -433,6 +434,12 @@ describe("derivePendingBackgroundWork kinds", () => {
         ],
       });
       expect(backgroundWorkHoldsCompletion(tasks)).toBe(false);
+      expect(
+        monitorHoldsWakeCompletion({
+          latestRunBackgroundWake: true,
+          pendingBackgroundTasks: tasks,
+        }),
+      ).toBe(false);
     });
 
     it("keeps a thread that never ran waiting on its watch", () => {

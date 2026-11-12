@@ -337,9 +337,10 @@ watch already reported; unlinking the pull request clears that. Subagents cannot
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
-A watched thread counts as working between wakes, so it stays in the **Working** section and does
-not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
-returns to your inbox.
+A watched thread counts as working between wakes while its checks run, so it stays in the
+**Working** section. Once every check has passed, the thread returns to your inbox even if the
+agent did not stop watching, and the watch keeps waking it on new comments, failed checks or conflicts. A
+watched thread does not auto-settle.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.

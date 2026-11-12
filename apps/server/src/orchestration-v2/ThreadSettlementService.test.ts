@@ -149,6 +149,23 @@ describe("isAutoSettlementCandidate", () => {
     ).toBe(true);
   });
 
+  it("never settles a thread whose pull request watch has stopped holding it", () => {
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({
+          pendingBackgroundTasks: [
+            {
+              taskId: "pull-request-watch:github.com/acme/app#1",
+              kind: "monitor",
+              description: "Watching pull request #1",
+            },
+          ],
+        }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+  });
+
   it("never settles, or keeps snoozed, a thread whose guest is waiting on the owner", () => {
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
