@@ -125,13 +125,13 @@ export function PullRequestMarkdown(props: {
   }) => boolean;
 }) {
   const mediaContext = useContext(PullRequestMediaContext);
-  const changeRequestUrl = useContext(ChangeRequestUrlContext);
+  const changeRequest = useContext(ChangeRequestContext);
   const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
   const [undoneTicks, setUndoneTicks] = useState(0);
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,
   )
-    .map((href) => (changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href))
+    .map((href) => (changeRequest ? resolveChangeRequestMediaUrl(href, changeRequest) : href))
     .filter(
       (uri) =>
         /^https?:\/\//i.test(uri) &&

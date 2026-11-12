@@ -44,12 +44,18 @@ export const make = Effect.gen(function* () {
             }),
           ),
         )
-        .pipe(Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT));
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+          // An upload's secret path segment grants access; keep it out of tracing spans.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        );
       const location = response.headers.location;
       if (response.status < 300 || response.status >= 400) return response;
       if (!location || hop >= MAX_REDIRECTS) return null;
-      const next = new URL(location, target);
-      if (next.protocol !== "https:") return null;
+      const next = URL.parse(location, target);
+      if (next === null || next.protocol !== "https:" || next.username || next.password) {
+        return null;
+      }
       target = next.toString();
     }
   });
