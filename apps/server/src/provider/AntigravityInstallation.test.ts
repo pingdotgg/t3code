@@ -394,7 +394,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
                 {
                   driver: "antigravity",
                   t3CodeRange: ">=0.0.42",
-                  ranges: [{ range: ">=1.5.0", status: "broken" }],
+                  ranges: [{ range: ">=1.5.7", status: "broken" }],
                 },
               ],
             } satisfies ModelManifest.ModelManifestData)
@@ -430,6 +430,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       });
       expect(yield* retry.installation.start.pipe(Effect.flip)).toMatchObject({
         operation: "start",
+      });
+      const recovery = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.6",
+        archive: Buffer.from("recovery runtime"),
+        platform: "win32",
+        manifest,
+      });
+      yield* recovery.installation.checkForUpdate;
+      expect(yield* recovery.installation.state).toMatchObject({
+        installedVersion: "1.5.7",
+        version: "1.5.6",
+      });
+      yield* recovery.installation.start;
+      expect(yield* terminalState(recovery.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.6",
       });
     }),
   );

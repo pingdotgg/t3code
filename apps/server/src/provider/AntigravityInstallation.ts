@@ -948,18 +948,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       return;
     }
     releaseAsset = latest;
-    yield* SubscriptionRef.update(state, (value) =>
+    yield* SubscriptionRef.updateEffect(state, (value) =>
       isRunning(value)
-        ? value
-        : {
-            ...value,
-            version:
+        ? Effect.succeed(value)
+        : Effect.gen(function* () {
+            const keepInstalled =
               value.installedVersion !== null &&
-              compareSemverVersions(value.installedVersion, latest.version) > 0
-                ? value.installedVersion
-                : latest.version,
-            totalBytes: null,
-          },
+              compareSemverVersions(value.installedVersion, latest.version) > 0 &&
+              !(yield* isWithdrawn(value.installedVersion));
+            return {
+              ...value,
+              version: keepInstalled ? value.installedVersion : latest.version,
+              totalBytes: null,
+            };
+          }),
     );
   });
 
