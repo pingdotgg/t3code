@@ -14,7 +14,7 @@ export const SecretProviderId = SecretProviderSlug.pipe(Schema.brand("SecretProv
 export type SecretProviderId = typeof SecretProviderId.Type;
 
 // Provider-specific syntax is the secret provider driver's to check.
-export const SecretReferencePath = TrimmedNonEmptyString.check(
+const SecretReferencePath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(1024),
   Schema.isPattern(/^[^\r\n]+$/),
 );

@@ -87,7 +87,7 @@ export const ManagedPolicyLimits = Schema.Struct({
 export type ManagedPolicyLimits = typeof ManagedPolicyLimits.Type;
 
 /** The limits clients see: what the server enforces, which can be broader than the file says. */
-export const ManagedPolicySummaryLimits = Schema.Struct({
+const ManagedPolicySummaryLimits = Schema.Struct({
   maxRuntimeMode: Schema.optionalKey(RuntimeMode),
   clients: Schema.optionalKey(Schema.NonEmptyArray(ManagedPolicyClient)),
   /** `false` also when `clients` leaves out `remote`, since Connect is remote access. */
@@ -113,7 +113,7 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
   /** No `feedUrl`: it can carry a token, and only the desktop app, which reads the file, uses it. */
   updates: Schema.optionalKey(ManagedUpdatesPolicy.mapFields(Struct.omit(["feedUrl"]))),
 });
-export type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
+type ManagedPolicySummaryLimits = typeof ManagedPolicySummaryLimits.Type;
 
 /**
  * The machine-wide policy file an administrator deploys. Decoded with excess properties

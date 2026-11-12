@@ -141,7 +141,7 @@ export function renderPrivilegedScript(plan: ProtectionPlan, mode: "apply" | "un
   return lines.join("\n");
 }
 
-export class ServiceProtectionError extends Schema.TaggedError<ServiceProtectionError>()(
+class ServiceProtectionError extends Schema.TaggedError<ServiceProtectionError>()(
   "ServiceProtectionError",
   {
     step: Schema.String,

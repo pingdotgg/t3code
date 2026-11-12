@@ -7,20 +7,20 @@ import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const ProviderApprovalPolicy = Schema.Literals([
+const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
   "on-request",
   "never",
 ]);
-export type ProviderApprovalPolicy = typeof ProviderApprovalPolicy.Type;
+type ProviderApprovalPolicy = typeof ProviderApprovalPolicy.Type;
 
-export const ProviderSandboxMode = Schema.Literals([
+const ProviderSandboxMode = Schema.Literals([
   "read-only",
   "workspace-write",
   "danger-full-access",
 ]);
-export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
+type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 
 export const RuntimeMode = Schema.Literals([
   "approval-required",

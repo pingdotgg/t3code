@@ -196,98 +196,60 @@ const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
 
-export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
-  "OrchestratorDispatchError",
-  {
-    commandId: CommandId,
-    commandType: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
-  }
-}
+import {
+  OrchestratorDispatchError,
+  OrchestratorThreadAlreadyExistsError,
+  OrchestratorCommandRejectedError,
+  OrchestratorProjectionError,
+  isOrchestratorProjectionError,
+  OrchestratorDomainEventStreamError,
+  OrchestratorProviderAdapterError,
+  OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadAboveModeLimitError,
+} from "./orchestrationErrors.ts";
+export {
+  wakeWorkStartedAt,
+  commandThreadId,
+  legacyPullRequestLink,
+  delegatedCompletionWakeDetail,
+  delegatedTaskTerminalStatus,
+  usageLimitHoldsQueue,
+  runForSourcePoint,
+  contextSourcePointForRun,
+  withPullRequestWatch,
+  latestStableRun,
+  providerThreadForRun,
+  providerTurnForRun,
+  DELEGATED_RESULT_INLINE_BYTES,
+} from "./orchestrationCommandQueries.ts";
 
-export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
-  "OrchestratorThreadAlreadyExistsError",
-  { commandId: CommandId, threadId: ThreadId },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} already exists. Use a new thread id.`;
-  }
-}
+import {
+  wakeWorkStartedAt,
+  commandThreadId,
+  legacyPullRequestLink,
+  delegatedCompletionWakeDetail,
+  delegatedTaskTerminalStatus,
+  usageLimitHoldsQueue,
+  runForSourcePoint,
+  contextSourcePointForRun,
+  withPullRequestWatch,
+  latestStableRun,
+  providerThreadForRun,
+  providerTurnForRun,
+  DELEGATED_RESULT_INLINE_BYTES,
+} from "./orchestrationCommandQueries.ts";
 
-export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
-  "OrchestratorCommandRejectedError",
-  { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
-) {
-  override get message(): string {
-    return `Orchestration command ${this.commandType} (${this.commandId}) was rejected before commit.`;
-  }
-}
-
-export class OrchestratorProjectionError extends Schema.TaggedError<OrchestratorProjectionError>()(
-  "OrchestratorProjectionError",
-  {
-    threadId: ThreadId,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Failed to load orchestration projection for thread ${this.threadId}.`;
-  }
-}
-
-const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
-
-export class OrchestratorDomainEventStreamError extends Schema.TaggedError<OrchestratorDomainEventStreamError>()(
-  "OrchestratorDomainEventStreamError",
-  {
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return "Failed while streaming orchestration domain events.";
-  }
-}
-
-export class OrchestratorProviderAdapterError extends Schema.TaggedError<OrchestratorProviderAdapterError>()(
-  "OrchestratorProviderAdapterError",
-  {
-    commandId: CommandId,
-    providerInstanceId: ProviderInstanceId,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Provider adapter failed while dispatching orchestration command ${this.commandId}.`;
-  }
-}
-
-export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<OrchestratorSubagentThreadReadOnlyError>()(
-  "OrchestratorSubagentThreadReadOnlyError",
-  { commandId: CommandId, threadId: ThreadId },
-) {
-  override get message(): string {
-    return "This subagent is run by its provider and cannot take messages. Message the parent thread instead.";
-  }
-}
-
-export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
-  "OrchestratorThreadAboveModeLimitError",
-  {
-    commandId: CommandId,
-    threadId: ThreadId,
-    mode: Schema.Literals(["runtime", "interaction"]),
-    runtimeMode: RuntimeMode,
-    interactionMode: ProviderInteractionMode,
-  },
-) {
-  override get message(): string {
-    return `Thread ${this.threadId} now runs in ${this.runtimeMode}/${this.interactionMode} mode, above what this caller may change.`;
-  }
-}
+export {
+  OrchestratorDispatchError,
+  OrchestratorThreadAlreadyExistsError,
+  OrchestratorCommandRejectedError,
+  OrchestratorProjectionError,
+  isOrchestratorProjectionError,
+  OrchestratorDomainEventStreamError,
+  OrchestratorProviderAdapterError,
+  OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadAboveModeLimitError,
+} from "./orchestrationErrors.ts";
 
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 
@@ -328,7 +290,7 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
   }
 }
 
-export class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
+class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
   "OrchestratorCommandIdConflictError",
   {
     commandId: CommandId,
@@ -493,30 +455,6 @@ function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs"
 }
 
 /** Stamp at wake start; queued prompts lack start times and delegated results jump the queue. */
-function wakeWorkStartedAt(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  trigger: {
-    readonly notification?: unknown;
-    readonly delegatedCompletion?: unknown;
-    readonly restartContinuationOfRunId?: RunId | undefined;
-  },
-): Pick<OrchestrationV2Run, "workStartedAt"> {
-  if (
-    trigger.notification === undefined &&
-    trigger.delegatedCompletion === undefined &&
-    trigger.restartContinuationOfRunId === undefined
-  ) {
-    return {};
-  }
-  const previous = runs
-    .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
-    .toSorted(
-      (left, right) =>
-        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
-    )[0]?.run;
-  return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
-}
-
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /** Unfinished runs (including queued) or open requests block moving a thread to another project. */
@@ -536,86 +474,6 @@ export function threadHasUnfinishedWork(records: {
   );
 }
 
-function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
-  switch (command.type) {
-    case "thread.create":
-    case "thread.archive":
-    case "thread.unarchive":
-    case "thread.delete":
-    case "thread.guest-share.open":
-    case "thread.guest-share.redeem":
-    case "thread.guest-share.close":
-    case "thread.guest-message.submit":
-    case "thread.guest-message.dismiss":
-    case "thread.settle":
-    case "thread.auto-settle":
-    case "thread.unsettle":
-    case "thread.snooze":
-    case "thread.unsnooze":
-    case "thread.auto-settle.set":
-    case "thread.pin":
-    case "thread.unpin":
-    case "thread.pin.reorder":
-    case "thread.active.reorder":
-    case "thread.tag.set":
-    case "thread.visit":
-    case "thread.mark-unread":
-    case "thread.metadata.update":
-    case "thread.pull-request.link":
-    case "thread.pull-request.unlink":
-    case "thread.pull-request-link.sync":
-    case "thread.pull-request.watch":
-    case "thread.pull-request-watch.sync":
-    case "thread.pull-request.sync":
-    case "thread.title.regeneration.complete":
-    case "thread.project.adopt-folder":
-    case "thread.runtime-mode.set":
-    case "thread.interaction-mode.set":
-    case "thread.model-selection.set":
-    case "provider-session.detach":
-    case "message.dispatch":
-    case "notification.delivery.accept":
-    case "prepared-run.release":
-    case "prepared-run.progress":
-    case "prepared-run.fail":
-    case "prepared-run.retry":
-    case "subagent.stop":
-    case "run.interrupt":
-    case "queued-message.promote-to-steer":
-    case "queued-run.start":
-    case "queue.resume":
-    case "queued-run.reorder":
-    case "queued-run.cancel":
-    case "queued-run.edit":
-    case "runtime-request.respond":
-    case "runtime-request.delivery.fail":
-    case "thread.user-input.dismiss":
-    case "checkpoint.rollback":
-    case "checkpoint.rollback.fail":
-    case "thread.background-work.settle":
-    case "thread.interrupt.unresponsive":
-    case "thread.stop":
-    case "provider.switch":
-      return command.threadId;
-    case "delegated_task.request":
-    case "delegated_task.remote.request":
-    case "delegated_task.remote.complete":
-    case "delegated_task.remote.stop":
-    case "delegated_task.wake-policy":
-    case "delegated_task.completion-delivery.acknowledge":
-    case "delegated_task.completion-delivery.dispose":
-    case "thread.created.record":
-      return command.parentThreadId;
-    case "secret_request.record":
-    case "link_request.record":
-      return command.threadId;
-    case "thread.fork":
-    case "thread.merge_back":
-      return command.targetThreadId;
-  }
-}
-
-// Validate before resolving the request: adapters may otherwise coerce unusable answers.
 const decodeUserInputAnswers = Schema.decodeUnknownEffect(
   Schema.Record(
     Schema.String,
@@ -703,66 +561,6 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
-function withPullRequestWatch(
-  link: ThreadPullRequestLink,
-  watch: ThreadPullRequestWatch | undefined,
-): ThreadPullRequestLink {
-  const { watch: previous, endedWatch, ...rest } = link;
-  if (watch !== undefined) return { ...rest, watch };
-  const ended = previous ?? endedWatch;
-  return ended === undefined ? rest : { ...rest, endedWatch: ended };
-}
-
-function legacyPullRequestLink(
-  thread: OrchestrationV2AppThread,
-  linked: ThreadLinkedPullRequest,
-  now: DateTime.Utc,
-): ThreadPullRequestLink {
-  const key = legacyThreadPullRequestKey(linked);
-  const existing = threadPullRequestsOf(thread).find((link) =>
-    threadPullRequestKeysEqual(link, key),
-  );
-  return withPullRequestWatch(
-    {
-      ...key,
-      url: canonicalizeGitCafePullRequestUrl(linked.url),
-      source: "manual",
-      linkedAt: DateTime.formatIso(now),
-      snapshot: null,
-      stack: null,
-      ...(existing?.repositoryWebUrl !== undefined && {
-        repositoryWebUrl: existing.repositoryWebUrl,
-      }),
-      ...(existing?.endedWatch && { endedWatch: existing.endedWatch }),
-    },
-    existing?.watch,
-  );
-}
-
-const DELEGATED_RESULT_INLINE_BYTES = 16_000;
-
-function delegatedCompletionWakeDetail(
-  taskIds: ReadonlyArray<string>,
-  tasks: ReadonlyArray<OrchestrationV2Subagent>,
-): string {
-  let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
-  return taskIds
-    .map((taskId) => {
-      const task = tasks.find((candidate) => candidate.id === taskId);
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
-      if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
-        const bytes = Buffer.byteLength(detail);
-        if (bytes <= remainingBytes) {
-          remainingBytes -= bytes;
-          return detail;
-        }
-      }
-      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
-    })
-    .join("\n\n");
-}
-
 function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
   return (
     status === "completed" ||
@@ -772,27 +570,6 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
-function delegatedTaskTerminalStatus(
-  status: OrchestrationV2Run["status"],
-): OrchestrationV2Subagent["status"] | null {
-  switch (status) {
-    case "completed":
-    case "failed":
-    case "cancelled":
-    case "interrupted":
-      return status;
-    case "rolled_back":
-      return "cancelled";
-    case "preparing":
-    case "queued":
-    case "starting":
-    case "running":
-    case "waiting":
-      return null;
-  }
-}
-
-/** Failed worktree setup keeps the queue held so queued messages cannot start in the project checkout. */
 function worktreeSetupPending(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
 ): boolean {
@@ -829,107 +606,6 @@ function queuedRunModelSelection(
   return followsCurrentConversation(message)
     ? projection.thread.modelSelection
     : run.modelSelection;
-}
-
-function usageLimitHoldsQueue(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
-  providerInstanceId: ModelSelection["instanceId"],
-): boolean {
-  let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
-  for (const session of projection.providerSessions) {
-    if (
-      session.providerInstanceId === providerInstanceId &&
-      (latestSession === undefined ||
-        DateTime.isGreaterThan(session.updatedAt, latestSession.updatedAt))
-    ) {
-      latestSession = session;
-    }
-  }
-  return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
-  );
-}
-
-function latestStableRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs">,
-): OrchestrationV2Run | null {
-  return (
-    projection.runs
-      .filter((run) => run.status === "completed" && run.checkpointId !== null)
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null
-  );
-}
-
-function runForSourcePoint(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
-  sourcePoint: Extract<
-    OrchestrationV2Command,
-    { readonly type: "thread.fork" | "thread.merge_back" }
-  >["sourcePoint"],
-): OrchestrationV2Run | null {
-  switch (sourcePoint.type) {
-    case "latest_stable":
-      return latestStableRun(projection);
-    case "run":
-      return projection.runs.find((run) => run.id === sourcePoint.runId) ?? null;
-    case "checkpoint": {
-      const checkpoint = projection.checkpoints.find(
-        (candidate) => candidate.id === sourcePoint.checkpointId,
-      );
-      return checkpoint?.runId === null || checkpoint === undefined
-        ? null
-        : (projection.runs.find((run) => run.id === checkpoint.runId) ?? null);
-    }
-  }
-}
-
-function providerThreadForRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "providerThreads">,
-  run: OrchestrationV2Run,
-): OrchestrationV2ProviderThread | undefined {
-  return run.providerThreadId === null
-    ? undefined
-    : projection.providerThreads.find((candidate) => candidate.id === run.providerThreadId);
-}
-
-function providerTurnForRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts">,
-  run: OrchestrationV2Run,
-): OrchestrationV2ProviderTurn | undefined {
-  if (run.activeAttemptId === null) {
-    return undefined;
-  }
-
-  return (
-    latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId) ??
-    projection.providerTurns.find((turn) => {
-      const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
-      return attempt?.providerTurnId === turn.id;
-    })
-  );
-}
-
-function contextSourcePointForRun(
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "providerThreads" | "providerTurns" | "attempts"
-  >,
-  run: OrchestrationV2Run,
-): OrchestrationV2ContextSourcePoint {
-  const providerThread = providerThreadForRun(projection, run);
-  const providerTurn = providerTurnForRun(projection, run);
-  return {
-    threadId: projection.thread.id,
-    runId: run.id,
-    ...(run.checkpointId === null ? {} : { checkpointId: run.checkpointId }),
-    ...(providerThread?.nativeThreadRef === null || providerThread?.nativeThreadRef === undefined
-      ? {}
-      : { providerThreadRef: providerThread.nativeThreadRef }),
-    ...(providerTurn?.nativeTurnRef === null || providerTurn?.nativeTurnRef === undefined
-      ? {}
-      : { providerTurnRef: providerTurn.nativeTurnRef }),
-  };
 }
 
 function pendingForkTransferForThread(

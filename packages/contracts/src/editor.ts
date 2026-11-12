@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
-export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
+const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
   readonly id: string;
@@ -219,8 +219,8 @@ export const buildRemoteOpenUrl = (input: {
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
 
-export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
-export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
+const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
+type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,

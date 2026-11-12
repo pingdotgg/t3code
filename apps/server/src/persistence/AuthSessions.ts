@@ -21,7 +21,7 @@ import {
   PersistenceSqlError,
 } from "./Errors.ts";
 
-export const AuthSessionClientMetadataRecord = Schema.Struct({
+const AuthSessionClientMetadataRecord = Schema.Struct({
   label: Schema.NullOr(Schema.String),
   ipAddress: Schema.NullOr(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
@@ -29,7 +29,7 @@ export const AuthSessionClientMetadataRecord = Schema.Struct({
   os: Schema.NullOr(Schema.String),
   browser: Schema.NullOr(Schema.String),
 });
-export type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRecord.Type;
+type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRecord.Type;
 
 export const AuthSessionRecord = Schema.Struct({
   sessionId: AuthSessionId,

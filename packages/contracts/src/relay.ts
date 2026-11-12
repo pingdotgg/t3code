@@ -16,8 +16,8 @@ import {
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 
-export const RelayAgentAwarenessPlatform = Schema.Literals(["ios", "android"]);
-export type RelayAgentAwarenessPlatform = typeof RelayAgentAwarenessPlatform.Type;
+const RelayAgentAwarenessPlatform = Schema.Literals(["ios", "android"]);
+type RelayAgentAwarenessPlatform = typeof RelayAgentAwarenessPlatform.Type;
 
 export const RelayAgentAwarenessPhase = Schema.Literals([
   "starting",
@@ -40,8 +40,8 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
-export const RelayApnsEnvironment = Schema.Literals(["sandbox", "production"]);
-export type RelayApnsEnvironment = typeof RelayApnsEnvironment.Type;
+const RelayApnsEnvironment = Schema.Literals(["sandbox", "production"]);
+type RelayApnsEnvironment = typeof RelayApnsEnvironment.Type;
 
 export const RelayDeviceRegistrationRequest = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
@@ -89,13 +89,13 @@ export const RelayClientDeviceRecord = Schema.Struct({
 });
 export type RelayClientDeviceRecord = typeof RelayClientDeviceRecord.Type;
 
-export const RelayListDevicesResponse = Schema.Struct({
+const RelayListDevicesResponse = Schema.Struct({
   devices: Schema.Array(RelayClientDeviceRecord),
 });
-export type RelayListDevicesResponse = typeof RelayListDevicesResponse.Type;
+type RelayListDevicesResponse = typeof RelayListDevicesResponse.Type;
 
 // Installed clients decode v1 as iOS-only. Keep that response contract frozen.
-export const RelayListDevicesResponseV1 = Schema.Struct({
+const RelayListDevicesResponseV1 = Schema.Struct({
   devices: Schema.Array(
     Schema.Struct({
       ...RelayClientDeviceRecord.fields,
@@ -111,10 +111,10 @@ export const RelayLiveActivityRegistrationRequest = Schema.Struct({
 });
 export type RelayLiveActivityRegistrationRequest = typeof RelayLiveActivityRegistrationRequest.Type;
 
-export const RelayDeviceUnregistrationParams = Schema.Struct({
+const RelayDeviceUnregistrationParams = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
 });
-export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
+type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
@@ -183,12 +183,12 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
 
-export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
+const RelayManagedEndpointRecoveryRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
   origin: RelayManagedEndpointOrigin,
   proof: TrimmedNonEmptyString,
 });
-export type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRecoveryRequest.Type;
+type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRecoveryRequest.Type;
 
 export const RelayManagedEndpointRecoveryRegistrationRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
@@ -277,11 +277,11 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;
 
-export const RelayEnvironmentLinkScope = Schema.Literals([
+const RelayEnvironmentLinkScope = Schema.Literals([
   "agent_activity_notifications",
   "managed_tunnels",
 ]);
-export type RelayEnvironmentLinkScope = typeof RelayEnvironmentLinkScope.Type;
+type RelayEnvironmentLinkScope = typeof RelayEnvironmentLinkScope.Type;
 
 export const RelayEnvironmentLinkProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,
@@ -356,26 +356,26 @@ export const RelayEnvironmentLinkProofInvalidReason = Schema.Literals([
 export type RelayEnvironmentLinkProofInvalidReason =
   typeof RelayEnvironmentLinkProofInvalidReason.Type;
 
-export const RelayEnvironmentLinkFailedReason = Schema.Literals([
+const RelayEnvironmentLinkFailedReason = Schema.Literals([
   "link_persistence_failed",
   "credential_persistence_failed",
   "replay_persistence_failed",
   "internal_error",
 ]);
-export type RelayEnvironmentLinkFailedReason = typeof RelayEnvironmentLinkFailedReason.Type;
+type RelayEnvironmentLinkFailedReason = typeof RelayEnvironmentLinkFailedReason.Type;
 
-export const RelayEnvironmentLinkUnavailableReason = Schema.Literals([
+const RelayEnvironmentLinkUnavailableReason = Schema.Literals([
   "managed_endpoint_not_configured",
   "managed_endpoint_provisioning_failed",
 ]);
-export type RelayEnvironmentLinkUnavailableReason =
+type RelayEnvironmentLinkUnavailableReason =
   typeof RelayEnvironmentLinkUnavailableReason.Type;
 
-export const RelayEnvironmentEndpointUnavailableReason = Schema.Literals([
+const RelayEnvironmentEndpointUnavailableReason = Schema.Literals([
   "endpoint_request_failed",
   "endpoint_response_invalid",
 ]);
-export type RelayEnvironmentEndpointUnavailableReason =
+type RelayEnvironmentEndpointUnavailableReason =
   typeof RelayEnvironmentEndpointUnavailableReason.Type;
 
 /**
@@ -414,13 +414,13 @@ export type RelayAuthInvalidReason = typeof RelayAuthInvalidReason.Type;
 export const RelayDpopFailureReason = DpopFailureReason;
 export type RelayDpopFailureReason = typeof RelayDpopFailureReason.Type;
 
-export const RelayInternalErrorReason = Schema.Literals([
+const RelayInternalErrorReason = Schema.Literals([
   "database_unavailable",
   "persistence_failed",
   "upstream_unavailable",
   "internal_error",
 ]);
-export type RelayInternalErrorReason = typeof RelayInternalErrorReason.Type;
+type RelayInternalErrorReason = typeof RelayInternalErrorReason.Type;
 
 export class RelayAuthInvalidError extends Schema.TaggedError<RelayAuthInvalidError>()(
   "RelayAuthInvalidError",
@@ -720,10 +720,10 @@ export const RelayClientEnvironmentRecord = Schema.Struct({
 });
 export type RelayClientEnvironmentRecord = typeof RelayClientEnvironmentRecord.Type;
 
-export const RelayListEnvironmentsResponse = Schema.Struct({
+const RelayListEnvironmentsResponse = Schema.Struct({
   environments: Schema.Array(RelayClientEnvironmentRecord),
 });
-export type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
+type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
 
 export const RelayEnvironmentConnectRequest = Schema.Struct({
   deviceId: Schema.optional(
@@ -763,7 +763,7 @@ export type RelayPublicClientId = typeof RelayPublicClientId.Type;
 export const RelayMobileClientId = "t3-mobile" as const;
 export const RelayWebClientId = "t3-web" as const;
 
-export const RelayDpopAccessTokenRequest = Schema.Struct({
+const RelayDpopAccessTokenRequest = Schema.Struct({
   grant_type: Schema.Literal(RelayDpopTokenExchangeGrantType),
   subject_token: TrimmedNonEmptyString.annotate({
     description: "Clerk bearer token for the signed-in cloud user.",
@@ -780,31 +780,31 @@ export const RelayDpopAccessTokenRequest = Schema.Struct({
 })
   .annotate({ description: "OAuth token exchange request for a DPoP-bound relay access token." })
   .pipe(HttpApiSchema.asFormUrlEncoded());
-export type RelayDpopAccessTokenRequest = typeof RelayDpopAccessTokenRequest.Type;
+type RelayDpopAccessTokenRequest = typeof RelayDpopAccessTokenRequest.Type;
 
-export const RelayDpopAccessTokenResponse = Schema.Struct({
+const RelayDpopAccessTokenResponse = Schema.Struct({
   access_token: TrimmedNonEmptyString,
   issued_token_type: Schema.Literal(RelayAccessTokenType),
   token_type: Schema.Literal("DPoP"),
   expires_in: Schema.Int.check(Schema.isGreaterThan(0)),
   scope: TrimmedNonEmptyString,
 });
-export type RelayDpopAccessTokenResponse = typeof RelayDpopAccessTokenResponse.Type;
+type RelayDpopAccessTokenResponse = typeof RelayDpopAccessTokenResponse.Type;
 
-export const RelayBearerRequestHeaders = Schema.Struct({
+const RelayBearerRequestHeaders = Schema.Struct({
   authorization: TrimmedNonEmptyString,
 });
 
-export const RelayDpopProofRequestHeaders = Schema.Struct({
+const RelayDpopProofRequestHeaders = Schema.Struct({
   dpop: TrimmedNonEmptyString,
 });
 
-export const RelayDpopRequestHeaders = Schema.Struct({
+const RelayDpopRequestHeaders = Schema.Struct({
   authorization: TrimmedNonEmptyString,
   dpop: TrimmedNonEmptyString,
 });
 
-export const RelayAuthorizationServerMetadata = Schema.Struct({
+const RelayAuthorizationServerMetadata = Schema.Struct({
   issuer: TrimmedNonEmptyString,
   token_endpoint: TrimmedNonEmptyString,
   grant_types_supported: Schema.Array(Schema.Literal(RelayDpopTokenExchangeGrantType)),
@@ -813,7 +813,7 @@ export const RelayAuthorizationServerMetadata = Schema.Struct({
   scopes_supported: Schema.Array(RelayDpopAccessTokenScope),
 });
 
-export const RelayProtectedResourceMetadata = Schema.Struct({
+const RelayProtectedResourceMetadata = Schema.Struct({
   resource: TrimmedNonEmptyString,
   authorization_servers: Schema.Array(TrimmedNonEmptyString),
   scopes_supported: Schema.Array(RelayDpopAccessTokenScope),
@@ -821,10 +821,10 @@ export const RelayProtectedResourceMetadata = Schema.Struct({
   dpop_signing_alg_values_supported: Schema.Array(Schema.Literal("ES256")),
 });
 
-export const RelayEnvironmentUnlinkParams = Schema.Struct({
+const RelayEnvironmentUnlinkParams = Schema.Struct({
   environmentId: EnvironmentId,
 });
-export type RelayEnvironmentUnlinkParams = typeof RelayEnvironmentUnlinkParams.Type;
+type RelayEnvironmentUnlinkParams = typeof RelayEnvironmentUnlinkParams.Type;
 
 export const RelayEnvironmentConnectResponse = Schema.Struct({
   environmentId: EnvironmentId,
@@ -834,8 +834,8 @@ export const RelayEnvironmentConnectResponse = Schema.Struct({
 });
 export type RelayEnvironmentConnectResponse = typeof RelayEnvironmentConnectResponse.Type;
 
-export const RelayEnvironmentStatusValue = Schema.Literals(["online", "offline"]);
-export type RelayEnvironmentStatusValue = typeof RelayEnvironmentStatusValue.Type;
+const RelayEnvironmentStatusValue = Schema.Literals(["online", "offline"]);
+type RelayEnvironmentStatusValue = typeof RelayEnvironmentStatusValue.Type;
 
 const RelayEnvironmentOfflineReason = Schema.Literals(["tunnel_released"]);
 type RelayEnvironmentOfflineReason = typeof RelayEnvironmentOfflineReason.Type;
@@ -867,8 +867,8 @@ export const RelayCloudMintCredentialProofPayload = Schema.Struct({
 });
 export type RelayCloudMintCredentialProofPayload = typeof RelayCloudMintCredentialProofPayload.Type;
 
-export const RelayCloudMintCredentialProof = TrimmedNonEmptyString;
-export type RelayCloudMintCredentialProof = typeof RelayCloudMintCredentialProof.Type;
+const RelayCloudMintCredentialProof = TrimmedNonEmptyString;
+type RelayCloudMintCredentialProof = typeof RelayCloudMintCredentialProof.Type;
 
 export const RelayCloudMintCredentialRequest = Schema.Struct({
   proof: RelayCloudMintCredentialProof,
@@ -894,8 +894,8 @@ export const RelayHookDeliveryProofPayload = Schema.Struct({
 });
 export type RelayHookDeliveryProofPayload = typeof RelayHookDeliveryProofPayload.Type;
 
-export const RelayCloudEnvironmentHealthProof = TrimmedNonEmptyString;
-export type RelayCloudEnvironmentHealthProof = typeof RelayCloudEnvironmentHealthProof.Type;
+const RelayCloudEnvironmentHealthProof = TrimmedNonEmptyString;
+type RelayCloudEnvironmentHealthProof = typeof RelayCloudEnvironmentHealthProof.Type;
 
 export const RelayCloudEnvironmentHealthRequest = Schema.Struct({
   proof: RelayCloudEnvironmentHealthProof,
@@ -997,11 +997,11 @@ export const RelayPublishResponse = Schema.Struct({
 });
 export type RelayPublishResponse = typeof RelayPublishResponse.Type;
 
-export const RelayHealthResponse = Schema.Struct({
+const RelayHealthResponse = Schema.Struct({
   ok: Schema.Boolean,
   service: Schema.Literal("relay"),
 });
-export type RelayHealthResponse = typeof RelayHealthResponse.Type;
+type RelayHealthResponse = typeof RelayHealthResponse.Type;
 
 const RelayHealthGroup = HttpApiGroup.make("health")
   .add(
@@ -1206,16 +1206,16 @@ const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
   .annotate(OpenApi.Description, "DPoP-authenticated client access to linked environments.")
   .middleware(RelayDpopClientAuth);
 
-export const RelayEnvironmentLinkPreferencesRequest = Schema.Struct({
+const RelayEnvironmentLinkPreferencesRequest = Schema.Struct({
   holdWebhooksWhileOffline: Schema.Boolean,
 });
-export type RelayEnvironmentLinkPreferencesRequest =
+type RelayEnvironmentLinkPreferencesRequest =
   typeof RelayEnvironmentLinkPreferencesRequest.Type;
 
-export const RelayWakeHeldHooksResponse = Schema.Struct({
+const RelayWakeHeldHooksResponse = Schema.Struct({
   pending: Schema.Boolean,
 });
-export type RelayWakeHeldHooksResponse = typeof RelayWakeHeldHooksResponse.Type;
+type RelayWakeHeldHooksResponse = typeof RelayWakeHeldHooksResponse.Type;
 
 const RelayServerGroup = HttpApiGroup.make("server")
   .add(

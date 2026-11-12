@@ -4,8 +4,8 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
-export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
-export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
+const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
+type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
 
 export const ProviderOptionChoice = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -21,7 +21,7 @@ const ProviderOptionDescriptorBase = {
   description: Schema.optional(TrimmedNonEmptyString),
 } as const;
 
-export const SelectProviderOptionDescriptor = Schema.Struct({
+const SelectProviderOptionDescriptor = Schema.Struct({
   ...ProviderOptionDescriptorBase,
   type: Schema.Literal("select"),
   options: Schema.Array(ProviderOptionChoice),
@@ -30,14 +30,14 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   /** Marks the reasoning control when its id is an agent's own, such as an ACP `thought_level`. */
   role: Schema.optional(Schema.Literal("reasoning")),
 });
-export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
+type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 
-export const BooleanProviderOptionDescriptor = Schema.Struct({
+const BooleanProviderOptionDescriptor = Schema.Struct({
   ...ProviderOptionDescriptorBase,
   type: Schema.Literal("boolean"),
   currentValue: Schema.optional(Schema.Boolean),
 });
-export type BooleanProviderOptionDescriptor = typeof BooleanProviderOptionDescriptor.Type;
+type BooleanProviderOptionDescriptor = typeof BooleanProviderOptionDescriptor.Type;
 
 export const ProviderOptionDescriptor = Schema.Union([
   SelectProviderOptionDescriptor,
@@ -104,12 +104,12 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
-export const CustomModelEntry = Schema.Struct({
+const CustomModelEntry = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.optional(ModelCapabilities),
 });
-export type CustomModelEntry = typeof CustomModelEntry.Type;
+type CustomModelEntry = typeof CustomModelEntry.Type;
 
 export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);
 export type CustomModelSetting = typeof CustomModelSetting.Type;

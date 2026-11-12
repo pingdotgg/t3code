@@ -44,8 +44,8 @@ export function resolveOfficialAcpRegistryIconUrl(icon: string | null | undefine
 export const AcpRegistryDistribution = Schema.Literals(["binary", "npx", "uvx"]);
 export type AcpRegistryDistribution = typeof AcpRegistryDistribution.Type;
 
-export const AcpRegistryIntegrity = Schema.Literals(["sha256", "registry"]);
-export type AcpRegistryIntegrity = typeof AcpRegistryIntegrity.Type;
+const AcpRegistryIntegrity = Schema.Literals(["sha256", "registry"]);
+type AcpRegistryIntegrity = typeof AcpRegistryIntegrity.Type;
 
 export const ACP_REGISTRY_MAX_AGENTS = 512;
 

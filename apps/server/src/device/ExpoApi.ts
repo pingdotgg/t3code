@@ -36,7 +36,7 @@ export interface ExpoCredential {
   };
 }
 
-export class ExpoNotSignedInError extends Schema.TaggedError<ExpoNotSignedInError>()(
+class ExpoNotSignedInError extends Schema.TaggedError<ExpoNotSignedInError>()(
   "ExpoNotSignedInError",
   {},
 ) {
@@ -51,7 +51,7 @@ const CREDENTIAL_SOURCE_NAMES: Record<ExpoCredentialSource, string> = {
   "eas-login": "The eas login session",
 };
 
-export class ExpoInvalidCredentialError extends Schema.TaggedError<ExpoInvalidCredentialError>()(
+class ExpoInvalidCredentialError extends Schema.TaggedError<ExpoInvalidCredentialError>()(
   "ExpoInvalidCredentialError",
   { source: Schema.Literals(["settings", "env", "eas-login"]) },
 ) {

@@ -21,7 +21,7 @@ export class ResourceMonitorBinaryUnsupported extends Schema.TaggedError<Resourc
   }
 }
 
-export class ResourceMonitorBinaryNotFound extends Schema.TaggedError<ResourceMonitorBinaryNotFound>()(
+class ResourceMonitorBinaryNotFound extends Schema.TaggedError<ResourceMonitorBinaryNotFound>()(
   "ResourceMonitorBinaryNotFound",
   {
     platform: Schema.String,

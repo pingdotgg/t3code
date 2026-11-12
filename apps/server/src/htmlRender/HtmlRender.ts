@@ -50,7 +50,7 @@ export class HtmlRenderImagesNotFoundError extends Schema.TaggedError<HtmlRender
   }
 }
 
-export class HtmlRenderImageTooLargeError extends Schema.TaggedError<HtmlRenderImageTooLargeError>()(
+class HtmlRenderImageTooLargeError extends Schema.TaggedError<HtmlRenderImageTooLargeError>()(
   "HtmlRenderImageTooLargeError",
   { path: Schema.String, sizeBytes: Schema.Number },
 ) {
@@ -59,7 +59,7 @@ export class HtmlRenderImageTooLargeError extends Schema.TaggedError<HtmlRenderI
   }
 }
 
-export class HtmlRenderPageTooLargeError extends Schema.TaggedError<HtmlRenderPageTooLargeError>()(
+class HtmlRenderPageTooLargeError extends Schema.TaggedError<HtmlRenderPageTooLargeError>()(
   "HtmlRenderPageTooLargeError",
   { sizeBytes: Schema.Number },
 ) {

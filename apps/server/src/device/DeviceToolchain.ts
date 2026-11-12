@@ -31,7 +31,7 @@ export interface DeviceToolchainPaths {
   readonly agentDevice: DeviceToolPaths;
 }
 
-export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolchainInstallError>()(
+class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolchainInstallError>()(
   "DeviceToolchainInstallError",
   {
     tool: Schema.String,

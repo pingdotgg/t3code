@@ -80,7 +80,7 @@ export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Beta" | "Dev" | "Nightly";
 
-export const DesktopUpdateStatusSchema = Schema.Literals([
+const DesktopUpdateStatusSchema = Schema.Literals([
   "disabled",
   "idle",
   "checking",
@@ -90,10 +90,10 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
   "downloaded",
   "error",
 ]);
-export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
+const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
-export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Beta", "Dev", "Nightly"]);
+const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Beta", "Dev", "Nightly"]);
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -107,8 +107,8 @@ export const DesktopAppBrandingSchema = Schema.Struct({
   displayName: Schema.String,
 });
 
-export const DesktopSnapShotMode = Schema.Literals(["direct", "portal", "unavailable"]);
-export type DesktopSnapShotMode = typeof DesktopSnapShotMode.Type;
+const DesktopSnapShotMode = Schema.Literals(["direct", "portal", "unavailable"]);
+type DesktopSnapShotMode = typeof DesktopSnapShotMode.Type;
 
 export const DesktopCaptureExtensionState = Schema.Struct({
   status: Schema.Literals([
@@ -299,7 +299,7 @@ export interface DesktopUpdateReleaseNote {
   footer?: string;
 }
 
-export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
+const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   version: Schema.String,
   items: Schema.Array(Schema.String),
   totalItems: Schema.Number,
@@ -392,7 +392,7 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
-export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
+const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
 export interface DesktopDiscoveredSshHost extends DesktopSshEnvironmentTarget {
   source: DesktopSshHostSource;
@@ -415,7 +415,7 @@ export interface DesktopSshEnvironmentBootstrap {
   remoteServerKind?: "external" | "managed";
 }
 
-export const DesktopSshEnvironmentBootstrapSchema = Schema.Struct({
+const DesktopSshEnvironmentBootstrapSchema = Schema.Struct({
   target: DesktopSshEnvironmentTargetSchema,
   httpBaseUrl: Schema.String,
   wsBaseUrl: Schema.String,
@@ -434,12 +434,12 @@ export interface DesktopSshPasswordPromptRequest {
 
 export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;
 
-export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
+const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
   type: Schema.Literal(DesktopSshPasswordPromptCancelledType),
   message: Schema.String,
 });
 
-export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
+const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
   issuePairingToken: Schema.optionalKey(Schema.Boolean),
 });
 
@@ -472,7 +472,7 @@ export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
   password: Schema.NullOr(Schema.String),
 });
 
-export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
+const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
   wsBaseUrl: Schema.String,
@@ -540,7 +540,7 @@ export interface DesktopWslDistro {
   version: 1 | 2;
 }
 
-export const DesktopWslDistroSchema = Schema.Struct({
+const DesktopWslDistroSchema = Schema.Struct({
   name: Schema.String,
   isDefault: Schema.Boolean,
   version: Schema.Literals([1, 2]),
@@ -580,7 +580,7 @@ export type DesktopPreviewNavStatus =
 
 export type DesktopPreviewColorScheme = "system" | "light" | "dark";
 
-export const DesktopPreviewColorSchemeSchema: Schema.Codec<DesktopPreviewColorScheme> =
+const DesktopPreviewColorSchemeSchema: Schema.Codec<DesktopPreviewColorScheme> =
   Schema.Literals(["system", "light", "dark"]);
 
 export const FAVICON_DATA_URL_MAX_LENGTH = 8192;
@@ -611,7 +611,7 @@ export interface DesktopPreviewTabState {
   updatedAt: string;
 }
 
-export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed()).check(
+const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed()).check(
   Schema.isNonEmpty(),
 );
 
@@ -688,7 +688,7 @@ export interface DesktopPreviewAnnotationTheme {
   fontMono: string;
 }
 
-export const DesktopPreviewAnnotationThemeSchema: Schema.Codec<DesktopPreviewAnnotationTheme> =
+const DesktopPreviewAnnotationThemeSchema: Schema.Codec<DesktopPreviewAnnotationTheme> =
   Schema.Struct({
     colorScheme: Schema.Literals(["light", "dark"]),
     radius: Schema.String,
@@ -762,7 +762,7 @@ export interface PickedElementStackFrame {
   columnNumber: number | null;
 }
 
-export const PickedElementStackFrameSchema: Schema.Codec<PickedElementStackFrame> = Schema.Struct({
+const PickedElementStackFrameSchema: Schema.Codec<PickedElementStackFrame> = Schema.Struct({
   functionName: Schema.NullOr(Schema.String),
   fileName: Schema.NullOr(Schema.String),
   lineNumber: Schema.NullOr(Schema.Number),
@@ -782,7 +782,7 @@ export interface PickedElementPayload {
   pickedAt: string;
 }
 
-export const PickedElementPayloadSchema: Schema.Codec<PickedElementPayload> = Schema.Struct({
+const PickedElementPayloadSchema: Schema.Codec<PickedElementPayload> = Schema.Struct({
   pageUrl: Schema.String,
   pageTitle: Schema.NullOr(Schema.String),
   tagName: Schema.String,
@@ -802,7 +802,7 @@ export interface PreviewAnnotationRect {
   height: number;
 }
 
-export const PreviewAnnotationRectSchema: Schema.Codec<PreviewAnnotationRect> = Schema.Struct({
+const PreviewAnnotationRectSchema: Schema.Codec<PreviewAnnotationRect> = Schema.Struct({
   x: Schema.Number,
   y: Schema.Number,
   width: Schema.Number,
@@ -814,7 +814,7 @@ export interface PreviewAnnotationPoint {
   y: number;
 }
 
-export const PreviewAnnotationPointSchema: Schema.Codec<PreviewAnnotationPoint> = Schema.Struct({
+const PreviewAnnotationPointSchema: Schema.Codec<PreviewAnnotationPoint> = Schema.Struct({
   x: Schema.Number,
   y: Schema.Number,
 });
@@ -825,7 +825,7 @@ export interface PreviewAnnotationElementTarget {
   rect: PreviewAnnotationRect;
 }
 
-export const PreviewAnnotationElementTargetSchema: Schema.Codec<PreviewAnnotationElementTarget> =
+const PreviewAnnotationElementTargetSchema: Schema.Codec<PreviewAnnotationElementTarget> =
   Schema.Struct({
     id: Schema.String,
     element: PickedElementPayloadSchema,
@@ -837,7 +837,7 @@ export interface PreviewAnnotationRegionTarget {
   rect: PreviewAnnotationRect;
 }
 
-export const PreviewAnnotationRegionTargetSchema: Schema.Codec<PreviewAnnotationRegionTarget> =
+const PreviewAnnotationRegionTargetSchema: Schema.Codec<PreviewAnnotationRegionTarget> =
   Schema.Struct({
     id: Schema.String,
     rect: PreviewAnnotationRectSchema,
@@ -851,7 +851,7 @@ export interface PreviewAnnotationStrokeTarget {
   bounds: PreviewAnnotationRect;
 }
 
-export const PreviewAnnotationStrokeTargetSchema: Schema.Codec<PreviewAnnotationStrokeTarget> =
+const PreviewAnnotationStrokeTargetSchema: Schema.Codec<PreviewAnnotationStrokeTarget> =
   Schema.Struct({
     id: Schema.String,
     color: Schema.String,
@@ -868,7 +868,7 @@ export interface PreviewAnnotationStyleChange {
   value: string;
 }
 
-export const PreviewAnnotationStyleChangeSchema: Schema.Codec<PreviewAnnotationStyleChange> =
+const PreviewAnnotationStyleChangeSchema: Schema.Codec<PreviewAnnotationStyleChange> =
   Schema.Struct({
     targetId: Schema.String,
     selector: Schema.NullOr(Schema.String),
@@ -884,7 +884,7 @@ export interface PreviewAnnotationScreenshot {
   cropRect: PreviewAnnotationRect;
 }
 
-export const PreviewAnnotationScreenshotSchema: Schema.Codec<PreviewAnnotationScreenshot> =
+const PreviewAnnotationScreenshotSchema: Schema.Codec<PreviewAnnotationScreenshot> =
   Schema.Struct({
     dataUrl: Schema.String,
     width: Schema.Number,
@@ -921,7 +921,7 @@ export const PreviewAnnotationPayloadSchema: Schema.Codec<PreviewAnnotationPaylo
 );
 
 export type PreviewAnnotationSubmission = "attach" | "send";
-export const PreviewAnnotationSubmissionSchema: Schema.Codec<PreviewAnnotationSubmission> =
+const PreviewAnnotationSubmissionSchema: Schema.Codec<PreviewAnnotationSubmission> =
   Schema.Literals(["attach", "send"]);
 
 export interface PreviewAnnotationSubmissionResult {

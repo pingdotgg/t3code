@@ -564,7 +564,7 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAge
   }
 }
 
-export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRootRefusalError>()(
+class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRootRefusalError>()(
   "ClaudeCodeRootRefusalError",
   {
     cause: Schema.Defect(),

@@ -30,12 +30,12 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
     'The user did not save this secret for shell use. Ask again with request_secret and delivery: "file".',
 } as const;
 
-export const SecretRequestFailureReason = Schema.Literals(
+const SecretRequestFailureReason = Schema.Literals(
   Object.keys(SECRET_REQUEST_FAILURE_MESSAGES) as Array<
     keyof typeof SECRET_REQUEST_FAILURE_MESSAGES
   >,
 );
-export type SecretRequestFailureReason = typeof SecretRequestFailureReason.Type;
+type SecretRequestFailureReason = typeof SecretRequestFailureReason.Type;
 
 export class SecretRequestError extends Schema.TaggedError<SecretRequestError>()(
   "SecretRequestError",

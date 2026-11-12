@@ -98,7 +98,7 @@ const serverAuthInternalErrorContext = {
   cause: Schema.Defect(),
 };
 
-export class ServerAuthBootstrapCredentialValidationError extends Schema.TaggedError<ServerAuthBootstrapCredentialValidationError>()(
+class ServerAuthBootstrapCredentialValidationError extends Schema.TaggedError<ServerAuthBootstrapCredentialValidationError>()(
   "ServerAuthBootstrapCredentialValidationError",
   {
     ...serverAuthInternalErrorContext,
@@ -120,7 +120,7 @@ export class ServerAuthSessionCredentialValidationError extends Schema.TaggedErr
   }
 }
 
-export class ServerAuthAuthenticatedSessionIssueError extends Schema.TaggedError<ServerAuthAuthenticatedSessionIssueError>()(
+class ServerAuthAuthenticatedSessionIssueError extends Schema.TaggedError<ServerAuthAuthenticatedSessionIssueError>()(
   "ServerAuthAuthenticatedSessionIssueError",
   {
     ...serverAuthInternalErrorContext,
@@ -131,7 +131,7 @@ export class ServerAuthAuthenticatedSessionIssueError extends Schema.TaggedError
   }
 }
 
-export class ServerAuthAuthenticatedAccessTokenIssueError extends Schema.TaggedError<ServerAuthAuthenticatedAccessTokenIssueError>()(
+class ServerAuthAuthenticatedAccessTokenIssueError extends Schema.TaggedError<ServerAuthAuthenticatedAccessTokenIssueError>()(
   "ServerAuthAuthenticatedAccessTokenIssueError",
   {
     ...serverAuthInternalErrorContext,
@@ -142,7 +142,7 @@ export class ServerAuthAuthenticatedAccessTokenIssueError extends Schema.TaggedE
   }
 }
 
-export class ServerAuthPairingLinkCreationError extends Schema.TaggedError<ServerAuthPairingLinkCreationError>()(
+class ServerAuthPairingLinkCreationError extends Schema.TaggedError<ServerAuthPairingLinkCreationError>()(
   "ServerAuthPairingLinkCreationError",
   {
     ...serverAuthInternalErrorContext,
@@ -153,7 +153,7 @@ export class ServerAuthPairingLinkCreationError extends Schema.TaggedError<Serve
   }
 }
 
-export class ServerAuthPairingLinksListError extends Schema.TaggedError<ServerAuthPairingLinksListError>()(
+class ServerAuthPairingLinksListError extends Schema.TaggedError<ServerAuthPairingLinksListError>()(
   "ServerAuthPairingLinksListError",
   {
     ...serverAuthInternalErrorContext,
@@ -164,7 +164,7 @@ export class ServerAuthPairingLinksListError extends Schema.TaggedError<ServerAu
   }
 }
 
-export class ServerAuthPairingLinkRevocationError extends Schema.TaggedError<ServerAuthPairingLinkRevocationError>()(
+class ServerAuthPairingLinkRevocationError extends Schema.TaggedError<ServerAuthPairingLinkRevocationError>()(
   "ServerAuthPairingLinkRevocationError",
   {
     ...serverAuthInternalErrorContext,
@@ -175,7 +175,7 @@ export class ServerAuthPairingLinkRevocationError extends Schema.TaggedError<Ser
   }
 }
 
-export class ServerAuthSessionTokenIssueError extends Schema.TaggedError<ServerAuthSessionTokenIssueError>()(
+class ServerAuthSessionTokenIssueError extends Schema.TaggedError<ServerAuthSessionTokenIssueError>()(
   "ServerAuthSessionTokenIssueError",
   {
     ...serverAuthInternalErrorContext,
@@ -186,7 +186,7 @@ export class ServerAuthSessionTokenIssueError extends Schema.TaggedError<ServerA
   }
 }
 
-export class ServerAuthSessionsListError extends Schema.TaggedError<ServerAuthSessionsListError>()(
+class ServerAuthSessionsListError extends Schema.TaggedError<ServerAuthSessionsListError>()(
   "ServerAuthSessionsListError",
   {
     ...serverAuthInternalErrorContext,
@@ -197,7 +197,7 @@ export class ServerAuthSessionsListError extends Schema.TaggedError<ServerAuthSe
   }
 }
 
-export class ServerAuthSessionRevocationError extends Schema.TaggedError<ServerAuthSessionRevocationError>()(
+class ServerAuthSessionRevocationError extends Schema.TaggedError<ServerAuthSessionRevocationError>()(
   "ServerAuthSessionRevocationError",
   {
     ...serverAuthInternalErrorContext,
@@ -208,7 +208,7 @@ export class ServerAuthSessionRevocationError extends Schema.TaggedError<ServerA
   }
 }
 
-export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<ServerAuthOtherSessionsRevocationError>()(
+class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<ServerAuthOtherSessionsRevocationError>()(
   "ServerAuthOtherSessionsRevocationError",
   {
     ...serverAuthInternalErrorContext,
@@ -219,7 +219,7 @@ export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<S
   }
 }
 
-export class ServerAuthWebSocketTokenIssueError extends Schema.TaggedError<ServerAuthWebSocketTokenIssueError>()(
+class ServerAuthWebSocketTokenIssueError extends Schema.TaggedError<ServerAuthWebSocketTokenIssueError>()(
   "ServerAuthWebSocketTokenIssueError",
   {
     ...serverAuthInternalErrorContext,
@@ -399,7 +399,7 @@ export const serverAuthDpopFailureReason = (
 ): DpopFailureReasonType | undefined =>
   error._tag === "ServerAuthInvalidCredentialError" ? error.dpopFailureReason : undefined;
 
-export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
+class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
   "ServerAuthInvalidScopeError",
   {},
 ) {

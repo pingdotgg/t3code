@@ -4,22 +4,22 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const VcsDriverKind = Schema.Literals(["git", "jj", "unknown"]);
 export type VcsDriverKind = typeof VcsDriverKind.Type;
 
-export const VcsFreshnessSource = Schema.Literals([
+const VcsFreshnessSource = Schema.Literals([
   "live-local",
   "cached-local",
   "cached-remote",
   "explicit-remote",
 ]);
-export type VcsFreshnessSource = typeof VcsFreshnessSource.Type;
+type VcsFreshnessSource = typeof VcsFreshnessSource.Type;
 
-export const VcsFreshness = Schema.Struct({
+const VcsFreshness = Schema.Struct({
   source: VcsFreshnessSource,
   observedAt: Schema.DateTimeUtc,
   expiresAt: Schema.Option(Schema.DateTimeUtc),
 });
-export type VcsFreshness = typeof VcsFreshness.Type;
+type VcsFreshness = typeof VcsFreshness.Type;
 
-export const VcsDriverCapabilities = Schema.Struct({
+const VcsDriverCapabilities = Schema.Struct({
   kind: VcsDriverKind,
   supportsWorktrees: Schema.Boolean,
   supportsBookmarks: Schema.Boolean,
@@ -27,7 +27,7 @@ export const VcsDriverCapabilities = Schema.Struct({
   supportsPushDefaultRemote: Schema.Boolean,
   ignoreClassifier: Schema.Literals(["native", "git-compatible-fallback"]),
 });
-export type VcsDriverCapabilities = typeof VcsDriverCapabilities.Type;
+type VcsDriverCapabilities = typeof VcsDriverCapabilities.Type;
 
 export const VcsRepositoryIdentity = Schema.Struct({
   kind: VcsDriverKind,
@@ -44,13 +44,13 @@ export const VcsListWorkspaceFilesResult = Schema.Struct({
 });
 export type VcsListWorkspaceFilesResult = typeof VcsListWorkspaceFilesResult.Type;
 
-export const VcsRemote = Schema.Struct({
+const VcsRemote = Schema.Struct({
   name: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   pushUrl: Schema.Option(TrimmedNonEmptyString),
   isPrimary: Schema.Boolean,
 });
-export type VcsRemote = typeof VcsRemote.Type;
+type VcsRemote = typeof VcsRemote.Type;
 
 export const VcsListRemotesResult = Schema.Struct({
   remotes: Schema.Array(VcsRemote),

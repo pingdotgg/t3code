@@ -37,8 +37,8 @@ export const WorktreeSetupStage = Schema.Struct({
 });
 export type WorktreeSetupStage = typeof WorktreeSetupStage.Type;
 
-export const WorktreeSetupPhase = Schema.Literals(["running", "done", "failed", "cancelled"]);
-export type WorktreeSetupPhase = typeof WorktreeSetupPhase.Type;
+const WorktreeSetupPhase = Schema.Literals(["running", "done", "failed", "cancelled"]);
+type WorktreeSetupPhase = typeof WorktreeSetupPhase.Type;
 
 export const WorktreeSetupSnapshot = Schema.Struct({
   threadId: ThreadId,

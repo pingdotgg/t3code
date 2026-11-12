@@ -40,7 +40,7 @@ const WAIT_SLICE_MS = 15_000;
 const READ_PAGE_LIMIT = 100;
 const TITLE_MAX_CHARS = 80;
 
-export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
+class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
   "ThreadServerNotRunningError",
   { baseDir: Schema.String },
 ) {
@@ -50,7 +50,7 @@ export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServer
   }
 }
 
-export class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServerUnreachableError>()(
+class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServerUnreachableError>()(
   "ThreadServerUnreachableError",
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
@@ -61,7 +61,7 @@ export class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServe
   }
 }
 
-export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
+class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
   "ThreadToolFailedError",
   { tool: Schema.String, detail: Schema.String },
 ) {
@@ -71,7 +71,7 @@ export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedEr
   }
 }
 
-export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("ThreadUsageError", {
+class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("ThreadUsageError", {
   detail: Schema.String,
 }) {
   override readonly [Runtime.errorReported] = false;
@@ -80,7 +80,7 @@ export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("Th
   }
 }
 
-export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProjectNotFoundError>()(
+class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProjectNotFoundError>()(
   "ThreadProjectNotFoundError",
   { identifier: Schema.String },
 ) {
@@ -91,7 +91,7 @@ export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProject
 }
 
 /** Exit code 2 lets a script tell "needs a human" apart from a failed run. */
-export class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputError>()(
+class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputError>()(
   "ThreadNeedsInputError",
   { threadId: ThreadId },
 ) {
@@ -103,7 +103,7 @@ export class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputEr
   }
 }
 
-export class ThreadRunEndedError extends Schema.TaggedError<ThreadRunEndedError>()(
+class ThreadRunEndedError extends Schema.TaggedError<ThreadRunEndedError>()(
   "ThreadRunEndedError",
   { threadId: ThreadId, status: Schema.String, error: Schema.optional(Schema.String) },
 ) {

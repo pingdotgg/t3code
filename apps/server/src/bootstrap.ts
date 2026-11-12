@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-export class BootstrapFdStatError extends Schema.TaggedError<BootstrapFdStatError>()(
+class BootstrapFdStatError extends Schema.TaggedError<BootstrapFdStatError>()(
   "BootstrapFdStatError",
   {
     fd: Schema.Number,
@@ -24,7 +24,7 @@ export class BootstrapFdStatError extends Schema.TaggedError<BootstrapFdStatErro
   }
 }
 
-export class BootstrapInputStreamOpenError extends Schema.TaggedError<BootstrapInputStreamOpenError>()(
+class BootstrapInputStreamOpenError extends Schema.TaggedError<BootstrapInputStreamOpenError>()(
   "BootstrapInputStreamOpenError",
   {
     fd: Schema.Number,

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-export class ProviderInstanceNotFoundError extends Schema.TaggedError<ProviderInstanceNotFoundError>()(
+class ProviderInstanceNotFoundError extends Schema.TaggedError<ProviderInstanceNotFoundError>()(
   "ProviderInstanceNotFoundError",
   {
     instanceId: Schema.String,

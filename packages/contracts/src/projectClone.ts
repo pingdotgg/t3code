@@ -19,8 +19,8 @@ export const ProjectCloneStage = Schema.Literals([
 ]);
 export type ProjectCloneStage = typeof ProjectCloneStage.Type;
 
-export const ProjectClonePhase = Schema.Literals(["running", "done", "failed", "cancelled"]);
-export type ProjectClonePhase = typeof ProjectClonePhase.Type;
+const ProjectClonePhase = Schema.Literals(["running", "done", "failed", "cancelled"]);
+type ProjectClonePhase = typeof ProjectClonePhase.Type;
 
 export const ProjectCloneSnapshot = Schema.Struct({
   projectId: ProjectId,

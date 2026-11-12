@@ -87,11 +87,11 @@ const OrchestratorMcpTargetOptionsFromRecord = Schema.Record(
   ),
 );
 
-export const OrchestratorMcpTargetOptions = Schema.Union([
+const OrchestratorMcpTargetOptions = Schema.Union([
   Schema.Array(ProviderOptionSelection),
   OrchestratorMcpTargetOptionsFromRecord,
 ]);
-export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
+type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
 
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(
@@ -145,7 +145,7 @@ export const OrchestratorMcpTaskRole = Schema.Literals([
 ]);
 export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
-export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
+const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
   "running",
   "waiting",
@@ -154,15 +154,15 @@ export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "cancelled",
   "interrupted",
 ]);
-export type OrchestratorMcpDelegatedTaskStatus = typeof OrchestratorMcpDelegatedTaskStatus.Type;
+type OrchestratorMcpDelegatedTaskStatus = typeof OrchestratorMcpDelegatedTaskStatus.Type;
 
-export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
+const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
   "completed",
   "failed",
   "cancelled",
   "interrupted",
 ]);
-export type OrchestratorMcpTerminalDelegatedTaskStatus =
+type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
@@ -258,14 +258,14 @@ export const OrchestratorMcpTaskCancelResult = Schema.Struct({
 });
 export type OrchestratorMcpTaskCancelResult = typeof OrchestratorMcpTaskCancelResult.Type;
 
-export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
+const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
-export type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
+type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
 
 export const OrchestratorMcpCreateThreadsInput = Schema.Struct({
   threads: Schema.Array(OrchestratorMcpCreateThreadRequest).check(
@@ -276,14 +276,14 @@ export const OrchestratorMcpCreateThreadsInput = Schema.Struct({
 });
 export type OrchestratorMcpCreateThreadsInput = typeof OrchestratorMcpCreateThreadsInput.Type;
 
-export const OrchestratorMcpCreatedThreadStatus = Schema.Union([
+const OrchestratorMcpCreatedThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   Schema.Literal("preparing"),
   Schema.Literal("starting"),
   OrchestratorMcpDelegatedTaskStatus,
   Schema.Literal("rolled_back"),
 ]);
-export type OrchestratorMcpCreatedThreadStatus = typeof OrchestratorMcpCreatedThreadStatus.Type;
+type OrchestratorMcpCreatedThreadStatus = typeof OrchestratorMcpCreatedThreadStatus.Type;
 
 export const OrchestratorMcpCreatedThread = Schema.Struct({
   threadId: ThreadId,
@@ -586,7 +586,7 @@ export const OrchestratorMcpModelOption = Schema.Struct({
 });
 export type OrchestratorMcpModelOption = typeof OrchestratorMcpModelOption.Type;
 
-export const OrchestratorMcpProviderCapability = Schema.Struct({
+const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
   displayName: Schema.NullOr(Schema.String),
@@ -605,9 +605,9 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
 });
-export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
+type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
-export const OrchestratorMcpEnvironmentLink = Schema.Struct({
+const OrchestratorMcpEnvironmentLink = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
   /** Whether it answered just now. An expired link must be linked again there. */
@@ -617,7 +617,7 @@ export const OrchestratorMcpEnvironmentLink = Schema.Struct({
   expiresAt: IsoDateTime,
   lastError: Schema.NullOr(Schema.String),
 });
-export type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
+type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
 
 export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
   environmentId: EnvironmentId,

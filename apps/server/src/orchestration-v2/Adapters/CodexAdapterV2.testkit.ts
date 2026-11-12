@@ -23,7 +23,7 @@ import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 
-export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
+class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
   "CodexReplayTranscriptDecodeError",
   {
     driver: Schema.optional(Schema.String),

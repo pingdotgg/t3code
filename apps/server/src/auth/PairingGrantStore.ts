@@ -32,7 +32,7 @@ export interface BootstrapGrant {
   readonly expiresAt: DateTime.DateTime;
 }
 
-export class UnknownBootstrapCredentialError extends Schema.TaggedError<UnknownBootstrapCredentialError>()(
+class UnknownBootstrapCredentialError extends Schema.TaggedError<UnknownBootstrapCredentialError>()(
   "UnknownBootstrapCredentialError",
   {},
 ) {
@@ -41,7 +41,7 @@ export class UnknownBootstrapCredentialError extends Schema.TaggedError<UnknownB
   }
 }
 
-export class ExpiredBootstrapCredentialError extends Schema.TaggedError<ExpiredBootstrapCredentialError>()(
+class ExpiredBootstrapCredentialError extends Schema.TaggedError<ExpiredBootstrapCredentialError>()(
   "ExpiredBootstrapCredentialError",
   {},
 ) {
@@ -50,7 +50,7 @@ export class ExpiredBootstrapCredentialError extends Schema.TaggedError<ExpiredB
   }
 }
 
-export class BootstrapCredentialProofKeyMismatchError extends Schema.TaggedError<BootstrapCredentialProofKeyMismatchError>()(
+class BootstrapCredentialProofKeyMismatchError extends Schema.TaggedError<BootstrapCredentialProofKeyMismatchError>()(
   "BootstrapCredentialProofKeyMismatchError",
   {},
 ) {
@@ -59,7 +59,7 @@ export class BootstrapCredentialProofKeyMismatchError extends Schema.TaggedError
   }
 }
 
-export class UnavailableBootstrapCredentialError extends Schema.TaggedError<UnavailableBootstrapCredentialError>()(
+class UnavailableBootstrapCredentialError extends Schema.TaggedError<UnavailableBootstrapCredentialError>()(
   "UnavailableBootstrapCredentialError",
   {},
 ) {
@@ -68,7 +68,7 @@ export class UnavailableBootstrapCredentialError extends Schema.TaggedError<Unav
   }
 }
 
-export class BootstrapCredentialScopeNotGrantedError extends Schema.TaggedError<BootstrapCredentialScopeNotGrantedError>()(
+class BootstrapCredentialScopeNotGrantedError extends Schema.TaggedError<BootstrapCredentialScopeNotGrantedError>()(
   "BootstrapCredentialScopeNotGrantedError",
   {},
 ) {
@@ -77,15 +77,15 @@ export class BootstrapCredentialScopeNotGrantedError extends Schema.TaggedError<
   }
 }
 
-export const BootstrapCredentialInvalidError = Schema.Union([
+const BootstrapCredentialInvalidError = Schema.Union([
   UnknownBootstrapCredentialError,
   ExpiredBootstrapCredentialError,
   BootstrapCredentialProofKeyMismatchError,
   UnavailableBootstrapCredentialError,
 ]);
-export type BootstrapCredentialInvalidError = typeof BootstrapCredentialInvalidError.Type;
+type BootstrapCredentialInvalidError = typeof BootstrapCredentialInvalidError.Type;
 
-export class ActivePairingLinksLoadError extends Schema.TaggedError<ActivePairingLinksLoadError>()(
+class ActivePairingLinksLoadError extends Schema.TaggedError<ActivePairingLinksLoadError>()(
   "ActivePairingLinksLoadError",
   {
     cause: Schema.Defect(),
@@ -96,7 +96,7 @@ export class ActivePairingLinksLoadError extends Schema.TaggedError<ActivePairin
   }
 }
 
-export class PairingLinkRevokeError extends Schema.TaggedError<PairingLinkRevokeError>()(
+class PairingLinkRevokeError extends Schema.TaggedError<PairingLinkRevokeError>()(
   "PairingLinkRevokeError",
   {
     pairingLinkId: Schema.String,
@@ -108,7 +108,7 @@ export class PairingLinkRevokeError extends Schema.TaggedError<PairingLinkRevoke
   }
 }
 
-export class PairingCredentialIssueError extends Schema.TaggedError<PairingCredentialIssueError>()(
+class PairingCredentialIssueError extends Schema.TaggedError<PairingCredentialIssueError>()(
   "PairingCredentialIssueError",
   {
     pairingLinkId: Schema.String,
@@ -122,7 +122,7 @@ export class PairingCredentialIssueError extends Schema.TaggedError<PairingCrede
   }
 }
 
-export class PairingCredentialRandomGenerationError extends Schema.TaggedError<PairingCredentialRandomGenerationError>()(
+class PairingCredentialRandomGenerationError extends Schema.TaggedError<PairingCredentialRandomGenerationError>()(
   "PairingCredentialRandomGenerationError",
   {
     operation: Schema.Literals(["generate-id", "generate-token"]),
@@ -134,7 +134,7 @@ export class PairingCredentialRandomGenerationError extends Schema.TaggedError<P
   }
 }
 
-export class BootstrapCredentialConsumeError extends Schema.TaggedError<BootstrapCredentialConsumeError>()(
+class BootstrapCredentialConsumeError extends Schema.TaggedError<BootstrapCredentialConsumeError>()(
   "BootstrapCredentialConsumeError",
   {
     cause: Schema.Defect(),
@@ -145,7 +145,7 @@ export class BootstrapCredentialConsumeError extends Schema.TaggedError<Bootstra
   }
 }
 
-export class BootstrapCredentialConsumeAvailableError extends Schema.TaggedError<BootstrapCredentialConsumeAvailableError>()(
+class BootstrapCredentialConsumeAvailableError extends Schema.TaggedError<BootstrapCredentialConsumeAvailableError>()(
   "BootstrapCredentialConsumeAvailableError",
   {
     cause: Schema.Defect(),
@@ -156,7 +156,7 @@ export class BootstrapCredentialConsumeAvailableError extends Schema.TaggedError
   }
 }
 
-export class BootstrapCredentialLookupError extends Schema.TaggedError<BootstrapCredentialLookupError>()(
+class BootstrapCredentialLookupError extends Schema.TaggedError<BootstrapCredentialLookupError>()(
   "BootstrapCredentialLookupError",
   {
     cause: Schema.Defect(),

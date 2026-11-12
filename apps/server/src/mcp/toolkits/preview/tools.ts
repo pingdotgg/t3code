@@ -172,7 +172,7 @@ const PreviewActTool = browserTool(
 );
 
 /** Wrap non-objects: MCP requires object structuredContent, and Claude Code rejects invalid results entirely. */
-export const PreviewEvaluateResult = Schema.Struct({
+const PreviewEvaluateResult = Schema.Struct({
   ...presentationFields,
   value: Schema.Unknown.annotate({
     description: "The JSON-serializable value the expression produced, or null.",

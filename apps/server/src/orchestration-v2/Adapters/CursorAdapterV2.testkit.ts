@@ -43,7 +43,7 @@ const decodeCursorAgentSdkReplayTranscript = Schema.decodeUnknownEffect(
   CursorAgentSdkReplayTranscript,
 );
 
-export class CursorReplayTranscriptDecodeError extends Schema.TaggedError<CursorReplayTranscriptDecodeError>()(
+class CursorReplayTranscriptDecodeError extends Schema.TaggedError<CursorReplayTranscriptDecodeError>()(
   "CursorReplayTranscriptDecodeError",
   {
     driver: Schema.optional(Schema.String),
@@ -57,7 +57,7 @@ export class CursorReplayTranscriptDecodeError extends Schema.TaggedError<Cursor
   }
 }
 
-export class CursorReplayExhaustedError extends Schema.TaggedError<CursorReplayExhaustedError>()(
+class CursorReplayExhaustedError extends Schema.TaggedError<CursorReplayExhaustedError>()(
   "CursorReplayExhaustedError",
   {
     scenario: Schema.String,
@@ -70,7 +70,7 @@ export class CursorReplayExhaustedError extends Schema.TaggedError<CursorReplayE
   }
 }
 
-export class CursorReplayFrameMismatchError extends Schema.TaggedError<CursorReplayFrameMismatchError>()(
+class CursorReplayFrameMismatchError extends Schema.TaggedError<CursorReplayFrameMismatchError>()(
   "CursorReplayFrameMismatchError",
   {
     scenario: Schema.String,
@@ -84,7 +84,7 @@ export class CursorReplayFrameMismatchError extends Schema.TaggedError<CursorRep
   }
 }
 
-export class CursorReplayIncompleteError extends Schema.TaggedError<CursorReplayIncompleteError>()(
+class CursorReplayIncompleteError extends Schema.TaggedError<CursorReplayIncompleteError>()(
   "CursorReplayIncompleteError",
   {
     scenario: Schema.String,
@@ -97,7 +97,7 @@ export class CursorReplayIncompleteError extends Schema.TaggedError<CursorReplay
   }
 }
 
-export class CursorReplayRuntimeError extends Schema.TaggedError<CursorReplayRuntimeError>()(
+class CursorReplayRuntimeError extends Schema.TaggedError<CursorReplayRuntimeError>()(
   "CursorReplayRuntimeError",
   {
     scenario: Schema.String,
@@ -110,14 +110,14 @@ export class CursorReplayRuntimeError extends Schema.TaggedError<CursorReplayRun
   }
 }
 
-export const CursorAgentSdkReplayError = Schema.Union([
+const CursorAgentSdkReplayError = Schema.Union([
   CursorReplayTranscriptDecodeError,
   CursorReplayExhaustedError,
   CursorReplayFrameMismatchError,
   CursorReplayIncompleteError,
   CursorReplayRuntimeError,
 ]);
-export type CursorAgentSdkReplayError = typeof CursorAgentSdkReplayError.Type;
+type CursorAgentSdkReplayError = typeof CursorAgentSdkReplayError.Type;
 const isCursorAgentSdkReplayError = Schema.is(CursorAgentSdkReplayError);
 const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 

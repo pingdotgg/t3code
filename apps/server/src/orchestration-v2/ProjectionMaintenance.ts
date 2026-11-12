@@ -13,7 +13,7 @@ import {
 } from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMaintenanceError>()(
+class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMaintenanceError>()(
   "ProjectionMaintenanceError",
   {
     operation: Schema.String,

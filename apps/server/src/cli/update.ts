@@ -43,7 +43,7 @@ import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
 import * as CliService from "./service.ts";
 
-export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
+class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
 }) {
   override get message(): string {

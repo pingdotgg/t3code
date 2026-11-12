@@ -411,7 +411,7 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   return { value: value(), text, omitted };
 };
 
-export class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
+class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
   "PreviewScreenshotSaveError",
   { screenshotPath: Schema.String, cause: Schema.Defect() },
 ) {

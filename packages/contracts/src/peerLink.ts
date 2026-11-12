@@ -23,8 +23,8 @@ export const PeerLink = Schema.Struct({
 export type PeerLink = typeof PeerLink.Type;
 
 /** Whether a link can be used now, as worked out when it is listed. */
-export const PeerLinkStatus = Schema.Literals(["reachable", "unreachable", "expired"]);
-export type PeerLinkStatus = typeof PeerLinkStatus.Type;
+const PeerLinkStatus = Schema.Literals(["reachable", "unreachable", "expired"]);
+type PeerLinkStatus = typeof PeerLinkStatus.Type;
 
 export const PeerLinkSummary = Schema.Struct({
   ...PeerLink.fields,
@@ -107,12 +107,12 @@ const PEER_LINK_REQUEST_FAILURE_MESSAGES = {
   record_failed: "Could not update the link request.",
 } as const;
 
-export const PeerLinkRequestFailureReason = Schema.Literals(
+const PeerLinkRequestFailureReason = Schema.Literals(
   Object.keys(PEER_LINK_REQUEST_FAILURE_MESSAGES) as Array<
     keyof typeof PEER_LINK_REQUEST_FAILURE_MESSAGES
   >,
 );
-export type PeerLinkRequestFailureReason = typeof PeerLinkRequestFailureReason.Type;
+type PeerLinkRequestFailureReason = typeof PeerLinkRequestFailureReason.Type;
 
 /**
  * Answering a link request failed before anything was linked. A link the

@@ -28,14 +28,14 @@ export const DesktopAppActivationErrorCode = Schema.Literals([
 ]);
 export type DesktopAppActivationErrorCode = typeof DesktopAppActivationErrorCode.Type;
 
-export const DesktopAppActivationSuccess = Schema.Struct({
+const DesktopAppActivationSuccess = Schema.Struct({
   version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),
   requestId: TrimmedNonEmptyString,
   ok: Schema.Literal(true),
   projectId: ProjectId,
   threadId: ThreadId,
 });
-export type DesktopAppActivationSuccess = typeof DesktopAppActivationSuccess.Type;
+type DesktopAppActivationSuccess = typeof DesktopAppActivationSuccess.Type;
 
 export const DesktopAppActivationFailure = Schema.Struct({
   version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),

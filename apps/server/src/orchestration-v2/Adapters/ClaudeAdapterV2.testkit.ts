@@ -62,7 +62,7 @@ const ClaudeAgentSdkReplayTranscript = Schema.Struct({
 });
 type ClaudeAgentSdkReplayTranscript = typeof ClaudeAgentSdkReplayTranscript.Type;
 
-export class ClaudeReplayTranscriptDecodeError extends Schema.TaggedError<ClaudeReplayTranscriptDecodeError>()(
+class ClaudeReplayTranscriptDecodeError extends Schema.TaggedError<ClaudeReplayTranscriptDecodeError>()(
   "ClaudeReplayTranscriptDecodeError",
   {
     driver: Schema.optional(Schema.String),
@@ -76,7 +76,7 @@ export class ClaudeReplayTranscriptDecodeError extends Schema.TaggedError<Claude
   }
 }
 
-export class ClaudeReplayExhaustedError extends Schema.TaggedError<ClaudeReplayExhaustedError>()(
+class ClaudeReplayExhaustedError extends Schema.TaggedError<ClaudeReplayExhaustedError>()(
   "ClaudeReplayExhaustedError",
   {
     scenario: Schema.String,
@@ -89,7 +89,7 @@ export class ClaudeReplayExhaustedError extends Schema.TaggedError<ClaudeReplayE
   }
 }
 
-export class ClaudeReplayUnexpectedOutboundError extends Schema.TaggedError<ClaudeReplayUnexpectedOutboundError>()(
+class ClaudeReplayUnexpectedOutboundError extends Schema.TaggedError<ClaudeReplayUnexpectedOutboundError>()(
   "ClaudeReplayUnexpectedOutboundError",
   {
     scenario: Schema.String,
@@ -103,7 +103,7 @@ export class ClaudeReplayUnexpectedOutboundError extends Schema.TaggedError<Clau
   }
 }
 
-export class ClaudeReplayFrameMismatchError extends Schema.TaggedError<ClaudeReplayFrameMismatchError>()(
+class ClaudeReplayFrameMismatchError extends Schema.TaggedError<ClaudeReplayFrameMismatchError>()(
   "ClaudeReplayFrameMismatchError",
   {
     scenario: Schema.String,
@@ -118,7 +118,7 @@ export class ClaudeReplayFrameMismatchError extends Schema.TaggedError<ClaudeRep
   }
 }
 
-export class ClaudeReplayRuntimeExitError extends Schema.TaggedError<ClaudeReplayRuntimeExitError>()(
+class ClaudeReplayRuntimeExitError extends Schema.TaggedError<ClaudeReplayRuntimeExitError>()(
   "ClaudeReplayRuntimeExitError",
   {
     scenario: Schema.String,
@@ -132,7 +132,7 @@ export class ClaudeReplayRuntimeExitError extends Schema.TaggedError<ClaudeRepla
   }
 }
 
-export class ClaudeReplayIncompleteError extends Schema.TaggedError<ClaudeReplayIncompleteError>()(
+class ClaudeReplayIncompleteError extends Schema.TaggedError<ClaudeReplayIncompleteError>()(
   "ClaudeReplayIncompleteError",
   {
     scenario: Schema.String,
@@ -145,7 +145,7 @@ export class ClaudeReplayIncompleteError extends Schema.TaggedError<ClaudeReplay
   }
 }
 
-export class ClaudeReplayDriverError extends Schema.TaggedError<ClaudeReplayDriverError>()(
+class ClaudeReplayDriverError extends Schema.TaggedError<ClaudeReplayDriverError>()(
   "ClaudeReplayDriverError",
   {
     scenario: Schema.String,
@@ -157,7 +157,7 @@ export class ClaudeReplayDriverError extends Schema.TaggedError<ClaudeReplayDriv
   }
 }
 
-export const ClaudeAgentSdkReplayError = Schema.Union([
+const ClaudeAgentSdkReplayError = Schema.Union([
   ClaudeReplayTranscriptDecodeError,
   ClaudeReplayExhaustedError,
   ClaudeReplayUnexpectedOutboundError,
@@ -166,7 +166,7 @@ export const ClaudeAgentSdkReplayError = Schema.Union([
   ClaudeReplayIncompleteError,
   ClaudeReplayDriverError,
 ]);
-export type ClaudeAgentSdkReplayError = typeof ClaudeAgentSdkReplayError.Type;
+type ClaudeAgentSdkReplayError = typeof ClaudeAgentSdkReplayError.Type;
 export const ClaudeOrchestratorReplayHarnessError = Schema.Union([
   ClaudeAgentSdkReplayError,
   ProviderAdapterDriverCreateError,

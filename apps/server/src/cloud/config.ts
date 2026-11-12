@@ -27,7 +27,7 @@ export const decodeRuntimeConfig = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayManagedEndpointRuntimeConfig),
 );
 
-export const ManagedEndpointConfirmedOrigin = Schema.Struct({
+const ManagedEndpointConfirmedOrigin = Schema.Struct({
   config: RelayManagedEndpointRuntimeConfig,
   origin: RelayManagedEndpointOrigin,
 });

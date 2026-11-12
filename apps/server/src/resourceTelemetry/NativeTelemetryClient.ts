@@ -53,7 +53,7 @@ const MAX_RESTART_DELAY = Duration.seconds(10);
 const FAILURE_WINDOW_MS = 60_000;
 const MAX_FAILURES_PER_WINDOW = 5;
 
-export class NativeTelemetrySpawnFailed extends Schema.TaggedError<NativeTelemetrySpawnFailed>()(
+class NativeTelemetrySpawnFailed extends Schema.TaggedError<NativeTelemetrySpawnFailed>()(
   "NativeTelemetrySpawnFailed",
   {
     path: Schema.String,
@@ -65,7 +65,7 @@ export class NativeTelemetrySpawnFailed extends Schema.TaggedError<NativeTelemet
   }
 }
 
-export class NativeTelemetryHandshakeTimedOut extends Schema.TaggedError<NativeTelemetryHandshakeTimedOut>()(
+class NativeTelemetryHandshakeTimedOut extends Schema.TaggedError<NativeTelemetryHandshakeTimedOut>()(
   "NativeTelemetryHandshakeTimedOut",
   {
     timeoutMs: Schema.Number,
@@ -88,7 +88,7 @@ class NativeTelemetryRequestTimedOut extends Schema.TaggedError<NativeTelemetryR
   }
 }
 
-export class NativeTelemetryProtocolMismatch extends Schema.TaggedError<NativeTelemetryProtocolMismatch>()(
+class NativeTelemetryProtocolMismatch extends Schema.TaggedError<NativeTelemetryProtocolMismatch>()(
   "NativeTelemetryProtocolMismatch",
   {
     expectedVersion: Schema.Number,
@@ -100,7 +100,7 @@ export class NativeTelemetryProtocolMismatch extends Schema.TaggedError<NativeTe
   }
 }
 
-export class NativeTelemetryDecodeFailed extends Schema.TaggedError<NativeTelemetryDecodeFailed>()(
+class NativeTelemetryDecodeFailed extends Schema.TaggedError<NativeTelemetryDecodeFailed>()(
   "NativeTelemetryDecodeFailed",
   {
     cause: Schema.Defect(),
@@ -111,7 +111,7 @@ export class NativeTelemetryDecodeFailed extends Schema.TaggedError<NativeTeleme
   }
 }
 
-export class NativeTelemetryCommandFailed extends Schema.TaggedError<NativeTelemetryCommandFailed>()(
+class NativeTelemetryCommandFailed extends Schema.TaggedError<NativeTelemetryCommandFailed>()(
   "NativeTelemetryCommandFailed",
   {
     operation: Schema.String,
@@ -123,7 +123,7 @@ export class NativeTelemetryCommandFailed extends Schema.TaggedError<NativeTelem
   }
 }
 
-export class NativeTelemetryExited extends Schema.TaggedError<NativeTelemetryExited>()(
+class NativeTelemetryExited extends Schema.TaggedError<NativeTelemetryExited>()(
   "NativeTelemetryExited",
   {
     exitCode: Schema.Number,
@@ -143,7 +143,7 @@ class NativeTelemetryStreamClosed extends Schema.TaggedError<NativeTelemetryStre
   }
 }
 
-export class NativeTelemetryUnavailable extends Schema.TaggedError<NativeTelemetryUnavailable>()(
+class NativeTelemetryUnavailable extends Schema.TaggedError<NativeTelemetryUnavailable>()(
   "NativeTelemetryUnavailable",
   {
     reason: Schema.String,

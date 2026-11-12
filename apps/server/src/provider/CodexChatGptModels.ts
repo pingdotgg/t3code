@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { mapCodexModelCapabilities } from "./CodexProvider.ts";
 
-export class ChatGptCatalogError extends Schema.TaggedError<ChatGptCatalogError>()(
+class ChatGptCatalogError extends Schema.TaggedError<ChatGptCatalogError>()(
   "ChatGptCatalogError",
   { status: Schema.Int },
 ) {}

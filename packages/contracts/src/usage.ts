@@ -79,8 +79,8 @@ export const UsageSourceFingerprint = Schema.Struct({
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 
-export const UsageSourceStatus = Schema.Literals(["ok", "missing", "partial", "failed"]);
-export type UsageSourceStatus = typeof UsageSourceStatus.Type;
+const UsageSourceStatus = Schema.Literals(["ok", "missing", "partial", "failed"]);
+type UsageSourceStatus = typeof UsageSourceStatus.Type;
 
 export const UsageSource = Schema.Struct({
   fingerprint: UsageSourceFingerprint,
@@ -97,8 +97,8 @@ export const UsageSource = Schema.Struct({
 });
 export type UsageSource = typeof UsageSource.Type;
 
-export const UsagePricingStatus = Schema.Literals(["fresh", "cached", "unavailable"]);
-export type UsagePricingStatus = typeof UsagePricingStatus.Type;
+const UsagePricingStatus = Schema.Literals(["fresh", "cached", "unavailable"]);
+type UsagePricingStatus = typeof UsagePricingStatus.Type;
 
 export const UsagePricing = Schema.Struct({
   status: UsagePricingStatus,

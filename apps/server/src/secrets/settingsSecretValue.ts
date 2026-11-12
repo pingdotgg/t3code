@@ -24,7 +24,7 @@ export const resolveSettingsSecrets = Effect.fn("SettingsSecrets.resolve")(funct
   );
 });
 
-export class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSecretUnresolvedError>()(
+class SettingsSecretUnresolvedError extends Schema.TaggedError<SettingsSecretUnresolvedError>()(
   "SettingsSecretUnresolvedError",
   { provider: Schema.String },
 ) {

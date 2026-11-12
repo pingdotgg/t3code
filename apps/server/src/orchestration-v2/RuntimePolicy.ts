@@ -19,7 +19,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
-export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
+class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
   {
     projectId: ProjectId,
@@ -53,11 +53,11 @@ export class RuntimePolicyAboveCeilingError extends Schema.TaggedError<RuntimePo
 
 export const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
-export const RuntimePolicyV2Error = Schema.Union([
+const RuntimePolicyV2Error = Schema.Union([
   RuntimePolicyResolveError,
   RuntimePolicyAboveCeilingError,
 ]);
-export type RuntimePolicyV2Error = typeof RuntimePolicyV2Error.Type;
+type RuntimePolicyV2Error = typeof RuntimePolicyV2Error.Type;
 
 export const RuntimePolicyV2Override = Schema.Struct({
   cwd: Schema.optional(Schema.String),

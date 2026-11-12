@@ -3,7 +3,7 @@ import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export const ClaudeCodeProfileSchema = Schema.Struct({
+const ClaudeCodeProfileSchema = Schema.Struct({
   effortMap: Schema.optional(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
@@ -17,7 +17,7 @@ export const ClaudeCodeProfileSchema = Schema.Struct({
   fixedContextWindowTokens: Schema.optional(Schema.Number),
 });
 
-export const ClaudeProfileAdapterSchema = Schema.Struct({
+const ClaudeProfileAdapterSchema = Schema.Struct({
   claudeCode: Schema.optional(ClaudeCodeProfileSchema),
 });
 
@@ -44,7 +44,7 @@ const ClaudeCodeCompatibilitySchema = Schema.Struct({
   ),
 );
 
-export const ClaudeModelAdapterSchema = Schema.Struct({
+const ClaudeModelAdapterSchema = Schema.Struct({
   claudeCode: Schema.optional(ClaudeCodeCompatibilitySchema),
 });
 

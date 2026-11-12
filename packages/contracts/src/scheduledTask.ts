@@ -335,7 +335,7 @@ export const ScheduledTaskWebhookDeliverySummary = Schema.Struct({
 });
 export type ScheduledTaskWebhookDeliverySummary = typeof ScheduledTaskWebhookDeliverySummary.Type;
 
-export const ScheduledTaskWebhookDelivery = Schema.Struct({
+const ScheduledTaskWebhookDelivery = Schema.Struct({
   ...ScheduledTaskWebhookDeliverySummary.fields,
   query: Schema.String,
   headers: Schema.Record(Schema.String, Schema.String),
@@ -343,7 +343,7 @@ export const ScheduledTaskWebhookDelivery = Schema.Struct({
   bodyTruncated: Schema.Boolean,
   renderedPrompt: Schema.NullOr(Schema.String),
 });
-export type ScheduledTaskWebhookDelivery = typeof ScheduledTaskWebhookDelivery.Type;
+type ScheduledTaskWebhookDelivery = typeof ScheduledTaskWebhookDelivery.Type;
 
 export const ScheduledTaskListWebhookDeliveriesInput = Schema.Struct({
   id: ScheduledTaskId,

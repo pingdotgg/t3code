@@ -30,7 +30,7 @@ const TRIAGE_AGENTS: ReadonlyArray<TriageAgent> = [
   { id: "codex", command: "codex", label: "Codex" },
 ];
 
-export class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentUnavailableError>()(
+class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentUnavailableError>()(
   "TriageAgentUnavailableError",
   { agent: Schema.String },
 ) {
@@ -39,7 +39,7 @@ export class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentU
   }
 }
 
-export class TriageAgentChoiceRequiredError extends Schema.TaggedError<TriageAgentChoiceRequiredError>()(
+class TriageAgentChoiceRequiredError extends Schema.TaggedError<TriageAgentChoiceRequiredError>()(
   "TriageAgentChoiceRequiredError",
   {},
 ) {

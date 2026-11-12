@@ -133,12 +133,12 @@ export const PullRequestReaction = Schema.Struct({
 });
 export type PullRequestReaction = typeof PullRequestReaction.Type;
 
-export const PullRequestCommentKind = Schema.Literals([
+const PullRequestCommentKind = Schema.Literals([
   "issue-comment",
   "review-comment",
   "review",
 ]);
-export type PullRequestCommentKind = typeof PullRequestCommentKind.Type;
+type PullRequestCommentKind = typeof PullRequestCommentKind.Type;
 
 export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -241,12 +241,12 @@ export const PullRequestReviewCapabilities = Schema.Struct({
 });
 export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities.Type;
 
-export const PullRequestEditCapabilities = Schema.Struct({
+const PullRequestEditCapabilities = Schema.Struct({
   changeRequest: Schema.Boolean,
   comment: Schema.Boolean,
   maintainerEdits: Schema.optional(Schema.Boolean),
 });
-export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
+type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
 export const PullRequestReviewerCapabilities = Schema.Struct({
   request: Schema.Boolean,
@@ -254,8 +254,8 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
 });
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
-export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
-export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
+const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
+type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
 
 export const PullRequestCapabilities = Schema.Struct({
   diff: Schema.Boolean,
@@ -857,12 +857,12 @@ export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Typ
  * The names keep their `cli-` prefix for wire compatibility; for a host read with a credential
  * rather than a tool they mean "no credential" and "a refused credential".
  */
-export const PullRequestUnavailableReason = Schema.Literals([
+const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
   "cli-unauthenticated",
   "provider-unsupported",
 ]);
-export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.Type;
+type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.Type;
 
 /**
  * `author:me` names whoever is signed in to the host being read, GitHub's `@me` spelled either

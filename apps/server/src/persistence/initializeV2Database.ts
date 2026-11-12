@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-export class V2DatabaseImportError extends Schema.TaggedError<V2DatabaseImportError>()(
+class V2DatabaseImportError extends Schema.TaggedError<V2DatabaseImportError>()(
   "V2DatabaseImportError",
   { sourcePath: Schema.String, destinationPath: Schema.String, cause: Schema.Defect() },
 ) {

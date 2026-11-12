@@ -79,7 +79,7 @@ export interface EventNdjsonLogStoreOptions {
   readonly attribution?: ResourceAttribution.ResourceAttribution["Service"];
 }
 
-export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjsonLogDirectoryError>()(
+class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjsonLogDirectoryError>()(
   "EventNdjsonLogDirectoryError",
   {
     directory: Schema.String,

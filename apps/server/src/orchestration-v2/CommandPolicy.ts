@@ -15,13 +15,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-export const SteeringExecutionPolicyV2 = Schema.Literals(["active_steering", "interrupt_restart"]);
-export type SteeringExecutionPolicyV2 = typeof SteeringExecutionPolicyV2.Type;
+const SteeringExecutionPolicyV2 = Schema.Literals(["active_steering", "interrupt_restart"]);
+type SteeringExecutionPolicyV2 = typeof SteeringExecutionPolicyV2.Type;
 
-export const ForkExecutionPolicyV2 = Schema.Literals(["native_fork", "portable_context"]);
-export type ForkExecutionPolicyV2 = typeof ForkExecutionPolicyV2.Type;
+const ForkExecutionPolicyV2 = Schema.Literals(["native_fork", "portable_context"]);
+type ForkExecutionPolicyV2 = typeof ForkExecutionPolicyV2.Type;
 
-export const CommandPolicyCapability = Schema.Literals([
+const CommandPolicyCapability = Schema.Literals([
   "queued_messages",
   "active_steering",
   "interrupt",
@@ -33,7 +33,7 @@ export const CommandPolicyCapability = Schema.Literals([
   "context_handoff",
   "strong_terminal_status",
 ]);
-export type CommandPolicyCapability = typeof CommandPolicyCapability.Type;
+type CommandPolicyCapability = typeof CommandPolicyCapability.Type;
 
 export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedError<CommandPolicyCapabilityUnsupportedError>()(
   "CommandPolicyCapabilityUnsupportedError",
@@ -50,8 +50,8 @@ export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedError<
   }
 }
 
-export const CommandPolicyV2Error = Schema.Union([CommandPolicyCapabilityUnsupportedError]);
-export type CommandPolicyV2Error = typeof CommandPolicyV2Error.Type;
+const CommandPolicyV2Error = Schema.Union([CommandPolicyCapabilityUnsupportedError]);
+type CommandPolicyV2Error = typeof CommandPolicyV2Error.Type;
 
 type MessageDispatchMode = Extract<
   OrchestrationV2Command,

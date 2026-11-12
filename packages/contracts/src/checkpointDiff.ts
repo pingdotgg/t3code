@@ -4,7 +4,7 @@ import * as Struct from "effect/Struct";
 
 import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const TurnCountRange = Schema.Struct({
+const TurnCountRange = Schema.Struct({
   fromTurnCount: NonNegativeInt,
   toTurnCount: NonNegativeInt,
 }).check(
@@ -18,7 +18,7 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
-export const ThreadTurnDiff = TurnCountRange.mapFields(
+const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,

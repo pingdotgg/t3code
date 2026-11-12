@@ -52,8 +52,8 @@ const decodeIdTokenClaims = Schema.decodeUnknownOption(Schema.fromJsonString(IdT
  * Connect account. `openai` and `claude` are provider accounts. `device` is a
  * client device that connected.
  */
-export const TelemetryOwnerSource = Schema.Literals(["connect", "openai", "claude", "device"]);
-export type TelemetryOwnerSource = typeof TelemetryOwnerSource.Type;
+const TelemetryOwnerSource = Schema.Literals(["connect", "openai", "claude", "device"]);
+type TelemetryOwnerSource = typeof TelemetryOwnerSource.Type;
 
 export interface TelemetryOwner {
   readonly source: TelemetryOwnerSource;
@@ -90,7 +90,7 @@ class TelemetryIdentityDecodeError extends Schema.TaggedError<TelemetryIdentityD
   }
 }
 
-export class TelemetryAnonymousIdGenerationError extends Schema.TaggedError<TelemetryAnonymousIdGenerationError>()(
+class TelemetryAnonymousIdGenerationError extends Schema.TaggedError<TelemetryAnonymousIdGenerationError>()(
   "TelemetryAnonymousIdGenerationError",
   {
     source: Schema.Literal("anonymous"),
@@ -103,7 +103,7 @@ export class TelemetryAnonymousIdGenerationError extends Schema.TaggedError<Tele
   }
 }
 
-export class TelemetryAnonymousIdPersistenceError extends Schema.TaggedError<TelemetryAnonymousIdPersistenceError>()(
+class TelemetryAnonymousIdPersistenceError extends Schema.TaggedError<TelemetryAnonymousIdPersistenceError>()(
   "TelemetryAnonymousIdPersistenceError",
   {
     source: Schema.Literal("anonymous"),

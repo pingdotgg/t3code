@@ -228,7 +228,7 @@ export const DeviceHostSummary = Schema.Union([
 ]);
 export type DeviceHostSummary = typeof DeviceHostSummary.Type;
 
-export const DeviceHostStatus = Schema.Literals([
+const DeviceHostStatus = Schema.Literals([
   "disabled",
   "idle",
   "installing",
@@ -236,7 +236,7 @@ export const DeviceHostStatus = Schema.Literals([
   "ready",
   "failed",
 ]);
-export type DeviceHostStatus = typeof DeviceHostStatus.Type;
+type DeviceHostStatus = typeof DeviceHostStatus.Type;
 
 export const DeviceSession = Schema.Struct({
   threadId: ThreadId,
@@ -247,7 +247,7 @@ export const DeviceSession = Schema.Struct({
 });
 export type DeviceSession = typeof DeviceSession.Type;
 
-export const DeviceHostStatuses = Schema.Record(
+const DeviceHostStatuses = Schema.Record(
   DeviceHostId,
   Schema.Struct({
     status: DeviceHostStatus,
@@ -364,20 +364,20 @@ export const DeviceShutdownInput = Schema.Struct({
 });
 export type DeviceShutdownInput = typeof DeviceShutdownInput.Type;
 
-export const DeviceAppearance = Schema.Literals(["light", "dark"]);
-export type DeviceAppearance = typeof DeviceAppearance.Type;
+const DeviceAppearance = Schema.Literals(["light", "dark"]);
+type DeviceAppearance = typeof DeviceAppearance.Type;
 
 export const DeviceTextSize = Schema.Literals(["small", "default", "large", "extra-large"]);
 export type DeviceTextSize = typeof DeviceTextSize.Type;
 
-export const DeviceColorFilter = Schema.Literals([
+const DeviceColorFilter = Schema.Literals([
   "none",
   "grayscale",
   "red-green",
   "green-red",
   "blue-yellow",
 ]);
-export type DeviceColorFilter = typeof DeviceColorFilter.Type;
+type DeviceColorFilter = typeof DeviceColorFilter.Type;
 
 export const DeviceOrientation = Schema.Literals([
   "portrait",

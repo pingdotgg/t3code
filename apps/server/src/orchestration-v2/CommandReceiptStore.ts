@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 
-export class CommandReceiptStoreWriteError extends Schema.TaggedError<CommandReceiptStoreWriteError>()(
+class CommandReceiptStoreWriteError extends Schema.TaggedError<CommandReceiptStoreWriteError>()(
   "CommandReceiptStoreWriteError",
   {
     commandId: CommandId,
@@ -19,7 +19,7 @@ export class CommandReceiptStoreWriteError extends Schema.TaggedError<CommandRec
   }
 }
 
-export class CommandReceiptStoreReadError extends Schema.TaggedError<CommandReceiptStoreReadError>()(
+class CommandReceiptStoreReadError extends Schema.TaggedError<CommandReceiptStoreReadError>()(
   "CommandReceiptStoreReadError",
   {
     commandId: CommandId,
@@ -31,14 +31,14 @@ export class CommandReceiptStoreReadError extends Schema.TaggedError<CommandRece
   }
 }
 
-export const CommandReceiptStoreV2Error = Schema.Union([
+const CommandReceiptStoreV2Error = Schema.Union([
   CommandReceiptStoreWriteError,
   CommandReceiptStoreReadError,
 ]);
-export type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
+type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
 
-export const CommandReceiptV2Status = Schema.Literals(["accepted", "rejected"]);
-export type CommandReceiptV2Status = typeof CommandReceiptV2Status.Type;
+const CommandReceiptV2Status = Schema.Literals(["accepted", "rejected"]);
+type CommandReceiptV2Status = typeof CommandReceiptV2Status.Type;
 
 export const CommandReceiptV2 = Schema.Struct({
   commandId: CommandId,

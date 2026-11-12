@@ -311,16 +311,16 @@ export const AuthAccessStreamSnapshotEvent = Schema.Struct({
 });
 export type AuthAccessStreamSnapshotEvent = typeof AuthAccessStreamSnapshotEvent.Type;
 
-export const AuthAccessStreamPairingLinkUpsertedEvent = Schema.Struct({
+const AuthAccessStreamPairingLinkUpsertedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("pairingLinkUpserted"),
   payload: AuthPairingLink,
 });
-export type AuthAccessStreamPairingLinkUpsertedEvent =
+type AuthAccessStreamPairingLinkUpsertedEvent =
   typeof AuthAccessStreamPairingLinkUpsertedEvent.Type;
 
-export const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
+const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("pairingLinkRemoved"),
@@ -328,7 +328,7 @@ export const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
     id: TrimmedNonEmptyString,
   }),
 });
-export type AuthAccessStreamPairingLinkRemovedEvent =
+type AuthAccessStreamPairingLinkRemovedEvent =
   typeof AuthAccessStreamPairingLinkRemovedEvent.Type;
 
 export class AuthAccessStreamError extends Schema.TaggedError<AuthAccessStreamError>()(
@@ -347,15 +347,15 @@ export class EnvironmentAuthorizationError extends Schema.TaggedError<Environmen
   },
 ) {}
 
-export const AuthAccessStreamClientUpsertedEvent = Schema.Struct({
+const AuthAccessStreamClientUpsertedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("clientUpserted"),
   payload: AuthClientSession,
 });
-export type AuthAccessStreamClientUpsertedEvent = typeof AuthAccessStreamClientUpsertedEvent.Type;
+type AuthAccessStreamClientUpsertedEvent = typeof AuthAccessStreamClientUpsertedEvent.Type;
 
-export const AuthAccessStreamClientRemovedEvent = Schema.Struct({
+const AuthAccessStreamClientRemovedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("clientRemoved"),
@@ -363,7 +363,7 @@ export const AuthAccessStreamClientRemovedEvent = Schema.Struct({
     sessionId: AuthSessionId,
   }),
 });
-export type AuthAccessStreamClientRemovedEvent = typeof AuthAccessStreamClientRemovedEvent.Type;
+type AuthAccessStreamClientRemovedEvent = typeof AuthAccessStreamClientRemovedEvent.Type;
 
 export const AuthAccessStreamEvent = Schema.Union([
   AuthAccessStreamSnapshotEvent,

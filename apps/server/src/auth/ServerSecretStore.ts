@@ -16,7 +16,7 @@ const secretStoreErrorContext = {
   cause: Schema.Defect(),
 };
 
-export class SecretStoreSecureError extends Schema.TaggedError<SecretStoreSecureError>()(
+class SecretStoreSecureError extends Schema.TaggedError<SecretStoreSecureError>()(
   "SecretStoreSecureError",
   {
     ...secretStoreErrorContext,
@@ -38,7 +38,7 @@ export class SecretStoreReadError extends Schema.TaggedError<SecretStoreReadErro
   }
 }
 
-export class SecretStoreTemporaryPathError extends Schema.TaggedError<SecretStoreTemporaryPathError>()(
+class SecretStoreTemporaryPathError extends Schema.TaggedError<SecretStoreTemporaryPathError>()(
   "SecretStoreTemporaryPathError",
   {
     ...secretStoreErrorContext,
@@ -60,7 +60,7 @@ export class SecretStorePersistError extends Schema.TaggedError<SecretStorePersi
   }
 }
 
-export class SecretStoreRandomGenerationError extends Schema.TaggedError<SecretStoreRandomGenerationError>()(
+class SecretStoreRandomGenerationError extends Schema.TaggedError<SecretStoreRandomGenerationError>()(
   "SecretStoreRandomGenerationError",
   {
     ...secretStoreErrorContext,
@@ -82,7 +82,7 @@ export class SecretStoreConcurrentReadError extends Schema.TaggedError<SecretSto
   }
 }
 
-export class SecretStoreRemoveError extends Schema.TaggedError<SecretStoreRemoveError>()(
+class SecretStoreRemoveError extends Schema.TaggedError<SecretStoreRemoveError>()(
   "SecretStoreRemoveError",
   {
     ...secretStoreErrorContext,

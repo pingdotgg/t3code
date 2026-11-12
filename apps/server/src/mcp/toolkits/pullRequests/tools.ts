@@ -185,7 +185,7 @@ export class PullRequestGuideFailedError extends Schema.TaggedError<PullRequestG
   }
 }
 
-export const PullRequestToolError = Schema.Union([
+const PullRequestToolError = Schema.Union([
   OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
   PullRequestUrlInvalidError,
@@ -203,7 +203,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
 ]);
-export type PullRequestToolError = typeof PullRequestToolError.Type;
+type PullRequestToolError = typeof PullRequestToolError.Type;
 
 const PullRequestIdentity = {
   host: Schema.String,
@@ -216,12 +216,12 @@ const PullRequestIdentity = {
 export const CHILD_PULL_REQUEST_REPORT_NEXT =
   "End your reply with: PR <full URL>, head <SHA>, checks and reviews <state>.";
 
-export const LinkPullRequestResult = Schema.Struct({
+const LinkPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   alreadyLinked: Schema.Boolean,
   next: Schema.optional(Schema.String),
 });
-export type LinkPullRequestResult = typeof LinkPullRequestResult.Type;
+type LinkPullRequestResult = typeof LinkPullRequestResult.Type;
 
 const PullRequestNumbersByRepository = Schema.Array(
   Schema.Struct({
@@ -231,24 +231,24 @@ const PullRequestNumbersByRepository = Schema.Array(
   }),
 );
 
-export const LinkPullRequestsResult = Schema.Struct({
+const LinkPullRequestsResult = Schema.Struct({
   linked: PullRequestNumbersByRepository,
   alreadyLinked: PullRequestNumbersByRepository,
   linkedCount: Schema.Int,
   invalidUrls: Schema.optional(Schema.Array(Schema.String)),
   next: Schema.optional(Schema.String),
 });
-export type LinkPullRequestsResult = typeof LinkPullRequestsResult.Type;
+type LinkPullRequestsResult = typeof LinkPullRequestsResult.Type;
 
-export const UnlinkPullRequestResult = Schema.Struct({
+const UnlinkPullRequestResult = Schema.Struct({
   host: Schema.String,
   repository: Schema.String,
   number: Schema.Int,
   wasLinked: Schema.Boolean,
 });
-export type UnlinkPullRequestResult = typeof UnlinkPullRequestResult.Type;
+type UnlinkPullRequestResult = typeof UnlinkPullRequestResult.Type;
 
-export const UnlinkPullRequestsResult = Schema.Struct({
+const UnlinkPullRequestsResult = Schema.Struct({
   unlinked: Schema.Array(
     Schema.Struct({
       host: Schema.String,
@@ -260,14 +260,14 @@ export const UnlinkPullRequestsResult = Schema.Struct({
   unlinkedCount: Schema.Int,
   remaining: Schema.Int,
 });
-export type UnlinkPullRequestsResult = typeof UnlinkPullRequestsResult.Type;
+type UnlinkPullRequestsResult = typeof UnlinkPullRequestsResult.Type;
 
-export const WatchPullRequestResult = Schema.Struct({
+const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   watching: Schema.Boolean,
   wasWatching: Schema.Boolean,
 });
-export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
+type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
 
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
@@ -426,12 +426,12 @@ const GuideOutcome = Schema.Struct({
   detail: Schema.NullOr(Schema.String),
 });
 
-export const WritePullRequestGuidesResult = Schema.Struct({
+const WritePullRequestGuidesResult = Schema.Struct({
   guides: Schema.Array(GuideOutcome),
 });
-export type WritePullRequestGuidesResult = typeof WritePullRequestGuidesResult.Type;
+type WritePullRequestGuidesResult = typeof WritePullRequestGuidesResult.Type;
 
-export const ReadPullRequestGuideResult = Schema.Struct({
+const ReadPullRequestGuideResult = Schema.Struct({
   ...PullRequestIdentity,
   guide: Schema.NullOr(PullRequestReviewGuide),
   run: Schema.NullOr(PullRequestReviewGuideRun),
@@ -440,7 +440,7 @@ export const ReadPullRequestGuideResult = Schema.Struct({
     description: "True when the PR head moved after the guide was written.",
   }),
 });
-export type ReadPullRequestGuideResult = typeof ReadPullRequestGuideResult.Type;
+type ReadPullRequestGuideResult = typeof ReadPullRequestGuideResult.Type;
 
 const WritePullRequestGuidesTool = Tool.make("write_pull_request_guides", {
   description:

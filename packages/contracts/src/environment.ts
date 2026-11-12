@@ -28,8 +28,8 @@ export const ExecutionEnvironmentPlatformOs = Schema.Literals([
 ]);
 export type ExecutionEnvironmentPlatformOs = typeof ExecutionEnvironmentPlatformOs.Type;
 
-export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
-export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
+const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
+type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
 export const ENVIRONMENT_MACHINE_KINDS = [
   "server",
@@ -44,7 +44,7 @@ export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS)
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
 
-export const ExecutionEnvironmentPlatform = Schema.Struct({
+const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
   machine: ForwardCompatibleOptional(EnvironmentMachineKind),
@@ -56,7 +56,7 @@ export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
 export const WorktreeSubmodules = Schema.Literals(["recursive", "top-level", "none"]);
 export type WorktreeSubmodules = typeof WorktreeSubmodules.Type;
-export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
+type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
 export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn", "desktop-app"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
@@ -183,19 +183,19 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 
-export const RepositoryIdentityLocator = Schema.Struct({
+const RepositoryIdentityLocator = Schema.Struct({
   source: Schema.Literal("git-remote"),
   remoteName: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
 });
-export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
+type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 
-export const RepositoryOrigin = Schema.Struct({
+const RepositoryOrigin = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   remoteUrl: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
 });
-export type RepositoryOrigin = typeof RepositoryOrigin.Type;
+type RepositoryOrigin = typeof RepositoryOrigin.Type;
 
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,

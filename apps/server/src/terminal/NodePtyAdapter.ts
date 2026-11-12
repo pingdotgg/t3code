@@ -11,7 +11,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
-export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
+class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
   "NodePtyModuleLoadError",
   {
     platform: Schema.String,

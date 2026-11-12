@@ -193,7 +193,7 @@ function idTokenIdentity(idToken: string | undefined): string | null {
   return null;
 }
 
-export class CloudCliCredentialRemovalError extends Schema.TaggedError<CloudCliCredentialRemovalError>()(
+class CloudCliCredentialRemovalError extends Schema.TaggedError<CloudCliCredentialRemovalError>()(
   "CloudCliCredentialRemovalError",
   { cause: Schema.Defect() },
 ) {
@@ -225,7 +225,7 @@ export class CloudCliCredentialRefreshError extends Schema.TaggedError<CloudCliC
 
 export const isCloudCliCredentialRefreshError = Schema.is(CloudCliCredentialRefreshError);
 
-export class CloudCliCredentialReadError extends Schema.TaggedError<CloudCliCredentialReadError>()(
+class CloudCliCredentialReadError extends Schema.TaggedError<CloudCliCredentialReadError>()(
   "CloudCliCredentialReadError",
   { cause: Schema.Defect() },
 ) {
@@ -243,7 +243,7 @@ export class CloudCliAuthorizationError extends Schema.TaggedError<CloudCliAutho
   }
 }
 
-export class CloudCliAuthorizationTimeoutError extends Schema.TaggedError<CloudCliAuthorizationTimeoutError>()(
+class CloudCliAuthorizationTimeoutError extends Schema.TaggedError<CloudCliAuthorizationTimeoutError>()(
   "CloudCliAuthorizationTimeoutError",
   { cause: Schema.Defect() },
 ) {

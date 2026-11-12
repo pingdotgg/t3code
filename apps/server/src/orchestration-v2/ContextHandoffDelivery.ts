@@ -144,7 +144,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   },
 );
 
-export class ContextHandoffDeliveryUncertainError extends Schema.TaggedError<ContextHandoffDeliveryUncertainError>()(
+class ContextHandoffDeliveryUncertainError extends Schema.TaggedError<ContextHandoffDeliveryUncertainError>()(
   "ContextHandoffDeliveryUncertainError",
   {},
 ) {

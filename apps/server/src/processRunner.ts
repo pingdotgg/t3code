@@ -77,7 +77,7 @@ export class ProcessSpawnError extends Schema.TaggedError<ProcessSpawnError>()(
   }
 }
 
-export class ProcessStdinError extends Schema.TaggedError<ProcessStdinError>()(
+class ProcessStdinError extends Schema.TaggedError<ProcessStdinError>()(
   "ProcessStdinError",
   {
     ...ProcessInvocationFields,

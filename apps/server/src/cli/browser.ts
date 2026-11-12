@@ -14,7 +14,7 @@ import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 import { resolveRootCliCommand } from "./invocation.ts";
 
-export class BrowserSetupStepError extends Schema.TaggedError<BrowserSetupStepError>()(
+class BrowserSetupStepError extends Schema.TaggedError<BrowserSetupStepError>()(
   "BrowserSetupStepError",
   { step: Schema.String, detail: Schema.String },
 ) {

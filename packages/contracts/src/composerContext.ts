@@ -47,11 +47,11 @@ export const ComposerContextId = TrimmedNonEmptyString.check(
 ).pipe(Schema.brand("ComposerContextId"));
 export type ComposerContextId = typeof ComposerContextId.Type;
 
-export const ComposerContextReferenceId = TrimmedNonEmptyString.check(
+const ComposerContextReferenceId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CONTEXT_ID_MAX_CHARS),
   Schema.isPattern(CONTEXT_ID_PATTERN),
 ).pipe(Schema.brand("ComposerContextReferenceId"));
-export type ComposerContextReferenceId = typeof ComposerContextReferenceId.Type;
+type ComposerContextReferenceId = typeof ComposerContextReferenceId.Type;
 
 export const ComposerContextKind = TrimmedNonEmptyString.check(
   Schema.isPattern(CONTEXT_KIND_PATTERN),
@@ -189,19 +189,19 @@ export const ReviewCommentContextRecord = Schema.Struct({
 }).check(Schema.makeFilter((record) => record.endIndex >= record.startIndex));
 export type ReviewCommentContextRecord = typeof ReviewCommentContextRecord.Type;
 
-export const MentionContextRecord = Schema.Struct({
+const MentionContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("mention"),
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
 });
-export type MentionContextRecord = typeof MentionContextRecord.Type;
+type MentionContextRecord = typeof MentionContextRecord.Type;
 
-export const SkillContextRecord = Schema.Struct({
+const SkillContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("skill"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
 });
-export type SkillContextRecord = typeof SkillContextRecord.Type;
+type SkillContextRecord = typeof SkillContextRecord.Type;
 
 export const ThreadContextRecord = Schema.Struct({
   ...recordBase,
@@ -227,7 +227,7 @@ export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
-export const UnknownContextRecord = Schema.Struct({
+const UnknownContextRecord = Schema.Struct({
   ...recordBase,
   kind: ComposerContextKind.check(Schema.isPattern(KNOWN_KIND_PATTERN)),
   payload: Schema.Unknown.check(
@@ -242,7 +242,7 @@ export const UnknownContextRecord = Schema.Struct({
     }),
   ),
 });
-export type UnknownContextRecord = typeof UnknownContextRecord.Type;
+type UnknownContextRecord = typeof UnknownContextRecord.Type;
 
 export const KnownComposerContextRecord = Schema.Union([
   ImageContextRecord,

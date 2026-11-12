@@ -113,7 +113,7 @@ export const SnoozePresetSetting = Schema.Union([
   }),
 ]);
 export type SnoozePresetSetting = typeof SnoozePresetSetting.Type;
-export const SnoozePresetSettings = Schema.Array(SnoozePresetSetting).check(
+const SnoozePresetSettings = Schema.Array(SnoozePresetSetting).check(
   Schema.isMaxLength(MAX_SNOOZE_PRESETS),
 );
 export const DEFAULT_SNOOZE_PRESETS: ReadonlyArray<SnoozePresetSetting> = [
@@ -257,13 +257,13 @@ const DEFAULT_SNAP_SHOT_SHORTCUT: SnapShotShortcut = {
   kind: "both-shift-keys",
 };
 
-export const NotificationMode = Schema.Literals([
+const NotificationMode = Schema.Literals([
   "off",
   "notifications",
   "sound",
   "notifications-and-sound",
 ]);
-export type NotificationMode = typeof NotificationMode.Type;
+type NotificationMode = typeof NotificationMode.Type;
 
 export const QuitConfirmationMode = Schema.Literals(["direct", "hold", "double-click"]);
 export type QuitConfirmationMode = typeof QuitConfirmationMode.Type;
@@ -281,13 +281,13 @@ const LegacyConfirmQuit = Schema.Boolean.pipe(
 
 const QuitConfirmationModeSetting = Schema.Union([QuitConfirmationMode, LegacyConfirmQuit]);
 
-export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
-export type FontFamilyPreference = typeof FontFamilyPreference.Type;
+const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
+type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
 /** Clients apply each environment theme set once; later local choices persist until the next set. Empty clears it. */
-export const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64));
+const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64));
 // Excluded from RPC patches so t3 theme set can validate syntax and resolvability.
-export type DefaultThemePreference = typeof DefaultThemePreference.Type;
+type DefaultThemePreference = typeof DefaultThemePreference.Type;
 
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
@@ -315,16 +315,16 @@ export const BrowserSearchEngine = Schema.Literals([
 export type BrowserSearchEngine = typeof BrowserSearchEngine.Type;
 export const DEFAULT_BROWSER_SEARCH_ENGINE: BrowserSearchEngine = "duckduckgo";
 export const BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH = 2048;
-export const BrowserCustomSearchUrl = Schema.String.check(
+const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
-export const LoadBalancingWeights = Schema.Record(
+const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
 );
 
-export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
+const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
@@ -333,12 +333,12 @@ export type ChatWidth = typeof ChatWidth.Type;
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
 
-export const ModelFavorite = Schema.Struct({
+const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
 });
-export const ModelFavorites = Schema.Array(ModelFavorite);
-export const ProviderModelPreferences = Schema.Record(
+const ModelFavorites = Schema.Array(ModelFavorite);
+const ProviderModelPreferences = Schema.Record(
   ProviderInstanceId,
   Schema.Struct({
     hiddenModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -887,15 +887,15 @@ const SecretProviderConfigWrite = Schema.Struct({
   label: SecretProviderLabel,
 });
 
-export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
-export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
+const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
+type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
 
-export const ObservabilitySettings = Schema.Struct({
+const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpLogsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
-export type ObservabilitySettings = typeof ObservabilitySettings.Type;
+type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
@@ -964,7 +964,7 @@ export const BackgroundActivityProfileSelection = Schema.Literals([
 ]);
 export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfileSelection.Type;
 
-export const BackgroundActivityOverrides = Schema.Struct({
+const BackgroundActivityOverrides = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
@@ -974,7 +974,7 @@ export const BackgroundActivityOverrides = Schema.Struct({
   pauseWhenClientLowPower: Schema.optionalKey(Schema.Boolean),
   pauseWhenOnBattery: Schema.optionalKey(Schema.Boolean),
 });
-export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
+type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
 
 export const BackgroundActivitySettings = Schema.Struct({
   schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
@@ -1017,13 +1017,13 @@ export const WorktreeCleanupRules = Schema.Struct({
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
 
-export const WorktreeCleanup = Schema.NullOr(
+const WorktreeCleanup = Schema.NullOr(
   Schema.Union([
     Schema.Struct({ mode: Schema.Literal("off") }),
     Schema.Struct({ mode: Schema.Literal("custom"), rules: WorktreeCleanupRules }),
   ]),
 );
-export type WorktreeCleanup = typeof WorktreeCleanup.Type;
+type WorktreeCleanup = typeof WorktreeCleanup.Type;
 
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeCleanup",
@@ -1055,10 +1055,10 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
-export const ProjectProviderInstanceOverride = Schema.Struct({
+const ProjectProviderInstanceOverride = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
-export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOverride.Type;
+type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOverride.Type;
 
 /** Absent keys inherit; null is a value for nullable settings.
  * providerInstances overrides fields per instance; other keys replace the whole setting. */
@@ -1488,7 +1488,7 @@ export const resolveIdleCompaction = (
   return override === "default" ? globalIdleCompaction(settings) : override;
 };
 
-export const ServerSettingsOperation = Schema.Literals([
+const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
   "create-provider-instance",
@@ -1505,7 +1505,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "write-managed-setting",
   "use-disallowed-provider",
 ]);
-export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
+type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
 /** Why a provider the administrator's policy leaves out cannot be used. */
 export const disallowedProviderMessage = (organization: string | undefined, label: string) =>

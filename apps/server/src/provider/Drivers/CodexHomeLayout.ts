@@ -76,7 +76,7 @@ const CodexShadowHomeContext = {
   effectiveHomePath: Schema.String,
 };
 
-export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShadowHomeFileSystemError>()(
+class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShadowHomeFileSystemError>()(
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
@@ -116,7 +116,7 @@ export class CodexShadowHomeEntryConflictError extends Schema.TaggedError<CodexS
   }
 }
 
-export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<CodexShadowHomePrivateEntrySymlinkError>()(
+class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<CodexShadowHomePrivateEntrySymlinkError>()(
   "CodexShadowHomePrivateEntrySymlinkError",
   {
     ...CodexShadowHomeContext,

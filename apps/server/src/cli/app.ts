@@ -32,7 +32,7 @@ const CLI_RESPONSE_TIMEOUT_MS = 17_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const isDesktopAppActivationResponse = Schema.is(DesktopAppActivationResponse);
 
-export class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopAppSshUnsupportedError>()(
+class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopAppSshUnsupportedError>()(
   "DesktopAppSshUnsupportedError",
   {},
 ) {
@@ -41,7 +41,7 @@ export class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopApp
   }
 }
 
-export class DesktopAppPlatformUnsupportedError extends Schema.TaggedError<DesktopAppPlatformUnsupportedError>()(
+class DesktopAppPlatformUnsupportedError extends Schema.TaggedError<DesktopAppPlatformUnsupportedError>()(
   "DesktopAppPlatformUnsupportedError",
   { platform: Schema.String },
 ) {
@@ -50,7 +50,7 @@ export class DesktopAppPlatformUnsupportedError extends Schema.TaggedError<Deskt
   }
 }
 
-export class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnreachableError>()(
+class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnreachableError>()(
   "DesktopAppUnreachableError",
   {
     candidateAddresses: Schema.Array(Schema.String),
@@ -64,7 +64,7 @@ export class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnr
   }
 }
 
-export class DesktopAppRequestFailedError extends Schema.TaggedError<DesktopAppRequestFailedError>()(
+class DesktopAppRequestFailedError extends Schema.TaggedError<DesktopAppRequestFailedError>()(
   "DesktopAppRequestFailedError",
   {
     code: DesktopAppActivationErrorCode,

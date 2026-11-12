@@ -22,7 +22,7 @@ export interface ThreadForkPlanV2 {
   readonly transfer: OrchestrationV2ContextTransfer;
 }
 
-export class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>()(
+class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>()(
   "ThreadForkPlanError",
   {
     sourceThreadId: ThreadId,

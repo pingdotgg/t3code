@@ -110,7 +110,7 @@ import {
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
 
-export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
+class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
   {
     eventType: Schema.String,
@@ -122,7 +122,7 @@ export class ProjectionStoreApplyEventError extends Schema.TaggedError<Projectio
   }
 }
 
-export class ProjectionStoreSetupError extends Schema.TaggedError<ProjectionStoreSetupError>()(
+class ProjectionStoreSetupError extends Schema.TaggedError<ProjectionStoreSetupError>()(
   "ProjectionStoreSetupError",
   {
     cause: Schema.optional(Schema.Defect()),

@@ -92,7 +92,7 @@ export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedError<Worksp
   }
 }
 
-export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedError<WorkspaceSearchIndexDestroyFailed>()(
+class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedError<WorkspaceSearchIndexDestroyFailed>()(
   "WorkspaceSearchIndexDestroyFailed",
   {
     cwd: Schema.String,

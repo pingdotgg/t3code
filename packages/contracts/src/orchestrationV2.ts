@@ -98,8 +98,8 @@ export const OrchestrationV2CreationSource = Schema.Literals([
 ]);
 export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
 
-export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
-export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
+const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
+type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
 
 const OrchestrationV2CreationFields = {
   createdBy: OrchestrationV2Actor,
@@ -139,8 +139,8 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
-export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
-export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
+const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
+type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
 export const OrchestrationV2ProviderRef = Schema.Struct({
   driver: ProviderDriverKind,
@@ -163,14 +163,14 @@ export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLin
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
   lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
 
-export const OrchestrationV2ContextTransferType = Schema.Literals([
+const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
   "provider_handoff",
   "merge_back",
   "subagent_spawn",
   "subagent_result",
 ]);
-export type OrchestrationV2ContextTransferType = typeof OrchestrationV2ContextTransferType.Type;
+type OrchestrationV2ContextTransferType = typeof OrchestrationV2ContextTransferType.Type;
 
 export const OrchestrationV2ContextSourcePoint = Schema.Struct({
   threadId: ThreadId,
@@ -257,16 +257,16 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
 });
 export type OrchestrationV2ContextTransfer = typeof OrchestrationV2ContextTransfer.Type;
 
-export const OrchestrationV2SessionCapabilities = Schema.Struct({
+const OrchestrationV2SessionCapabilities = Schema.Struct({
   supportsMultipleProviderThreadsPerSession: Schema.Boolean,
   supportsModelSwitchInSession: Schema.Boolean,
   supportsProviderSwitchingViaHandoff: Schema.Boolean,
   supportsRuntimeModeSwitchInSession: Schema.Boolean,
   pendingRequestsSurviveRestart: Schema.Boolean,
 });
-export type OrchestrationV2SessionCapabilities = typeof OrchestrationV2SessionCapabilities.Type;
+type OrchestrationV2SessionCapabilities = typeof OrchestrationV2SessionCapabilities.Type;
 
-export const OrchestrationV2ThreadCapabilities = Schema.Struct({
+const OrchestrationV2ThreadCapabilities = Schema.Struct({
   canCreateEmptyThread: Schema.Boolean,
   canReadThreadSnapshot: Schema.Boolean,
   canRollbackThread: Schema.Boolean,
@@ -275,9 +275,9 @@ export const OrchestrationV2ThreadCapabilities = Schema.Struct({
   canForkFromSubagentThread: Schema.Boolean,
   exposesNativeThreadId: Schema.Boolean,
 });
-export type OrchestrationV2ThreadCapabilities = typeof OrchestrationV2ThreadCapabilities.Type;
+type OrchestrationV2ThreadCapabilities = typeof OrchestrationV2ThreadCapabilities.Type;
 
-export const OrchestrationV2TurnCapabilities = Schema.Struct({
+const OrchestrationV2TurnCapabilities = Schema.Struct({
   exposesNativeTurnId: Schema.Boolean,
   emitsTurnStarted: Schema.Boolean,
   emitsTurnCompleted: Schema.Boolean,
@@ -291,18 +291,18 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   supportsQueuedMessages: Schema.Boolean,
   terminalStatusQuality: Schema.Literals(["strong", "weak", "none"]),
 });
-export type OrchestrationV2TurnCapabilities = typeof OrchestrationV2TurnCapabilities.Type;
+type OrchestrationV2TurnCapabilities = typeof OrchestrationV2TurnCapabilities.Type;
 
-export const OrchestrationV2StreamingCapabilities = Schema.Struct({
+const OrchestrationV2StreamingCapabilities = Schema.Struct({
   streamsAssistantText: Schema.Boolean,
   streamsReasoning: Schema.Boolean,
   streamsToolOutput: Schema.Boolean,
   streamsPlanText: Schema.Boolean,
   emitsMessageCompleted: Schema.Boolean,
 });
-export type OrchestrationV2StreamingCapabilities = typeof OrchestrationV2StreamingCapabilities.Type;
+type OrchestrationV2StreamingCapabilities = typeof OrchestrationV2StreamingCapabilities.Type;
 
-export const OrchestrationV2ToolCapabilities = Schema.Struct({
+const OrchestrationV2ToolCapabilities = Schema.Struct({
   exposesToolItemIds: Schema.Boolean,
   emitsToolStarted: Schema.Boolean,
   emitsToolCompleted: Schema.Boolean,
@@ -310,9 +310,9 @@ export const OrchestrationV2ToolCapabilities = Schema.Struct({
   supportsMcpTools: Schema.Boolean,
   supportsDynamicToolCallbacks: Schema.Boolean,
 });
-export type OrchestrationV2ToolCapabilities = typeof OrchestrationV2ToolCapabilities.Type;
+type OrchestrationV2ToolCapabilities = typeof OrchestrationV2ToolCapabilities.Type;
 
-export const OrchestrationV2ApprovalCapabilities = Schema.Struct({
+const OrchestrationV2ApprovalCapabilities = Schema.Struct({
   supportsCommandApproval: Schema.Boolean,
   supportsFileReadApproval: Schema.Boolean,
   supportsFileChangeApproval: Schema.Boolean,
@@ -321,18 +321,18 @@ export const OrchestrationV2ApprovalCapabilities = Schema.Struct({
   approvalCallbacksAreLiveOnly: Schema.Boolean,
   approvalsCanOriginateFromSubagents: Schema.Boolean,
 });
-export type OrchestrationV2ApprovalCapabilities = typeof OrchestrationV2ApprovalCapabilities.Type;
+type OrchestrationV2ApprovalCapabilities = typeof OrchestrationV2ApprovalCapabilities.Type;
 
-export const OrchestrationV2PlanningCapabilities = Schema.Struct({
+const OrchestrationV2PlanningCapabilities = Schema.Struct({
   emitsPlanUpdated: Schema.Boolean,
   emitsTodoList: Schema.Boolean,
   emitsProposedPlan: Schema.Boolean,
   supportsStructuredQuestions: Schema.Boolean,
   planDeltasHaveItemIds: Schema.Boolean,
 });
-export type OrchestrationV2PlanningCapabilities = typeof OrchestrationV2PlanningCapabilities.Type;
+type OrchestrationV2PlanningCapabilities = typeof OrchestrationV2PlanningCapabilities.Type;
 
-export const OrchestrationV2SubagentCapabilities = Schema.Struct({
+const OrchestrationV2SubagentCapabilities = Schema.Struct({
   supportsSubagents: Schema.Boolean,
   exposesSubagentThreadIds: Schema.Boolean,
   emitsSubagentLifecycle: Schema.Boolean,
@@ -340,9 +340,9 @@ export const OrchestrationV2SubagentCapabilities = Schema.Struct({
   canCloseSubagents: Schema.Boolean,
   canForkSubagentThread: Schema.Boolean,
 });
-export type OrchestrationV2SubagentCapabilities = typeof OrchestrationV2SubagentCapabilities.Type;
+type OrchestrationV2SubagentCapabilities = typeof OrchestrationV2SubagentCapabilities.Type;
 
-export const OrchestrationV2ContextCapabilities = Schema.Struct({
+const OrchestrationV2ContextCapabilities = Schema.Struct({
   acceptsSystemContext: Schema.Boolean,
   acceptsDeveloperContext: Schema.Boolean,
   acceptsSyntheticUserContext: Schema.Boolean,
@@ -352,31 +352,31 @@ export const OrchestrationV2ContextCapabilities = Schema.Struct({
   supportsFullThreadHandoff: Schema.Boolean,
   maxRecommendedHandoffChars: Schema.NullOr(PositiveInt),
 });
-export type OrchestrationV2ContextCapabilities = typeof OrchestrationV2ContextCapabilities.Type;
+type OrchestrationV2ContextCapabilities = typeof OrchestrationV2ContextCapabilities.Type;
 
-export const OrchestrationV2CheckpointCapabilities = Schema.Struct({
+const OrchestrationV2CheckpointCapabilities = Schema.Struct({
   appCanCheckpointFilesystem: Schema.Boolean,
   supportsNestedCheckpointScopes: Schema.Boolean,
   providerCanRollbackConversation: Schema.Boolean,
   providerRollbackReturnsSnapshot: Schema.Boolean,
   providerCanReadConversationSnapshot: Schema.Boolean,
 });
-export type OrchestrationV2CheckpointCapabilities =
+type OrchestrationV2CheckpointCapabilities =
   typeof OrchestrationV2CheckpointCapabilities.Type;
 
-export const OrchestrationV2RuntimePolicyCapabilities = Schema.Struct({
+const OrchestrationV2RuntimePolicyCapabilities = Schema.Struct({
   enforcement: Schema.Literals(["native", "client-boundary"]),
 });
-export type OrchestrationV2RuntimePolicyCapabilities =
+type OrchestrationV2RuntimePolicyCapabilities =
   typeof OrchestrationV2RuntimePolicyCapabilities.Type;
 
-export const OrchestrationV2IdentityCapabilities = Schema.Struct({
+const OrchestrationV2IdentityCapabilities = Schema.Struct({
   nativeThreadIds: OrchestrationV2NativeRefStrength,
   nativeTurnIds: OrchestrationV2NativeRefStrength,
   nativeItemIds: OrchestrationV2NativeRefStrength,
   nativeRequestIds: OrchestrationV2NativeRefStrength,
 });
-export type OrchestrationV2IdentityCapabilities = typeof OrchestrationV2IdentityCapabilities.Type;
+type OrchestrationV2IdentityCapabilities = typeof OrchestrationV2IdentityCapabilities.Type;
 
 export const OrchestrationV2ProviderCapabilities = Schema.Struct({
   sessions: OrchestrationV2SessionCapabilities,
@@ -601,21 +601,21 @@ export const OrchestrationV2RunStatus = Schema.Literals([
 ]);
 export type OrchestrationV2RunStatus = typeof OrchestrationV2RunStatus.Type;
 
-export const OrchestrationV2DelegatedCompletionTaskDeliveryState = Schema.Literals([
+const OrchestrationV2DelegatedCompletionTaskDeliveryState = Schema.Literals([
   "pending",
   "claimed",
   "acknowledged",
   "delivered",
   "disposed",
 ]);
-export type OrchestrationV2DelegatedCompletionTaskDeliveryState =
+type OrchestrationV2DelegatedCompletionTaskDeliveryState =
   typeof OrchestrationV2DelegatedCompletionTaskDeliveryState.Type;
 
-export const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
+const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
   state: OrchestrationV2DelegatedCompletionTaskDeliveryState,
   observedByRunId: Schema.NullOr(RunId),
 });
-export type OrchestrationV2DelegatedCompletionTaskDelivery =
+type OrchestrationV2DelegatedCompletionTaskDelivery =
   typeof OrchestrationV2DelegatedCompletionTaskDelivery.Type;
 
 export const OrchestrationV2DelegatedCompletionDelivery = Schema.Struct({
@@ -644,11 +644,11 @@ export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
 export type OrchestrationV2RestartCancelledBackgroundWork =
   typeof OrchestrationV2RestartCancelledBackgroundWork.Type;
 
-export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
+const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
   runId: RunId,
   restartCancelledBackgroundWork: Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
 });
-export type OrchestrationV2RunBackgroundWorkCancelled =
+type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
@@ -957,12 +957,12 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
 });
 export type OrchestrationV2ProviderSession = typeof OrchestrationV2ProviderSession.Type;
 
-export const OrchestrationV2ProviderSessionDetached = Schema.Struct({
+const OrchestrationV2ProviderSessionDetached = Schema.Struct({
   providerSessionId: ProviderSessionId,
   detachedAt: Schema.DateTimeUtc,
   reason: Schema.optional(Schema.String),
 });
-export type OrchestrationV2ProviderSessionDetached =
+type OrchestrationV2ProviderSessionDetached =
   typeof OrchestrationV2ProviderSessionDetached.Type;
 
 function encodedKind(member: Schema.Top): string {
@@ -1402,12 +1402,12 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
 
-export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
+const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
   scopeId: CheckpointScopeId,
   checkpointId: CheckpointId,
   requestedAt: Schema.DateTimeUtc,
 });
-export type OrchestrationV2CheckpointRollbackRequest =
+type OrchestrationV2CheckpointRollbackRequest =
   typeof OrchestrationV2CheckpointRollbackRequest.Type;
 
 export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedError<OrchestrationV2CheckpointUnavailableError>()(
@@ -1435,14 +1435,14 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
 
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
 
-export const OrchestrationV2FileChangeDetail = Schema.Struct({
+const OrchestrationV2FileChangeDetail = Schema.Struct({
   operation: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
   oldPath: Schema.optional(TrimmedNonEmptyString),
   fileType: Schema.optional(TrimmedNonEmptyString),
   mimeType: Schema.optional(TrimmedNonEmptyString),
 });
-export type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDetail.Type;
+type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDetail.Type;
 
 export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "usage_limit",
@@ -1521,13 +1521,13 @@ const OrchestrationV2TurnItemBaseFields = {
   updatedAt: Schema.DateTimeUtc,
 } as const;
 
-export const OrchestrationV2FileSearchResult = Schema.Struct({
+const OrchestrationV2FileSearchResult = Schema.Struct({
   fileName: TrimmedNonEmptyString,
   line: Schema.optional(PositiveInt),
   column: Schema.optional(PositiveInt),
   preview: Schema.optional(Schema.String),
 });
-export type OrchestrationV2FileSearchResult = typeof OrchestrationV2FileSearchResult.Type;
+type OrchestrationV2FileSearchResult = typeof OrchestrationV2FileSearchResult.Type;
 
 export const OrchestrationV2WebSearchResult = Schema.Struct({
   title: Schema.optional(Schema.String),
@@ -1536,16 +1536,16 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
-export const OrchestrationV2SecretRequestStatus = Schema.Literals([
+const OrchestrationV2SecretRequestStatus = Schema.Literals([
   "pending",
   "saved",
   "declined",
   "cancelled",
 ]);
-export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretRequestStatus.Type;
+type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretRequestStatus.Type;
 
 /** `file`: the value goes to an owner-only file the agent's shell commands can read. */
-export const OrchestrationV2SecretRequestDelivery = Schema.Literal("file");
+const OrchestrationV2SecretRequestDelivery = Schema.Literal("file");
 
 const OrchestrationV2SecretRequestFields = {
   type: Schema.Literal("secret_request"),
@@ -1556,14 +1556,14 @@ const OrchestrationV2SecretRequestFields = {
   secretStatus: OrchestrationV2SecretRequestStatus,
 } as const;
 
-export const OrchestrationV2LinkRequestStatus = Schema.Literals([
+const OrchestrationV2LinkRequestStatus = Schema.Literals([
   "pending",
   "linked",
   "declined",
   "cancelled",
   "failed",
 ]);
-export type OrchestrationV2LinkRequestStatus = typeof OrchestrationV2LinkRequestStatus.Type;
+type OrchestrationV2LinkRequestStatus = typeof OrchestrationV2LinkRequestStatus.Type;
 
 /**
  * An agent asked the user to link another environment. The user picks the
@@ -2060,13 +2060,13 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
 
-export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
+const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
   id: MessageId,
   role: OrchestrationV2ConversationMessage.fields.role,
   text: Schema.String,
   updatedAt: Schema.DateTimeUtc,
 });
-export type OrchestrationV2LatestVisibleMessageSummary =
+type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
@@ -2347,12 +2347,12 @@ export const OrchestrationV2ProviderSessionJson = OrchestrationV2ProviderSession
 );
 export type OrchestrationV2ProviderSessionJson = typeof OrchestrationV2ProviderSessionJson.Type;
 
-export const OrchestrationV2ProviderSessionDetachedJson =
+const OrchestrationV2ProviderSessionDetachedJson =
   OrchestrationV2ProviderSessionDetached.mapFields((fields) => ({
     ...fields,
     detachedAt: Schema.DateTimeUtcFromString,
   }));
-export type OrchestrationV2ProviderSessionDetachedJson =
+type OrchestrationV2ProviderSessionDetachedJson =
   typeof OrchestrationV2ProviderSessionDetachedJson.Type;
 
 export const OrchestrationV2ProviderThreadJson = OrchestrationV2ProviderThread.mapFields(
@@ -2415,7 +2415,7 @@ export const OrchestrationV2CheckpointJson = OrchestrationV2Checkpoint.mapFields
 }));
 export type OrchestrationV2CheckpointJson = typeof OrchestrationV2CheckpointJson.Type;
 
-export const OrchestrationV2CheckpointRollbackRequestJson =
+const OrchestrationV2CheckpointRollbackRequestJson =
   OrchestrationV2CheckpointRollbackRequest.mapFields((fields) => ({
     ...fields,
     requestedAt: Schema.DateTimeUtcFromString,
@@ -2644,13 +2644,13 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
 
-export const OrchestrationV2ProjectedTurnItemJson = OrchestrationV2ProjectedTurnItem.mapFields(
+const OrchestrationV2ProjectedTurnItemJson = OrchestrationV2ProjectedTurnItem.mapFields(
   (fields) => ({
     ...fields,
     item: OrchestrationV2TurnItemJson,
   }),
 );
-export type OrchestrationV2ProjectedTurnItemJson = typeof OrchestrationV2ProjectedTurnItemJson.Type;
+type OrchestrationV2ProjectedTurnItemJson = typeof OrchestrationV2ProjectedTurnItemJson.Type;
 
 export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjection.mapFields(
   (fields) => ({
@@ -2683,20 +2683,20 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
 );
 export type OrchestrationV2ThreadProjectionJson = typeof OrchestrationV2ThreadProjectionJson.Type;
 
-export const OrchestrationV2PendingRuntimeRequestSummaryJson =
+const OrchestrationV2PendingRuntimeRequestSummaryJson =
   OrchestrationV2PendingRuntimeRequestSummary.mapFields((fields) => ({
     ...fields,
     createdAt: Schema.DateTimeUtcFromString,
   }));
-export type OrchestrationV2PendingRuntimeRequestSummaryJson =
+type OrchestrationV2PendingRuntimeRequestSummaryJson =
   typeof OrchestrationV2PendingRuntimeRequestSummaryJson.Type;
 
-export const OrchestrationV2LatestVisibleMessageSummaryJson =
+const OrchestrationV2LatestVisibleMessageSummaryJson =
   OrchestrationV2LatestVisibleMessageSummary.mapFields((fields) => ({
     ...fields,
     updatedAt: Schema.DateTimeUtcFromString,
   }));
-export type OrchestrationV2LatestVisibleMessageSummaryJson =
+type OrchestrationV2LatestVisibleMessageSummaryJson =
   typeof OrchestrationV2LatestVisibleMessageSummaryJson.Type;
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
@@ -3652,27 +3652,27 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
 });
 export type OrchestrationV2ThreadLaunchInput = typeof OrchestrationV2ThreadLaunchInput.Type;
 
-export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
+const OrchestrationV2ThreadLaunchResult = Schema.Struct({
   threadId: ThreadId,
   projection: OrchestrationV2ThreadProjection,
   resumed: Schema.Boolean,
   /** The initial message's commit sequence. Older servers omit it. */
   sequence: Schema.optionalKey(NonNegativeInt),
 });
-export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
+type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 
-export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
+const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
   threadId: ThreadId,
 });
-export type OrchestrationV2GetThreadProjectionInput =
+type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;
 
-export const OrchestrationV2SubscribeShellInput = Schema.Struct({
+const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
@@ -3686,12 +3686,12 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    */
   omitOlderSettled: Schema.optionalKey(Schema.Boolean),
 });
-export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
+type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
-export const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
+const OrchestrationV2GetThreadFamilyInput = Schema.Struct({
   threadId: ThreadId,
 });
-export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThreadFamilyInput.Type;
+type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThreadFamilyInput.Type;
 
 /**
  * The active threads that share the requested thread's `lineage.rootThreadId`: the root, its
@@ -3704,10 +3704,10 @@ export const OrchestrationV2ThreadFamily = Schema.Struct({
 });
 export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Type;
 
-export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
+const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
 });
-export type OrchestrationV2GetWorktreeThreadIdsInput =
+type OrchestrationV2GetWorktreeThreadIdsInput =
   typeof OrchestrationV2GetWorktreeThreadIdsInput.Type;
 
 /**
@@ -3741,14 +3741,14 @@ export const OrchestrationV2OlderSettledCursor = Schema.Struct({
 });
 export type OrchestrationV2OlderSettledCursor = typeof OrchestrationV2OlderSettledCursor.Type;
 
-export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
+const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   before: OrchestrationV2OlderSettledCursor,
   /** Every project when absent. */
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
 });
-export type OrchestrationV2GetOlderSettledThreadsInput =
+type OrchestrationV2GetOlderSettledThreadsInput =
   typeof OrchestrationV2GetOlderSettledThreadsInput.Type;
 
 /**
@@ -3765,12 +3765,12 @@ export type OrchestrationV2OlderSettledThreadsPage =
   typeof OrchestrationV2OlderSettledThreadsPage.Type;
 
 /** Active threads on a worktree path, including subagent children a shell may leave out. */
-export const OrchestrationV2WorktreeThreadIds = Schema.Struct({
+const OrchestrationV2WorktreeThreadIds = Schema.Struct({
   threadIds: Schema.Array(ThreadId),
 });
-export type OrchestrationV2WorktreeThreadIds = typeof OrchestrationV2WorktreeThreadIds.Type;
+type OrchestrationV2WorktreeThreadIds = typeof OrchestrationV2WorktreeThreadIds.Type;
 
-export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
+const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
   afterSequence: Schema.optionalKey(NonNegativeInt),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
@@ -3781,7 +3781,7 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   acceptDedupedBodies: Schema.optionalKey(Schema.Boolean),
   acceptCompactIds: Schema.optionalKey(Schema.Boolean),
 });
-export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
+type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 
 /**
  * Server-side only: set it on a response for a client that opted in, and the
@@ -4009,19 +4009,19 @@ export class OrchestrationV2ForceStopThreadError extends Schema.TaggedError<Orch
   }
 }
 
-export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
+const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   scriptPath: TrimmedNonEmptyString,
 });
-export type OrchestrationV2GetWorkflowScriptInput =
+type OrchestrationV2GetWorkflowScriptInput =
   typeof OrchestrationV2GetWorkflowScriptInput.Type;
 
-export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
+const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
   scriptPath: TrimmedNonEmptyString,
   contents: Schema.String,
   truncated: Schema.Boolean,
 });
-export type OrchestrationV2GetWorkflowScriptResult =
+type OrchestrationV2GetWorkflowScriptResult =
   typeof OrchestrationV2GetWorkflowScriptResult.Type;
 
 /** Names a provider-native subagent's child thread. */
@@ -4104,12 +4104,12 @@ export class OrchestrationWorkflowFileError extends Schema.TaggedError<Orchestra
   }
 }
 
-export const OrchestrationV2GetTurnItemInput = Schema.Struct({
+const OrchestrationV2GetTurnItemInput = Schema.Struct({
   threadId: ThreadId,
   itemId: TurnItemId,
   revision: Schema.optional(Schema.String),
 });
-export type OrchestrationV2GetTurnItemInput = typeof OrchestrationV2GetTurnItemInput.Type;
+type OrchestrationV2GetTurnItemInput = typeof OrchestrationV2GetTurnItemInput.Type;
 
 export const OrchestrationV2GetTurnItemResult = Schema.Struct({
   item: Schema.NullOr(OrchestrationV2TurnItem),
@@ -4168,7 +4168,7 @@ export const OrchestrationV2SearchThreadInput = Schema.Struct({
 });
 export type OrchestrationV2SearchThreadInput = typeof OrchestrationV2SearchThreadInput.Type;
 
-export const OrchestrationV2ThreadFindMatch = Schema.Struct({
+const OrchestrationV2ThreadFindMatch = Schema.Struct({
   entryId: TrimmedNonEmptyString,
   runId: Schema.NullOr(RunId),
   occurrence: NonNegativeInt,

@@ -25,7 +25,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
 
-export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
+class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
   {},
 ) {
@@ -46,7 +46,7 @@ export class ScratchFolderError extends Schema.TaggedError<ScratchFolderError>()
   }
 }
 
-export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>()(
+class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>()(
   "ScratchProjectError",
   {
     workspaceRoot: Schema.String,
@@ -60,7 +60,7 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
 
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
 
-export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFolderError>()(
+class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFolderError>()(
   "NamedProjectFolderError",
   {
     folder: Schema.String,
@@ -72,7 +72,7 @@ export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFold
   }
 }
 
-export class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCreateError>()(
+class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCreateError>()(
   "NamedProjectCreateError",
   {
     workspaceRoot: Schema.String,

@@ -106,7 +106,7 @@ export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedError<P
   }
 }
 
-export class ProjectSetupScriptUnsupportedShellError extends Schema.TaggedError<ProjectSetupScriptUnsupportedShellError>()(
+class ProjectSetupScriptUnsupportedShellError extends Schema.TaggedError<ProjectSetupScriptUnsupportedShellError>()(
   "ProjectSetupScriptUnsupportedShellError",
   { shell: Schema.String },
 ) {

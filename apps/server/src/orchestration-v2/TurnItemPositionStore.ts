@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-export class TurnItemPositionStoreError extends Schema.TaggedError<TurnItemPositionStoreError>()(
+class TurnItemPositionStoreError extends Schema.TaggedError<TurnItemPositionStoreError>()(
   "TurnItemPositionStoreError",
   {
     threadId: ThreadId,

@@ -422,7 +422,7 @@ const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit
   Effect.orElseSucceed(() => undefined),
 );
 
-export class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(
+class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(
   "BootServiceUnsupportedError",
   { platform: Schema.String },
 ) {
@@ -493,7 +493,7 @@ export class BootServicePrerequisiteError extends Schema.TaggedError<BootService
   }
 }
 
-export class BootServiceUpdatePendingError extends Schema.TaggedError<BootServiceUpdatePendingError>()(
+class BootServiceUpdatePendingError extends Schema.TaggedError<BootServiceUpdatePendingError>()(
   "BootServiceUpdatePendingError",
   {},
 ) {

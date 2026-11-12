@@ -11,12 +11,12 @@ export const BrowserProfileId = TrimmedNonEmptyString.check(
 );
 export type BrowserProfileId = typeof BrowserProfileId.Type;
 
-export const BrowserProfileName = TrimmedNonEmptyString.check(
+const BrowserProfileName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(BROWSER_PROFILE_NAME_MAX_LENGTH),
 );
 
-export const BrowserProfileKind = Schema.Literals(["persistent", "incognito"]);
-export type BrowserProfileKind = typeof BrowserProfileKind.Type;
+const BrowserProfileKind = Schema.Literals(["persistent", "incognito"]);
+type BrowserProfileKind = typeof BrowserProfileKind.Type;
 
 export const BrowserProfile = Schema.Struct({
   id: BrowserProfileId,

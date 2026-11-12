@@ -21,10 +21,10 @@ const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSc
   Schema.isMaxProperties(128),
 );
 
-export const TerminalThreadInput = Schema.Struct({
+const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
 });
-export type TerminalThreadInput = typeof TerminalThreadInput.Type;
+type TerminalThreadInput = typeof TerminalThreadInput.Type;
 
 // Terminal ids are client-chosen; the server never allocates them.
 const TerminalSessionInput = Schema.Struct({

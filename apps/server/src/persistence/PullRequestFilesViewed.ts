@@ -23,12 +23,12 @@ export const PullRequestFilesViewedScope = Schema.Struct({
 });
 export type PullRequestFilesViewedScope = typeof PullRequestFilesViewedScope.Type;
 
-export const PullRequestFileViewedMark = Schema.Struct({
+const PullRequestFileViewedMark = Schema.Struct({
   path: Schema.String,
   /** Empty means the host confirms deletion; null means no baseline, so the mark stays cleared until replaced. */
   revision: Schema.NullOr(Schema.String),
 });
-export type PullRequestFileViewedMark = typeof PullRequestFileViewedMark.Type;
+type PullRequestFileViewedMark = typeof PullRequestFileViewedMark.Type;
 
 export interface SetPullRequestFilesViewedInput extends PullRequestFilesViewedScope {
   readonly files: ReadonlyArray<PullRequestFileViewedMark & { readonly viewed: boolean }>;

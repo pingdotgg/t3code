@@ -57,7 +57,7 @@ export const McpAppUpdateModelContextInput = Schema.Struct({
 });
 export type McpAppUpdateModelContextInput = typeof McpAppUpdateModelContextInput.Type;
 
-export const McpAppRequestErrorReason = Schema.Literals([
+const McpAppRequestErrorReason = Schema.Literals([
   "not-an-app",
   "provider-unsupported",
   "session-stopped",
@@ -65,7 +65,7 @@ export const McpAppRequestErrorReason = Schema.Literals([
   "unsupported-content",
   "request-failed",
 ]);
-export type McpAppRequestErrorReason = typeof McpAppRequestErrorReason.Type;
+type McpAppRequestErrorReason = typeof McpAppRequestErrorReason.Type;
 
 export class McpAppRequestError extends Schema.TaggedError<McpAppRequestError>()(
   "McpAppRequestError",

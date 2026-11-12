@@ -48,7 +48,7 @@ export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>
   }
 }
 
-export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamError>()(
+class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamError>()(
   "EventSinkStreamError",
   {
     threadId: Schema.optional(ThreadId),

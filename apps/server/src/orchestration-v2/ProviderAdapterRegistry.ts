@@ -26,17 +26,17 @@ export class ProviderAdapterRegistryLookupError extends Schema.TaggedError<Provi
   }
 }
 
-export class ProviderAdapterRegistryMetadataError extends Schema.TaggedError<ProviderAdapterRegistryMetadataError>()(
+class ProviderAdapterRegistryMetadataError extends Schema.TaggedError<ProviderAdapterRegistryMetadataError>()(
   "ProviderAdapterRegistryMetadataError",
   { instanceId: ProviderInstanceId, cause: Schema.Defect() },
 ) {}
 
-export const ProviderAdapterRegistryV2Error = Schema.Union([
+const ProviderAdapterRegistryV2Error = Schema.Union([
   ProviderAdapterRegistryLookupError,
   ProviderAdapterRegistryMetadataError,
   ProviderAdapterDriverCreateError,
 ]);
-export type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Error.Type;
+type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Error.Type;
 
 export interface ProviderAdapterRegistryV2Shape {
   readonly get: (

@@ -54,12 +54,12 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
 });
 export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
-export const ThreadPullRequestStackLayer = Schema.Struct({
+const ThreadPullRequestStackLayer = Schema.Struct({
   number: PositiveInt,
   headBranch: TrimmedNonEmptyString,
   state: PullRequestState,
 });
-export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
+type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
 
 /** Layers run bottom to top. */
 export const ThreadPullRequestStack = Schema.Struct({

@@ -47,7 +47,7 @@ export class OpenCodeReplayTranscriptDecodeError extends Schema.TaggedError<Open
   }
 }
 
-export class OpenCodeReplayMismatchError extends Schema.TaggedError<OpenCodeReplayMismatchError>()(
+class OpenCodeReplayMismatchError extends Schema.TaggedError<OpenCodeReplayMismatchError>()(
   "OpenCodeReplayMismatchError",
   {
     scenario: Schema.String,
@@ -61,7 +61,7 @@ export class OpenCodeReplayMismatchError extends Schema.TaggedError<OpenCodeRepl
   }
 }
 
-export class OpenCodeReplayIncompleteError extends Schema.TaggedError<OpenCodeReplayIncompleteError>()(
+class OpenCodeReplayIncompleteError extends Schema.TaggedError<OpenCodeReplayIncompleteError>()(
   "OpenCodeReplayIncompleteError",
   {
     scenario: Schema.String,
@@ -74,12 +74,12 @@ export class OpenCodeReplayIncompleteError extends Schema.TaggedError<OpenCodeRe
   }
 }
 
-export const OpenCodeReplayError = Schema.Union([
+const OpenCodeReplayError = Schema.Union([
   OpenCodeReplayTranscriptDecodeError,
   OpenCodeReplayMismatchError,
   OpenCodeReplayIncompleteError,
 ]);
-export type OpenCodeReplayError = typeof OpenCodeReplayError.Type;
+type OpenCodeReplayError = typeof OpenCodeReplayError.Type;
 export const OpenCodeOrchestratorReplayHarnessError = Schema.Union([
   OpenCodeReplayError,
   ProviderAdapterDriverCreateError,

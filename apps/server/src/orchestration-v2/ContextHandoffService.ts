@@ -27,7 +27,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
-export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
+class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
   {
     threadId: ThreadId,
@@ -42,8 +42,8 @@ export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandof
   }
 }
 
-export const ContextHandoffServiceV2Error = Schema.Union([ContextHandoffPrepareError]);
-export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.Type;
+const ContextHandoffServiceV2Error = Schema.Union([ContextHandoffPrepareError]);
+type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.Type;
 
 export interface ContextHandoffServiceV2Shape {
   readonly prepareLegacyImport: (input: {

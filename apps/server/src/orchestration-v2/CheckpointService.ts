@@ -26,7 +26,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
 
-export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
+class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
   "CheckpointRootScopePrepareError",
   {
     threadId: ThreadId,
@@ -52,7 +52,7 @@ export class CheckpointBaselineCaptureError extends Schema.TaggedError<Checkpoin
   }
 }
 
-export class CheckpointCaptureError extends Schema.TaggedError<CheckpointCaptureError>()(
+class CheckpointCaptureError extends Schema.TaggedError<CheckpointCaptureError>()(
   "CheckpointCaptureError",
   {
     scopeId: CheckpointScopeId,
@@ -78,7 +78,7 @@ export class CheckpointRestoreError extends Schema.TaggedError<CheckpointRestore
   }
 }
 
-export class CheckpointDeleteStaleRefsError extends Schema.TaggedError<CheckpointDeleteStaleRefsError>()(
+class CheckpointDeleteStaleRefsError extends Schema.TaggedError<CheckpointDeleteStaleRefsError>()(
   "CheckpointDeleteStaleRefsError",
   {
     scopeId: CheckpointScopeId,
@@ -91,14 +91,14 @@ export class CheckpointDeleteStaleRefsError extends Schema.TaggedError<Checkpoin
   }
 }
 
-export const CheckpointServiceV2Error = Schema.Union([
+const CheckpointServiceV2Error = Schema.Union([
   CheckpointRootScopePrepareError,
   CheckpointBaselineCaptureError,
   CheckpointCaptureError,
   CheckpointRestoreError,
   CheckpointDeleteStaleRefsError,
 ]);
-export type CheckpointServiceV2Error = typeof CheckpointServiceV2Error.Type;
+type CheckpointServiceV2Error = typeof CheckpointServiceV2Error.Type;
 
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 

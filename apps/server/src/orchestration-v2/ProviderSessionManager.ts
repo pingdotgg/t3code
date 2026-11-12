@@ -71,13 +71,13 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "waiting",
 ]);
 
-export const ProviderSessionReleaseReason = Schema.Literals([
+const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
   "runtime_error",
   "manual_shutdown",
   "server_shutdown",
 ]);
-export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.Type;
+type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.Type;
 
 export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSessionOpenError>()(
   "ProviderSessionOpenError",
@@ -92,7 +92,7 @@ export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSession
   }
 }
 
-export class ProviderSessionLookupError extends Schema.TaggedError<ProviderSessionLookupError>()(
+class ProviderSessionLookupError extends Schema.TaggedError<ProviderSessionLookupError>()(
   "ProviderSessionLookupError",
   {
     providerSessionId: ProviderSessionId,
@@ -104,7 +104,7 @@ export class ProviderSessionLookupError extends Schema.TaggedError<ProviderSessi
   }
 }
 
-export class ProviderSessionCloseError extends Schema.TaggedError<ProviderSessionCloseError>()(
+class ProviderSessionCloseError extends Schema.TaggedError<ProviderSessionCloseError>()(
   "ProviderSessionCloseError",
   {
     providerSessionId: ProviderSessionId,
@@ -129,7 +129,7 @@ export class ProviderSessionReleaseError extends Schema.TaggedError<ProviderSess
   }
 }
 
-export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSessionActivityError>()(
+class ProviderSessionActivityError extends Schema.TaggedError<ProviderSessionActivityError>()(
   "ProviderSessionActivityError",
   {
     providerSessionId: ProviderSessionId,

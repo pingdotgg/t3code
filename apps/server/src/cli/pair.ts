@@ -60,7 +60,7 @@ export type PairStateVariant = "userdata" | "dev";
 // Only devUrl's presence selects dev state; its value is unused.
 const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
-export class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
+class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
   "NoRunningServerError",
   {
     checkedStatePaths: Schema.Array(Schema.String),
@@ -79,7 +79,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   }
 }
 
-export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
+class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
   { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
 ) {
@@ -91,7 +91,7 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
   }
 }
 
-export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
+class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
   "TailscaleUnavailableError",
   { cause: Schema.Defect() },
 ) {
@@ -100,7 +100,7 @@ export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnava
   }
 }
 
-export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMissingError>()(
+class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMissingError>()(
   "MagicDnsNameMissingError",
   {},
 ) {
@@ -109,7 +109,7 @@ export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMis
   }
 }
 
-export class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleServeNotEnabledError>()(
+class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleServeNotEnabledError>()(
   "TailscaleServeNotEnabledError",
   {},
 ) {
@@ -118,7 +118,7 @@ export class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleS
   }
 }
 
-export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherEnvironmentError>()(
+class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherEnvironmentError>()(
   "ServesOtherEnvironmentError",
   { servePort: Schema.Number },
 ) {
@@ -127,7 +127,7 @@ export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherE
   }
 }
 
-export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServeFailedError>()(
+class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServeFailedError>()(
   "TailscaleServeFailedError",
   { servePort: Schema.Number, cause: Schema.Defect() },
 ) {
@@ -136,7 +136,7 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
   }
 }
 
-export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupiedError>()(
+class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupiedError>()(
   "ServePortOccupiedError",
   { servePort: Schema.Number },
 ) {

@@ -102,10 +102,10 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
-export const EnvironmentOperationForbiddenReason = Schema.Literals([
+const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
 ]);
-export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
+type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
 export const EnvironmentInternalErrorReason = Schema.Literals([
   "bootstrap_validation_failed",
@@ -512,20 +512,20 @@ export const EnvironmentCloudPreferencesRequest = Schema.Struct({
 });
 export type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
 
-export const AuthPairingLinkRevokeResult = Schema.Struct({
+const AuthPairingLinkRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
 });
-export type AuthPairingLinkRevokeResult = typeof AuthPairingLinkRevokeResult.Type;
+type AuthPairingLinkRevokeResult = typeof AuthPairingLinkRevokeResult.Type;
 
-export const AuthClientSessionRevokeResult = Schema.Struct({
+const AuthClientSessionRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
 });
-export type AuthClientSessionRevokeResult = typeof AuthClientSessionRevokeResult.Type;
+type AuthClientSessionRevokeResult = typeof AuthClientSessionRevokeResult.Type;
 
-export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
+const AuthOtherClientSessionsRevokeResult = Schema.Struct({
   revokedCount: Schema.Number,
 });
-export type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
+type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
 
 class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
   HttpApiEndpoint.get("descriptor", "/.well-known/t3/environment", {

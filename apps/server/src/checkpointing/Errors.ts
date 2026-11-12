@@ -3,11 +3,11 @@ import * as Schema from "effect/Schema";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 
-export const CheckpointDiffOperation = Schema.Literals([
+const CheckpointDiffOperation = Schema.Literals([
   "CheckpointDiffQuery.getTurnDiff",
   "CheckpointDiffQuery.getFullThreadDiff",
 ]);
-export type CheckpointDiffOperation = typeof CheckpointDiffOperation.Type;
+type CheckpointDiffOperation = typeof CheckpointDiffOperation.Type;
 
 export class CheckpointDiffResultInvalidError extends Schema.TaggedError<CheckpointDiffResultInvalidError>()(
   "CheckpointDiffResultInvalidError",

@@ -36,7 +36,7 @@ import {
   type PersistedServerRuntimeState,
 } from "./serverRuntimeState.ts";
 
-export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
+class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
   { stateDir: Schema.String },
 ) {
@@ -48,7 +48,7 @@ export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyR
   }
 }
 
-export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceError>()(
+class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceError>()(
   "OlderBootServiceError",
   { baseDir: Schema.String },
 ) {
@@ -59,7 +59,7 @@ export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceEr
   }
 }
 
-export class ServerOwnershipError extends Schema.TaggedError<ServerOwnershipError>()(
+class ServerOwnershipError extends Schema.TaggedError<ServerOwnershipError>()(
   "ServerOwnershipError",
   { stateDir: Schema.String, cause: Schema.Defect() },
 ) {

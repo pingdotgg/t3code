@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
-export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<RuntimeRequestResponseExecutionError>()(
+class RuntimeRequestResponseExecutionError extends Schema.TaggedError<RuntimeRequestResponseExecutionError>()(
   "RuntimeRequestResponseExecutionError",
   {
     reason: Schema.Literals([

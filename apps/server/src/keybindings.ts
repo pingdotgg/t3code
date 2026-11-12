@@ -43,7 +43,7 @@ import {
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
 
-export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
+const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
   Schema.decodeTo(
     Schema.toType(ResolvedKeybindingRule),
     SchemaTransformation.transformEffect({

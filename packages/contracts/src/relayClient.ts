@@ -43,7 +43,7 @@ export const RelayClientInstallProgressEventSchema = Schema.Union([
 ]);
 export type RelayClientInstallProgressEvent = typeof RelayClientInstallProgressEventSchema.Type;
 
-export const RelayClientInstallFailureReasonSchema = Schema.Literals([
+const RelayClientInstallFailureReasonSchema = Schema.Literals([
   "download_failed",
   "invalid_checksum",
   "install_locked",

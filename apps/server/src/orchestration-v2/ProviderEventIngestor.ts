@@ -42,7 +42,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
 
-export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
+class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
   {
     providerSessionId: ProviderSessionId,
