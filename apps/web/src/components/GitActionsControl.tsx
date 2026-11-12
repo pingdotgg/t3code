@@ -1233,11 +1233,18 @@ export default function GitActionsControl({
                 if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
               }}
             >
-              <MenuTrigger
-                render={<ThreadDetailsControl part="icon" aria-label="Git action options" />}
-              >
-                <EllipsisIcon />
-              </MenuTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={<ThreadDetailsControl part="icon" aria-label="Git action options" />}
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </TooltipTrigger>
+                <TooltipPopup>Git action options</TooltipPopup>
+              </Tooltip>
               <MenuPopup side="bottom" align="end" width="wide">
                 {gitItems}
               </MenuPopup>
@@ -1266,11 +1273,26 @@ export default function GitActionsControl({
               if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
             }}
           >
-            <MenuTrigger
-              render={<Button size="icon-sm" variant="secondary" aria-label="Git action options" />}
-            >
-              <ChevronDownIcon />
-            </MenuTrigger>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="secondary"
+                        aria-label="Git action options"
+                        // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
+                        data-toolbar-control=""
+                      />
+                    }
+                  />
+                }
+              >
+                <ChevronDownIcon />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Git action options</TooltipPopup>
+            </Tooltip>
             <MenuPopup side="bottom" align="end">
               {gitItems}
             </MenuPopup>
