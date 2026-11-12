@@ -729,7 +729,20 @@ const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
 );
 
-function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
+type CodexWorkspaceWriteSandbox = Extract<
+  CodexSchema.V2ThreadStartResponse__SandboxPolicy,
+  { readonly type: "workspaceWrite" }
+>;
+
+const isCodexWorkspaceWriteSandbox = (
+  sandbox: CodexSchema.V2ThreadStartResponse__SandboxPolicy | undefined,
+): sandbox is CodexWorkspaceWriteSandbox => sandbox?.type === "workspaceWrite";
+
+function codexRuntimeModeTurnDefaults(
+  runtimeMode: RuntimeMode,
+  // A bare workspaceWrite turn override resets network access and writable roots to off.
+  configuredWorkspaceWriteSandbox: CodexWorkspaceWriteSandbox | undefined,
+): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
   readonly approvalsReviewer: CodexSchema.V2TurnStartParams__ApprovalsReviewer;
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
@@ -747,17 +760,13 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
       return {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-        },
+        sandboxPolicy: { ...configuredWorkspaceWriteSandbox, type: "workspaceWrite" },
       };
     case "auto":
       return {
         approvalPolicy: "on-request",
         approvalsReviewer: "auto_review",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-        },
+        sandboxPolicy: { ...configuredWorkspaceWriteSandbox, type: "workspaceWrite" },
       };
     case "full-access":
       return {
@@ -784,8 +793,13 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** The user's `model_reasoning_summary` from the Codex config, when set. */
     readonly configuredReasoningSummary?: CodexSchema.V2TurnStartParams__ReasoningSummary;
+    /** The workspace-write sandbox Codex resolved for the thread from its config. */
+    readonly configuredWorkspaceWriteSandbox?: CodexWorkspaceWriteSandbox | undefined;
   }) {
-    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
+    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(
+      input.runtimePolicy.runtimeMode,
+      input.configuredWorkspaceWriteSandbox,
+    );
     const approvalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
@@ -1474,7 +1488,10 @@ function codexThreadRuntimeParams(input: {
 }
 
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
-  Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
+  Schema.Struct({
+    thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }),
+    sandbox: Schema.optionalKey(CodexSchema.V2ThreadStartResponse__SandboxPolicy),
+  }),
 );
 
 const CodexChildSelection = Schema.Struct({
@@ -1798,6 +1815,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           >(),
         );
         const threadsAwaitingContextRestore = yield* Ref.make(new Set<string>());
+        const configuredWorkspaceWriteSandboxes = new Map<string, CodexWorkspaceWriteSandbox>();
+        const rememberConfiguredSandbox = (
+          nativeThreadId: string,
+          sandbox: CodexSchema.V2ThreadStartResponse__SandboxPolicy | undefined,
+        ) =>
+          Effect.sync(() => {
+            if (isCodexWorkspaceWriteSandbox(sandbox))
+              configuredWorkspaceWriteSandboxes.set(nativeThreadId, sandbox);
+          });
         // Codex drops client developer messages during compaction but only resends additionalContext
         // when it changes. Restore after turn/completed: items injected mid-turn make the turn sample again.
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
@@ -7259,6 +7285,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
+              configuredWorkspaceWriteSandbox: configuredWorkspaceWriteSandboxes.get(threadId),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
@@ -7585,6 +7612,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
                 ),
               ),
+              Effect.tap((response) =>
+                rememberConfiguredSandbox(response.thread.id, response.sandbox),
+              ),
               Effect.map((response): OrchestrationV2ProviderThread =>
                 providerThreadFromCodexThread({
                   appThreadId: threadInput.threadId,
@@ -7625,6 +7655,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
+              yield* rememberConfiguredSandbox(response.thread.id, response.sandbox);
               return {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,
@@ -8486,6 +8517,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+              yield* rememberConfiguredSandbox(response.thread.id, response.sandbox);
               let forkedThread = response.thread;
               if (boundary.rollbackTurnCount > 0) {
                 const { historyMode } = yield* ensureInitialized.pipe(
