@@ -1225,6 +1225,47 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("an HTTP Basic challenge is reported as a pending sign-in dialog", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const session = contexts[0]!.sessions[0]!;
+      contexts[0]!.page.goto.mockImplementationOnce(async () => {
+        session.emit("Fetch.authRequired", {
+          requestId: "auth-1",
+          frameId: "main",
+          resourceType: "Document",
+          request: { url: "http://localhost:18914/", method: "GET", headers: {} },
+          authChallenge: {
+            source: "Server",
+            origin: "http://localhost:18914",
+            scheme: "basic",
+            realm: "test",
+          },
+        });
+      });
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:18914/" },
+      });
+      // Without handleAuthRequests, Chromium renders the 401 body and never asks for credentials.
+      expect(session.send).toHaveBeenCalledWith(
+        "Fetch.enable",
+        expect.objectContaining({ handleAuthRequests: true }),
+      );
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.dialog).not.toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("closing an isolated tab closes its context only after the page closes", () =>
   Effect.scoped(
     Effect.gen(function* () {
