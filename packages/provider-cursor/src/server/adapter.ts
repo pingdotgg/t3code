@@ -2255,6 +2255,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                // Unreadable Cursor state leaves startup to the SDK rather than failing the turn.
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.cursor-workspace-mcp-unresolved", {
+                    cwd,
+                    cause,
+                  }).pipe(Effect.as({})),
+                ),
               );
 
         const openAgent = Effect.fnUntraced(function* (openInput: {

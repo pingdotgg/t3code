@@ -2262,13 +2262,13 @@ describe("CursorAdapterV2", () => {
         yield* sendTurn(2);
         const { repro: _disabled, ...stillEnabled } = expectedServers;
         assert.deepEqual(sentWith[1], { ...stillEnabled, ...t3Servers });
-        for (const disabledState of ["[", '{"off": true}', '["off",]']) {
-          yield* fileSystem.writeFileString(
-            path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
-            disabledState,
-          );
-          assert.isTrue(Exit.isFailure(yield* Effect.exit(loadServers())));
-        }
+        // Unreadable disabled state starts none of the overrides, and the turn still goes out.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          "[",
+        );
+        yield* sendTurn(3);
+        assert.deepEqual(sentWith[2], t3Servers);
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
