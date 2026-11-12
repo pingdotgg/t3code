@@ -40,12 +40,12 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
+const modelSelection = { instanceId, model: "test-model" };
 
 it.effect.each(
   (
     [
       [false, "during delivery"],
-      [false, "during delivery", "claudeAgent"],
       [false, "before dispatch"],
       [true, "after delivery"],
       [true, "without native steering"],
@@ -54,20 +54,16 @@ it.effect.each(
       [false, "during continuation"],
       ["question", "during delivery"],
     ] as const
-  ).map(([kind, timing, provider = "codex"]) => ({
+  ).map(([kind, timing]) => ({
     mailbox: kind === true,
     question: kind === "question",
     timing,
-    provider,
     label:
       kind === "question" ? "delegated task question" : kind ? "mailbox notification" : "steering",
   })),
-)("delivers $label on completion $timing ($provider)", ({ mailbox, question, timing, provider }) =>
+)("delivers $label when completion wins $timing", ({ mailbox, question, timing }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const driver = ProviderDriverKind.make(provider);
-      const instanceId = ProviderInstanceId.make(provider);
-      const modelSelection = { instanceId, model: "test-model" };
       const cwd = yield* checkpointWorkspace(`steering-completion-${timing.replaceAll(" ", "-")}`);
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];

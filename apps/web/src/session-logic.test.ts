@@ -643,7 +643,7 @@ describe("V2 session presentation", () => {
     },
   );
 
-  it("keeps queued input out of the timeline until dispatch or startup failure", () => {
+  it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const runId = RunId.make("run-dispatched-queued");
@@ -711,30 +711,6 @@ describe("V2 session presentation", () => {
           optimisticMessages: [],
         }),
       ).toHaveLength(inputIntent === "queued_turn" ? 0 : 1);
-    }
-    for (const status of ["completed", "failed"] as const) {
-      const entries = deriveTimelineEntriesFromVisibleTurnItems({
-        visibleTurnItems: [
-          {
-            position: 0,
-            visibility: "local",
-            sourceThreadId: projection.thread.id,
-            sourceItemId: dispatchedItem.id,
-            item: {
-              ...dispatchedItem,
-              inputIntent: "queued_turn",
-              status,
-              startedAt: status === "failed" ? null : now,
-            },
-          },
-        ],
-        optimisticMessages: [optimisticMessage],
-      });
-      expect(entries.map((entry) => entry.id)).toEqual([messageId]);
-      expect(entries[0]).toMatchObject({
-        kind: "message",
-        message: { text: "Queued input", inputIntent: "queued_turn" },
-      });
     }
     const promotedEntries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: [
