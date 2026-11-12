@@ -14,6 +14,7 @@ import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/con
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
@@ -29,7 +30,10 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
-import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
+import {
+  PASSKEY_BRIDGE_ARGUMENT,
+  PRIMARY_PASTE_DISABLED_ARGUMENT,
+} from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -52,6 +56,21 @@ class ContextMenuImageCopyError extends Schema.TaggedError<ContextMenuImageCopyE
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
 const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
 const MACOS_WINDOW_BUTTON_RADIUS = 7;
+
+function parseMailtoAddress(rawUrl: string): Option.Option<string> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return Option.none();
+  }
+  if (url.protocol !== "mailto:" || url.pathname === "") return Option.none();
+  try {
+    return Option.some(decodeURIComponent(url.pathname));
+  } catch {
+    return Option.some(url.pathname);
+  }
+}
 
 function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   if (window.isDestroyed() || window.isFullScreen()) return;
@@ -148,16 +167,72 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
+// A window snapped to a display edge can be reported 1px past that edge.
+const SAVED_BOUNDS_EDGE_TOLERANCE_PX = 1;
+
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
   displayBounds: DisplayBounds,
 ): boolean {
+  const tolerance = SAVED_BOUNDS_EDGE_TOLERANCE_PX;
   return (
-    windowBounds.x >= displayBounds.x &&
-    windowBounds.y >= displayBounds.y &&
-    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width &&
-    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height
+    windowBounds.x >= displayBounds.x - tolerance &&
+    windowBounds.y >= displayBounds.y - tolerance &&
+    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width + tolerance &&
+    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height + tolerance
   );
+}
+
+function overlapArea(left: DisplayBounds, right: DisplayBounds): number {
+  const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+  const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+  return width > 0 && height > 0 ? width * height : 0;
+}
+
+function displayMatching(
+  bounds: DisplayBounds,
+  displays: readonly DisplayBounds[],
+): DisplayBounds | undefined {
+  let match: DisplayBounds | undefined;
+  let matchArea = 0;
+  for (const display of displays) {
+    const area = overlapArea(bounds, display);
+    if (area > matchArea) {
+      match = display;
+      matchArea = area;
+    }
+  }
+  return match;
+}
+
+// Normal bounds of a maximized window can sit on, or straddle into, another display than the window.
+function normalBoundsOnWindowDisplay(
+  normalBounds: DisplayBounds,
+  windowBounds: DisplayBounds,
+  displays: readonly DisplayBounds[],
+): DisplayBounds {
+  const target = displayMatching(windowBounds, displays);
+  if (target === undefined || windowFitsWithinDisplay(normalBounds, target)) {
+    return normalBounds;
+  }
+  const source = displayMatching(normalBounds, displays) ?? target;
+  const width = Math.min(normalBounds.width, target.width);
+  const height = Math.min(normalBounds.height, target.height);
+  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+  return {
+    x: clamp(target.x + normalBounds.x - source.x, target.x, target.x + target.width - width),
+    y: clamp(target.y + normalBounds.y - source.y, target.y, target.y + target.height - height),
+    width,
+    height,
+  };
+}
+
+function readDisplayBoundsOrEmpty(): readonly DisplayBounds[] {
+  try {
+    return Electron.screen.getAllDisplays().map((display) => display.bounds);
+  } catch {
+    return [];
+  }
 }
 
 function windowBoundsEqual(
@@ -312,6 +387,7 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const primaryPaste = yield* DesktopPrimaryPaste.DesktopPrimaryPaste;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -417,6 +493,7 @@ export const make = Effect.gen(function* () {
         sandbox: true,
         webviewTag: true,
         // Guest fullscreen propagates to the embedder; both must opt out to keep it inside the webview.
+        // The app's own fullscreen elements reach OS fullscreen through syncHtmlFullscreen.
         disableHtmlFullscreenWindowResize: true,
       },
     });
@@ -433,33 +510,52 @@ export const make = Effect.gen(function* () {
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
-    const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
+    let lastPersistableState: {
+      readonly bounds: DesktopAppSettings.DesktopWindowBounds;
+      readonly isMaximized: boolean;
+    } | null = null;
+    const readPersistableState = () => {
       if (window.isDestroyed()) {
         return null;
       }
+      // Minimized windows report stale state on some platforms (macOS: not maximized, the
+      // pre-move normal frame; Windows: -32000), so they keep the state seen before minimizing.
+      if (window.isMinimized()) {
+        return lastPersistableState;
+      }
+      const isMaximized = window.isMaximized();
       const bounds =
-        window.isFullScreen() || window.isMaximized() || window.isMinimized()
-          ? window.getNormalBounds()
+        window.isFullScreen() || isMaximized
+          ? normalBoundsOnWindowDisplay(
+              window.getNormalBounds(),
+              window.getBounds(),
+              readDisplayBoundsOrEmpty(),
+            )
           : window.getBounds();
-      return DesktopAppSettings.normalizeMainWindowBounds({
+      const persistableBounds = DesktopAppSettings.normalizeMainWindowBounds({
         x: Math.round(bounds.x),
         y: Math.round(bounds.y),
         width: Math.round(bounds.width),
         height: Math.round(bounds.height),
       });
+      lastPersistableState =
+        persistableBounds === null ? null : { bounds: persistableBounds, isMaximized };
+      return lastPersistableState;
     };
-    const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
+    const fallbackWindowBounds = boundsPersistenceEnabled
+      ? null
+      : (readPersistableState()?.bounds ?? null);
     const fallbackWindowMaximized = persistedSettings.mainWindowMaximized;
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
       if (!boundsPersistenceEnabled) {
         return pendingBoundsPersistFiber;
       }
-      const bounds = readPersistableBounds();
-      if (bounds === null) {
+      const state = readPersistableState();
+      if (state === null) {
         return pendingBoundsPersistFiber;
       }
       pendingBoundsPersistFiber = runFork(
-        desktopSettings.setMainWindowBounds(bounds, window.isMaximized()).pipe(
+        desktopSettings.setMainWindowBounds(state.bounds, state.isMaximized).pipe(
           Effect.asVoid,
           Effect.catch((error) =>
             logWindowWarning("failed to persist main window bounds", {
@@ -471,16 +567,15 @@ export const make = Effect.gen(function* () {
       return pendingBoundsPersistFiber;
     };
     const scheduleBoundsPersist = () => {
-      if (!boundsPersistenceEnabled) {
-        const currentBounds = readPersistableBounds();
-        if (
-          currentBounds === null ||
+      const state = readPersistableState();
+      if (
+        !boundsPersistenceEnabled &&
+        (state === null ||
           (fallbackWindowBounds !== null &&
-            windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
-            window.isMaximized() === fallbackWindowMaximized)
-        ) {
-          return;
-        }
+            windowBoundsEqual(state.bounds, fallbackWindowBounds) &&
+            state.isMaximized === fallbackWindowMaximized))
+      ) {
+        return;
       }
       boundsPersistenceEnabled = true;
       if (boundsPersistFiber !== undefined) {
@@ -541,6 +636,12 @@ export const make = Effect.gen(function* () {
           PASSKEY_BRIDGE_ARGUMENT,
         ];
       }
+      if (!primaryPaste.enabled) {
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          PRIMARY_PASTE_DISABLED_ARGUMENT,
+        ];
+      }
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
@@ -579,6 +680,19 @@ export const make = Effect.gen(function* () {
               label: "Copy Link",
               click: () => {
                 void runPromise(electronShell.copyText(params.linkURL));
+              },
+            },
+            { type: "separator" },
+          );
+        }
+
+        const mailtoAddress = parseMailtoAddress(params.linkURL);
+        if (Option.isSome(mailtoAddress)) {
+          menuTemplate.push(
+            {
+              label: "Copy Email Address",
+              click: () => {
+                void runPromise(electronShell.copyText(mailtoAddress.value));
               },
             },
             { type: "separator" },
@@ -672,6 +786,14 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
+      if (window.isDestroyed()) return;
+      // Cmd/Ctrl+W reaches the renderer; DevTools uses the native menu shortcut.
+      window.webContents.setIgnoreMenuShortcuts(
+        (environment.platform === "darwin" ? input.meta : input.control) &&
+          !input.alt &&
+          !input.shift &&
+          input.key.toLowerCase() === "w",
+      );
       // A held Cmd/Ctrl+W closes one tab or terminal, not each one behind it.
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
@@ -680,6 +802,7 @@ export const make = Effect.gen(function* () {
       }
     });
     window.webContents.on("input-event", (_event, input) => {
+      if (window.isDestroyed()) return;
       if (input.type === "gestureScrollBegin") {
         window.webContents.send(TRACKPAD_SCROLL_BEGIN_CHANNEL);
       } else if (input.type === "gestureScrollEnd") {
@@ -692,7 +815,10 @@ export const make = Effect.gen(function* () {
       runFork(zoomWindow(window, direction));
     });
 
-    window.on("page-title-updated", (event) => {
+    // The renderer titles the window after the open thread; only a blank title
+    // falls back to the app name.
+    window.on("page-title-updated", (event, title) => {
+      if (title.trim() !== "") return;
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
@@ -775,7 +901,6 @@ export const make = Effect.gen(function* () {
       }
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
-      window.setTitle(environment.displayName);
       if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
     window.webContents.on(
@@ -865,6 +990,8 @@ export const make = Effect.gen(function* () {
       void runPromise(revealWhenReady);
     });
 
+    // Desktop IPC only answers the main window, so register it before its renderer can call in.
+    yield* electronWindow.setMain(window);
     loadApplication();
     if (environment.isDevelopment) {
       window.webContents.openDevTools({ mode: "detach" });
@@ -883,7 +1010,6 @@ export const make = Effect.gen(function* () {
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
     if (Option.isSome(window)) {
-      yield* electronWindow.setMain(window.value);
       mainClosedDuringStartup = false;
       yield* logWindowInfo("main window created");
     }

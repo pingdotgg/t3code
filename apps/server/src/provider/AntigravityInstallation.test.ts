@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -126,6 +126,7 @@ interface HarnessOptions {
   readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
+  readonly connectTimeout?: boolean;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -188,8 +189,18 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           requests.push(request.url);
+          if (options.connectTimeout) {
+            return Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  cause: new Error("Connect Timeout Error (attempted address: dl.google.com:443)"),
+                }),
+              }),
+            );
+          }
           const response = HttpClientResponse.fromWeb(
             request,
             new Response(null, {
@@ -203,15 +214,17 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
               },
             }),
           );
-          return Object.defineProperty(response, "stream", {
-            value:
-              options.body ??
-              Stream.make(
-                archive.subarray(0, 31),
-                archive.subarray(31, 149),
-                archive.subarray(149),
-              ),
-          });
+          return Effect.succeed(
+            Object.defineProperty(response, "stream", {
+              value:
+                options.body ??
+                Stream.make(
+                  archive.subarray(0, 31),
+                  archive.subarray(31, 149),
+                  archive.subarray(149),
+                ),
+            }),
+          );
         }),
       ),
     ),
@@ -237,7 +250,7 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
     path.join(installation.managedDirectory, "versions", previousReleaseId),
   );
   expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
-  expect(yield* fs.readFileString(resolved.harnessPath)).toBe(harnessContents);
+  expect(yield* fs.readFileString(resolved.harnessPath!)).toBe(harnessContents);
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
 });
 
@@ -281,7 +294,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(validation?.version).toBe("fixture-new");
       if (!validation) return yield* Effect.die("Expected runtime validation.");
       expect(yield* fs.readFileString(validation.executable.executablePath)).toBe(serverContents);
-      expect(yield* fs.readFileString(validation.executable.harnessPath)).toBe(harnessContents);
+      expect(yield* fs.readFileString(validation.executable.harnessPath!)).toBe(harnessContents);
 
       yield* Deferred.succeed(finishValidation, undefined);
       expect(yield* terminalState(installation)).toMatchObject({
@@ -293,9 +306,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* Deferred.await(stagingReleased);
       const selected = yield* installation.resolve();
       expect(selected).toMatchObject({ source: "managed", version: "fixture-new" });
-      expect(path.dirname(selected.harnessPath)).toBe(path.dirname(selected.executablePath));
+      expect(path.dirname(selected.harnessPath!)).toBe(path.dirname(selected.executablePath));
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
-      expect(yield* fs.readFileString(selected.harnessPath)).toBe(harnessContents);
+      expect(yield* fs.readFileString(selected.harnessPath!)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
         expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
       );
@@ -351,6 +364,73 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         [previousReleaseId],
       );
     }),
+  );
+
+  it.effect(
+    "names the connection failure instead of disk space when the download cannot connect",
+    () =>
+      Effect.gen(function* () {
+        const { installation, validations } = yield* makeHarness({ connectTimeout: true });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).not.toMatch(/disk space/i);
+        expect(state.message).toMatch(/connect|network|download/i);
+        expect(validations).toEqual([]);
+      }),
+  );
+
+  // The runtime's own abort is a real process; Windows has no POSIX sh.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "explains that the linux-arm64 runtime needs 4 KiB pages when it aborts on a 16 KiB kernel",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Google's linux-arm64 build aborts like this on Asahi and Raspberry Pi 5 kernels.
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          String(command.command).endsWith(executableName)
+            ? realSpawner.spawn(
+                ChildProcess.make(
+                  "sh",
+                  [
+                    "-c",
+                    "echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; kill -ABRT $$",
+                  ],
+                  { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+                ),
+              )
+            : realSpawner.spawn(command),
+        );
+        const { installation } = yield* makeHarness({
+          arch: "arm64",
+          useDefaultValidation: true,
+          spawner,
+        });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/page/i);
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a 16 KiB-page linux-arm64 kernel before downloading the runtime",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.command === "getconf"
+            ? realSpawner.spawn(ChildProcess.make("sh", ["-c", "echo 16384"], command.options))
+            : realSpawner.spawn(command),
+        );
+        const { installation, requests } = yield* makeHarness({ arch: "arm64", spawner });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/4 KiB/);
+        expect(requests).toEqual([]);
+      }),
   );
 
   it.effect.each(["download", "extract", "active pointer"] as const)(
@@ -636,6 +716,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
 
   // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "accepts the agy CLI without a harness sibling but still requires one for other binaries",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const cliDirectory = path.join(baseDir, "cli");
+        yield* fs.makeDirectory(cliDirectory);
+        const cli = path.join(cliDirectory, "antigravity");
+        const alias = path.join(cliDirectory, "agy");
+        const other = path.join(cliDirectory, "custom-acp");
+        yield* fs.writeFileString(cli, "cli", { mode: 0o755 });
+        yield* fs.symlink(cli, alias);
+        yield* fs.writeFileString(other, "other", { mode: 0o755 });
+        const { installation } = yield* makeHarness({ baseDir });
+
+        expect(yield* installation.resolve(cli)).toMatchObject({
+          executablePath: cli,
+          harnessPath: null,
+          source: "override",
+          version: null,
+        });
+        expect(yield* installation.resolve(alias)).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+        });
+        expect(yield* installation.resolve("agy", { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+        });
+        expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+
+        // Version-manager shims dispatch by their invoked name, so the shim path is what runs.
+        const shims = path.join(baseDir, "shims");
+        const mise = path.join(baseDir, "mise");
+        yield* fs.makeDirectory(shims);
+        yield* fs.writeFileString(mise, "mise", { mode: 0o755 });
+        yield* fs.symlink(mise, path.join(shims, "agy"));
+        expect(yield* installation.resolve("agy", { PATH: shims })).toMatchObject({
+          executablePath: path.join(shims, "agy"),
+          harnessPath: null,
+        });
+
+        const { installation: windows } = yield* makeHarness({ baseDir, platform: "win32" });
+        for (const name of ["agy.EXE", "agy.cmd"]) {
+          const windowsDirectory = path.join(baseDir, `windows-${name}`);
+          yield* fs.makeDirectory(windowsDirectory);
+          yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
+          expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
+            executablePath: path.join(windowsDirectory, name),
+            harnessPath: null,
+          });
+        }
+      }),
+  );
+
+  // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>
       Effect.gen(function* () {
@@ -697,6 +839,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(
           yield* isolated.installation.resolve(executableName, { PATH: externalDirectory }),
         ).toMatchObject({ source: "override", executablePath: externalExecutable });
+
+        const incompleteDirectory = path.join(baseDir, "incomplete");
+        yield* fs.makeDirectory(incompleteDirectory);
+        yield* fs.writeFileString(path.join(incompleteDirectory, executableName), "no harness", {
+          mode: 0o755,
+        });
+        const shadowedPath = { PATH: `${incompleteDirectory}:${externalDirectory}` };
+        expect(yield* isolated.installation.resolve(undefined, shadowedPath)).toMatchObject({
+          source: "path",
+          executablePath: externalExecutable,
+        });
+        expect(yield* isolated.installation.resolve(executableName, shadowedPath)).toMatchObject({
+          source: "override",
+          executablePath: externalExecutable,
+        });
       }),
   );
 
@@ -725,7 +882,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       Effect.gen(function* () {
         const { installation, baseDir, fs, path } = yield* makeHarness({ previous: true });
         const previous = yield* installation.resolve();
-        yield* fs.remove(previous.harnessPath);
+        yield* fs.remove(previous.harnessPath!);
         const externalDirectory = path.join(baseDir, "external");
         yield* fs.makeDirectory(externalDirectory);
         yield* fs.writeFileString(path.join(externalDirectory, executableName), "external server", {
