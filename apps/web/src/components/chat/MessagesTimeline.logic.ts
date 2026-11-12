@@ -3703,6 +3703,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
   if (a.continuesPromptStack !== b.continuesPromptStack) return false;
   if (a.superseded !== b.superseded) return false;
+  if (a.continuesWorkLog !== b.continuesWorkLog) return false;
 
   switch (a.kind) {
     case "background-activity": {
@@ -3714,7 +3715,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.active === bg.active &&
         a.expanded === bg.expanded &&
         a.precedesPrompt === bg.precedesPrompt &&
-        shallow(a.runIds, bg.runIds)
+        shallow(a.runIds, bg.runIds) &&
+        shallow(a.revealedRowIds, bg.revealedRowIds)
       );
     }
     case "working":
@@ -3733,7 +3735,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
     case "worktree-setup":
-      return a.snapshot === (b as typeof a).snapshot;
+      return a.snapshot === (b as typeof a).snapshot && a.embedded === (b as typeof a).embedded;
 
     case "assistant-meta": {
       const bm = b as typeof a;
