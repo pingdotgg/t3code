@@ -143,9 +143,16 @@ describe("connection routes", () => {
 
 describe("reported labels", () => {
   it("follows the server's label only where the server gave it", () => {
-    const named = direct("named", "http://192.168.1.5:3773/");
+    const named = {
+      ...LAN,
+      target: new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Mine",
+        connectionId: "named",
+      }),
+    };
     const paired = {
-      ...named,
+      ...TAILNET,
       target: new BearerConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "Desk",
@@ -153,14 +160,19 @@ describe("reported labels", () => {
         connectionId: "paired",
       }),
     };
-    const relay = {
-      target: new RelayConnectionTarget({ environmentId: ENVIRONMENT_ID, label: "Desk" }),
-      profile: Option.none(),
-    };
-    expect(routesWithReportedLabel([named, paired, relay], "Desk")).toBeNull();
-    const renamed = routesWithReportedLabel([named, paired, relay], "Laptop");
-    expect(renamed?.map(({ target }) => target.label)).toEqual(["Desk", "Laptop", "Laptop"]);
-    expect(renamed?.[1]?.target.followsServerLabel).toBe(true);
+    // Saved before routes carried the marker: a learned route copies the T3 Connect route's label.
+    const savedEarlier = learned("learned", "https://desk.example.com/");
+    const routes = [savedEarlier, named, paired, RELAY];
+    expect(routesWithReportedLabel(routes, "Desk")).toBeNull();
+    const renamed = routesWithReportedLabel(routes, "Laptop");
+    expect(renamed?.map(({ target }) => target.label)).toEqual([
+      "Laptop",
+      "Mine",
+      "Laptop",
+      "Laptop",
+    ]);
+    expect(renamed?.[0]?.target.followsServerLabel).toBe(true);
+    expect(routesWithReportedLabel([named], "Laptop")).toBeNull();
   });
 });
 

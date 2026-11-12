@@ -344,16 +344,16 @@ export function mergeLearnedRoutes(input: {
   return signature(saved) === signature(next) ? null : next;
 }
 
-function withLabel(target: ConnectionTarget, label: string): ConnectionTarget {
+function withServerLabel(target: ConnectionTarget, label: string): ConnectionTarget {
   switch (target._tag) {
     case "PrimaryConnectionTarget":
-      return new PrimaryConnectionTarget({ ...target, label });
+      return new PrimaryConnectionTarget({ ...target, label, followsServerLabel: true });
     case "BearerConnectionTarget":
-      return new BearerConnectionTarget({ ...target, label });
+      return new BearerConnectionTarget({ ...target, label, followsServerLabel: true });
     case "RelayConnectionTarget":
       return new RelayConnectionTarget({ ...target, label });
     case "SshConnectionTarget":
-      return new SshConnectionTarget({ ...target, label });
+      return new SshConnectionTarget({ ...target, label, followsServerLabel: true });
   }
 }
 
@@ -362,16 +362,24 @@ function followsServerLabel(target: ConnectionTarget): boolean {
   return target._tag === "RelayConnectionTarget" || target.followsServerLabel === true;
 }
 
-/** Routes carrying the label the server now reports, keeping names the user chose; null when unchanged. */
+/**
+ * Routes carrying the label the server now reports, keeping names the user chose; null when unchanged.
+ * A route holding the same label as one that follows the server is a copy of it (learned routes copy
+ * the entry's label), so it follows too.
+ */
 export function routesWithReportedLabel(
   routes: ReadonlyArray<ConnectionRoute>,
   reportedLabel: string,
 ): ReadonlyArray<ConnectionRoute> | null {
+  const serverLabels = new Set(
+    routes.filter((route) => followsServerLabel(route.target)).map((route) => route.target.label),
+  );
   let changed = false;
   const next = routes.map((route) => {
-    if (!followsServerLabel(route.target) || route.target.label === reportedLabel) return route;
+    const { label } = route.target;
+    if (label === reportedLabel || !serverLabels.has(label)) return route;
     changed = true;
-    return { ...route, target: withLabel(route.target, reportedLabel) };
+    return { ...route, target: withServerLabel(route.target, reportedLabel) };
   });
   return changed ? next : null;
 }
