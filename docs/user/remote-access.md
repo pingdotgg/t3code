@@ -169,7 +169,10 @@ Mobile keeps its manual environment selection.
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
-HTTPS** in **Settings → Sharing & access**. Turn it off there to remove that route.
+HTTPS** in **Settings → Sharing & access**. Turn it off there to remove that route,
+or use **Change port** to move it. T3 Code does not take over an HTTPS port that
+already serves other Tailscale Serve routes on the machine; choose another port
+instead.
 
 To start a command-line server with Tailscale HTTPS:
 

@@ -217,6 +217,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
   ensureTailscaleServe,
+  readTailscaleServeRoutesBlocking,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
@@ -918,6 +919,22 @@ const layerMakeServer = Layer.unwrap(
 
               const localPort = address.port;
               const localHost = loopbackUrlHostForAddress(address);
+              // Serving the port again would replace its root handler, so leave a port that
+              // already serves something else alone, or one whose routes cannot be read.
+              const blocking = yield* readTailscaleServeRoutesBlocking({
+                servePort: config.tailscaleServePort,
+                target: { host: localHost.replace(/^\[|\]$/gu, ""), port: localPort },
+              }).pipe(Effect.option);
+              if (Option.isNone(blocking) || blocking.value.length > 0) {
+                yield* Effect.logWarning(
+                  `Tailscale Serve left off: HTTPS port ${String(config.tailscaleServePort)} ${Option.isNone(blocking) ? "could not be checked for other routes" : "already serves other routes on this machine; choose another port"}`,
+                  {
+                    servePort: config.tailscaleServePort,
+                    ...(Option.isSome(blocking) ? { routes: blocking.value } : {}),
+                  },
+                );
+                return null;
+              }
               return yield* ensureTailscaleServe({
                 localPort,
                 servePort: config.tailscaleServePort,

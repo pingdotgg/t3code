@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ensureTailscaleServe,
   parseTailscaleExitNode,
+  parseTailscaleServeRoutesBlocking,
   parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
@@ -215,6 +216,65 @@ describe("tailscale", () => {
     assert.deepEqual(parseTailscaleServeRoutesTo("{}", { host: "127.0.0.1", port: 3773 }), []);
     assert.deepEqual(parseTailscaleServeRoutesTo("null", { host: "127.0.0.1", port: 3773 }), []);
     assert.isUndefined(parseTailscaleServeRoutesTo("not json", { host: "127.0.0.1", port: 3773 }));
+  });
+
+  it("finds the Serve routes on a port that serving this server there would take over", () => {
+    const target = { host: "127.0.0.1", port: 3773 };
+    const blocking = (status: unknown, servePort = 443) =>
+      parseTailscaleServeRoutesBlocking(JSON.stringify(status), { servePort, target });
+    const box = (handlers: Record<string, unknown>) => ({
+      TCP: { "443": { HTTPS: true } },
+      Web: { "box.tailnet.ts.net:443": { Handlers: handlers } },
+    });
+
+    // Another service at the root, or beside this server's root, holds the port.
+    assert.deepEqual(blocking(box({ "/": { Proxy: "http://127.0.0.1:9000" } })), [
+      { servePort: 443, mount: "/", host: "box.tailnet.ts.net" },
+    ]);
+    assert.deepEqual(
+      blocking(
+        box({
+          "/": { Proxy: "http://127.0.0.1:3773" },
+          "/mcp": { Proxy: "http://127.0.0.1:8080" },
+          "/docs": { Path: "/srv/docs" },
+          "/hello": { Text: "hi" },
+          "/sock": { Proxy: "unix:/run/app.sock" },
+          // A name might resolve elsewhere, so it is not known to be this server.
+          "/named": { Proxy: "http://localhost:3773" },
+        }),
+      ),
+      ["/mcp", "/docs", "/hello", "/sock", "/named"].map((mount) => ({
+        servePort: 443,
+        mount,
+        host: "box.tailnet.ts.net",
+      })),
+    );
+    assert.deepEqual(
+      blocking({ TCP: { "443": { TCPForward: "127.0.0.1:22" }, "8443": { HTTPS: true } } }),
+      [{ servePort: 443 }],
+    );
+    assert.deepEqual(
+      blocking({
+        Foreground: { session1: box({ "/": { Proxy: "http://127.0.0.1:9000" } }) },
+      }),
+      [{ servePort: 443, mount: "/", host: "box.tailnet.ts.net", owner: "foreground" }],
+    );
+
+    // This server's own root, other ports, and Services under their own names leave it free.
+    assert.deepEqual(blocking(box({ "/": { Proxy: "http://127.0.0.1:3773" } })), []);
+    assert.deepEqual(blocking(box({ "/": { Proxy: "http://127.0.0.1:9000" } }), 8443), []);
+    assert.deepEqual(
+      blocking({
+        Services: {
+          "svc:other": {
+            Web: { "other.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "9000" } } } },
+          },
+        },
+      }),
+      [],
+    );
+    assert.deepEqual(blocking(null), []);
+    assert.isUndefined(parseTailscaleServeRoutesBlocking("not json", { servePort: 443, target }));
   });
 
   it.effect("parses status facts", () =>

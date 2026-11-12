@@ -591,12 +591,12 @@ const reachesTarget = (url: string, target: { readonly host: string; readonly po
 };
 
 /**
- * The Serve routes that forward to the server bound at `target`, or undefined when the status
- * cannot be read.
+ * The Serve routes `select` keeps. It gets the URL a route dials, or undefined when the route
+ * serves a Unix socket, text, or files. Undefined when the status cannot be read.
  */
-export const parseTailscaleServeRoutesTo = (
+const parseTailscaleServeRoutes = (
   rawServeStatusJson: string,
-  target: { readonly host: string; readonly port: number },
+  select: (dialed: string | undefined) => Pick<TailscaleServeRoute, "ambiguous"> | undefined,
 ): ReadonlyArray<TailscaleServeRoute> | undefined => {
   const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
   if (Option.isNone(status)) return undefined;
@@ -605,16 +605,12 @@ export const parseTailscaleServeRoutesTo = (
     owner?: string,
   ): ReadonlyArray<TailscaleServeRoute> => {
     const scope = owner === undefined ? {} : { owner };
-    const reached = (url: string) => {
-      const found = reachesTarget(url, target);
-      if (found === undefined) return undefined;
-      return found.reach === "either" ? { ambiguous: found.hostname } : {};
-    };
     const tcp = Object.entries(config?.TCP ?? {}).flatMap(([port, handler]) => {
-      const reach =
-        handler.TCPForward === undefined || handler.TCPForward.startsWith("unix:")
-          ? undefined
-          : reached(`tcp://${handler.TCPForward}`);
+      // An entry without a forward only listens for that port's web handlers.
+      if (handler.TCPForward === undefined) return [];
+      const reach = select(
+        handler.TCPForward.startsWith("unix:") ? undefined : `tcp://${handler.TCPForward}`,
+      );
       return reach !== undefined && Number.isInteger(Number(port))
         ? [{ servePort: Number(port), ...reach, ...scope }]
         : [];
@@ -625,7 +621,11 @@ export const parseTailscaleServeRoutesTo = (
       if (!Number.isInteger(servePort)) return [];
       const host = hostPort.slice(0, separator);
       return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
-        const reach = handler.Proxy === undefined ? undefined : reached(expandProxy(handler.Proxy));
+        const reach = select(
+          handler.Proxy === undefined || handler.Proxy.startsWith("unix:")
+            ? undefined
+            : expandProxy(handler.Proxy),
+        );
         return reach === undefined ? [] : [{ servePort, mount, host, ...reach, ...scope }];
       });
     });
@@ -642,6 +642,40 @@ export const parseTailscaleServeRoutesTo = (
   ];
 };
 
+/**
+ * The Serve routes that forward to the server bound at `target`, or undefined when the status
+ * cannot be read.
+ */
+export const parseTailscaleServeRoutesTo = (
+  rawServeStatusJson: string,
+  target: { readonly host: string; readonly port: number },
+): ReadonlyArray<TailscaleServeRoute> | undefined =>
+  parseTailscaleServeRoutes(rawServeStatusJson, (dialed) => {
+    const found = dialed === undefined ? undefined : reachesTarget(dialed, target);
+    if (found === undefined) return undefined;
+    return found.reach === "either" ? { ambiguous: found.hostname } : {};
+  });
+
+/**
+ * The Serve routes on `servePort` that are not known to forward to the server bound at `target`,
+ * which serving there would take over or mix with. A Tailscale Service answers under its own name,
+ * so its routes are left out. Undefined when the status cannot be read.
+ */
+export const parseTailscaleServeRoutesBlocking = (
+  rawServeStatusJson: string,
+  input: {
+    readonly servePort: number;
+    readonly target: { readonly host: string; readonly port: number };
+  },
+): ReadonlyArray<TailscaleServeRoute> | undefined =>
+  parseTailscaleServeRoutes(rawServeStatusJson, (dialed) =>
+    dialed !== undefined && reachesTarget(dialed, input.target)?.reach === "exact" ? undefined : {},
+  )?.filter(
+    (route) =>
+      route.servePort === input.servePort &&
+      (route.owner === undefined || route.owner === "foreground"),
+  );
+
 /** The Serve routes that forward to the server bound at `target` on this machine. */
 export const readTailscaleServeRoutesTo = (target: {
   readonly host: string;
@@ -650,6 +684,20 @@ export const readTailscaleServeRoutesTo = (target: {
   readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
     Effect.flatMap((status) => {
       const routes = parseTailscaleServeRoutesTo(status, target);
+      return routes === undefined
+        ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
+        : Effect.succeed(routes);
+    }),
+  );
+
+/** The Serve routes on `servePort` here that are not known to forward to the server at `target`. */
+export const readTailscaleServeRoutesBlocking = (input: {
+  readonly servePort: number;
+  readonly target: { readonly host: string; readonly port: number };
+}) =>
+  readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
+    Effect.flatMap((status) => {
+      const routes = parseTailscaleServeRoutesBlocking(status, input);
       return routes === undefined
         ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
         : Effect.succeed(routes);
