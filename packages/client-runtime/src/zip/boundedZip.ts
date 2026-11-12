@@ -99,8 +99,8 @@ export async function rangedZip(
 ) {
   let size = -1;
   let revision: string | null = null;
-  const range = async (start: number, end: number) => {
-    const response = await fetchRange(url, {
+  const range = async (start: number, end: number, source = url) => {
+    const response = await fetchRange(source, {
       headers: { range: `bytes=${start}-${end}` },
       ...(signal ? { signal } : {}),
     });
@@ -233,12 +233,13 @@ export async function rangedZip(
         { size: file.size, modified: file.modified, directory: file.directory },
       ]),
     ),
-    async read(path: string) {
+    /** `source` is a re-minted URL for the same file; the revision check still applies. */
+    async read(path: string, source = url) {
       const entry = files[path];
       if (!entry) throw new Error("This archive entry is unavailable.");
       const compressed = new DataView(entry.central.buffer).getUint32(20, true);
       const fetchLocal = (length: number) =>
-        range(entry.local, Math.min(directoryStart, entry.local + length) - 1);
+        range(entry.local, Math.min(directoryStart, entry.local + length) - 1, source);
       let local = await fetchLocal(30 + entry.central.length + compressed);
       if (!local) throw new Error(ARCHIVE_CHANGED);
       const localView = new DataView(local.buffer);

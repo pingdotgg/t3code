@@ -217,7 +217,11 @@ function useZipArchive(input: {
       const url = (await refresh()) ?? uri;
       // Archives the range reader can't list are downloaded and read whole below.
       const ranged = await rangedZip(url, fetch, ARCHIVE_MAX_BYTES, abort.signal).catch(() => null);
-      if (ranged) return toArchive(ranged.entries, ranged.read);
+      // Asset URLs expire, so each member read re-mints one; the revision check still applies.
+      if (ranged)
+        return toArchive(ranged.entries, async (path) =>
+          ranged.read(path, (await refresh().catch(() => null)) ?? url),
+        );
       const response = await fetch(url, { signal: abort.signal });
       if (!response.ok || !response.body) throw new ZipFailureError({ failure: NETWORK });
       const bytes = await readArchiveBody(response.body, (receivedBytes) =>

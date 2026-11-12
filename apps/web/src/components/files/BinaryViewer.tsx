@@ -81,6 +81,8 @@ export default function BinaryViewer(props: {
   readonly name: string;
   readonly kind: "archive" | "sqlite";
   readonly onRetry?: () => void;
+  /** Re-mints an expiring asset URL; ZIP members are fetched from it after the archive opens. */
+  readonly refreshSrc?: () => Promise<string | null>;
 }) {
   const [archive, setArchive] = useState<Archive | null>(null);
   const [database, setDatabase] = useState<Database | null>(null);
@@ -311,7 +313,11 @@ export default function BinaryViewer(props: {
                           else {
                             setSelectedPath(item.path);
                             setEntry(null);
-                            send({ type: "entry", path: item.path });
+                            void (props.refreshSrc?.() ?? Promise.resolve(null))
+                              .catch(() => null)
+                              .then((src) =>
+                                send({ type: "entry", path: item.path, ...(src ? { src } : {}) }),
+                              );
                           }
                         }}
                       >

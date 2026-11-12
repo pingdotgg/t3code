@@ -6,8 +6,10 @@ import { boundedZip, rangedZip } from "./boundedZip.ts";
 function source(initial: Uint8Array, options: { etag?: string | null } = {}) {
   const state = { bytes: initial, etag: options.etag === undefined ? 'W/"1"' : options.etag };
   const ranges: string[] = [];
-  const fetchRange = async (_url: string, init: { headers: { range: string } }) => {
+  const urls: string[] = [];
+  const fetchRange = async (url: string, init: { headers: { range: string } }) => {
     ranges.push(init.headers.range);
+    urls.push(url);
     const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(init.headers.range)!.map(Number);
     const body = state.bytes.slice(start, end! + 1);
     return {
@@ -19,7 +21,7 @@ function source(initial: Uint8Array, options: { etag?: string | null } = {}) {
       arrayBuffer: async () => body.buffer,
     };
   };
-  return { state, ranges, fetchRange };
+  return { state, ranges, urls, fetchRange };
 }
 
 async function sample() {
@@ -112,7 +114,11 @@ describe("rangedZip", () => {
 
     const later = source(bytes);
     const ranged = (await rangedZip("archive.zip", later.fetchRange))!;
+    // A re-minted URL for an unchanged archive keeps working once the opening URL expires.
+    expect(await ranged.read("123", "fresh.zip")).toBeInstanceOf(Uint8Array);
+    expect(later.urls.at(-1)).toBe("fresh.zip");
     later.state.etag = 'W/"2"';
+    await expect(ranged.read("123", "fresh.zip")).rejects.toThrow("This archive changed");
     await expect(ranged.read("123")).rejects.toThrow("This archive changed");
   });
 

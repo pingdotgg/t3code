@@ -145,7 +145,7 @@ async function handle(input: BinaryWorkerRequest) {
     const size = ranged ? ranged.entries.get(input.path)?.size : files.get(input.path)?.length;
     if (size === undefined) throw new Error("This archive entry is unavailable.");
     if (size > ARCHIVE_ENTRY_MAX_BYTES) throw new Error("Entry previews are limited to 10 MB.");
-    const bytes = ranged ? await ranged.read(input.path) : files.get(input.path)!;
+    const bytes = ranged ? await ranged.read(input.path, input.src) : files.get(input.path)!;
     reply({ type: "entry", path: input.path, bytes });
     return;
   }

@@ -17,7 +17,7 @@ export interface ArchiveEntry {
 
 export type BinaryWorkerRequest =
   | { type: "open"; kind: "archive" | "sqlite"; name: string; src: string }
-  | { type: "entry"; path: string }
+  | { type: "entry"; path: string; src?: string }
   | { type: "rows"; table: string; page: number };
 
 export type BinaryWorkerResult =
