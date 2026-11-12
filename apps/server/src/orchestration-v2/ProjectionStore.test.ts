@@ -720,26 +720,51 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
     // An id filter reads by primary key, not every row of the thread.
     const byId = traceSqlStatements();
     const found = yield* store
-      .getThreadRecords(threadId, ["runs", "nodes", "subagents", "messages"], {
-        runIds: [RunId.make("run:idle-compaction:4")],
-        nodeIds: [nodeId],
-        subagentIds: [nodeId],
-        messageIds: [MessageId.make("message:idle-compaction:4")],
-      })
+      .getThreadRecords(
+        threadId,
+        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns"],
+        {
+          runIds: [RunId.make("run:idle-compaction:4")],
+          nodeIds: [nodeId],
+          subagentIds: [nodeId],
+          messageIds: [MessageId.make("message:idle-compaction:4")],
+          attemptIds: [RunAttemptId.make("attempt:idle-compaction")],
+          providerTurnIds: [ProviderTurnId.make("turn:idle-old")],
+        },
+      )
       .pipe(Effect.withTracer(byId.tracer));
     assert.deepEqual(
       found.runs.map((run) => run.id),
       ["run:idle-compaction:4"],
     );
-    for (const table of ["runs", "nodes", "subagents", "messages"]) {
-      const query = byId.statements.find((statement) =>
-        statement.includes(`FROM orchestration_v2_projection_${table}`),
+    assert.deepEqual(
+      found.providerTurns.map((turn) => turn.id),
+      ["turn:idle-old"],
+    );
+    // A task's turn item and a child thread's tasks are found through their own indexes.
+    yield* store
+      .getThreadRecords(threadId, ["subagents", "turnItems"], {
+        subagentChildThreadIds: [threadId],
+        turnItemNodeIds: [nodeId],
+      })
+      .pipe(Effect.withTracer(byId.tracer));
+    for (const [table, index] of [
+      ...["runs", "nodes", "subagents", "messages", "run_attempts", "provider_turns"].map(
+        (name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const,
+      ),
+      ["subagents", "orchestration_v2_projection_subagents_child_thread_idx"],
+      ["turn_items", "orchestration_v2_projection_turn_items_node_ordinal_idx"],
+    ] as const) {
+      const plans = yield* Effect.forEach(
+        byId.statements.filter((statement) =>
+          statement.includes(`FROM orchestration_v2_projection_${table}`),
+        ),
+        (query) => sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`),
       );
-      assert.isDefined(query);
-      const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
-        .map((row) => row.detail)
-        .join("\n");
-      assert.include(plan, `USING INDEX sqlite_autoindex_orchestration_v2_projection_${table}_1`);
+      assert.isTrue(
+        plans.some((plan) => plan.some((row) => row.detail.includes(`USING INDEX ${index}`))),
+        `${table} is not read through ${index}`,
+      );
     }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),

@@ -342,7 +342,9 @@ export interface ProjectionRuntimeResponseContext {
 
 export interface ProjectionRecordFilter {
   readonly providerThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly providerTurnIds?: ReadonlyArray<ProviderTurnId>;
   readonly providerTurnAttemptIds?: ReadonlyArray<RunAttemptId>;
+  readonly attemptIds?: ReadonlyArray<RunAttemptId>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
   readonly turnItemRunId?: RunId;
@@ -362,6 +364,7 @@ export interface ProjectionRecordFilter {
   readonly contextTransferStatuses?: ReadonlyArray<OrchestrationV2ContextTransfer["status"]>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
   readonly subagentRunIds?: ReadonlyArray<RunId>;
+  readonly subagentChildThreadIds?: ReadonlyArray<ThreadId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
   readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
@@ -640,6 +643,20 @@ export interface ProjectionStoreV2Shape {
     requestId: TurnItemId,
     resultId: TurnItemId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** Whether Stop reached the run. Reads one index entry, however long the thread is. */
+  readonly hasRunInterruptRequest: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /** One run and node with the run's provider thread, active attempt and provider turn, read together. */
+  readonly getRunProviderRecords: (
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+  ) => Effect.Effect<
+    ProjectionRecords<"runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts">,
+    ProjectionStoreV2Error
+  >;
   readonly isNodeStored: (
     node: OrchestrationV2ExecutionNode,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -3429,7 +3446,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
-                WHERE thread_id = ${threadId}
+                WHERE ${threadColumn(filter?.turnItemNodeIds)} = ${threadId}
                   ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
@@ -3671,13 +3688,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ))
             ORDER BY ordinal ASC
           `,
-          fields !== undefined && !fields.includes("attempts")
+          (fields !== undefined && !fields.includes("attempts")) ||
+          (window === undefined && matchesNothing(filter?.attemptIds))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_run_attempts
-            WHERE thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.attemptIds)} = ${threadId}
+              ${filter?.attemptIds === undefined ? sql`` : sql`AND attempt_id IN (SELECT value FROM json_each(${encodeIdList(filter.attemptIds)}))`}
             ORDER BY run_id ASC, attempt_ordinal ASC
           `
               : sql<PayloadRow>`
@@ -3727,14 +3746,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ),
           (fields !== undefined && !fields.includes("subagents")) ||
           (window === undefined &&
-            (matchesNothing(filter?.subagentIds) || matchesNothing(filter?.subagentRunIds)))
+            matchesNothing(
+              filter?.subagentIds,
+              filter?.subagentRunIds,
+              filter?.subagentChildThreadIds,
+            ))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_subagents AS subagent
-            WHERE ${threadColumn(filter?.subagentIds)} = ${threadId}
+            WHERE ${threadColumn(filter?.subagentIds ?? filter?.subagentChildThreadIds)} = ${threadId}
               ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
+              ${filter?.subagentChildThreadIds === undefined ? sql`` : sql`AND child_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentChildThreadIds)}))`}
               ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
               ${
                 filter?.omitSettledSubagents !== undefined
@@ -3816,13 +3840,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `,
           (fields !== undefined && !fields.includes("providerTurns")) ||
           (window === undefined &&
-            matchesNothing(filter?.providerTurnAttemptIds, filter?.providerTurnThreadIds))
+            matchesNothing(
+              filter?.providerTurnIds,
+              filter?.providerTurnAttemptIds,
+              filter?.providerTurnThreadIds,
+            ))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.providerTurnIds)} = ${threadId}
+              ${filter?.providerTurnIds === undefined ? sql`` : sql`AND provider_turn_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnIds)}))`}
               ${filter?.providerTurnAttemptIds === undefined ? sql`` : sql`AND run_attempt_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnAttemptIds)}))`}
               ${filter?.providerTurnThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnThreadIds)}))`}
               ${
@@ -5354,6 +5383,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           effect.pipe(Effect.mapError(controlReadError(threadId))),
       );
 
+    const hasRunInterruptRequest: ProjectionStoreV2Shape["hasRunInterruptRequest"] = (
+      threadId,
+      runId,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            // The literal type lets SQLite use the partial stop-request index.
+            const rows = yield* sql<{ readonly found: number }>`
+          SELECT 1 AS found FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND run_id = ${runId} AND type = 'run_interrupt_request'
+          LIMIT 1`;
+            return rows.length > 0;
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const isNodeStored: ProjectionStoreV2Shape["isNodeStored"] = Effect.fn(
       "ProjectionStore.isNodeStored",
     )(
@@ -6009,6 +6056,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
         Effect.mapError(controlReadError(threadId)),
       );
+
+    const getRunProviderRecords: ProjectionStoreV2Shape["getRunProviderRecords"] = (
+      threadId,
+      runId,
+      nodeId,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const controls = yield* getThreadRecords(threadId, ["runs", "nodes"], {
+              runIds: [runId],
+              nodeIds: [nodeId],
+            });
+            const run = controls.runs[0];
+            const attemptIds = run?.activeAttemptId == null ? [] : [run.activeAttemptId];
+            const records = yield* getThreadRecords(
+              threadId,
+              ["providerThreads", "providerTurns", "attempts"],
+              {
+                providerThreadIds: run?.providerThreadId == null ? [] : [run.providerThreadId],
+                providerTurnAttemptIds: attemptIds,
+                attemptIds,
+              },
+            );
+            const attemptTurnId = records.attempts[0]?.providerTurnId;
+            if (records.providerTurns.length > 0 || attemptTurnId == null)
+              return { ...controls, ...records };
+            // A steered run's attempt can point at a provider turn that another attempt started.
+            const { providerTurns } = yield* getThreadRecords(threadId, ["providerTurns"], {
+              providerTurnIds: [attemptTurnId],
+            });
+            return { ...controls, ...records, providerTurns };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
 
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
@@ -7929,6 +8011,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
+      hasRunInterruptRequest: readOnReader(hasRunInterruptRequest),
+      getRunProviderRecords: readOnReader(getRunProviderRecords),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getSubagentCount: readOnReader(getSubagentCount),
