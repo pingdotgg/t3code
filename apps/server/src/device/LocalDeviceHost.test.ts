@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -41,6 +42,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
   previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
+  daemonStopOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -100,9 +102,9 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
         runs.push(input);
-        return input.args.includes("devices")
-          ? startup(stateDir)
-          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+        if (input.args.includes("devices")) return startup(stateDir);
+        if (input.args.includes("daemon")) return Effect.succeed(daemonStopOutput);
+        return Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
       },
     }),
     Effect.provideService(
@@ -335,6 +337,29 @@ describe("AgentDevice startup", () => {
         "--state-dir",
         stateDir,
       ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #35639 turning agent access off reported success while the daemon kept running
+  it.effect("reports an agent-device daemon that fails to stop", () =>
+    Effect.gen(function* () {
+      for (const failedStop of [
+        processOutput(1, "", "stop failed"),
+        processOutput(0, "", "", true),
+      ]) {
+        const { host } = yield* agentFixture(
+          () => Effect.die("A session that never readies agent tools must not start the daemon"),
+          processOutput(0),
+          {
+            httpPort: 12345,
+            token: "previous-token",
+            pid: process.pid,
+            version: AGENT_DEVICE_VERSION,
+          },
+          failedStop,
+        );
+        expect(Exit.isFailure(yield* Effect.exit(host.stopAgent))).toBe(true);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
