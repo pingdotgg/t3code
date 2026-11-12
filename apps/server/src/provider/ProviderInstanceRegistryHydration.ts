@@ -15,6 +15,7 @@ import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import type * as SqlClient from "effect/sql/SqlClient";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
@@ -47,7 +48,9 @@ type ProviderInstanceRegistryHydrationEnv =
   // Secret provider reads.
   | SecureRandom.SecureRandom
   // The Claude runner counts its CLIs as running agents for port discovery.
-  | PortScanner.PortDiscovery;
+  | PortScanner.PortDiscovery
+  // Adapter ids read which subagent threads predate short ids.
+  | SqlClient.SqlClient;
 
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,

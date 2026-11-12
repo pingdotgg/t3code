@@ -486,7 +486,7 @@ export const subscribeVcsBranch = (
                   includeRemote: false,
                 }).pipe(
                   Stream.filter((event) => event._tag !== "remoteUpdated"),
-                  Stream.map((event) => ({ refName: event.local.refName })),
+                  Stream.map(({ local }) => ({ refName: local.refName, isRepo: local.isRepo })),
                 ),
           ),
         ),
