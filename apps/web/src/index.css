@@ -242,7 +242,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    The block runs from the pane's edge to 16px past its children, with a
    concave 16px corner at its foot and the pane's convex 16px corner on its
    rising edge. Static paint only; below md the pane is full-bleed and there
-   is no notch. */
+   is no notch. Only light, black chrome and the modal pane draw it; elsewhere
+   the pane's tabs sit on a bar (the connected tabs, further down). */
 @media (width >= 48rem) {
   [data-app-modal-pane] {
     --workspace-topbar-height: var(--workspace-pane-header-height);
@@ -250,7 +251,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --pane-header-overlap: var(--pane-notch-height);
   }
 
-  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"],
+  .black-chrome [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"],
   [data-app-modal-pane] {
     /* The strip and both curves share the chrome's color and texture. */
     & [data-pane-notch]::before,
@@ -383,7 +384,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Over the channel art the notch shapes repaint the art, fixed to the
    viewport so they line up with ChromeChannelArt. The same curve masks apply. */
 @media (width >= 48rem) {
-  [data-chrome-art] [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
+  .black-chrome
+    [data-chrome-art]
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"] {
     & [data-pane-notch]::before,
     & [data-pane-notches-merged]::before,
     & [data-pane-notch]::after,
@@ -528,8 +532,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
         display: flex;
         top: calc(anchor(--pane-notch top) + var(--pane-notch-height));
-        right: calc(anchor(--pane-notch right) + 1rem);
       }
+    }
+
+    .black-chrome
+      [data-slot="sidebar"][data-variant="inset"]
+      ~ [data-slot="sidebar-inset"]
+      [data-layout-pane-id][data-pane-notched]
+      > [data-pane-cut="end-notch"] {
+      right: calc(anchor(--pane-notch right) + 1rem);
     }
   }
 }
@@ -6264,8 +6275,23 @@ body {
   }
 }
 
-/* The joined tab's shape (PaneTabs.tsx), drawn only by the connected pane tabs. */
-[data-pane-join] {
+/* ── Connected pane tabs ──
+   Each pane's top is a bar in the chrome's color; the focused pane's active
+   tab is a piece of the pane rising into it, joined by concave ears, with
+   one lit rim from its top round the ears and out along the pane's edge,
+   where it fades. An unfocused pane's active tab is a soft pill on the bar.
+   [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
+   slides to the active tab. Light, black chrome keeps the notch instead. */
+[data-slot="sidebar-inset"] {
+  /* Pane tokens resolved outside the chrome scope of the bar. */
+  --pane-join-fill: var(--background);
+  --pane-join-fg: var(--strong-foreground, var(--foreground));
+  --pane-join-muted: var(--muted-foreground);
+  --pane-join-rim: var(--raised-rim);
+}
+
+[data-pane-join],
+[data-pane-bar-corner] {
   display: none;
 }
 
@@ -6273,4 +6299,322 @@ body {
 [data-layout-tab-strip] {
   --pane-tab-idle-color: var(--muted-foreground);
   --pane-tab-active-color: var(--strong-foreground);
+}
+
+@media (width >= 48rem) {
+  :root:not(.black-chrome)
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"] {
+    --pane-join-ear: 10px;
+    --pane-join-radius: 10px;
+    /* The tabs and the bar's controls sit this much lower, centred in the joined tab. */
+    --pane-join-shift: 5px;
+    /* From the pane edge to the first tab: the pane's 14px corner, the ear, 2px. */
+    --pane-join-lead: calc(14px + var(--pane-join-ear) + 2px);
+    /* How far down the rim's gradient runs past the shape's height, so it
+       still lights the sides and the ears. */
+    --pane-join-rim-k: 1.6;
+    /* The rim's run along the pane's top edge, out from each ear. */
+    --pane-join-tail: 36px;
+    --workspace-chrome-controls-top: var(--pane-join-shift);
+
+    & [data-pane-header] {
+      padding-block: var(--pane-join-shift)
+        calc(var(--pane-notch-height) - var(--workspace-topbar-height) - var(--pane-join-shift));
+      /* From a tab's foot to the pane's top edge. */
+      --pane-join-drop: calc(
+        var(--pane-notch-height) - var(--pane-join-shift) -
+          (var(--workspace-topbar-height) + 1.75rem) / 2
+      );
+      /* Above a tab, up to 2px under the header's top. */
+      --pane-join-rise: calc(
+        var(--pane-join-shift) + (var(--workspace-topbar-height) - 1.75rem) / 2 - 2px
+      );
+      --pane-join-h: calc(var(--pane-join-rise) + 1.75rem + var(--pane-join-drop));
+      --pane-join-rim-size: 100% calc(var(--pane-join-h) * var(--pane-join-rim-k));
+    }
+
+    /* The bar: the leading row's block runs the pane's whole width. */
+    & [data-pane-notch=""] {
+      --pane-bar-fg: var(--foreground);
+      --pane-bar-muted: var(--muted-foreground);
+      padding-inline-start: var(--pane-join-lead);
+
+      &::before {
+        content: "";
+        position: absolute;
+        z-index: -1;
+        inset-block-start: calc(var(--pane-join-shift) * -1);
+        inset-inline: -100vw;
+        height: var(--pane-notch-height);
+        background-color: var(--app-chrome-background);
+        background-image: var(--surface-grain);
+        background-size: var(--surface-grain-size);
+        pointer-events: none;
+      }
+    }
+
+    /* The pane's two top corners at the bar's foot. */
+    & [data-pane-bar-corner] {
+      display: block;
+      position: absolute;
+      z-index: 1;
+      inset-block-start: var(--pane-notch-height);
+      width: 14px;
+      height: 14px;
+      background-color: var(--app-chrome-background);
+      background-image: var(--surface-grain);
+      background-size: var(--surface-grain-size);
+      pointer-events: none;
+    }
+    & [data-pane-bar-corner="start"] {
+      inset-inline-start: 0;
+      mask: radial-gradient(circle 14px at 100% 100%, transparent 13.5px, #000 14.5px);
+    }
+    & [data-pane-bar-corner="end"] {
+      inset-inline-end: 0;
+      mask: radial-gradient(circle 14px at 0 100%, transparent 13.5px, #000 14.5px);
+    }
+
+    /* Room for the joined tab's body, ears and edge rim inside the strip's
+       scroll clip. At the end the rim's tail runs on under the next control,
+       which overlaps it by as much, so the last tab stays where it was. */
+    & [data-pane-notch=""] [data-layout-tab-strip] {
+      isolation: isolate;
+      padding: var(--pane-join-rise) calc(var(--pane-join-ear) + var(--pane-join-tail))
+        calc(var(--pane-join-drop) + 1px) var(--pane-join-ear);
+      margin: calc(var(--pane-join-rise) * -1) calc(var(--pane-join-tail) * -1)
+        calc(var(--pane-join-drop) * -1 - 1px) calc(var(--pane-join-ear) * -1);
+      /* Its padding passes presses on to the controls it runs under. */
+      pointer-events: none;
+      scroll-padding-inline: var(--pane-join-ear);
+      --pane-tab-idle-color: var(--pane-bar-muted);
+      --pane-tab-active-color: var(--pane-join-fg);
+    }
+    & [data-pane-notch=""] [data-strip-layer] > * {
+      pointer-events: auto;
+    }
+
+    &
+      [data-pane-notch=""]
+      [data-layout-tab-strip]
+      :is(.surface-pane-tab:not([data-hidden-terminal-chip]), [data-active-tab="true"]) {
+      background: none;
+      box-shadow: none;
+      color: var(--pane-join-fg);
+      --contrast-strong-foreground: var(--pane-join-fg);
+      --strong-foreground: var(--pane-join-fg);
+      --muted-foreground: var(--pane-join-muted);
+      --foreground: var(--pane-join-fg);
+    }
+
+    /* An unfocused pane's tab sits on the bar, in the bar's colors. */
+    & [data-pane-notch-unfocused] [data-layout-tab-strip] {
+      --pane-tab-active-color: var(--pane-bar-fg);
+    }
+    &
+      [data-pane-notch-unfocused]
+      [data-layout-tab-strip]
+      :is(.surface-pane-tab:not([data-hidden-terminal-chip]), [data-active-tab="true"]) {
+      color: var(--pane-bar-fg);
+      --contrast-strong-foreground: var(--pane-bar-fg);
+      --strong-foreground: var(--pane-bar-fg);
+      --foreground: var(--pane-bar-fg);
+    }
+
+    /* The bar's own controls follow the tabs down. */
+    & [data-workspace-titlebar-controls] {
+      translate: 0 var(--pane-join-shift);
+    }
+
+    /* The pane's corner cuts sit at the bar's foot; the end one at the pane's
+       end, where the bar ends. It still paints only while the strip's edge
+       holds it; the bar's own corner rounds the pane at rest. */
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
+      top: calc(anchor(--pane-notch top) + var(--pane-notch-height) - var(--pane-join-shift));
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-notch"] {
+      right: 0;
+    }
+
+    & [data-pane-notch=""] [data-pane-join] {
+      display: block;
+      position: absolute;
+      z-index: -1;
+      inset-block-start: 0;
+      inset-inline-start: 0;
+      width: 0;
+      height: var(--pane-join-h);
+      pointer-events: none;
+      color: var(--pane-bar-fg);
+      --jx: 0px;
+      --jw: 0px;
+      --jm: 0;
+      --e: var(--pane-join-ear);
+      --r: var(--pane-join-radius);
+
+      &[hidden] {
+        display: none;
+      }
+
+      & i {
+        position: absolute;
+        inset-block-start: 0;
+        inset-inline-start: 0;
+        display: block;
+      }
+
+      & [data-jb] {
+        width: 0;
+        height: 100%;
+      }
+
+      /* A cap: corner, side and ear. The end cap is the start one mirrored. */
+      & [data-jc] {
+        width: calc(var(--e) + var(--r) + 1px);
+        height: 100%;
+        translate: calc(var(--jx) - var(--e)) 0;
+      }
+      & [data-jc="r"] {
+        translate: calc(var(--jx) + var(--jw) - var(--r) - 1px) 0;
+        scale: -1 1;
+      }
+
+      /* Body fill, 1px past the cap into the middle and 1px below the edge.
+         The overlap column skips the top row, where the middle's rim is. */
+      & [data-jf] {
+        inset-inline-start: var(--e);
+        width: calc(var(--r) + 1px);
+        height: calc(100% + 1px);
+        border-start-start-radius: var(--r);
+        background:
+          linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) 0 0 / calc(100% - 1px) 100%
+            no-repeat,
+          linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) 0 1px / 100% 100% no-repeat;
+      }
+
+      /* Corner ring and side line, inside the shape's outermost pixel. */
+      & [data-jr] {
+        width: 100%;
+        height: 100%;
+        background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
+        mask:
+          radial-gradient(
+              circle var(--r) at 100% 100%,
+              transparent calc(var(--r) - 1.25px),
+              #000 calc(var(--r) - 0.75px),
+              #000 calc(var(--r) - 0.25px),
+              transparent calc(var(--r) + 0.25px)
+            )
+            var(--e) 0 / var(--r) var(--r) no-repeat,
+          linear-gradient(#000, #000) var(--e) var(--r) / 1px calc(100% - var(--r) - var(--e))
+            no-repeat;
+      }
+
+      /* The ear: pane fill outside the circle, and the rim turning out along it. */
+      & [data-je],
+      & [data-jer] {
+        inset-block-start: calc(100% - var(--e));
+        width: calc(var(--e) + 1px);
+        height: calc(var(--e) + 1px);
+      }
+      & [data-je] {
+        background: radial-gradient(
+          circle var(--e) at 0 0,
+          transparent calc(var(--e) - 0.5px),
+          var(--pane-join-fill) calc(var(--e) + 0.5px)
+        );
+      }
+      & [data-jer] {
+        background: var(--pane-join-rim) 0 calc((var(--pane-join-h) - var(--e)) * -1) /
+          var(--pane-join-rim-size) no-repeat;
+        mask: radial-gradient(
+          circle var(--e) at 0 0,
+          transparent calc(var(--e) - 0.25px),
+          #000 calc(var(--e) + 0.25px),
+          #000 calc(var(--e) + 0.75px),
+          transparent calc(var(--e) + 1.25px)
+        );
+      }
+
+      /* Along the pane's top edge, out from the ear, fading. */
+      & [data-jt] {
+        inset-block-start: 100%;
+        inset-inline-start: calc(var(--pane-join-tail) * -1);
+        width: var(--pane-join-tail);
+        height: 1px;
+        background: var(--pane-join-rim) 0 calc(var(--pane-join-h) * -1) / var(--pane-join-rim-size)
+          no-repeat;
+        mask: linear-gradient(to right, transparent, #000);
+      }
+
+      & [data-jm] {
+        width: 1px;
+        height: calc(100% + 1px);
+        transform-origin: 0 0;
+        translate: calc(var(--jx) + var(--r)) 0;
+        scale: var(--jm) 1;
+        background: var(--pane-join-fill);
+      }
+      & [data-jm]::after {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto;
+        height: 1px;
+        background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
+      }
+
+      /* An unfocused pane's active tab: a soft pill on the bar. */
+      & [data-jp] {
+        inset-block-start: var(--pane-join-rise);
+        height: 1.75rem;
+        width: var(--jw);
+        translate: var(--jx) 0;
+        border-radius: var(--radius-control);
+        background: color-mix(in srgb, currentColor 10%, transparent);
+        opacity: 0;
+      }
+
+      /* Focus moving between panes cross-fades the joined tab and the pill. */
+      & :is([data-jb], [data-jp]) {
+        transition: opacity var(--panel-animation-duration, 150ms) ease-out;
+      }
+    }
+
+    & [data-pane-notch-unfocused] [data-pane-join] {
+      & [data-jb] {
+        opacity: 0;
+      }
+      & [data-jp] {
+        opacity: 1;
+      }
+    }
+
+    &
+      [data-pane-notch=""]
+      [data-layout-tab-strip]
+      :is(.surface-pane-tab, [data-active-tab="true"]) {
+      transition: color var(--panel-animation-duration, 150ms) ease-out;
+    }
+  }
+
+  :root:not(.black-chrome)
+    [data-chrome-art]
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"] {
+    & [data-pane-notch=""]::before,
+    & [data-pane-bar-corner] {
+      background: var(--chrome-art-paint);
+      background-attachment: fixed;
+      background-blend-mode: var(--chrome-art-blend, normal);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root:not(.black-chrome)
+      [data-pane-notch=""]
+      :is([data-pane-join] *, .surface-pane-tab, [data-active-tab]) {
+      transition: none;
+    }
+  }
 }
