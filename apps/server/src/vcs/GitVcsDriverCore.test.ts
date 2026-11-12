@@ -1937,9 +1937,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       yield* git(cwd, ["init"]);
       yield* git(cwd, ["config", "user.email", "test@test.com"]);
       yield* git(cwd, ["config", "user.name", "Test"]);
+      // Selected paths add up to more than Linux's default 2 MiB argument limit.
+      const dir = "d".repeat(200);
+      yield* fs.makeDirectory(path.join(cwd, dir));
       const files = Array.from(
         { length: 6_000 },
-        (_, index) => `file-${String(index).padStart(5, "0")}-${"x".repeat(160)}.txt`,
+        (_, index) => `${dir}/file-${String(index).padStart(5, "0")}-${"x".repeat(160)}.txt`,
       );
       yield* Effect.forEach(files, (file) => fs.writeFileString(path.join(cwd, file), "before\n"), {
         concurrency: 16,
@@ -1965,6 +1968,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       assert.isNotNull(context);
       assert.isAbove(context!.stagedSummary.length, 1_000_000);
       assert.lengthOf(context!.stagedSummary.split("\n"), files.length);
+      const selected = files.slice(1);
+      yield* driver.commit(cwd, "selected", "", { stage: { filePaths: selected } });
+      assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "selected");
+      assert.equal(yield* git(cwd, ["status", "--porcelain"]), `M ${files[0]}`);
     }),
   );
   describe("structured errors", () => {
@@ -1997,6 +2004,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");
         assert.notProperty(error, "reason");
+      }),
+    );
+
+    it.effect("fails with a GitCommandError when spawn throws", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        // Over the OS argument limit, Node's spawn throws E2BIG synchronously.
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.spawnThrow",
+            cwd,
+            args: ["status", "x".repeat(4 * 1024 * 1024)],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.spawnThrow",
+          detail: "Failed to spawn Git process.",
+        });
       }),
     );
 
