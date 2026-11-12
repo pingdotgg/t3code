@@ -1766,7 +1766,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
               makePullRequestSummary({
                 ...input,
                 state: "open",
-                updatedAt: new Date(Date.parse(NOW) - 2 * DAY_MS).toISOString(),
+                updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS)),
               }),
             ),
         });
