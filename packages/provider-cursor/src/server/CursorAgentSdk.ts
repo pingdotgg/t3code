@@ -496,26 +496,36 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               (error) =>
                 Effect.gen(function* () {
                   abandonedRunRecoveryAvailable = false;
-                  const latestRun = yield* Effect.tryPromise({
-                    try: () => Agent.listRuns(agent.agentId, { ...runOptions, limit: 1 }),
-                    catch: (cause) => runnerError(cause, "agent.listRuns"),
-                  });
-                  const activeRun = latestRun.items.find(
-                    (candidate) => candidate.status === "running",
-                  );
-                  if (activeRun === undefined) {
-                    return yield* error;
-                  }
-                  yield* log({
-                    direction: "outgoing",
-                    stage: "decoded",
-                    payload: { type: "run.cancel", runId: activeRun.id },
-                  });
-                  yield* Effect.tryPromise({
-                    try: () => Agent.cancelRun(activeRun.id, runOptions),
-                    catch: (cause) => runnerError(cause, "agent.cancelRun"),
-                  });
-                  return yield* startRun();
+                  let cursor: string | undefined;
+                  // Cursor lists local runs oldest first, so the abandoned run may be on a later page.
+                  do {
+                    const page = yield* Effect.tryPromise({
+                      try: () =>
+                        Agent.listRuns(agent.agentId, {
+                          ...runOptions,
+                          limit: 100,
+                          ...(cursor === undefined ? {} : { cursor }),
+                        }),
+                      catch: (cause) => runnerError(cause, "agent.listRuns"),
+                    });
+                    const activeRun = page.items.find(
+                      (candidate) => candidate.status === "running",
+                    );
+                    if (activeRun !== undefined) {
+                      yield* log({
+                        direction: "outgoing",
+                        stage: "decoded",
+                        payload: { type: "run.cancel", runId: activeRun.id },
+                      });
+                      yield* Effect.tryPromise({
+                        try: () => Agent.cancelRun(activeRun.id, runOptions),
+                        catch: (cause) => runnerError(cause, "agent.cancelRun"),
+                      });
+                      return yield* startRun();
+                    }
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
+                  return yield* error;
                 }),
             ),
           );
