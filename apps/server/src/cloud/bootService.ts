@@ -1509,13 +1509,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* runSteps(manager.deactivate);
     yield* withSelectionLock(
       unitPath,
-      fs.remove(unitPath).pipe(
-        Effect.andThen(
+      fs.readFileString(unitPath).pipe(
+        Effect.tap(() => fs.remove(unitPath)),
+        Effect.flatMap((unit) =>
           manager.kind === "launchd"
-            ? fs.remove(stableLauncherPaths(input.baseDir).directory, {
-                recursive: true,
-                force: true,
-              })
+            ? fs.remove(
+                stableLauncherPaths(bootServiceBaseDirOf(unit) ?? input.baseDir).directory,
+                { recursive: true, force: true },
+              )
             : Effect.void,
         ),
         Effect.mapError((cause) => new BootServiceInstallError({ cause })),
