@@ -6341,28 +6341,42 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("prepares selected files without staging and commits only those files", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+    it.effect.each(["root", "aliased-nested"] as const)(
+      "prepares selected files without staging and commits only those files from %s",
+      (location) =>
+        Effect.gen(function* () {
+          const sandbox = yield* makeTmpDir();
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const repository = path.join(sandbox, "repo");
+          const nested = path.join(repository, "sub", "dir");
+          yield* fileSystem.makeDirectory(nested, { recursive: true });
+          yield* initRepoWithCommit(repository);
+          const cwd = location === "aliased-nested" ? path.join(sandbox, "link") : repository;
+          if (location === "aliased-nested") NodeFS.symlinkSync(nested, cwd, "junction");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const selected = "sub/dir/a.txt";
+          yield* writeTextFile(repository, selected, "a\n");
+          yield* writeTextFile(repository, "b.txt", "b\n");
 
-        yield* writeTextFile(cwd, "a.txt", "a\n");
-        yield* writeTextFile(cwd, "b.txt", "b\n");
+          const context = yield* driver.prepareCommitContext(cwd, [selected]);
+          assert.include(context?.stagedSummary ?? "", "a.txt");
+          assert.notInclude(context?.stagedSummary ?? "", "b.txt");
+          assert.equal(yield* git(repository, ["diff", "--cached", "--name-only"]), "");
 
-        const context = yield* driver.prepareCommitContext(cwd, ["a.txt"]);
-        assert.include(context?.stagedSummary ?? "", "a.txt");
-        assert.notInclude(context?.stagedSummary ?? "", "b.txt");
-        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
-
-        const commit = yield* driver.commit(cwd, "Add a", "", { stage: { filePaths: ["a.txt"] } });
-        assert.match(commit.commitSha, /^[a-f0-9]{40}$/);
-        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Add a");
-
-        const status = yield* git(cwd, ["status", "--porcelain"]);
-        assert.include(status, "?? b.txt");
-        assert.notInclude(status, "a.txt");
-      }),
+          const commit = yield* driver.commit(cwd, "Add a", "", {
+            stage: { filePaths: [selected] },
+          });
+          assert.match(commit.commitSha, /^[a-f0-9]{40}$/);
+          assert.equal(yield* git(repository, ["log", "-1", "--pretty=%s"]), "Add a");
+          assert.equal(
+            yield* git(repository, ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]),
+            selected,
+          );
+          const status = yield* git(repository, ["status", "--porcelain"]);
+          assert.include(status, "?? b.txt");
+          assert.notInclude(status, "a.txt");
+        }),
     );
 
     it.effect("stops a selected-file commit when another process holds the index lock", () =>
