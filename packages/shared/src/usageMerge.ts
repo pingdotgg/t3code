@@ -188,23 +188,27 @@ function dayKey(bucket: UsageBucket): string {
 }
 
 /**
- * How well an environment can attribute a source: -1 when its server cannot
- * split usage by thread at all, otherwise the records it placed in its own T3
- * threads.
+ * What an environment's scan of a source holds: every record it counted, and
+ * how many it placed in its own T3 threads (-1 when its server cannot split
+ * usage by thread at all).
  */
-function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number {
+function scanCoverage(
+  summary: UsageSummary,
+  source: UsageSource,
+): { readonly records: number; readonly inThreads: number } {
   const threads = summary.threads;
-  if (threads === undefined) return -1;
   let records = 0;
+  let inThreads = threads === undefined ? -1 : 0;
   for (const bucket of bucketsForSource(summary, source)) {
-    if (bucket.thread !== undefined && threads[bucket.thread]?.threadId !== undefined) {
-      records += bucket.records;
+    records += bucket.records;
+    if (bucket.thread !== undefined && threads?.[bucket.thread]?.threadId !== undefined) {
+      inThreads += bucket.records;
     }
   }
-  return records;
+  return { records, inThreads };
 }
 
-/** Claim shared physical folders once; prefer complete, fresh scans.
+/** Claim shared physical folders once; prefer complete scans, then the best attributed one that drops nothing.
  * Claim whole summaries before narrowing buckets so slices retain the full merge's owners.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
@@ -248,15 +252,19 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       }
     }
     for (const [key, list] of candidates) {
+      // `list` is newest first. The scan that attributed most to T3 threads owns
+      // the folder, unless it counted fewer records than the newest scan: that
+      // one predates usage the newest saw, and owning the folder would drop it.
+      const newest = list[0];
+      const floor =
+        newest === undefined ? 0 : scanCoverage(newest.environment.summary, newest.source).records;
       for (const entry of list) {
-        entry.inThreads = recordsInT3Threads(entry.environment.summary, entry.source);
+        const coverage = scanCoverage(entry.environment.summary, entry.source);
+        entry.inThreads = coverage.records < floor ? -2 : coverage.inThreads;
       }
-      // Parsed timestamps in the same millisecond are equally fresh; attribution breaks only that tie.
-      const [owner, ...rest] = [...list].sort(
-        (a, b) =>
-          (Date.parse(b.environment.summary.readAt) || 0) -
-            (Date.parse(a.environment.summary.readAt) || 0) || b.inThreads - a.inThreads,
-      );
+      // A stable sort keeps the read-time order among equals. A copy, not
+      // `toSorted`: this also runs on Hermes.
+      const [owner, ...rest] = [...list].sort((a, b) => b.inThreads - a.inThreads);
       if (owner === undefined) continue;
       ownerByFingerprint.set(key, owner.environment.environmentId);
       ownerScanByFingerprint.set(key, owner);

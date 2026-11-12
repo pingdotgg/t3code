@@ -318,13 +318,18 @@ describe("mergeUsage", () => {
       ],
       projects: [],
     });
-    // At the same read time, prefer the scan with stronger T3 attribution.
+    // Read later, but it only sees the session from outside, or (an older
+    // server) cannot split by thread at all.
     const outside = environment("outside", {
       ...summary([bucket({ thread: 0 })], [source]),
+      readAt: "2026-08-07T00:01:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
-    const older = environment("older", summary([bucket()], [source], USAGE_MERGE_COMPATIBLE_SINCE));
+    const older = environment("older", {
+      ...summary([bucket()], [source], USAGE_MERGE_COMPATIBLE_SINCE),
+      readAt: "2026-08-07T00:02:00.000Z",
+    });
 
     for (const ordered of [
       [ran, outside, older],
@@ -336,26 +341,26 @@ describe("mergeUsage", () => {
     }
   });
 
-  it("uses the newest complete scan even when it has less T3 attribution", () => {
+  it("keeps one complete scan per directory, even when a newer one differs", () => {
+    // Aliases or a later read can make the same records look like other cells.
     const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
-    const older = environment("older", {
+    const ran = environment("ran", {
       ...summary([bucket({ thread: 0 })], [source]),
       threads: [{ key: "t3:ship", threadId: ThreadId.make("ship"), located: true }],
       projects: [],
     });
-    const newer = environment("newer", {
-      ...summary([bucket({ thread: 0, costUsd: 15, records: 6 })], [source]),
+    const later = environment("later", {
+      ...summary([bucket({ thread: 0, model: "fable-alias", costUsd: 15 })], [source]),
       readAt: "2026-08-07T00:05:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
-    const merged = mergeUsage([newer, older], USAGE_CONTRACT_VERSION);
-    expect(merged.costUsd).toBe(15);
-    expect(merged.records).toBe(6);
-    expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["newer"]);
+    const merged = mergeUsage([later, ran], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["ran"]);
   });
 
-  it("does not let a scan kept from a failed refresh hold a directory", () => {
+  it("does not let a better attributed scan drop records a newer scan counted", () => {
     const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
     const stale = environment("stale", {
       ...summary([bucket({ thread: 0 })], [source]),
@@ -363,13 +368,14 @@ describe("mergeUsage", () => {
       projects: [],
     });
     const fresh = environment("fresh", {
-      ...summary([bucket({ thread: 0, costUsd: 50 })], [source]),
-      readAt: "2026-08-07T03:00:00.000Z",
+      ...summary([bucket({ thread: 0, costUsd: 50, records: 6 })], [source]),
+      readAt: "2026-08-07T00:05:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
     const merged = mergeUsage([stale, fresh], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(50);
+    expect(merged.records).toBe(6);
     expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["fresh"]);
   });
 
@@ -390,6 +396,7 @@ describe("mergeUsage", () => {
         [bucket({ records: 9 }), bucket({ model: "y", thread: 0, costUsd: 1, records: 1 })],
         [source],
       ),
+      readAt: "2026-08-07T00:01:00.000Z",
       threads,
       projects: [],
     });

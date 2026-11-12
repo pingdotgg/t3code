@@ -76,8 +76,8 @@ saved totals first, then updates them when Cursor's API responds. When an enviro
 Usage shows its last report for the selected window when this browser saved that exact window,
 marked with the time it was read. Otherwise that environment shows no saved usage until it
 reconnects. Environments on one machine that read
-the same history folder count its newest completed scan once. When scans were read at the same time,
-the environment that attributed more of the work to T3 threads is used.
+the same history folder count it once, from the environment that attributed more of the work to T3
+threads. A scan that counted fewer records than a newer one is never used.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
