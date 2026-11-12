@@ -1408,6 +1408,8 @@ export function useComposerSend(input: ComposerSendInput) {
                 ? "Message may not have been sent"
                 : "Message not sent",
               description: "Your new draft was kept. Copy the failed message to send it again.",
+              // The toast holds the only copy of the failed text, so it stays until dismissed.
+              timeout: 0,
               data: { hideCopyButton: true },
               actionProps: {
                 children: "Copy message",
