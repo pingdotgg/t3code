@@ -106,10 +106,29 @@ export const threadTitleEvaluationCases = [
     ],
     rubric: "Keep title generation as the subject. Do not focus on filing the PR.",
   },
+  {
+    id: "project-name",
+    source: "https://github.com/pingdotgg/t3code/pull/33418",
+    request: "Make hyperdrive init create a default config instead of crashing.",
+    projectTitle: "Hyperdrive",
+    previousTitle: "Hyperdrive Init Missing Config Crash",
+    messages: [
+      {
+        role: "user",
+        text: "hyperdrive init crashes when ~/.hyperdrive/config.toml is missing. Make hyperdrive create a default config instead of throwing.",
+      },
+      {
+        role: "assistant",
+        text: "Hyperdrive's loadConfig now writes a default config.toml when the file is absent.",
+      },
+    ],
+    rubric: "Name the default config on init. Leave out Hyperdrive, the project name.",
+  },
 ] satisfies ReadonlyArray<{
   id: string;
   source: string;
   request: string;
+  projectTitle?: string;
   previousTitle: string;
   messages: ReadonlyArray<ThreadTitleMessage>;
   rubric: string;

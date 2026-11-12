@@ -130,6 +130,7 @@ describe("new thread model fallback", () => {
     ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
     ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
     ["antigravity", ["gemini-weekly"], "antigravity-default", true],
+    ["codex", ["individual"], "gpt-5.5", true],
     ["opencode", ["go_weekly"], "opencode/big-pickle", false],
     ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
   ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
@@ -342,6 +343,45 @@ describe("pools", () => {
       },
     });
     expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
+  it("merges a local Antigravity login with its hub account by Google account fingerprint", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const local = provider({
+      driver: antigravity,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      auth: { status: "authenticated" },
+      usageLimits: {
+        checkedAt,
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 20 }],
+      },
+    });
+    const hubAccount = {
+      id: "antigravity-g@example.com.json",
+      driver: antigravity,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 30 }],
+      },
+    };
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [local],
+              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
@@ -1499,6 +1539,23 @@ describe("external usage settings", () => {
     ]);
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
+  });
+
+  it("shows a notice once when environments with one label report the same failure", () => {
+    const failing = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    const host = { entry: { target: { label: "Host" } }, serverConfig: { providers: [failing] } };
+    const presentations = new Map([
+      [EnvironmentId.make("a"), host],
+      [EnvironmentId.make("b"), host],
+      [EnvironmentId.make("c"), host],
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual(["Host · codex: Could not read limits."]);
   });
 });
 

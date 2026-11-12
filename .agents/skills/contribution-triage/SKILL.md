@@ -111,6 +111,8 @@ trusted policy and reassess changed submission evidence; neither example grants 
 
 Do not automatically close a PR if a maintainer in the trusted `TRIAGE_EXEMPTIONS.td` list has
 commented or submitted a review, including on earlier heads, or if `triage:keep-open` is present.
+Comments that triage itself posted, such as an earlier notice or question, are not maintainer
+involvement, even when they were posted from a maintainer's account on that maintainer's behalf.
 Leave protected PRs open for maintainer decision. This does not grant an author exemption,
 eligibility, or review approval.
 
@@ -126,7 +128,17 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   This is a routing exception, not a claim that the PR passed eligibility or correctness review.
 - **Closure warranted.** The assessment is complete and establishes a specific policy violation.
   Prepare a clear explanation under [closure and reconsideration](../../../CONTRIBUTING.md#closure-and-reconsideration),
-  post it, and close the PR. Verify that the explanation is present and the PR is closed. The comment
+  post it, then read the repository variable `PR_LIMITS_ENFORCE`
+  (`gh variable get PR_LIMITS_ENFORCE -R pingdotgg/t3code`). When it prints `true`, apply
+  `triage:closing` as the last thing you do to the PR, verify that the explanation and the label
+  are present, and do not close the PR yourself:
+  [pr-limits.yml](../../../.github/workflows/pr-limits.yml) closes it 72 hours after the label. Any
+  activity on the PR after the label, including a further comment or label from you, removes the
+  label; treat an author's reply or push as new evidence, reassess, and apply the label again only
+  if the finding still holds. When the command prints any other value, or fails saying the variable
+  was not found, the variable is off and nothing would close a labeled PR: close it yourself and
+  verify that the explanation is present and the PR is closed. Only another failure, such as a
+  permission error, means the variable cannot be read; then report the closure as incomplete. The comment
   must name the violated rule, cite supporting submission evidence, link the maintained guide section,
   and give a concrete remedy. Missing contributor evidence can warrant closure; explain what must be
   established. Missing product approval calls for maintainer discussion, not an agent's product decision.
@@ -173,9 +185,10 @@ description, evidence, approvals, existing triage comments, PR open/closed state
 label when relevant. Reassess changes that could invalidate the finding. Reuse an existing explanation
 only if it still matches the current finding; avoid duplicate comments, closures, or label applications.
 
-For closure, establish that the required explanation is posted before closing. If posting fails or its
-result is ambiguous, read back the comments before retrying or proceeding. If the comment succeeds but
-closure fails, preserve the comment and retry only the unfinished closure after checking current state.
+For closure, establish that the required explanation is posted before applying `triage:closing` or
+closing. If posting fails or its result is ambiguous, read back the comments before retrying or
+proceeding. If the comment succeeds but the label or the closure fails, preserve the comment and retry
+only that unfinished step after checking current state.
 Handle a failed or ambiguous label application the same way: inspect labels before any retry. If access
 or state still cannot be verified, report an incomplete action and the step needed to resume. Do not
 retry blindly or claim success for an unverified action.
