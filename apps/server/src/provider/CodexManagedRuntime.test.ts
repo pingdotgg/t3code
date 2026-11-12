@@ -29,13 +29,17 @@ const decodeSettings = Schema.decodeSync(CodexSettings);
 const decodeCommand = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Array(Schema.String)])),
 );
-it.live.each(
-  (["managed", "local"] as const).flatMap((source) =>
-    (["primary", "additional"] as const).map((account) => ({ source, account })),
+it.live.each([
+  ...(["managed", "local"] as const).flatMap((source) =>
+    (["primary", "additional"] as const).map((account) => ({ source, account, host: "Node" })),
   ),
-)(
-  "$source Codex $account account shares home state without routing owned tokens through ambient CLI overrides",
-  ({ source, account }) =>
+  // The desktop runs the server on its Electron binary as Node; Codex's env has that mode removed.
+  ...(HostProcess.Platform.defaultValue() === "win32"
+    ? []
+    : [{ source: "managed", account: "primary", host: "Electron" } as const]),
+] as const)(
+  "$source Codex $account account on $host shares home state without routing owned tokens through ambient CLI overrides",
+  ({ source, account, host }) =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make(
         account === "primary" ? "codex" : "codex-personal",
@@ -43,6 +47,25 @@ it.live.each(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "codex-shared-home-" });
+      // Stands in for Electron: Node only when ELECTRON_RUN_AS_NODE is set, otherwise an app launch.
+      const electronPath = path.join(sharedHome, "fake-electron");
+      yield* fs.writeFileString(
+        electronPath,
+        `#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] || { echo "started as an Electron app" >&2; exit 9; }\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+      );
+      yield* fs.chmod(electronPath, 0o755);
+      // Pinned, so a test run from inside the desktop app still covers a plain Node server.
+      const { ELECTRON_RUN_AS_NODE: _hostMode, ...nodeEnvironment } = process.env;
+      const electronHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        host === "Node"
+          ? effect.pipe(Effect.provideService(HostProcess.Environment, nodeEnvironment))
+          : effect.pipe(
+              Effect.provideService(HostProcess.ExecutablePath, electronPath),
+              Effect.provideService(HostProcess.Environment, {
+                ...nodeEnvironment,
+                ELECTRON_RUN_AS_NODE: "1",
+              }),
+            );
       yield* fs.writeFileString(path.join(sharedHome, "auth.json"), "native-auth-unchanged");
       yield* fs.writeFileString(path.join(sharedHome, "config.toml"), "# shared config\n");
       const data = new Map<string, Uint8Array>();
@@ -111,7 +134,7 @@ it.live.each(
           enabled: true,
           config: decodeSettings({ setupMode: "managed", homePath: sharedHome }),
           environment: ambient,
-        });
+        }).pipe(electronHost);
         yield* Effect.gen(function* () {
           const effective = yield* runtime.resolve;
           assert.strictEqual(leases, 1);
@@ -179,6 +202,12 @@ it.live.each(
               stderr: "",
               code: 0,
             });
+            if (host === "Electron") {
+              // The launcher is replaced in place; nothing else accumulates beside it.
+              assert.deepEqual(yield* fs.readDirectory(path.dirname(command)), [
+                path.basename(command),
+              ]);
+            }
             const saved = Option.getOrThrow(yield* runtime.auth.read);
             const expired = yield* encodeJson({ ...saved, expiresAt: 0 });
             yield* store.set(new TextEncoder().encode(expired));
