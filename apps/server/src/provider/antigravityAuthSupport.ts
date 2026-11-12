@@ -187,22 +187,24 @@ class GoogleMetadataFetchError extends Schema.TaggedError<GoogleMetadataFetchErr
 
 // The Go client's metadata server check. Like Go's transport it never uses a proxy, which cannot
 // reach this host's link-local address. Unreachable link-local addresses can hang, so bound it.
-export const probeGoogleMetadataServer = (host = "169.254.169.254") =>
-  Effect.acquireUseRelease(
-    Effect.try({
-      try: makeDirectFetch,
-      catch: (cause) => new GoogleMetadataFetchError({ cause }),
-    }),
-    (direct) =>
-      HttpClient.get(`http://${host}`).pipe(
-        Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
-        Effect.provideService(FetchHttpClient.Fetch, direct.fetch),
-      ),
-    (direct) => Effect.promise(direct.close),
-  ).pipe(
-    Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
-    Effect.orElseSucceed(() => false),
-  );
+export const probeGoogleMetadataServer = Effect.fn("probeGoogleMetadataServer")(
+  (host = "169.254.169.254") =>
+    Effect.acquireUseRelease(
+      Effect.try({
+        try: makeDirectFetch,
+        catch: (cause) => new GoogleMetadataFetchError({ cause }),
+      }),
+      (direct) =>
+        HttpClient.get(`http://${host}`).pipe(
+          Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
+          Effect.provideService(FetchHttpClient.Fetch, direct.fetch),
+        ),
+      (direct) => Effect.promise(direct.close),
+    ).pipe(
+      Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
+      Effect.orElseSucceed(() => false),
+    ),
+);
 
 /**
  * `auth.type` names the selected method so a native logout clears only that method's credentials
