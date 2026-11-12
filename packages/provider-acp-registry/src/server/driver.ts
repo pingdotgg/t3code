@@ -825,6 +825,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      invalidateCaches: (Option.isSome(runtimeCoordinator)
+        ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
+        : Effect.void
+      ).pipe(Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache))),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
       acpSessionManagement: {

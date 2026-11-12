@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { unified } from "unified";
+import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -8,6 +8,8 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  remarkAssistantInsights,
+  remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
 
 it.each([
@@ -116,6 +118,114 @@ it.each([
       ],
     });
   }
+});
+
+const insightRule = "─".repeat(20);
+const insightFence = (body: string, wrap = "") =>
+  [`${wrap}★ Insight ${insightRule}${wrap}`, body, `${wrap}${insightRule}${wrap}`].join("\n");
+
+it.each(["", "`"])("groups %j insight fences while preserving surrounding markdown", (wrap) => {
+  const markdown = [
+    "Before **bold** and [reference][src].",
+    "",
+    insightFence("- Also [reference][src].", wrap),
+    "",
+    "After.",
+    "",
+    '[src]:\n  https://example.com\n  "Source"',
+  ].join("\n");
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkAssistantInsights)
+    .use(remarkRehype)
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(processor.parse(markdown), markdown);
+  expect(
+    tree.children.filter((node) => node.type === "element").map((node) => node.tagName),
+  ).toEqual(["p", "blockquote", "p"]);
+  expect(
+    tree.children.find((node) => node.type === "element" && node.tagName === "blockquote"),
+  ).toMatchObject({ properties: { dataAlert: "insight" } });
+  expect(JSON.stringify(tree).match(/"href":"https:\/\/example.com"/g)).toHaveLength(2);
+  expect(JSON.stringify(tree)).toContain('"tagName":"strong"');
+  expect(JSON.stringify(tree)).not.toContain(insightRule);
+});
+
+it.each([
+  ["```text", "★ Insight " + insightRule, "literal", insightRule, "```"].join("\n"),
+  ["- ```text", "  ★ Insight " + insightRule, "  literal", "  " + insightRule, "  ```"].join("\n"),
+  ["    ★ Insight " + insightRule, "    literal", "    " + insightRule].join("\n"),
+  ["Paragraph.", "    ★ Insight " + insightRule, "    literal", "    " + insightRule].join("\n"),
+  ["`example", "★ Insight " + insightRule, "literal", insightRule, "`"].join("\n"),
+  insightFence("quoted")
+    .split("\n")
+    .map((line) => "> " + line)
+    .join("\n"),
+])("leaves literal and nested insight examples unchanged: %s", (markdown) => {
+  const processor = unified().use(remarkParse).use(remarkAssistantInsights);
+  const tree = processor.parse(markdown);
+  expect(processor.runSync(structuredClone(tree), markdown)).toEqual(tree);
+});
+
+it("groups streaming bodies and several insights without losing code or headings", () => {
+  const markdown = [
+    "## Setup",
+    "",
+    insightFence("```text\n" + insightRule + "\n```"),
+    "",
+    "## Setup",
+    "",
+    "★ Insight " + insightRule,
+    "Still **streaming**",
+  ].join("\n");
+  const processor = unified().use(remarkParse).use(remarkAssistantInsights);
+  const tree = processor.parse(markdown);
+  processor.runSync(tree, markdown);
+  expect(tree.children.map((node) => node.type)).toEqual([
+    "heading",
+    "blockquote",
+    "heading",
+    "blockquote",
+  ]);
+  expect(tree.children[1]).toMatchObject({ children: [{ type: "code", value: insightRule }] });
+  expect(tree.children[3]).toMatchObject({
+    children: [
+      { type: "paragraph", children: [{ type: "text", value: "Still " }, { type: "strong" }] },
+    ],
+  });
+});
+
+it("keeps reference definitions out of unfinished streaming code", () => {
+  const markdown = `[src]: https://example.com\n\n★ Insight ${insightRule}\n\`\`\`ts\nconst value = 1`;
+  const processor = unified().use(remarkParse).use(remarkAssistantInsights);
+  const tree = processor.parse(markdown);
+  processor.runSync(tree, markdown);
+  expect(tree.children.find((node) => node.type === "blockquote")).toMatchObject({
+    children: [{ type: "code", value: "const value = 1" }],
+  });
+});
+
+it("preserves footnotes and original code positions across a callout", () => {
+  const code = "```sh\necho hello\n```";
+  const markdown = ["Before[^n].", "", insightFence(code), "", "[^n]: Footnote."].join("\n");
+  const processor = unified()
+    .use(remarkParse)
+    .use(remarkAssistantInsights)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const tree = processor.parse(markdown);
+  processor.runSync(tree, markdown);
+  expect(tree.children[0]).toMatchObject({
+    children: [
+      { type: "text", value: "Before" },
+      { type: "footnoteReference", identifier: "n" },
+      { type: "text", value: "." },
+    ],
+  });
+  expect(tree.children.at(-1)).toMatchObject({ type: "footnoteDefinition", identifier: "n" });
+  const note = tree.children.find((node) => node.type === "blockquote");
+  const block = note?.children[0];
+  expect(markdown.slice(block?.position?.start.offset, block?.position?.end.offset)).toBe(code);
 });
 
 it("preserves in-app thread links through the shared Markdown sanitizer", () => {
@@ -309,6 +419,47 @@ it("keeps an image on its own line under a label but leaves inline images inline
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
 });
 
+it("keeps the number written on each ordered list item only when enabled", () => {
+  type Node = { tagName?: string; properties?: { value?: unknown }; children?: Node[] };
+  const values = (node: Node): unknown[] => [
+    ...(node.tagName === "li" ? [node.properties?.value] : []),
+    ...(node.children ?? []).flatMap(values),
+  ];
+  const renderer = (plugins: PluggableList) => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(plugins)
+      .use(remarkRehype, { allowDangerousHtml: true });
+    return (markdown: string) =>
+      values(processor.runSync(processor.parse(markdown), markdown) as Node);
+  };
+  const render = renderer([
+    ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+    remarkEnableOrderedListNumbers,
+  ]);
+
+  expect(render("3. first\n5. second\n6. third")).toEqual([undefined, "5", undefined]);
+  expect(render("1. one\n1. one again")).toEqual([undefined, "1"]);
+  expect(render("> 1. quoted\n> 4. skipped")).toEqual([undefined, "4"]);
+  expect(render("1. outer\n   1. nested\n   7. jump\n9. back")).toEqual([
+    undefined,
+    undefined,
+    "7",
+    "9",
+  ]);
+  expect(render("1. one\n2. two\n- bullet")).toEqual([undefined, undefined, undefined]);
+  expect(render("-       first block\n\n        3. first\n        5. second")).toEqual([
+    undefined,
+    undefined,
+    "5",
+  ]);
+  expect(
+    renderer(CHAT_MARKDOWN_REMARK_PLUGINS)(
+      "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
+    ),
+  ).toEqual([undefined, undefined, undefined, undefined, undefined]);
+});
+
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
   const processor = unified()
     .use(remarkParse)
@@ -345,4 +496,42 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
     { src: "docs/dark.webp" },
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
   ]);
+});
+
+it("links complete absolute paths in prose and skips shortened ones", () => {
+  const path =
+    "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const links = (markdown: string) => {
+    const urls: string[] = [];
+    const visit = (node: Root | RootContent) => {
+      if (node.type === "link") urls.push(node.url);
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(processor.runSync(processor.parse(markdown), markdown) as Root);
+    return urls;
+  };
+  expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
+  expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
+  expect(links("See /tmp/report(1).txt. and /tmp/app/[id]/page.tsx.")).toEqual([
+    "/tmp/report(1).txt",
+    "/tmp/app/[id]/page.tsx",
+  ]);
+  expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
+  expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
+    "/tmp/x.md:3",
+  ]);
+  expect(
+    links(
+      '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
+    ),
+  ).toEqual([]);
+  expect(
+    links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
+  ).toEqual([]);
+  expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
+    `https://example.com${path}`,
+  ]);
+  expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
+  expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
 });
