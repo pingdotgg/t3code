@@ -256,6 +256,11 @@ function redactProviderFailureText(value: string): string {
     .trim();
 }
 
+/** The message `makeProviderFailure` shows for `message`, before the length cap. */
+export function uncappedProviderFailureMessage(message: string): string {
+  return redactProviderFailureText(message) || DEFAULT_PROVIDER_FAILURE_MESSAGE;
+}
+
 function boundedText(value: string, maxLength: number): string {
   const redacted = redactProviderFailureText(value);
   if (redacted.length <= maxLength) return redacted;

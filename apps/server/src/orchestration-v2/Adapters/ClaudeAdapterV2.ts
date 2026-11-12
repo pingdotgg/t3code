@@ -225,6 +225,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
+  uncappedProviderFailureMessage,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -4178,6 +4179,13 @@ const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(fun
   return yield* Effect.raceFirst(Deferred.await(answers), cancellation);
 });
 
+/** True when a failure built from `source` shows `frameText` whole: the same text, raw or as the failure normalizes it before the cap. */
+function failureRepeatsFrame(source: string | undefined, frameText: string): boolean {
+  if (source === undefined) return false;
+  const frame = frameText.trim();
+  return source.trim() === frame || uncappedProviderFailureMessage(source) === frame;
+}
+
 /** Exclude CLI-internal "[ede_diagnostic] ..." telemetry from error banners. */
 function resultUserFacingError(result: SDKResultMessage): string | undefined {
   const errors = "errors" in result && Array.isArray(result.errors) ? result.errors : [];
@@ -4421,7 +4429,7 @@ function providerFailureFromResult(
   receivedAt: DateTime.Utc,
   failureHint?: string,
   usageLimited = false,
-): OrchestrationV2ProviderFailure | null {
+): { readonly failure: OrchestrationV2ProviderFailure; readonly source: string } | null {
   const gatewayResetAt =
     failureHint === undefined &&
     message.subtype === "success" &&
@@ -4436,13 +4444,15 @@ function providerFailureFromResult(
         )
       : undefined;
   if (gatewayResetAt !== undefined) {
-    return makeProviderFailure({
+    const source = "Claude API rate limit reached. Try again later.";
+    const failure = makeProviderFailure({
       class: "usage_limit",
-      message: "Claude API rate limit reached. Try again later.",
+      message: source,
       code: "api_error_429",
       retryable: true,
       resetAt: gatewayResetAt,
     });
+    return { failure, source };
   }
   const failureClass =
     (message.subtype === "success" && message.api_error_status === 429) || usageLimited
@@ -4461,11 +4471,13 @@ function providerFailureFromResult(
       ? "Claude API rate limit reached. Try again later."
       : terminalResultError(message.terminal_reason, failureHint ?? apiErrorMessage);
   if (message.subtype !== "success") {
-    return makeProviderFailure({
-      message: listedError ?? structuredError ?? message.errors.join("\n"),
+    const source = listedError ?? structuredError ?? message.errors.join("\n");
+    const failure = makeProviderFailure({
+      message: source,
       code: message.subtype,
       class: failureClass,
     });
+    return { failure, source };
   }
   if (!message.is_error && structuredError === undefined) {
     return null;
@@ -4479,8 +4491,9 @@ function providerFailureFromResult(
           receivedAt,
         )
       : undefined;
-  return makeProviderFailure({
-    message: listedError ?? structuredError ?? failureHint ?? message.result,
+  const source = listedError ?? structuredError ?? failureHint ?? message.result;
+  const failure = makeProviderFailure({
+    message: source,
     code:
       apiErrorStatus === null
         ? (message.terminal_reason ?? "sdk_result_error")
@@ -4489,6 +4502,14 @@ function providerFailureFromResult(
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
     resetAt: resetAt ?? null,
   });
+  // The 500-character API error excerpt supplies the message only when nothing ranked above it does.
+  const fromExcerpt =
+    listedError === undefined &&
+    failureHint === undefined &&
+    apiErrorMessage !== undefined &&
+    apiErrorStatus !== 429 &&
+    apiErrorStatus !== 529;
+  return { failure, source: fromExcerpt ? message.result : source };
 }
 
 function providerFailureFromApiRetry(message: SDKAPIRetryMessage): OrchestrationV2ProviderFailure {
@@ -8605,6 +8626,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >;
           readonly completedAt: DateTime.Utc;
           readonly failure?: OrchestrationV2ProviderFailure;
+          readonly failureSource?: string;
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
@@ -8697,8 +8719,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             apiErrorFrame !== null &&
             (input.status !== "failed" ||
-              input.failure?.message !==
-                makeProviderFailure({ message: apiErrorFrame.text }).message.slice(0, 500).trim())
+              !failureRepeatsFrame(input.failureSource, apiErrorFrame.text))
           ) {
             yield* emitAssistantTextArtifacts({ context: input.context, ...apiErrorFrame });
           }
@@ -10986,7 +11007,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (assistantText !== null && assistantText.text.length > 0) {
             const heldApiError = context.assistant.apiErrorFrame;
             context.assistant.apiErrorFrame = null;
-            if (heldApiError !== null) {
+            // A repeated snapshot of the held frame is that frame again, not later text.
+            if (heldApiError !== null && heldApiError.nativeItemId !== assistantText.nativeItemId) {
               yield* emitAssistantTextArtifacts({ context, ...heldApiError });
             }
             if (message.type === "assistant" && message.error !== undefined) {
@@ -11172,20 +11194,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
                 : null;
-            const resultFailure = interrupted
+            const compactionMessage = limitedCompaction?.message ?? failureHint;
+            const builtFailure = interrupted
               ? null
               : limitedCompaction !== null
-                ? makeProviderFailure({
-                    class: "usage_limit",
-                    message: limitedCompaction.message ?? failureHint,
-                    code: "compaction_failed",
-                  })
+                ? {
+                    failure: makeProviderFailure({
+                      class: "usage_limit",
+                      message: compactionMessage,
+                      code: "compaction_failed",
+                    }),
+                    source: compactionMessage,
+                  }
                 : providerFailureFromResult(
                     message,
                     bufferedResultArrivals.get(message) ?? completedAt,
                     failureHint,
                     usageLimited,
                   );
+            const resultFailure = builtFailure?.failure ?? null;
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
@@ -11200,6 +11227,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
+              ...(builtFailure?.source === undefined ? {} : { failureSource: builtFailure.source }),
             });
           }
         });

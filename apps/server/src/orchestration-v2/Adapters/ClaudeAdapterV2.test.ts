@@ -96,6 +96,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { claudeSignedOutMessage } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -7649,6 +7650,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const longConfigDir = `/claude/${"config/".repeat(600)}`;
   // regression: #24171
   it.effect.each([
     {
@@ -7662,6 +7664,175 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       text: `API Error: ${"safeguard detail ".repeat(40)}`.trim(),
       apiErrorStatus: 400,
       shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when a long 403 failure repeats it",
+      text: `API Error: 403 ${"access detail ".repeat(40)}`.trim(),
+      apiErrorStatus: 403,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when only the truncated failure matches it",
+      text: `API Error: ${"safeguard detail ".repeat(40)}first ending`,
+      result: `API Error: ${"safeguard detail ".repeat(40)}second ending`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps a 500-character API error frame when the longer result goes on",
+      text: `API Error: ${"boundary detail ".repeat(31)}`.slice(0, 500),
+      result: `${`API Error: ${"boundary detail ".repeat(31)}`.slice(0, 500)} and more`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "drops the CLI's API error frame when the result adds a trailing newline",
+      text: "API Error: rejected",
+      result: "API Error: rejected\n",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when the result has a control character",
+      text: "API Error: rejected detail",
+      result: "API Error: rejected\u0000detail",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when a listed error has a control character",
+      text: "API Error: rejected detail",
+      errors: ["API Error: rejected\u0007detail"],
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when a full-length listed error has a control character",
+      text: `API Error: ${"x".repeat(4096 - "API Error: ".length)}`,
+      errors: [`API Error:\u0000${"x".repeat(4096 - "API Error: ".length)}`],
+      failure: `API Error: ${"x".repeat(4096 - "API Error: ".length)}`,
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when it equals only a capped listed error",
+      text: `API Error: ${"x".repeat(4094 - "API Error: ".length)}…`,
+      failure: `API Error: ${"x".repeat(4094 - "API Error: ".length)}…`,
+      errors: [`API Error: ${"x".repeat(4094 - "API Error: ".length)}\u{1F600}tail`],
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "drops the CLI's API error frame when a listed error repeats it under a longer result",
+      text: `API Error: ${"x".repeat(489)}`,
+      result: `API Error: ${"x".repeat(489)} hidden tail`,
+      errors: [`API Error: ${"x".repeat(489)}`],
+      failure: `API Error: ${"x".repeat(489)}`,
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when a listed error shows only its first 500 characters",
+      text: `API Error: ${"x".repeat(489)} hidden tail`,
+      errors: [`API Error: ${"x".repeat(489)}`],
+      failure: `API Error: ${"x".repeat(489)}`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when the result has a different secret",
+      text: "API Error: Bearer frame-value rejected",
+      result: "API Error: Bearer result-value rejected",
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "drops the CLI's API error frame when its snapshot repeats and the failure repeats it",
+      text: "API Error: Claude Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
+      repeatedSnapshot: true,
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when an error result lists it",
+      text: "API Error: Request could not be completed.",
+      subtype: "error_during_execution",
+      errors: ["API Error: Request could not be completed."],
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when the endings differ beyond the failure cap",
+      text: `API Error: ${"detail ".repeat(700)}first ending`,
+      result: `API Error: ${"detail ".repeat(700)}second ending`,
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when a 403 result differs beyond the failure cap",
+      text: `API Error: 403 ${"access detail ".repeat(300)}first ending`,
+      result: `API Error: 403 ${"access detail ".repeat(300)}second ending`,
+      apiErrorStatus: 403,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when an error result differs beyond the failure cap",
+      text: `API Error: ${"detail ".repeat(700)}first ending`,
+      subtype: "error_during_execution",
+      errors: [`API Error: ${"detail ".repeat(700)}second ending`],
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when a listed error differs beyond the failure cap",
+      text: `API Error: ${"detail ".repeat(700)}first ending`,
+      errors: [`API Error: ${"detail ".repeat(700)}second ending`],
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when joined diagnostics differ beyond the failure cap",
+      text: `[ede_diagnostic] ${"detail ".repeat(700)}first ending`,
+      subtype: "error_during_execution",
+      errors: [`[ede_diagnostic] ${"detail ".repeat(700)}second ending`],
+      apiErrorStatus: 400,
+      terminalReason: null,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when a long login hint differs beyond the failure cap",
+      text: claudeSignedOutMessage({
+        configDir: `${longConfigDir}frame`,
+        cwd: NodePath.resolve("/workspace"),
+      }),
+      environment: { CLAUDE_CONFIG_DIR: `${longConfigDir}login` },
+      frameError: "authentication_failed" as const,
+      apiErrorStatus: 401,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when a custom endpoint's version error is reworded",
+      text: "API Error: 400 Claude Code 2.1.280 does not support this model; version 2.1.290 or newer is required. Run 'claude update', or update the Claude desktop app, then try again.",
+      environment: {
+        CLAUDE_CONFIG_DIR: "/synthetic/no-claude-config",
+        ANTHROPIC_BASE_URL: "https://gateway.example.test/v1",
+      },
+      installed: "2.1.322",
+      apiErrorStatus: 400,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when a compaction error differs beyond the failure cap",
+      text: `API Error: ${"detail ".repeat(700)}first ending`,
+      compactError: `API Error: ${"detail ".repeat(700)}second ending`,
+      shown: true,
+    },
+    {
+      name: "emits the held API error frame before later assistant text",
+      text: "API Error: 400 Request rejected.",
+      followingText: "The request was rejected.",
+      apiErrorStatus: 400,
+      shown: true,
     },
     {
       name: "keeps the CLI's API error frame when the failure says something else",
@@ -7678,7 +7849,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
   ])("$name", (input) =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions(
+        "environment" in input ? { environment: input.environment } : undefined,
+      );
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -7689,25 +7862,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         }),
       );
+      if ("installed" in input) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000615",
+            session_id: WAKE_NATIVE_SESSION,
+            claude_code_version: input.installed,
+          }),
+        );
+      }
+      const result = makeResultFrame({
+        uuid: "00000000-0000-4000-8000-000000000611",
+        result: "result" in input ? input.result : input.text,
+        ...("subtype" in input ? { subtype: input.subtype } : {}),
+        ...("errors" in input ? { errors: input.errors } : {}),
+        isError: true,
+        ...("apiErrorStatus" in input ? { apiErrorStatus: input.apiErrorStatus } : {}),
+        terminalReason: "terminalReason" in input ? input.terminalReason : "api_error",
+      });
       yield* Queue.offerAll(harness.sdkMessages, [
-        makeAssistantErrorFrame({
-          uuid: "00000000-0000-4000-8000-000000000610",
-          error: "invalid_request",
-          text: input.text,
-        }),
-        makeResultFrame({
-          uuid: "00000000-0000-4000-8000-000000000611",
-          result: input.text,
-          isError: true,
-          apiErrorStatus: input.apiErrorStatus,
-          terminalReason: "terminalReason" in input ? input.terminalReason : "api_error",
-        }),
+        ...("compactError" in input
+          ? [
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt: 0 },
+                uuid: "00000000-0000-4000-8000-000000000613",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+              claudeSdkFrame({
+                type: "system",
+                subtype: "status",
+                status: null,
+                compact_result: "failed",
+                compact_error: input.compactError,
+                uuid: "00000000-0000-4000-8000-000000000614",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]
+          : []),
+        ...Array.from({ length: "repeatedSnapshot" in input ? 2 : 1 }, () =>
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000610",
+            error: "frameError" in input ? input.frameError : "invalid_request",
+            text: input.text,
+          }),
+        ),
+        ...("followingText" in input
+          ? [
+              makeAssistantTextFrame({
+                uuid: "00000000-0000-4000-8000-000000000612",
+                text: input.followingText,
+              }),
+            ]
+          : []),
+        "compactError" in input ? claudeSdkFrame({ ...result, local_command: "compact" }) : result,
       ]);
 
       const terminal = yield* Queue.take(harness.terminalReceipts);
-      assert.equal(terminal.status, "terminalReason" in input ? "interrupted" : "failed");
+      assert.equal(
+        terminal.status,
+        "terminalReason" in input && input.terminalReason === "aborted_streaming"
+          ? "interrupted"
+          : "failed",
+      );
       if (terminal.status === "failed") {
-        assert.equal(terminal.failure.message === input.text.slice(0, 500).trim(), !input.shown);
+        if (!input.shown) assert.isTrue(input.text.startsWith(terminal.failure.message));
+        if ("failure" in input) assert.equal(terminal.failure.message, input.failure);
       } else {
         assert.equal(terminal.failure, null);
       }
@@ -7716,7 +7938,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ? [event.message.text]
           : [],
       );
-      assert.deepEqual(assistantTexts, input.shown ? [input.text] : []);
+      assert.deepEqual(
+        assistantTexts,
+        !input.shown
+          ? []
+          : "followingText" in input
+            ? [input.text, input.followingText]
+            : [input.text],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
