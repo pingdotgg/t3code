@@ -1,4 +1,8 @@
 import {
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
   type ComposerContextId,
   EnvironmentId,
   MessageId,
@@ -399,6 +403,11 @@ describe("pullRequestContextKindLabel", () => {
     expect(
       pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
     ).toBe("Draft pull request");
+    const record = comment("https://github.com/acme/app/pull/7", false);
+    expect(pullRequestContextKindLabel(record, MERGE_REQUEST_TERMINOLOGY)).toBe(
+      "Open merge request",
+    );
+    expect(pullRequestContextKindLabel(record, PULL_REQUEST_TERMINOLOGY)).toBe("Open pull request");
   });
 });
 

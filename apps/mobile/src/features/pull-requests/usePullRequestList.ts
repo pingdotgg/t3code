@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -158,6 +159,7 @@ const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
   AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
 export function usePullRequestList(targets: readonly ListTarget[]) {
+  const { plural } = useChangeRequestTerms();
   const registry = use(RegistryContext);
   const scopeKey = JSON.stringify(targets);
   const sources = useAtomValue(sourcesFamily(scopeKey));
@@ -311,14 +313,11 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           {
             environmentId: target.environmentId,
             projectTitle: "",
-            message:
-              cause instanceof Error
-                ? cause.message
-                : `Couldn't load ${currentChangeRequestTerms().plural}.`,
+            message: cause instanceof Error ? cause.message : `Couldn't load ${plural}.`,
           },
         ];
       }),
-    [sources],
+    [sources, plural],
   );
   const listing = useMemo(
     () => ({ ...data, entries, errors: [...data.errors, ...errors] }),

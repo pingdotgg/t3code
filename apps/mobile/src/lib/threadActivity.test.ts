@@ -1,4 +1,9 @@
-import { setMergeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
+import {
+  setMergeRequestTerms,
+  currentChangeRequestTerms,
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+} from "@t3tools/client-runtime/source-control-clients";
 import {
   MessageId,
   CheckpointId,
@@ -1475,7 +1480,7 @@ describe("retained v2 feed presentation", () => {
         3,
       ),
     ]);
-    const summary = () =>
+    const summary = (terms = currentChangeRequestTerms()) =>
       deriveThreadFeedPresentation(
         feed,
         null,
@@ -1484,12 +1489,57 @@ describe("retained v2 feed presentation", () => {
         null,
         false,
         cache,
+        undefined,
+        terms,
       ).find((entry) => entry.type === "work-toggle");
     expect(summary()).toMatchObject({ summary: expect.stringContaining("pull request") });
     setMergeRequestTerms(true);
     expect(summary()).toMatchObject({ summary: expect.stringContaining("merge request") });
     setMergeRequestTerms(false);
     expect(summary()).toMatchObject({ summary: expect.stringContaining("pull request") });
+    expect(summary(MERGE_REQUEST_TERMINOLOGY)).toMatchObject({
+      summary: expect.stringContaining("merge request"),
+    });
+    expect(summary(MERGE_REQUEST_TERMINOLOGY)).toMatchObject({
+      summary: expect.stringContaining("merge request"),
+    });
+    expect(summary(PULL_REQUEST_TERMINOLOGY)).toMatchObject({
+      summary: expect.stringContaining("pull request"),
+    });
+    const singleFeed = feed.map((entry) =>
+      entry.type === "activity-group"
+        ? { ...entry, activities: entry.activities.slice(0, 1) }
+        : entry,
+    );
+    for (const terms of [
+      MERGE_REQUEST_TERMINOLOGY,
+      MERGE_REQUEST_TERMINOLOGY,
+      PULL_REQUEST_TERMINOLOGY,
+    ]) {
+      const single = deriveThreadFeedPresentation(
+        singleFeed,
+        null,
+        new Set([runId]),
+        new Set(),
+        null,
+        false,
+        cache,
+        undefined,
+        terms,
+      ).find(
+        (entry) =>
+          entry.type === "activity-group" && entry.activities[0]?.groupStandIn !== undefined,
+      );
+      expect(single).toMatchObject({
+        activities: [
+          expect.objectContaining({
+            groupStandIn: expect.objectContaining({
+              label: expect.stringContaining(terms.shortLabel),
+            }),
+          }),
+        ],
+      });
+    }
   });
 
   it("retains unchanged rows while the assistant streams", () => {

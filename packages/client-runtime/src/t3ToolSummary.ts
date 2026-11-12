@@ -1,4 +1,7 @@
-import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
+import {
+  currentChangeRequestTerms,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
 
 export interface T3ToolSummaryCall {
@@ -87,6 +90,7 @@ function pullRequestQuantity(
     readonly output: Record<string, unknown> | undefined;
   }>,
   countKey: "linkedCount" | "unlinkedCount",
+  terms: ChangeRequestTerminology,
 ): string {
   let count = 0;
   for (const call of calls) {
@@ -94,14 +98,15 @@ function pullRequestQuantity(
     if (typeof reported === "number") count += reported;
     else if (call.input?.url !== undefined || call.input?.number !== undefined) count += 1;
     // A batch result too large to compact loses its count, so the label drops the number.
-    else return currentChangeRequestTerms().plural;
+    else return terms.plural;
   }
-  return quantity(count, currentChangeRequestTerms().singular);
+  return quantity(count, terms.singular);
 }
 
 export function summarizeT3ToolCalls(
   action: T3McpToolSummaryAction,
   calls: ReadonlyArray<T3ToolSummaryCall>,
+  terms = currentChangeRequestTerms(),
 ): { label: string; failedCount: number } {
   const results = calls.map((call) => {
     const result = readResult(call.output);
@@ -409,30 +414,26 @@ export function summarizeT3ToolCalls(
       break;
     }
     case "link-pr":
-      label = phrase("Linked", "link", pullRequestQuantity(selected, "linkedCount"));
+      label = phrase("Linked", "link", pullRequestQuantity(selected, "linkedCount", terms));
       break;
     case "unlink-pr":
-      label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount"));
+      label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount", terms));
       break;
     case "watch-pr":
-      label = phrase(
-        "Watching",
-        "watch",
-        quantity(selected.length, currentChangeRequestTerms().singular),
-      );
+      label = phrase("Watching", "watch", quantity(selected.length, terms.singular));
       break;
     case "unwatch-pr":
       label = phrase(
         "Stopped watching",
         "stop watching",
-        quantity(selected.length, currentChangeRequestTerms().singular),
+        quantity(selected.length, terms.singular),
       );
       break;
     case "list-prs":
       label = phrase(
         "Checked",
         "check",
-        `linked ${currentChangeRequestTerms().plural}${selected.length === 1 ? "" : ` ${times}`}`,
+        `linked ${terms.plural}${selected.length === 1 ? "" : ` ${times}`}`,
       );
       break;
     case "write-pr-guides": {

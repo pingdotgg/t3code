@@ -1,3 +1,4 @@
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
@@ -196,17 +197,20 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection id="source-control-text-generation" title="Commits & pull requests">
+    <SettingsSection
+      id="source-control-text-generation"
+      title={formatChangeRequestText("Commits & pull requests", requestTerms)}
+    >
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
         mixed={writingStyleMixed}
-        {...searchableSetting("source-control-writing-style")}
-        description={MODE_OPTIONS[style.mode].description}
+        {...searchableSetting("source-control-writing-style", requestTerms)}
+        description={formatChangeRequestText(MODE_OPTIONS[style.mode].description, requestTerms)}
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label="commit and pull request writing"
+              label={formatChangeRequestText("commit and pull request writing", requestTerms)}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -234,7 +238,7 @@ export function SourceControlWritingSettingsSection() {
             <SelectTrigger
               size="sm"
               className="w-full sm:w-56"
-              aria-label="Commit and pull request writing"
+              aria-label={formatChangeRequestText("Commit and pull request writing", requestTerms)}
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
@@ -260,7 +264,10 @@ export function SourceControlWritingSettingsSection() {
                   value={allInstructions ?? ""}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
-                  aria-label="Custom commit and pull request instructions for all selected environments"
+                  aria-label={formatChangeRequestText(
+                    "Custom commit and pull request instructions for all selected environments",
+                    requestTerms,
+                  )}
                   placeholder="Write the instructions each selected environment should use."
                 />
                 <Button
@@ -307,8 +314,14 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep commit subjects under 60 characters. Keep pull request descriptions short and plain."
-              aria-label="Custom commit and pull request instructions"
+              placeholder={formatChangeRequestText(
+                "Keep commit subjects under 60 characters. Keep pull request descriptions short and plain.",
+                requestTerms,
+              )}
+              aria-label={formatChangeRequestText(
+                "Custom commit and pull request instructions",
+                requestTerms,
+              )}
             />
           </div>
         ) : null}
@@ -318,7 +331,7 @@ export function SourceControlWritingSettingsSection() {
         serverScoped
         settingKeys={["reviewGuidesEnabled"]}
         mixed={mixedReviewGuidesEnabled}
-        {...searchableSetting("review-guides")}
+        {...searchableSetting("review-guides", requestTerms)}
         description={`Add a Guide tab to ${requestTerms.plural}. An agent explains the changes and points out decisions that need review.`}
         control={
           <Switch
@@ -335,7 +348,7 @@ export function SourceControlWritingSettingsSection() {
           <SettingsRow
             serverScoped
             settingKeys={["reviewGuideModelSelection"]}
-            {...searchableSetting("review-guide-model")}
+            {...searchableSetting("review-guide-model", requestTerms)}
             description={`Must be a coding agent: it reads the ${requestTerms.singular} over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator.`}
             control={
               !hasServerTargets ? (
@@ -434,7 +447,7 @@ export function SourceControlWritingSettingsSection() {
           <SettingsRow
             serverScoped
             settingKeys={["reviewGuideInstructions"]}
-            {...searchableSetting("review-guide-instructions")}
+            {...searchableSetting("review-guide-instructions", requestTerms)}
             description="Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same."
             resetAction={
               mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
@@ -475,21 +488,24 @@ export function SourceControlWritingSettingsSection() {
       ) : null}
       <AdvancedSettings
         targetIds={[
-          searchableSetting("follow-change-request-templates").id,
-          searchableSetting("source-control-writer-model").id,
+          searchableSetting("follow-change-request-templates", requestTerms).id,
+          searchableSetting("source-control-writer-model", requestTerms).id,
         ]}
       >
         <SettingsRow
           serverScoped
           settingKeys={["sourceControlWritingStyle"]}
           mixed={templatesMixed}
-          {...searchableSetting("follow-change-request-templates")}
-          description="Use the repository's pull request template when it has one."
+          {...searchableSetting("follow-change-request-templates", requestTerms)}
+          description={formatChangeRequestText(
+            "Use the repository's pull request template when it has one.",
+            requestTerms,
+          )}
           resetAction={
             templatesMixed ||
             style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
               <SettingResetButton
-                label="pull request templates"
+                label={formatChangeRequestText("pull request templates", requestTerms)}
                 onClick={() =>
                   updateSettings({
                     sourceControlWritingStyle: {
@@ -511,7 +527,7 @@ export function SourceControlWritingSettingsSection() {
                   },
                 })
               }
-              aria-label="Follow pull request templates"
+              aria-label={formatChangeRequestText("Follow pull request templates", requestTerms)}
             />
           }
         />
@@ -519,8 +535,11 @@ export function SourceControlWritingSettingsSection() {
         <SettingsRow
           serverScoped
           settingKeys={["sourceControlWriterModelSelection"]}
-          {...searchableSetting("source-control-writer-model")}
-          description="Model for commit messages, pull request text, and branch or bookmark names. When disabled, use the text generation model configured for this environment."
+          {...searchableSetting("source-control-writer-model", requestTerms)}
+          description={formatChangeRequestText(
+            "Model for commit messages, pull request text, and branch or bookmark names. When disabled, use the text generation model configured for this environment.",
+            requestTerms,
+          )}
           control={
             !hasServerTargets ? (
               <span className="text-sm text-muted-foreground">

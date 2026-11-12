@@ -1,3 +1,5 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import ChatMarkdown from "./ChatMarkdown";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
@@ -254,7 +256,11 @@ function FileContextChip(props: {
   );
 }
 
-function PullRequestContextChip(props: { record: ReviewCommentContext; kind: ContextChipKind }) {
+function PullRequestContextChip(props: {
+  record: ReviewCommentContext;
+  kind: ContextChipKind;
+  terms: ChangeRequestTerminology;
+}) {
   const actions = use(ComposerContextActionsContext);
   const metadata = props.record.pullRequest;
   if (metadata === undefined) return null;
@@ -263,7 +269,7 @@ function PullRequestContextChip(props: { record: ReviewCommentContext; kind: Con
       metadata={metadata}
       environmentId={actions.environmentId}
       label={reviewCommentContextLabel(props.record)}
-      kindLabel={pullRequestContextKindLabel(props.record)}
+      kindLabel={pullRequestContextKindLabel(props.record, props.terms)}
       kind={props.kind}
       onOpen={actions.openPullRequest}
     />
@@ -359,6 +365,7 @@ function UnresolvedContextChip(props: { label: string }) {
 
 interface ComposerContextRenderContext {
   label: string;
+  terms: ChangeRequestTerminology;
 }
 
 const composerContextPresentationRegistry = createContextPresentationRegistry<
@@ -422,6 +429,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           return (
             <PullRequestContextChip
               record={entry.record}
+              terms={context.terms}
               kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
             />
           );
@@ -430,7 +438,11 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           <ContextChip
             icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
             label={reviewCommentContextLabel(entry.record)}
-            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            kindLabel={
+              isPullRequest
+                ? pullRequestContextKindLabel(entry.record, context.terms)
+                : "Review comment"
+            }
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
@@ -489,8 +501,10 @@ export function ComposerContextReferenceChip(props: {
   contextId: string;
   label: string;
 }): ReactElement {
+  const terms = useChangeRequestTerms();
   const records = use(ComposerContextRecordsContext);
   return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
     label: props.label,
+    terms,
   });
 }

@@ -877,12 +877,16 @@ function toFeedActivity(
   };
 }
 
-function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
+function singleToolCallLabel(
+  activity: ThreadFeedActivity,
+  expanded: boolean,
+  terms: ChangeRequestTerminology,
+): string {
   if (activity.workEntry.itemType === "reasoning")
     return expanded
       ? "Thought"
       : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
-  const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
+  const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed", terms);
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   return command ? truncate(command, WORK_LOG_LABEL_MAX_LENGTH) : activity.summary;
@@ -1930,7 +1934,15 @@ function appendPresentedFeedEntry(
     )
   ) {
     const rows: ThreadFeedEntry[] = [];
-    appendActivityGroupRows(rows, entry, expandedWorkGroupIds, activeRunId, isWorking, activeTail);
+    appendActivityGroupRows(
+      rows,
+      entry,
+      expandedWorkGroupIds,
+      activeRunId,
+      isWorking,
+      activeTail,
+      terms,
+    );
     cached = { terms, activeRunId, isWorking, activeTail, rows };
     presentedActivityGroupsCache.set(entry, cached);
   }
@@ -1946,6 +1958,7 @@ function appendActivityGroupRows(
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
+  terms: ChangeRequestTerminology,
 ): void {
   const groupAnchorIdByActivityId = new Map<string, string>();
   let groupAnchorId: string | null = null;
@@ -1980,6 +1993,7 @@ function appendActivityGroupRows(
       activeRunId,
       isWorking,
       activeTail && isTrailingRun,
+      terms,
     );
     const paths = workEntriesViewedImagePaths(groupableRun.map((activity) => activity.workEntry));
     if (paths.length > 0) {
@@ -2021,6 +2035,7 @@ function appendToolGroupRows(
   activeRunId: RunId | null,
   isWorking: boolean,
   activeTail: boolean,
+  terms: ChangeRequestTerminology,
 ): void {
   const expanded = expandedWorkGroupIds.has(groupId);
   const latestActiveActivity = activities.findLast(
@@ -2032,7 +2047,10 @@ function appendToolGroupRows(
   const latestActivity = latestActiveActivity ?? activities.at(-1)!;
   const shimmer = activeTail && (active || latestActivity.status === "success");
   const singleActivity = activities.length === 1 ? latestActivity : null;
-  const groupSummary = summarizeToolGroup(activities.map((activity) => activity.workEntry));
+  const groupSummary = summarizeToolGroup(
+    activities.map((activity) => activity.workEntry),
+    terms,
+  );
   const latestThought =
     live && !expanded
       ? activities.findLast(
@@ -2047,11 +2065,11 @@ function appendToolGroupRows(
       ? latestActivity.lifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
-      : liveToolActivitySummary(latestActivity, live)
+      : liveToolActivitySummary(latestActivity, live, terms)
     : singleActivity !== null &&
         singleActivity.toolLike &&
         toolGroupAction(singleActivity.workEntry) !== "edit"
-      ? singleToolCallLabel(singleActivity, expanded)
+      ? singleToolCallLabel(singleActivity, expanded, terms)
       : singleActivity !== null && !singleActivity.toolLike
         ? singleActivity.workEntry.label
         : groupSummary.summary;
@@ -2091,7 +2109,7 @@ function appendToolGroupRows(
     activities.findLast((activity) => activity.workEntry.toolIcon !== undefined)?.workEntry
       .toolIcon;
   const summaryToolIcon = live
-    ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
+    ? resolveWorkEntryToolPresentation(latestActivity.workEntry, undefined, terms)?.icon
     : undefined;
   result.push({
     type: "work-toggle",
@@ -2136,17 +2154,25 @@ function appendToolGroupRows(
   });
 }
 
-function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
+function liveToolActivitySummary(
+  activity: ThreadFeedActivity,
+  presentTense: boolean,
+  terms: ChangeRequestTerminology,
+): string {
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   if (activity.workEntry.itemType === "reasoning") {
     return compactWorkEntryText(
       activity.workEntry.detail?.trim() || (status === "inProgress" ? "Thinking" : "Thought"),
     );
   }
-  const presentation = resolveWorkEntryToolPresentation({
-    ...activity.workEntry,
-    toolLifecycleStatus: status,
-  });
+  const presentation = resolveWorkEntryToolPresentation(
+    {
+      ...activity.workEntry,
+      toolLifecycleStatus: status,
+    },
+    undefined,
+    terms,
+  );
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {

@@ -571,7 +571,10 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
   }
 }
 
-export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): {
+export function summarizeToolGroup(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+  terms = currentChangeRequestTerms(),
+): {
   summary: string;
   hasFailure: boolean;
 } {
@@ -612,7 +615,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
     count: group.entries.length,
     priority: summaryActionPriority(action),
     ...(group.t3Action
-      ? summarizeT3ToolCalls(group.t3Action, group.entries.map(t3ToolSummaryCall))
+      ? summarizeT3ToolCalls(group.t3Action, group.entries.map(t3ToolSummaryCall), terms)
       : {
           label: toolGroupActionLabel(
             group.action,

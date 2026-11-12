@@ -106,8 +106,11 @@ export function pullRequestContextDisplayState(
   return pullRequest.state === "open" && pullRequest.isDraft ? "draft" : pullRequest.state;
 }
 
-export function pullRequestContextKindLabel(comment: ReviewCommentPresentation): string {
-  const term = currentChangeRequestTerms().singular;
+export function pullRequestContextKindLabel(
+  comment: ReviewCommentPresentation,
+  terms = currentChangeRequestTerms(),
+): string {
+  const term = terms.singular;
   const state = pullRequestContextDisplayState(comment);
   if (state === null) return capitalizeTerm(term);
   return `${capitalizeTerm(state)} ${term}`;

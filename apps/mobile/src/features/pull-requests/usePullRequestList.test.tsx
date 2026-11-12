@@ -1,3 +1,4 @@
+import { setMergeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
@@ -9,7 +10,12 @@ import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => ({ failPage: false }));
+const mocks = vi.hoisted(() => ({ failPage: false, mergeTerms: false }));
+
+vi.mock("../../state/change-request-terminology", async () => {
+  const { changeRequestTerms } = await import("@t3tools/client-runtime/source-control-clients");
+  return { useChangeRequestTerms: () => changeRequestTerms(mocks.mergeTerms) };
+});
 
 vi.mock("../../connection/catalog", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -41,6 +47,7 @@ vi.mock("../../state/pull-requests", async () => {
     const response = page(target.input.cursors ? {} : { "github.com org/repo": "next" });
     return Atom.make(
       Effect.suspend(() => {
+        if (target.environmentId === "untyped") return Effect.die("Unavailable");
         if (target.environmentId === "offline")
           return Effect.fail(
             new PullRequestListTestError({ message: "Environment is not connected." }),
@@ -73,6 +80,7 @@ import { usePullRequestList } from "./usePullRequestList";
 
 function setup(ids: readonly string[]) {
   mocks.failPage = false;
+  mocks.mergeTerms = false;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const registry = AtomRegistry.make();
   const targets = ids.map((id) => ({
@@ -88,14 +96,16 @@ function setup(ids: readonly string[]) {
     return null;
   }
   const root = createRoot(document.createElement("div"));
-  act(() => {
+  const renderProbe = () => {
     root.render(
       <RegistryContext.Provider value={registry}>
         <Probe />
       </RegistryContext.Provider>,
     );
-  });
+  };
+  act(renderProbe);
   return {
+    rerender: () => act(renderProbe),
     get latest() {
       return latest;
     },
@@ -107,10 +117,17 @@ function setup(ids: readonly string[]) {
 }
 
 it("keeps a refresh failure in the source errors and allows healthy pagination", async () => {
-  using probe = setup(["healthy", "offline"]);
+  setMergeRequestTerms(false);
+  using _terms = {
+    [Symbol.dispose]() {
+      setMergeRequestTerms(false);
+    },
+  };
+  using probe = setup(["healthy", "offline", "untyped"]);
   await act(async () => probe.latest.onRefresh());
   expect(probe.latest.data.errors.map((error) => error.message)).toEqual([
     "Environment is not connected.",
+    "Couldn't load pull requests.",
   ]);
   expect(probe.latest.refreshing).toBe(false);
   expect(probe.latest.loadMoreError).toBeNull();
@@ -119,6 +136,14 @@ it("keeps a refresh failure in the source errors and allows healthy pagination",
   expect(probe.latest.continued).toBe(true);
   expect(probe.latest.hasMore).toBe(false);
   expect(probe.latest.loadMoreError).toBeNull();
+  for (const enabled of [true, false]) {
+    mocks.mergeTerms = enabled;
+    setMergeRequestTerms(enabled);
+    probe.rerender();
+    expect(probe.latest.error).toContain(
+      `Couldn't load ${enabled ? "merge requests" : "pull requests"}.`,
+    );
+  }
 });
 
 it("keeps load-more failures retryable", async () => {
