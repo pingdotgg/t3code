@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildDiffReviewComment,
   buildFileReviewComment,
+  buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
   resolveDiffReviewAnchor,
   resolveDiffReviewPosition,
@@ -42,7 +43,7 @@ describe("review comment context parsing", () => {
         " three",
         " four",
       ].join("\n"),
-      "review-comment-test",
+      { cacheKeyPrefix: "review-comment-test" },
     )[0]!.files;
 
     const comment = buildDiffReviewComment({
@@ -75,6 +76,38 @@ describe("review comment context parsing", () => {
     );
   });
 
+  it("keeps a selection's trailing blank line and whitespace in the rendered excerpt", () => {
+    const fileDiff = parsePatchFiles(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1,4 +1,4 @@",
+        " one",
+        "-two",
+        "+two\t",
+        " ",
+        " four",
+      ].join("\n"),
+      { cacheKeyPrefix: "review-comment-trailing-blank" },
+    )[0]!.files[0]!;
+    const comment = (end: number) =>
+      buildDiffReviewComment({
+        id: "comment-blank",
+        sectionId: "turn:1",
+        sectionTitle: "Turn 1",
+        filePath: "src/app.ts",
+        fileDiff,
+        range: { start: 2, side: "additions", end, endSide: "additions" },
+        text: "Insert here.",
+      })!;
+
+    expect(buildReviewCommentRenderablePatch(comment(2))).toMatch(/\n\+two\t$/);
+    expect(buildReviewCommentRenderablePatch(comment(3))).toMatch(
+      /\n@@ -3,1 \+2,2 @@\n\+two\t\n $/,
+    );
+  });
+
   it("restores Pierre line selections from persisted diff comment row indexes", () => {
     const fileDiff = parsePatchFiles(
       [
@@ -87,7 +120,7 @@ describe("review comment context parsing", () => {
         "+TWO",
         " three",
       ].join("\n"),
-      "restore-review-comment-range",
+      { cacheKeyPrefix: "restore-review-comment-range" },
     )[0]!.files[0]!;
     const comment = buildDiffReviewComment({
       id: "comment-6",
@@ -140,7 +173,7 @@ describe("review comment context parsing", () => {
         " line 27",
         " line 28",
       ].join("\n"),
-      "review-position-hunks",
+      { cacheKeyPrefix: "review-position-hunks" },
     )[0]!.files[0]!;
     // The Code tab tries the original partial patch before the hydrated viewer file.
     expect(resolveDiffReviewPosition(fileDiff, 25, "additions")).toBeNull();
@@ -198,7 +231,7 @@ describe("review comment context parsing", () => {
         "+twenty-one",
         " twenty-two",
       ].join("\n"),
-      "review-anchor-range",
+      { cacheKeyPrefix: "review-anchor-range" },
     )[0]!.files[0]!;
     const upward = { start: 3, side: "additions", end: 1, endSide: "additions" } as const;
 

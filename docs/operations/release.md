@@ -42,7 +42,7 @@ the version.
   - Only plain stable `X.Y.Z` releases are marked as the repository's latest release.
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
-  - The release job's **Write release notes** step (`scripts/generate-release-notes.ts`) builds the body: a computed header line, a short summary from `gpt-6.1-terra`, and GitHub's generated list folded under `<details>`. It needs the `OPENAI_API_KEY` secret. The summary leaves out commits whose scopes are all mobile; the header counts every commit. The desktop update popover, on every channel, shows the highlights paragraph and the header counts as a short note per release, with the offered release's age from the update feed's `releaseDate`. The nightly Discord post shows the part above `<details>`. If the step fails or there is nothing to summarize, it writes no file and the release uses GitHub's generated notes as before.
+  - The release job's **Write release notes** step (`scripts/generate-release-notes.ts`) builds the body: a computed header line, a short summary from `gpt-6.1-terra`, and GitHub's generated list folded under `<details>`. It needs the `OPENAI_API_KEY` secret. The desktop update popover shows up to seven highlights and the number of other fixes and performance improvements. Mobile-only commits count toward release totals but cannot be highlights. The offered release's age comes from the update feed's `releaseDate`. The nightly Discord post shows the part above `<details>`. If summary generation fails, the release uses GitHub's generated notes.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
 - Builds a self-contained CLI archive per platform (`t3-<version>-<platform>-<arch>.tar.gz`, `.zip` on Windows) in the same job as that target's desktop artifact and attaches them to the GitHub Release with a `SHA256SUMS` file, on every channel, for five targets: macOS arm64, Linux x64 and arm64, Windows x64 and arm64. Every archive is smoke-tested on hardware of its own architecture, and every one but the Windows archives is also built and signed there. There is no macOS x64 archive: Node single-executables are unsupported on x64 macOS (the SEA docs list macOS as arm64 only) and the binary segfaults on start; the x64 desktop app is Electron and unaffected.
   - The archive holds the server as a Node single-executable (`scripts/build-cli-archive.ts`), so unpacking it needs neither Node, npm, nor a compiler. It is the only form in which T3 Code manages a runtime: the desktop's SSH environments, the boot service, `t3 update`, and the install scripts all download and verify this archive against `SHA256SUMS`. The `t3` npm package exists for people who run `npx t3` or `npm install -g t3` themselves, and it downloads this same archive too; nothing in the product installs from npm. The `curl | sh` installers are `scripts/install.sh` and `scripts/install.ps1`; the marketing site copies them into its `public/` at build time (`apps/marketing/scripts/stage-install-scripts.mjs`) and serves them at `t3.codes/install.sh` and `/install.ps1`.
@@ -106,9 +106,13 @@ The relay is a shared control plane versioned separately from client releases. S
 client builds must point at the same relay so users see the same linked environments when switching
 release channels.
 
-`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. The
-release workflow reads the relay URL and Clerk client configuration from the existing `production`
-GitHub Actions environment before building desktop, CLI, or hosted web artifacts.
+`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. Stable
+and nightly releases read the relay URL and Clerk client configuration from the existing
+`production` GitHub Actions environment before building desktop, CLI, or hosted web artifacts. That
+environment admits only `main` and `v*` tags, so preview releases, which may run from any branch,
+take the same public identifiers from `.env.example`; keep it in step with the `production` values.
+Every channel reads the relay client tracing config from Alchemy state with the repository-level
+`CLOUDFLARE_API_TOKEN`, so moving that token into `production` would break preview releases.
 
 Required repository variables shared by relay deployments:
 
@@ -338,9 +342,9 @@ uploads resume on the next check.
 
 Normal Nightly releases include the newest processed internal-testing APK available
 when the release publishes. Internal builds do not create separate Android releases.
-If Play credentials or a processed APK are unavailable, the Nightly can still publish
-without an APK. Android submissions continue to go to internal testing; promote a
-build to Alpha to publish it as a beta.
+If Play credentials or a processed APK are unavailable, or the download takes more
+than five minutes, the Nightly can still publish without an APK. Android submissions
+continue to go to internal testing; promote a build to Alpha to publish it as a beta.
 
 The APK is the universal APK Play generates and signs from the
 uploaded bundle, so no signing key lives in GitHub. The job skips itself until
@@ -529,9 +533,11 @@ blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
-After the GitHub Release is published, the workflow runs `node scripts/build-npm-launcher.ts`, then
-`node apps/server/scripts/cli.ts publish --packages-dir npm-packages`, which runs `npm publish` on
-`t3.tgz`. That is the only package published per release.
+`build_bundle` builds the version-matched `t3.tgz` with `node scripts/build-npm-launcher.ts` and
+uploads it as the `npm-launcher` artifact. After the GitHub Release is published, `publish_cli`
+checks out only what it needs to set up the project's Node.js, downloads that exact upload by the
+artifact ID `build_bundle` outputs (never by name), checks the tarball version, and runs
+`npm publish --provenance` on it. That is the only package published per release.
 
 Checklist:
 
@@ -659,7 +665,7 @@ Checklist:
    - preflight passes
    - release quality checks pass
    - `build_bundle` and all platform builds pass
-   - `publish_cli` publishes the exact release version before the release job
+   - `publish_cli` publishes the exact release version after the release job
    - release job uploads expected files
 5. Smoke test downloaded artifacts.
 
