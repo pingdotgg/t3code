@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -3958,6 +3959,98 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             }
           }
         }),
+    );
+
+    it.effect(
+      "reports a new repository without waiting on a huge untracked file's line count",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* git(cwd, ["init", "-b", "main"]);
+          yield* writeTextFile(cwd, "small.txt", "line\n");
+          yield* writeTextFile(cwd, "large.data", "");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          yield* fileSystem.truncate(pathService.join(cwd, "large.data"), 8 * 1024 * 1024 * 1024);
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const totalsDiffSettled = yield* Deferred.make<void>();
+          const largeFileDiffAbandonedAt = yield* Deferred.make<number>();
+          // Stands in for `git diff --numstat` reading gigabytes of untracked file content.
+          const readsLargeFile = (command: ChildProcess.Command) => {
+            const indexFile =
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("--numstat") &&
+              command.options.env?.GIT_INDEX_FILE;
+            return (
+              typeof indexFile === "string" &&
+              NodeFS.readFileSync(indexFile).includes(Buffer.from("large.data"))
+            );
+          };
+          const spawner = ChildProcessSpawner.make((command) =>
+            readsLargeFile(command)
+              ? Deferred.succeed(totalsDiffSettled, undefined).pipe(
+                  Effect.as(
+                    ChildProcessSpawner.makeHandle({
+                      ...makeSuccessfulHandle(""),
+                      isRunning: Effect.succeed(true),
+                      exitCode: Effect.never.pipe(
+                        Effect.onInterrupt(() =>
+                          Clock.currentTimeMillis.pipe(
+                            Effect.flatMap((now) =>
+                              Deferred.succeed(largeFileDiffAbandonedAt, now),
+                            ),
+                          ),
+                        ),
+                      ),
+                    }),
+                  ),
+                )
+              : delegate.spawn(command),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const startedAt = yield* Clock.currentTimeMillis;
+
+          const status = yield* driver
+            .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
+            .pipe(Effect.forkChild);
+          yield* Effect.raceFirst(Deferred.await(totalsDiffSettled), Fiber.await(status));
+          // Git's default command timeout, which is what releases the status on main.
+          yield* TestClock.adjust("30 seconds");
+          const reported = yield* Fiber.join(status);
+
+          const statusHeldForMs = (yield* Deferred.isDone(largeFileDiffAbandonedAt))
+            ? (yield* Deferred.await(largeFileDiffAbandonedAt)) - startedAt
+            : 0;
+          assert.isAtMost(statusHeldForMs, 5_000, "status waited on the untracked line count");
+          assert.isTrue(reported.isRepo);
+          assert.strictEqual(reported.branch, "main");
+        }).pipe(Effect.provide(layerServerConfig)),
+    );
+
+    it.effect("counts totals when a large unstaged copy of a removed file stays on disk", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "asset.data", "old\n");
+        yield* git(cwd, ["add", "asset.data"]);
+        yield* git(cwd, ["commit", "-m", "add asset"]);
+        yield* git(cwd, ["rm", "--cached", "asset.data"]);
+        yield* fileSystem.truncate(pathService.join(cwd, "asset.data"), 257 * 1024 * 1024);
+        yield* writeTextFile(cwd, "ordinary.txt", "new\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: null,
+          insertions: 1,
+          deletions: 1,
+        });
+      }),
     );
 
     it.effect("reports changes to a file named HEAD", () =>
