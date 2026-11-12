@@ -173,7 +173,7 @@ it.each([
               pid: 42,
               port: 12345,
               entryPath,
-              platform: platform === "darwin" ? undefined : "android",
+              platform: "android",
               emulatorExtraArgs: "",
             }),
           );
@@ -201,14 +201,14 @@ it.each([
         ]);
       } else {
         expect(errors).toEqual([]);
-        expect(messages).toHaveLength(mode === "stop" || mode === "stop-agent" ? 0 : 1);
-        if (mode === "start" || mode === "agent-start")
+        expect(messages).toHaveLength(1);
+        if (mode === "probe")
+          expect(JSON.parse(messages[0]!)).toMatchObject({ nodePath: execPath });
+        else
           expect(JSON.parse(messages[0]!)).toMatchObject({
             hubPort: 12345,
             ...(mode === "agent-start" ? { daemonPort: 23456, token: "test-token" } : {}),
           });
-        else if (mode === "probe")
-          expect(JSON.parse(messages[0]!)).toMatchObject({ nodePath: execPath });
       }
       expect(
         (await NodeFSP.readdir(state)).filter((name) => name.startsWith(".bootstrap-")),
