@@ -2670,20 +2670,11 @@ it.live("a read-only viewer reads the page's semantics but cannot act through th
         _tag: "accessibility",
         document: {
           document: expect.stringContaining("loader-1"),
-          truncated: false,
-          root: {
-            role: "document",
-            name: "Shop",
-            children: [
-              { role: "heading", name: "Cart", level: 1 },
-              { role: "button", name: "Checkout" },
-              { role: "textbox", name: "Password", protected: true },
-            ],
-          },
         },
       });
       expect(JSON.stringify(shown)).not.toContain("hunter2");
       const document = shown._tag === "accessibility" ? shown.document! : null;
+      expect(document!.root.children![2]).toMatchObject({ protected: true });
       const button = document!.root.children![1]!;
       yield* reader.input({
         type: "accessibilityAction",

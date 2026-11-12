@@ -73,7 +73,10 @@ describe("buildAccessibilityTree", () => {
       frame("0", [
         node("1", "RootWebArea", { label: "Page", childIds: ["2", "5"] }),
         node("2", "generic", { ignored: true, childIds: ["3", "4"] }),
-        node("3", "heading", { label: "Title" }),
+        node("3", "heading", {
+          label: "Title",
+          properties: [{ name: "level", value: { value: 1 } }],
+        }),
         node("4", "generic", { childIds: ["6"] }),
         node("5", "StaticText", { label: "After", childIds: ["7"] }),
         node("6", "link", { label: "Docs", backendDOMNodeId: 4 }),
@@ -85,7 +88,7 @@ describe("buildAccessibilityTree", () => {
       role: "document",
       name: "Page",
       children: [
-        { id: "0.3", role: "heading", name: "Title" },
+        { id: "0.3", role: "heading", name: "Title", level: 1 },
         { id: "0.6", role: "link", name: "Docs" },
         { id: "0.5", role: "text", name: "After" },
       ],
