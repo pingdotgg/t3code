@@ -290,6 +290,7 @@ function LinkRequestSheet(props: {
       dismissDisabled={busy}
     >
       <ScrollView
+        nestedScrollEnabled
         className="flex-1 bg-sheet-solid"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"

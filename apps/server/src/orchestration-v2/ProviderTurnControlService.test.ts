@@ -240,6 +240,7 @@ it.effect(
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
           hasOnlyMaintenanceUserMessages: () => Effect.die("unused maintenance history"),
+          hasPendingDelegatedCompletion: () => Effect.die("unused hasPendingDelegatedCompletion"),
           getSubagentCount: () => Effect.die("unused subagent count"),
           listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
