@@ -1,15 +1,28 @@
-import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  PreviewAnnotationPayloadSchema,
+  ScopedThreadRef,
+  type PreviewAnnotationPayload,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { readThreadPreviewState } from "~/previewStateStore";
+import { readEnvironmentScope } from "~/state/session";
 
-interface PoppedOutAnnotation {
-  readonly threadRef: ScopedThreadRef;
-  readonly picked: PreviewAnnotationPayload;
-  readonly screenshotFailed: boolean;
-}
+const PoppedOutAnnotation = Schema.Struct({
+  threadRef: ScopedThreadRef,
+  tabId: Schema.String,
+  runtimeTabId: Schema.String,
+  picked: PreviewAnnotationPayloadSchema,
+  screenshotFailed: Schema.Boolean,
+});
+type PoppedOutAnnotation = typeof PoppedOutAnnotation.Type;
+const isPoppedOutAnnotation = Schema.is(PoppedOutAnnotation);
 
 // The pop-out window has its own composer store, so its picks are handed to the chat window.
 const CHANNEL_NAME = "t3code:preview-annotations";
@@ -61,8 +74,16 @@ export function PoppedOutAnnotationReceiver() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to picks posted by pop-out preview windows
   useEffect(() => {
     const channel = new BroadcastChannel(CHANNEL_NAME);
-    channel.onmessage = (event: MessageEvent<PoppedOutAnnotation>) => {
-      const { threadRef, picked, screenshotFailed } = event.data;
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      if (!isPoppedOutAnnotation(event.data)) return;
+      const { threadRef, tabId, runtimeTabId, picked, screenshotFailed } = event.data;
+      if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
+      const state = readThreadPreviewState(threadRef);
+      if (
+        !state.desktopByTabId[tabId]?.detached ||
+        runtimeTabId !== previewRuntimeTabId(threadRef, state.serverEpoch, tabId)
+      )
+        return;
       addPreviewAnnotationToDraft(threadRef, picked, screenshotFailed);
     };
     return () => channel.close();

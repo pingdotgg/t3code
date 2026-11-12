@@ -31,7 +31,6 @@ import {
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import { hardenPreviewWebviewPreferences } from "../preview/WebviewPreferences.ts";
-import { PRIMARY_PASTE_DISABLED_ARGUMENT } from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -607,13 +606,11 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
-      hardenPreviewWebviewPreferences(webPreferences, previewPasskeys.bridgeEnabled);
-      if (!primaryPaste.enabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PRIMARY_PASTE_DISABLED_ARGUMENT,
-        ];
-      }
+      hardenPreviewWebviewPreferences(
+        webPreferences,
+        previewPasskeys.bridgeEnabled,
+        primaryPaste.enabled,
+      );
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();

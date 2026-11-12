@@ -33,6 +33,8 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
+import { PRIMARY_PASTE_DISABLED_ARGUMENT } from "./GuestProtocol.ts";
 
 describe("fitPictureInPictureContentSize", () => {
   it("does not collapse toward the minimum size when orientation changes repeatedly", () => {
@@ -249,6 +251,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
         attachGuest: () => () => {},
       }),
     ),
+    Layer.provideMerge(Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: false })),
     Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(layerFileSystem),
     Layer.provideMerge(Path.layer),
@@ -611,6 +614,7 @@ describe("PreviewManager", () => {
           Effect.provide(
             Layer.mergeAll(
               layerEnvironment,
+              Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
               layerBrowserSession,
               Layer.mock(DesktopBrowserHost.DesktopBrowserHost)({
                 attach: () => {},
@@ -1721,9 +1725,15 @@ describe("PreviewManager", () => {
   effectIt.effect("detaches a tab with no page as soon as its window opens", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const hostHandlers = new Map<string, (...args: ReadonlyArray<unknown>) => void>();
         browserWindowConstructor.mockImplementation(function () {
           return {
-            webContents: { id: 901, on: vi.fn(), setWindowOpenHandler: vi.fn() },
+            webContents: {
+              id: 901,
+              on: (event: string, handler: (...args: ReadonlyArray<unknown>) => void) =>
+                hostHandlers.set(event, handler),
+              setWindowOpenHandler: vi.fn(),
+            },
             isDestroyed: () => false,
             once: vi.fn(),
             close: vi.fn(),
@@ -1744,6 +1754,11 @@ describe("PreviewManager", () => {
         yield* manager.openTabWindow("tab_empty_window", "persist:t3code-preview-test");
 
         expect(detached.at(-1)).toBe(true);
+        const preferences: Electron.WebPreferences = {};
+        hostHandlers.get("will-attach-webview")!({}, preferences, {
+          partition: "persist:t3code-preview-test",
+        });
+        expect(preferences.additionalArguments).toContain(PRIMARY_PASTE_DISABLED_ARGUMENT);
       }),
     ),
   );

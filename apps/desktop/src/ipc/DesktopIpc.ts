@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { isSameOriginRendererNavigation } from "../window/RendererNavigation.ts";
 
 export interface DesktopIpcInvokeEvent {
   readonly sender: {
@@ -208,7 +209,10 @@ const isPopoutWindow = (event: DesktopIpcInvokeEvent, appUrl: string): boolean =
   if (sender.getType?.() !== "window" || sender.mainFrame !== event.senderFrame) return false;
   try {
     const url = new URL(sender.getURL?.() ?? "");
-    return url.origin === new URL(appUrl).origin && url.hash.startsWith("#/browser-window/");
+    return (
+      isSameOriginRendererNavigation({ applicationUrl: appUrl, navigationUrl: url.href }) &&
+      url.hash.startsWith("#/browser-window/")
+    );
   } catch {
     return false;
   }

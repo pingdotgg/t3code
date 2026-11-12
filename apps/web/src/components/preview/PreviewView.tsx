@@ -836,8 +836,14 @@ export function PreviewView({
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      if (isPopoutWindow) {
-        sendPreviewAnnotationToChatWindow({ threadRef, picked, screenshotFailed });
+      if (isPopoutWindow && tabId) {
+        sendPreviewAnnotationToChatWindow({
+          threadRef,
+          tabId,
+          runtimeTabId,
+          picked,
+          screenshotFailed,
+        });
         return;
       }
       const { annotation, image } = addPreviewAnnotationToDraft(

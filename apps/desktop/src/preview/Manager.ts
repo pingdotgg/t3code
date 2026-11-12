@@ -63,6 +63,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -566,6 +567,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+  const primaryPaste = yield* DesktopPrimaryPaste.DesktopPrimaryPaste;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
   const { isPartition: isBrowserPartition } = yield* BrowserSession.BrowserSession;
   const context = yield* Effect.context<never>();
@@ -3044,7 +3046,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         event.preventDefault();
         return;
       }
-      hardenPreviewWebviewPreferences(webPreferences, passkeys.bridgeEnabled);
+      hardenPreviewWebviewPreferences(webPreferences, passkeys.bridgeEnabled, primaryPaste.enabled);
     });
     host.on("did-attach-webview", (_event, contents) => {
       // The tab was closed or recreated since this window opened; never bind to the replacement.

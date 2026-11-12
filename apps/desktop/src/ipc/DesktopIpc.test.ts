@@ -61,6 +61,9 @@ it.effect("answers only the app's own windows' top frames", () =>
       },
       popoutOnAppRoute: popout(3, "t3://app/index.html#/settings"),
       foreignWindow: popout(4, "https://example.com/#/browser-window/tab-1"),
+      blankWindow: popout(6, "about:blank#/browser-window/tab-1"),
+      otherHost: popout(7, "t3://other/index.html#/browser-window/tab-1"),
+      fileWindow: popout(8, "file:///index.html#/browser-window/tab-1"),
       guestOnAppUrl: {
         ...popout(5, "t3://app/index.html#/browser-window/tab-1"),
         sender: { ...popout(5, "").sender, getType: () => "webview" },
@@ -85,6 +88,9 @@ it.effect("answers only the app's own windows' top frames", () =>
       popoutSubframe: ["rejected", undefined],
       popoutOnAppRoute: ["rejected", undefined],
       foreignWindow: ["rejected", undefined],
+      blankWindow: ["rejected", undefined],
+      otherHost: ["rejected", undefined],
+      fileWindow: ["rejected", undefined],
       guestOnAppUrl: ["rejected", undefined],
     });
   }).pipe(Effect.scoped),
