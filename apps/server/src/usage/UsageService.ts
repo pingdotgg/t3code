@@ -782,26 +782,35 @@ export const make = Effect.gen(function* () {
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
     const awaitRefresh = input.awaitRefresh === true;
-    const [resolved] = yield* Effect.all(
-      [
-        resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
-          Effect.provideContext(readerContext),
-        ),
-        provisional ? Effect.void : ensureRates(false),
-      ],
-      { concurrency: 2 },
-    );
-    // A window no complete scan has read would show partial totals, so every directory must cover it.
-    const fromMemory =
-      provisional &&
-      resolved.dirs.every(
-        (source) => (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs,
+    const collect = Effect.gen(function* () {
+      const resolved = yield* resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
+        Effect.provideContext(readerContext),
       );
-    const [, scannedDirs] = yield* Effect.all(
-      [
-        fromMemory ? loadSavedRates : provisional ? ensureRates(false) : Effect.void,
-        collectDirs(resolved, windowStartMs, settings, retentionCutoffMs, awaitRefresh, fromMemory),
-      ],
+      // A window no complete scan has read would show partial totals, so every directory must cover it.
+      const fromMemory =
+        provisional &&
+        resolved.dirs.length > 0 &&
+        resolved.dirs.every(
+          (source) => (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs,
+        );
+      const [, scanned] = yield* Effect.all(
+        [
+          fromMemory ? loadSavedRates : provisional ? ensureRates(false) : Effect.void,
+          collectDirs(
+            resolved,
+            windowStartMs,
+            settings,
+            retentionCutoffMs,
+            awaitRefresh,
+            fromMemory,
+          ),
+        ],
+        { concurrency: 2 },
+      );
+      return { scannedDirs: scanned, fromMemory };
+    });
+    const [{ scannedDirs, fromMemory }] = yield* Effect.all(
+      [collect, provisional ? Effect.void : ensureRates(false)],
       { concurrency: 2 },
     );
 

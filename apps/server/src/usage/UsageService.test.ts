@@ -3235,6 +3235,7 @@ describe("UsageService", () => {
         yield* service.awaitPersisted;
         const restarted = yield* UsageService.make;
         const saved = yield* restarted.readSummary({ ...WINDOW, provisional: true });
+        assert.isTrue(saved.sources.some((source) => source.refreshing === true));
         assert.deepStrictEqual(saved.buckets, exact.buckets);
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-saved-order-test", home, settings })),
@@ -3259,6 +3260,7 @@ describe("UsageService", () => {
         );
         yield* service.readSummary(NARROW_WINDOW);
         const saved = yield* service.readSummary({ ...WINDOW, provisional: true });
+        assert.isTrue(saved.sources.some((source) => source.refreshing === true));
         const exact = yield* service.readSummary(WINDOW);
         assert.deepStrictEqual(saved.buckets, exact.buckets);
       }).pipe(
@@ -3408,7 +3410,14 @@ describe("UsageService", () => {
             HttpClient.HttpClient,
             HttpClient.make((request) =>
               Deferred.await(releaseRates).pipe(
-                Effect.as(HttpClientResponse.fromWeb(request, Response.json({}))),
+                Effect.as(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({
+                      "example-model": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-5 },
+                    }),
+                  ),
+                ),
               ),
             ),
           ),
@@ -3427,7 +3436,8 @@ describe("UsageService", () => {
 
         const original = yield* Fiber.join(first);
         const updated = yield* Fiber.join(second);
-        assert.strictEqual(original.buckets[0]?.costUsd, 0);
+        // Fetched rates price the first read, so scans must start while the fetch is pending.
+        assert.isAbove(original.buckets[0]?.costUsd ?? 0, 0);
         assert.closeTo(updated.buckets[0]?.costUsd ?? -1, 0.00006, 1e-12);
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-price-race-test", home, settings })),
