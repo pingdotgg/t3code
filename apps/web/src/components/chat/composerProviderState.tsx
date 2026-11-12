@@ -86,7 +86,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     promptInjectionState = "none",
     includePlanAgent,
   } = input;
-  if (provider === "opencode") {
+  if (provider === "opencode" || provider === "cursor") {
     const normalizedModel = normalizeModelSlug(model, provider);
     const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
     if (!modelIsInCatalog) {
