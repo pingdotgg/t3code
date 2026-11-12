@@ -5110,6 +5110,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("steering does not hand Claude an input that cancels the running tool calls", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("steer-priority"),
+        text: "Run the slow commands",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${input.attemptId}`,
+      });
+      for (const [createdBy, creationSource] of [
+        ["user", "web"],
+        ["agent", "mcp"],
+      ] as const) {
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId,
+          message: {
+            createdBy,
+            creationSource,
+            messageId: MessageId.make(`steer-priority-${createdBy}`),
+            text: "Progress note, nothing to change.",
+            attachments: [],
+          },
+        });
+      }
+      // Claude Code aborts in-flight and waiting tool calls for a "now" input and
+      // reports the waiting ones as "The user doesn't want to take this action".
+      assert.notEqual(harness.offeredMessages[1]?.priority, "now");
+      assert.notEqual(harness.offeredMessages[2]?.priority, "now");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #29750 Claude sets a goal only from a prompt that opens with /goal
   it("keeps a /goal that mentions a skill as one native goal command", () => {
     const message = ClaudeAdapterV2.makeClaudeUserMessage({
