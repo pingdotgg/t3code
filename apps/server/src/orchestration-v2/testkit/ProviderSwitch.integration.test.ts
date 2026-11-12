@@ -2666,6 +2666,11 @@ describe("orchestration v2 provider switching", () => {
       "refuses the hand-off while the previous instance still runs background work",
       { background: true, queued: false, sharedHistory: false },
     ],
+    // regression: #35240 the refusal says to press Stop, so Stop must let the send through
+    [
+      "lets the hand-off through after Stop while the probe still reports background work",
+      { background: true, queued: false, sharedHistory: false, stopFirst: true },
+    ],
     [
       "keeps a busy previous session running when a queued hand-off starts",
       { background: true, queued: true, sharedHistory: false },
@@ -2674,9 +2679,11 @@ describe("orchestration v2 provider switching", () => {
       "holds a queued account switch while the replaced session still runs background work",
       { background: true, queued: true, sharedHistory: true },
     ],
-  ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
+  ] as const)("%s", ([, options]) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const { background, queued, sharedHistory } = options;
+        const stopFirst = "stopFirst" in options && options.stopFirst;
         const cwd = yield* checkpointWorkspace("handoff-releases-session");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const backgroundWork = yield* Ref.make(background);
@@ -2850,7 +2857,16 @@ describe("orchestration v2 provider switching", () => {
               unchanged.providerSessions.map((session) => [session.id, session.status]),
               [[firstSession!.id, "ready"]],
             );
-            yield* Ref.set(backgroundWork, false);
+            if (stopFirst) {
+              yield* orchestrator.dispatch({
+                type: "thread.stop",
+                commandId: CommandId.make("command:handoff-releases-session:stop"),
+                threadId: handoffThreadId,
+              });
+              yield* worker.drain();
+            } else {
+              yield* Ref.set(backgroundWork, false);
+            }
           }
 
           yield* send(2, secondSelection);
