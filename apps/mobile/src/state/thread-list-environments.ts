@@ -14,8 +14,9 @@ export type ThreadListProvider = Pick<
 
 const capabilityKeys = ["threadAutoSettleOptOut", "threadFolders"] as const;
 
-function selectEnvironment(config: ServerConfig) {
+function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
+    isConnected,
     providers: config.providers.map(
       ({ instanceId, driver, enabled, displayName, accentColor, iconUrl }) => ({
         instanceId,
@@ -61,14 +62,19 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const loadedEnvironmentIds = new Set<EnvironmentId>();
   const threadFolderEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
+  const reorderableEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
-  for (const [id, { providers, machineKind, capabilities, snoozePresets }] of environments) {
+  for (const [
+    id,
+    { providers, machineKind, capabilities, isConnected, snoozePresets },
+  ] of environments) {
     providersByEnvironmentId.set(id, providers);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadFolders === true) threadFolderEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
+    if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
     threadFolderEnvironmentIds,
@@ -78,8 +84,8 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     snoozeEnvironmentIds: loadedEnvironmentIds,
     pinningEnvironmentIds: loadedEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
-    pinReorderEnvironmentIds: loadedEnvironmentIds,
-    activeReorderEnvironmentIds: loadedEnvironmentIds,
+    pinReorderEnvironmentIds: reorderableEnvironmentIds,
+    activeReorderEnvironmentIds: reorderableEnvironmentIds,
     titleRegenerationEnvironmentIds: loadedEnvironmentIds,
     snoozePresetsByEnvironmentId,
   };
@@ -87,15 +93,17 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
 
 export function createThreadListEnvironmentsAtom(
   configsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, ServerConfig>>,
+  connectedEnvironmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>,
 ) {
   let previous = new Map<EnvironmentId, ListEnvironment>();
   let result = collectEnvironments(previous);
   return Atom.make((get) => {
     const configs = get(configsAtom);
+    const connectedEnvironmentIds = new Set(get(connectedEnvironmentIdsAtom));
     const next = new Map<EnvironmentId, ListEnvironment>();
     let changed = configs.size !== previous.size;
     for (const [id, config] of configs) {
-      const selected = selectEnvironment(config);
+      const selected = selectEnvironment(config, connectedEnvironmentIds.has(id));
       const prior = previous.get(id);
       if (prior && sameProviders(prior.providers, selected.providers)) {
         selected.providers = prior.providers;
@@ -107,6 +115,7 @@ export function createThreadListEnvironmentsAtom(
         prior &&
         prior.providers === selected.providers &&
         prior.machineKind === selected.machineKind &&
+        prior.isConnected === selected.isConnected &&
         prior.snoozePresets === selected.snoozePresets &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),

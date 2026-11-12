@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  applyTerminalAttachStreamEvent,
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  nextTerminalAttachSeedState,
+} from "@t3tools/client-runtime/state/terminal";
+import { synchronizeTerminalSession } from "../../components/ThreadTerminalDrawer";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
@@ -121,6 +127,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       canvas,
       beginPath() {},
       clip() {},
+      getTransform: () => ({ a: 1, d: 1 }),
       rect() {},
       resetTransform() {},
       restore() {},
@@ -277,6 +284,24 @@ describe("GhosttyTerminalSurface visibility", () => {
       "\x1b[F",
     ]);
     expect(surface.hasSelection()).toBe(false);
+  });
+
+  it("skips middle-click selection paste when the desktop turned primary paste off", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("echo hi");
+    surface.selectAll();
+    const pasteFromClipboard = vi.spyOn(surface, "pasteFromClipboard");
+
+    let primaryPasteEnabled = false;
+    Object.assign(window, { desktopBridge: { getPrimaryPasteEnabled: () => primaryPasteEnabled } });
+    harness.pointer("pointerdown", 5, 4, {}, 1);
+    expect(pasteFromClipboard).not.toHaveBeenCalled();
+
+    primaryPasteEnabled = true;
+    harness.pointer("pointerdown", 5, 4, {}, 1);
+    expect(pasteFromClipboard).toHaveBeenCalledOnce();
   });
 
   it("leaves modified history keys with alternate-screen applications", async () => {
@@ -436,6 +461,86 @@ describe("GhosttyTerminalSurface visibility", () => {
     },
   );
 
+  it("keeps a selection through redraws until the selected text changes", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const seed = nextTerminalAttachSeedState();
+    let state = applyTerminalAttachStreamEvent(seed, {
+      type: "snapshot",
+      snapshot: {
+        threadId: "thread",
+        terminalId: "term-1",
+        cwd: "/repo",
+        worktreePath: null,
+        status: "running",
+        pid: 123,
+        history: "* Working |",
+        exitCode: null,
+        exitSignal: null,
+        label: "Terminal",
+        updatedAt: "2026-10-20T00:00:00.000Z",
+      },
+    });
+    let cursor = synchronizeTerminalSession(surface, seed, state, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 85, 1);
+    harness.pointer("pointerup", 85, 0);
+    expect(surface.getSelection()).toBe("* Working |");
+
+    // A TUI repaints its spinner line in place, the way Claude Code redraws.
+    const redraw = (data: string) => {
+      const previous = state;
+      state = applyTerminalAttachStreamEvent(state, {
+        type: "output",
+        threadId: "thread",
+        terminalId: "term-1",
+        data,
+      });
+      cursor = synchronizeTerminalSession(surface, previous, state, cursor);
+    };
+    redraw("\r\x1b[2K* Working |");
+    expect(surface.getSelection()).toBe("* Working |");
+
+    redraw("\r\x1b[2K* Working /");
+    expect(surface.getSelection()).toBe("");
+    expect(surface.getSelectionPosition()).toBeNull();
+  });
+
+  it("reports where a selection sits after output scrolls it", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const rows = Array.from({ length: 10 }, (_, index) => `row ${index}`);
+    surface.write(`\x1b[?1049h\x1b[H${rows.join("\r\n")}`);
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1, {}, 0, 50);
+    harness.pointer("pointermove", 45, 1, {}, 0, 50);
+    harness.pointer("pointerup", 45, 0, {}, 0, 50);
+    const text = surface.getSelection();
+    const before = surface.getSelectionPosition();
+    expect(text).toMatch(/^row \d$/);
+
+    surface.write("\r\nrow 10\r\nrow 11");
+    expect(surface.getSelection()).toBe(text);
+    expect(surface.getSelectionPosition()?.start.y).toBe(before!.start.y - 2);
+  });
+
+  it("keeps a drag anchored to its text when output scrolls it mid-drag", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const rows = Array.from({ length: 10 }, (_, index) => `row ${index}`);
+    surface.write(`\x1b[?1049h\x1b[H${rows.join("\r\n")}`);
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1, {}, 0, 50);
+    harness.pointer("pointermove", 45, 1, {}, 0, 50);
+    expect(surface.getSelection()).toBe("row 6");
+
+    // The pointer stays over the row that output scrolls "row 8" into.
+    surface.write("\r\nrow 10\r\nrow 11");
+    harness.pointer("pointermove", 53, 1, {}, 0, 50);
+    expect(surface.getSelection()).toBe("row 6\nrow 7\nrow 8");
+  });
+
   it("does not activate a link replaced before pointer release", async () => {
     const harness = createHarness();
     const onLinkActivate = vi.fn();
@@ -449,6 +554,150 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointerup", 5, 0);
 
     expect(onLinkActivate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { scenario: "missing", exists: false },
+    { scenario: "file", exists: true },
+    { scenario: "replaced", exists: true },
+    { scenario: "superseded", exists: false },
+    { scenario: "hidden", exists: false },
+    { scenario: "dragged", exists: true },
+    { scenario: "keyboard-selected", exists: false },
+    { scenario: "selection-cleared", exists: true },
+    { scenario: "output-cleaned", exists: true },
+  ])(
+    "validates a quick click without waiting for hover: $scenario",
+    async ({ scenario, exists }) => {
+      vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+      const harness = createHarness();
+      let resolveValidation!: (exists: boolean) => void;
+      const validation = new Promise<boolean>((resolve) => {
+        resolveValidation = resolve;
+      });
+      const validateLink = vi.fn(() => validation);
+      const onLinkActivate = vi.fn();
+      const surface = await harness.create({
+        beforeKey: () => true,
+        canActivateLink: () => false,
+        validateLink,
+        onLinkActivate,
+      });
+      surface.write("src/main.ts");
+      harness.flushFrame();
+      surface.selectAll();
+      expect(surface.getSelection()).toBe("src/main.ts");
+      harness.pointer("pointerdown", 5, 1);
+      expect(validateLink).toHaveBeenCalledWith("src/main.ts");
+      if (scenario === "dragged") harness.pointer("pointermove", 45, 1);
+      harness.pointer("pointerup", 5, 0);
+      expect(onLinkActivate).not.toHaveBeenCalled();
+      if (scenario === "replaced") {
+        surface.write("\r\x1b[2Ksrc/other.ts");
+        harness.flushFrame();
+      }
+      if (scenario === "superseded") harness.pointer("pointerdown", 5, 1);
+      if (scenario === "hidden") {
+        surface.setVisible(false);
+        surface.setVisible(true);
+      }
+      if (scenario === "keyboard-selected")
+        key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true });
+      if (scenario === "selection-cleared") surface.clearSelection();
+      if (scenario === "output-cleaned") surface.clearSelection({ source: "output" });
+      resolveValidation(exists);
+      await validation;
+      expect(onLinkActivate).toHaveBeenCalledTimes(
+        scenario === "file" || scenario === "output-cleaned" ? 1 : 0,
+      );
+      if (scenario === "missing" || scenario === "selection-cleared")
+        expect(surface.getSelection()).toBe("");
+      if (
+        scenario === "file" ||
+        scenario === "hidden" ||
+        scenario === "superseded" ||
+        scenario === "keyboard-selected"
+      ) {
+        expect(surface.getSelection()).not.toBe("");
+      }
+    },
+  );
+
+  it("only requests validation for a stable visible link under the pointer", async () => {
+    const harness = createHarness();
+    const onLinkHover = vi.fn();
+    const surface = await harness.create({ onLinkHover, canActivateLink: () => false });
+    surface.write("\x1b[?1049h\x1b[Hsrc/first.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(250);
+    expect(onLinkHover).not.toHaveBeenCalled();
+
+    harness.pointer("pointermove", 5, 0);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/first.ts");
+    onLinkHover.mockClear();
+    for (let index = 0; index < 100; index++) {
+      surface.write(`\r\x1b[2Ksrc/file-${index}.ts`);
+      harness.flushFrame();
+      vi.advanceTimersByTime(10);
+    }
+    vi.advanceTimersByTime(239);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    harness.flushFrame();
+    vi.advanceTimersByTime(1_000);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([["src/file-99.ts"]]);
+    onLinkHover.mockClear();
+
+    harness.pointer("pointerleave", 5, 0);
+    surface.write("\r\x1b[2Ksrc/recent.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(150);
+    harness.pointer("pointermove", 5, 0);
+    vi.advanceTimersByTime(99);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/recent.ts");
+    onLinkHover.mockClear();
+
+    harness.pointer("pointerleave", 5, 0);
+    surface.write("\r\x1b[2Ksrc/still.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(250);
+    surface.write("\x1b[2;1Hother output");
+    harness.flushFrame();
+    harness.pointer("pointermove", 5, 0);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/still.ts");
+    onLinkHover.mockClear();
+
+    surface.write("\x1b[H\x1b[2Ksrc/move.ts");
+    harness.flushFrame();
+    harness.pointer("pointermove", 45, 0);
+    vi.advanceTimersByTime(150);
+    surface.write("\r\x1b[2K src/move.ts");
+    harness.flushFrame();
+    vi.advanceTimersByTime(249);
+    expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(onLinkHover).toHaveBeenLastCalledWith("src/move.ts");
+    onLinkHover.mockClear();
+
+    for (const [index, cancel] of [
+      () => {
+        surface.write("\r\x1b[2Kplain text");
+        harness.flushFrame();
+      },
+      () => harness.pointer("pointerleave", 5, 0),
+      () => surface.setVisible(false),
+      () => surface.dispose(),
+    ].entries()) {
+      surface.setVisible(true);
+      surface.write(`\x1b[H\x1b[2Ksrc/next-${index}.ts`);
+      harness.flushFrame();
+      harness.pointer("pointermove", 5, 0);
+      cancel();
+      vi.advanceTimersByTime(250);
+      expect(onLinkHover.mock.calls.filter(([text]) => text !== null)).toEqual([]);
+    }
   });
 
   it.each([false, true])(

@@ -1,0 +1,78 @@
+---
+title: Worker pools
+description: Run always-on queue consumers with GCP.Run.WorkerPool — no URL, a fixed instance count, and a Pub/Sub pull loop.
+---
+
+`GCP.Run.WorkerPool` runs containers that have no URL and keep
+running. Use it for a consumer that pulls from Pub/Sub all day,
+whether or not anyone sends HTTP traffic.
+
+## Declare a pool
+
+Set how many instances run with `scaling.manualInstanceCount`:
+
+```typescript
+// src/Worker.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { Jobs, Results } from "./resources.ts";
+
+export default class Worker extends GCP.Run.WorkerPool<Worker>()(
+  "Worker",
+  { main: import.meta.url, scaling: { manualInstanceCount: 1 } },
+  Effect.gen(function* () {
+    const results = yield* GCP.Firestore.WriteDatabase(Results);
+
+    yield* GCP.PubSub.consumeTopicMessages(
+      Jobs,
+      { maxMessages: 10, ackDeadlineSeconds: 60 },
+      (messages) =>
+        messages.pipe(
+          Stream.runForEach(({ message }) =>
+            results.set(`jobs/${message.messageId}`, { done: true }),
+          ),
+          Effect.orDie,
+        ),
+    );
+  }).pipe(
+    Effect.provide([GCP.Run.TopicPullEventSource, GCP.Firestore.WriteDatabaseHttp]),
+  ),
+) {}
+```
+
+`TopicPullEventSource` creates a pull subscription for the pool and
+runs the pull loop. A batch is acked only after your handler succeeds.
+If it fails, Pub/Sub delivers the batch again.
+
+## Make processing idempotent
+
+Pub/Sub delivers at least once. Write results with `set` keyed by the
+job id, so a second delivery overwrites the same document instead of
+adding another.
+
+## Run a loop of your own
+
+Return `run` instead to own the loop:
+
+```typescript
+return {
+  run: Effect.gen(function* () {
+    yield* Effect.log("tick");
+    yield* Effect.sleep("30 seconds");
+  }).pipe(Effect.forever),
+};
+```
+
+## Example
+
+[`examples/gcp-pubsub-worker`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-pubsub-worker)
+is a job queue: a public service publishes jobs, a worker pool
+processes them, and the service reads results from Firestore.
+
+## Where next
+
+- [Pub/Sub](/gcp/messaging/pubsub) — topics, push vs pull, filters, and
+  dead letters.
+- [Run reference](/providers/gcp/run#workerpool) — every prop and
+  attribute.

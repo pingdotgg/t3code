@@ -39,6 +39,14 @@ export function ProjectFavicon(input: {
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const { project } = input;
+  if (project.projectIcon) {
+    return <ProjectIconOverrideGlyph icon={project.projectIcon} className={input.className} />;
+  }
+  return <AutomaticProjectFavicon {...input} />;
+}
+
+function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
+  const { project } = input;
   const src = useAtomValue(
     projectFaviconUrlAtom({
       environmentId: project.environmentId,
@@ -46,9 +54,6 @@ export function ProjectFavicon(input: {
       faviconPath: project.faviconPath,
     }),
   );
-  if (project.projectIcon) {
-    return <ProjectIconOverrideGlyph icon={project.projectIcon} className={input.className} />;
-  }
   const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {

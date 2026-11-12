@@ -1,6 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A loopback fake of Cursor's backend drives the real SDK.
+import * as NodeHttp from "node:http";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   EnvironmentId,
   MessageId,
@@ -13,12 +17,14 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import { vi } from "vite-plus/test";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -33,7 +39,21 @@ import {
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { ConfigurationError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+// The SDK reads CURSOR_BACKEND_URL once when it loads, before any test body runs.
+const cursorBackendUrl = await vi.hoisted(async () => {
+  const NodeNet = await import("node:net");
+  const probe = NodeNet.createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  const url = `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}`;
+  process.env.CURSOR_BACKEND_URL = url;
+  return url;
+});
+
+const { Agent, ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -43,7 +63,7 @@ describe("CursorAdapterV2", () => {
     { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
     { status: "finished", model: "gpt-6-sol", lateModel: null },
   ] as const)(
-    "projects Cursor tasks: $status, late model $lateModel",
+    "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
     ({ status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -113,7 +133,35 @@ describe("CursorAdapterV2", () => {
                               : {}),
                           },
                         },
-                      }).pipe(Effect.orDie);
+                      });
+                    }
+                    const readUpdates: ReadonlyArray<InteractionUpdate> = [
+                      {
+                        type: "tool-call-started",
+                        modelCallId: "native-model-call",
+                        callId: "read-secret",
+                        toolCall: { type: "read", args: { path: "secret.txt" } },
+                      },
+                      ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
+                        type,
+                        modelCallId: "native-model-call",
+                        callId: "read-open",
+                        toolCall: {
+                          type: "read" as const,
+                          args: { path: "open.txt" },
+                          ...(type === "tool-call-completed"
+                            ? {
+                                result: {
+                                  status: "success" as const,
+                                  value: { fileSize: 3, content: "ok\n", totalLines: 1 },
+                                },
+                              }
+                            : {}),
+                        },
+                      })),
+                    ];
+                    for (const update of readUpdates) {
+                      yield* input.onDelta!(update);
                     }
                     return {
                       agentId: "native-cursor-lifecycle",
@@ -127,7 +175,7 @@ describe("CursorAdapterV2", () => {
                       }),
                       cancel: Effect.void,
                     };
-                  }),
+                  }).pipe(Effect.orDie),
               }),
           }),
           Effect.provide(TestProviderHost.layer({ cwd: workspace })),
@@ -189,7 +237,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isFalse(sentWithMcpOverride);
+        assert.isTrue(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -205,6 +253,40 @@ describe("CursorAdapterV2", () => {
                 : "failed",
         );
         assert.isNotNull(rows.at(-1)?.subagent.completedAt);
+        const unfinished =
+          status === "finished" ? "interrupted" : status === "error" ? "failed" : "cancelled";
+        const finalReads = new Map<string, { status: string; output: unknown; done: boolean }>();
+        for (const event of events) {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "Read"
+          ) {
+            finalReads.set(String(event.turnItem.title), {
+              status: event.turnItem.status,
+              output: event.turnItem.output,
+              done: event.turnItem.completedAt !== null,
+            });
+          }
+        }
+        const finalNodes = new Map<string, string>();
+        for (const event of events) {
+          if (event.type === "node.updated" && event.node.kind === "tool_call") {
+            finalNodes.set(String(event.node.nativeItemRef?.nativeId), event.node.status);
+          }
+        }
+        assert.deepEqual(Object.fromEntries(finalReads), {
+          "Read secret.txt": { status: unfinished, output: undefined, done: true },
+          "Read open.txt": {
+            status: "completed",
+            output: { fileSize: 3, content: "ok\n", totalLines: 1 },
+            done: true,
+          },
+        });
+        assert.deepEqual(Object.fromEntries(finalNodes), {
+          "read-secret": unfinished,
+          "read-open": "completed",
+        });
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -446,11 +528,11 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect("fails standalone SDK transport diagnostics and compacts with SDK summarize", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
-      const sentMessages: Array<string> = [];
+      const summarizeRequests: Array<boolean> = [];
       let sendCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
@@ -474,9 +556,7 @@ describe("CursorAdapterV2", () => {
               send: (input) =>
                 Effect.sync(() => {
                   sendCalls += 1;
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
+                  summarizeRequests.push(input.summarize === true);
                   const runId = `native-cursor-run-${sendCalls}`;
                   return {
                     agentId: "native-cursor-error",
@@ -487,9 +567,10 @@ describe("CursorAdapterV2", () => {
                       status: "finished" as const,
                       model: { id: "composer-2.5" },
                       durationMs: 1,
-                      ...(sendCalls === 1
-                        ? { result: "Error: RetriableError: WritableIterable is closed" }
-                        : {}),
+                      result:
+                        sendCalls === 1
+                          ? "Error: RetriableError: WritableIterable is closed"
+                          : "Summary of the conversation so far",
                     }),
                     cancel: Effect.void,
                   };
@@ -582,11 +663,12 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const compactionEvents = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
       );
-      assert.equal(sentMessages[1], "/compress");
+      assert.deepEqual(summarizeRequests, [false, true]);
+      assert.notInclude(JSON.stringify(compactionEvents), "Summary of the conversation so far");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -747,6 +829,151 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("carries an interrupted prompt into the steer that restarts the turn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-steer-" });
+      const sentMessages: Array<string> = [];
+      const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-steer-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-steer",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  sentMessages.push(
+                    typeof input.message === "string" ? input.message : input.message.text,
+                  );
+                  const runId = `native-cursor-run-${sentMessages.length}`;
+                  const ended = yield* Deferred.make<"finished" | "cancelled">();
+                  runEnds.push(ended);
+                  return {
+                    agentId: "native-cursor-steer",
+                    runId,
+                    // Cursor drops a cancelled run's prompt from the agent's conversation.
+                    wait: Deferred.await(ended).pipe(
+                      Effect.map((status) => ({
+                        id: runId,
+                        requestId: `native-request-${sentMessages.length}`,
+                        status,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      })),
+                    ),
+                    cancel: Deferred.succeed(ended, "cancelled"),
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-steer-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-steer-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor steer",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      const turnInput = (runOrdinal: number, text: string) => ({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make(`cursor-steer-run-${runOrdinal}`),
+        runOrdinal,
+        providerTurnOrdinal: runOrdinal,
+        attemptId: RunAttemptId.make(`cursor-steer-attempt-${runOrdinal}`),
+        rootNodeId: NodeId.make(`cursor-steer-root-${runOrdinal}`),
+        appThread,
+        message: {
+          messageId: MessageId.make(`cursor-steer-message-${runOrdinal}`),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          text,
+          attachments: [],
+        },
+      });
+      const firstPrompt = "Write me a 1000 word story about a dog.";
+      const steerText = "No wait, a pig please.";
+
+      yield* runtime.startTurn(turnInput(1, firstPrompt));
+      const started = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        ),
+      );
+      assert(started.type === "provider_turn.updated");
+      yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      yield* runtime.startTurn(turnInput(2, steerText));
+
+      assert.lengthOf(sentMessages, 2);
+      const steered = sentMessages[1]!;
+      assert.include(steered, steerText);
+      assert.include(
+        steered,
+        firstPrompt,
+        "the interrupted prompt is missing from the run that replaces it",
+      );
+
+      yield* Deferred.succeed(runEnds[1]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(turnInput(3, "Now a cow."));
+      assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -780,7 +1007,18 @@ describe("CursorAdapterV2", () => {
               args: { city: "Berlin" },
             },
             ...(type === "tool-call-completed"
-              ? { result: { status: "success" as const, value: { content: [], isError: false } } }
+              ? {
+                  result: {
+                    status: "success" as const,
+                    value: {
+                      content: [
+                        { text: { text: "Preview complete" } },
+                        { image: { data: "iVBORw0KGgo=", mimeType: "image/png" } },
+                      ],
+                      isError: false,
+                    },
+                  },
+                }
               : {}),
           },
         })),
@@ -863,6 +1101,32 @@ describe("CursorAdapterV2", () => {
             type: "grep",
             args: { pattern: "TODO", path: "src" },
             result: { status: "error", error: "search failed" },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "grep-counts",
+          toolCall: {
+            type: "grep",
+            args: { pattern: "TODO", outputMode: "count" },
+            result: {
+              status: "success",
+              value: {
+                workspaceResults: {
+                  [workspace]: {
+                    type: "count",
+                    output: {
+                      counts: [
+                        { file: "src/a.ts", count: 1 },
+                        { file: "src/b.ts", count: 3 },
+                      ],
+                      total: 4,
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         {
@@ -1065,6 +1329,9 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepEqual(item.input, { city: "Berlin" });
       }
+      assert.deepEqual(toolOutputImages(mcpItems.at(-1)?.output), [
+        { mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ]);
       const fileSearchItems = events.flatMap((event) =>
         event.type === "turn_item.updated" &&
         event.turnItem.type === "file_search" &&
@@ -1114,6 +1381,14 @@ describe("CursorAdapterV2", () => {
             pattern: "TODO",
             status: "failed",
             results: [{ fileName: "src", preview: "search failed" }],
+          },
+          {
+            pattern: "TODO",
+            status: "completed",
+            results: [
+              { fileName: "src/a.ts", preview: "1 match" },
+              { fileName: "src/b.ts", preview: "3 matches" },
+            ],
           },
           {
             pattern: "*.ts",
@@ -1489,6 +1764,56 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.live("honors the user's Cursor CLI attribution preferences", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-attribution-" });
+      yield* fileSystem.makeDirectory(path.join(home, ".cursor"));
+      yield* fileSystem.writeFileString(
+        path.join(home, ".cursor", "cli-config.json"),
+        JSON.stringify({
+          attribution: { attributeCommitsToAgent: false, attributePRsToAgent: false },
+        }),
+      );
+      const backend = yield* fakeCursorBackend;
+      // CURSOR_CONFIG_DIR outranks an ambient XDG_CONFIG_HOME; the home overrides keep the real ~/.cursor out.
+      yield* scopedProcessEnv({
+        HOME: home,
+        USERPROFILE: home,
+        CURSOR_CONFIG_DIR: path.join(home, ".cursor"),
+      });
+      const agent = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          Agent.create(
+            makeCursorAgentOptions({
+              apiKey: "synthetic-cursor-api-key",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+              runtimePolicy: {
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: home,
+              },
+              threadId: ThreadId.make("cursor-attribution-thread"),
+              mcpSession: undefined,
+              platform: "linux",
+            }),
+          ),
+        ),
+        (agent) => Effect.sync(() => agent.close()),
+      );
+      yield* Effect.promise(() => agent.send("Commit hello.txt."));
+
+      assert.deepEqual(yield* Deferred.await(backend.requestContext), {
+        commitAttributionMessage: undefined,
+        prAttributionMessage: undefined,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {
       interactionMode: "default" as const,
@@ -1715,3 +2040,134 @@ describe("CursorAdapterV2", () => {
     );
   });
 });
+
+const scopedProcessEnv = (values: Record<string, string>) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      for (const [key, value] of Object.entries(values)) vi.stubEnv(key, value);
+    }),
+    () => Effect.sync(() => vi.unstubAllEnvs()),
+  );
+
+// Loopback stand-in for Cursor's backend: it asks the local SDK runtime for its request
+// context over RunSSE and decodes the RequestContext the SDK appends back (agent.v1 protos).
+const fakeCursorBackend = Effect.gen(function* () {
+  const requestContext = yield* Deferred.make<{
+    readonly commitAttributionMessage: string | undefined;
+    readonly prAttributionMessage: string | undefined;
+  }>();
+  const requestContextExec = protoField(
+    2,
+    Buffer.concat([Buffer.from([0x08, 0x01]), protoField(15, Buffer.from("ctx")), protoField(10)]),
+  );
+  const runFrame = Buffer.alloc(5 + requestContextExec.length);
+  runFrame.writeUInt32BE(requestContextExec.length, 1);
+  requestContextExec.copy(runFrame, 5);
+  const server = NodeHttp.createServer((request, response) => {
+    const chunks: Array<Buffer> = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      switch (request.url) {
+        case "/auth/exchange_user_api_key":
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ accessToken: "synthetic-access-token" }));
+          return;
+        case "/v1/models":
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ items: [{ id: "composer-2" }] }));
+          return;
+        case "/agent.v1.AgentService/RunSSE":
+          response.writeHead(200, { "content-type": "application/connect+proto" });
+          response.write(runFrame);
+          return;
+        case "/aiserver.v1.BidiService/BidiAppend": {
+          const appended = protoGet(Buffer.concat(chunks), 1);
+          const clientMessage = Buffer.from(appended?.toString() ?? "", "hex");
+          const success = protoPath(clientMessage, [2, 10, 1]);
+          if (success !== undefined) {
+            const context = protoGet(success, 1);
+            Deferred.doneUnsafe(
+              requestContext,
+              context === undefined
+                ? Effect.die(new Error("RequestContextSuccess carried no RequestContext"))
+                : Effect.succeed({
+                    commitAttributionMessage: protoGet(context, 26)?.toString(),
+                    prAttributionMessage: protoGet(context, 27)?.toString(),
+                  }),
+            );
+          }
+          response.setHeader("content-type", "application/proto");
+          response.end();
+          return;
+        }
+        default:
+          response.statusCode = 404;
+          response.end();
+      }
+    });
+  });
+  yield* Effect.acquireRelease(
+    Effect.callback<void>((resume) => {
+      server.listen(Number(new URL(cursorBackendUrl).port), "127.0.0.1", () => resume(Effect.void));
+    }),
+    () =>
+      Effect.callback<void>((resume) => {
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
+  );
+  return { requestContext };
+});
+
+function protoVarint(value: number): Buffer {
+  const bytes: Array<number> = [];
+  while (value > 0x7f) {
+    bytes.push((value & 0x7f) | 0x80);
+    value >>>= 7;
+  }
+  bytes.push(value);
+  return Buffer.from(bytes);
+}
+
+function protoField(fieldNumber: number, value: Buffer = Buffer.alloc(0)): Buffer {
+  return Buffer.concat([protoVarint((fieldNumber << 3) | 2), protoVarint(value.length), value]);
+}
+
+function protoGet(message: Buffer, fieldNumber: number): Buffer | undefined {
+  let offset = 0;
+  const readVarint = () => {
+    let value = 0;
+    let shift = 0;
+    let byte: number;
+    do {
+      byte = message[offset++] ?? 0;
+      value += (byte & 0x7f) * 2 ** shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return value;
+  };
+  while (offset < message.length) {
+    const key = readVarint();
+    const wireType = key & 7;
+    if (wireType === 0) {
+      readVarint();
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      const length = readVarint();
+      if (Math.floor(key / 8) === fieldNumber) return message.subarray(offset, offset + length);
+      offset += length;
+    }
+  }
+  return undefined;
+}
+
+function protoPath(message: Buffer, fieldNumbers: ReadonlyArray<number>): Buffer | undefined {
+  let current: Buffer | undefined = message;
+  for (const fieldNumber of fieldNumbers) {
+    current = current === undefined ? undefined : protoGet(current, fieldNumber);
+  }
+  return current;
+}

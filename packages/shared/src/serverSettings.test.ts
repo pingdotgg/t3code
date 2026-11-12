@@ -23,7 +23,9 @@ import {
   resolveModelPreferences,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
+  resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
+  resolveSpeechPostProcessingModelSelection,
 } from "./serverSettings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -32,6 +34,12 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("fallbackTextGenerationModelSelection", () => {
+  it("uses Big Pickle when only OpenCode is enabled", () => {
+    expect(
+      fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === "opencode"),
+    ).toEqual({ instanceId: "opencode", model: "opencode/big-pickle" });
+  });
+
   it("replaces and clears the fallback without carrying model options", () => {
     const fallbackModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "new" };
     const settings = applyServerSettingsPatch(
@@ -50,7 +58,7 @@ describe("fallbackTextGenerationModelSelection", () => {
       applyServerSettingsPatch(settings, { fallbackModelSelection: null }).fallbackModelSelection,
     ).toBeNull();
   });
-  it("ignores a configured non-default instance at machine scope, matching no fallback", () => {
+  it("falls back to a configured non-default instance", () => {
     const configured = ProviderInstanceId.make("codex_work");
     const providerInstances = {
       [configured]: { driver: ProviderDriverKind.make("codex"), config: {} },
@@ -58,19 +66,6 @@ describe("fallbackTextGenerationModelSelection", () => {
     const fallback = fallbackTextGenerationModelSelection(
       providerInstances,
       (instanceId) => instanceId === configured,
-    );
-    expect(fallback).toBeNull();
-  });
-
-  it("considers a configured non-default instance only when asked to", () => {
-    const configured = ProviderInstanceId.make("codex_work");
-    const providerInstances = {
-      [configured]: { driver: ProviderDriverKind.make("codex"), config: {} },
-    };
-    const fallback = fallbackTextGenerationModelSelection(
-      providerInstances,
-      (instanceId) => instanceId === configured,
-      { includeConfiguredInstances: true },
     );
     expect(fallback?.instanceId).toBe(configured);
   });
@@ -119,6 +114,24 @@ describe("serverSettings helpers", () => {
       hosts: { "github.com": { enabled: false } },
       tokens: {},
     });
+  });
+
+  it("keeps a source control host's saved tokens when a patch sets another host's token", () => {
+    const reference = { provider: "vault", reference: "github/token" };
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      sourceControlHosts: { github: { tokens: { "github.com": reference } } },
+    });
+    const patched = applyServerSettingsPatch(saved, {
+      sourceControlHosts: { github: { tokens: { "ghe.example": "x" } } },
+    });
+    expect(patched.sourceControlHosts.github?.tokens).toEqual({
+      "github.com": reference,
+      "ghe.example": "x",
+    });
+    const recased = applyServerSettingsPatch(saved, {
+      sourceControlHosts: { github: { tokens: { " GitHub.com ": "ghp_new" } } },
+    });
+    expect(recased.sourceControlHosts.github?.tokens).toEqual({ "github.com": "ghp_new" });
   });
 
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
@@ -247,6 +260,15 @@ describe("serverSettings helpers", () => {
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
       otlpLogsUrl: "http://localhost:4318/v1/logs",
     });
+    // The server still loads a file holding the retired token streaming mode.
+    expect(
+      parsePersistedServerObservabilitySettings(
+        JSON.stringify({
+          responseStreamingMode: "token",
+          observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
+        }),
+      ).otlpTracesUrl,
+    ).toBe("http://localhost:4318/v1/traces");
   });
 
   it("falls back cleanly when persisted settings are invalid", () => {
@@ -369,6 +391,45 @@ describe("serverSettings helpers", () => {
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("routes every text task but review guides to a text generator, until it is turned off", () => {
+    const generatorId = ProviderInstanceId.make("openrouter");
+    const selection = createModelSelection(generatorId, "openai/gpt-5-mini");
+    const settings = (enabled: boolean) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerators: {
+        [generatorId]: {
+          kind: "openaiCompatible" as const,
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKey: "",
+          enabled,
+        },
+      },
+      sourceControlWriterModelSelection: selection,
+      reviewGuideModelSelection: selection,
+      speechPostProcessingModelSelection: selection,
+    });
+    // A text generator has no provider snapshot; an empty list must not read as unusable.
+    const on = settings(true);
+    expect(resolveSourceControlWriterModelSelection(on, [], null)).toBe(selection);
+    expect(resolveSpeechPostProcessingModelSelection(on, [])).toBe(selection);
+    expect(resolveReviewGuideModelSelection(on, [], null)).toBe(selection);
+    expect(
+      resolveReviewGuideModelSelection(
+        { ...on, sourceControlWriterModelSelection: null },
+        [],
+        null,
+      ),
+    ).toBe(on.textGenerationModelSelection);
+
+    const off = settings(false);
+    expect(resolveSourceControlWriterModelSelection(off, [], null)).toBe(
+      off.textGenerationModelSelection,
+    );
+    expect(resolveSpeechPostProcessingModelSelection(off, [])).toBe(
+      off.textGenerationModelSelection,
+    );
   });
 
   it("falls back from a writer provider a project turned off, keeping it for other projects", () => {
@@ -957,5 +1018,44 @@ describe("synchronized model preferences", () => {
         setModelFavorites: [{ provider, model: "sol", favorite: false }],
       }).favorites,
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
+  });
+});
+
+describe("resolveSpeechPostProcessingModelSelection", () => {
+  it("follows the text generation model until a usable cleanup model is set", () => {
+    const textGeneration = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
+    const cleanup = createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku", [
+      { id: "effort", value: "low" },
+    ]);
+    const base = { ...DEFAULT_SERVER_SETTINGS, textGenerationModelSelection: textGeneration };
+    expect(resolveSpeechPostProcessingModelSelection(base)).toBe(textGeneration);
+    const pinned = applyServerSettingsPatch(base, { speechPostProcessingModelSelection: cleanup });
+    expect(resolveSpeechPostProcessingModelSelection(pinned)).toEqual(cleanup);
+    expect(
+      resolveSpeechPostProcessingModelSelection({
+        ...pinned,
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: false,
+            config: {},
+          },
+        },
+      }),
+    ).toBe(textGeneration);
+    expect(
+      resolveSpeechPostProcessingModelSelection(pinned, [
+        {
+          instanceId: "claudeAgent",
+          enabled: true,
+          installed: true,
+          supportsTextGeneration: false,
+        },
+      ] as never),
+    ).toBe(textGeneration);
+    expect(
+      applyServerSettingsPatch(pinned, { speechPostProcessingModelSelection: null })
+        .speechPostProcessingModelSelection,
+    ).toBeNull();
   });
 });

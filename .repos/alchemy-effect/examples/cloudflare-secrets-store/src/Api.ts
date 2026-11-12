@@ -1,8 +1,8 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Redacted from "effect/Redacted";
 import { ApiKey } from "./ApiKey.ts";
 
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -23,9 +23,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           return HttpServerResponse.text(`Secret (masked): ${masked}`);
         }
 
-        return HttpServerResponse.text(
-          "Hello from Cloudflare Secrets Store example!",
-        );
+        return HttpServerResponse.text("Hello from Cloudflare Secrets Store example!");
       }).pipe(
         Effect.catchTag("SecretError", (err) =>
           Effect.succeed(

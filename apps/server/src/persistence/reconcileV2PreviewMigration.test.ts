@@ -55,8 +55,15 @@ describe("V2 preview upgrade", () => {
         [73, "ActiveTurnItemIndexes"],
         [74, "ExcludeAttachmentPlaceholdersFromSearch"],
         [75, "SubagentDeliveryState"],
-        [76, "ThreadFolders"],
-        [77, "ThreadFolderRules"],
+        [76, "ProjectionProjectsPinArchive"],
+        [77, "RepairBooleanSettledOverride"],
+        [78, "DropOrchestrationEventCorrelationIndex"],
+        [79, "DelegatedRecoveryIndexes"],
+        [80, "ScheduledTaskThreadMode"],
+        [81, "ProjectionMessageSearchText"],
+        [82, "TurnItemConversationIndex"],
+        [83, "ThreadFolders"],
+        [84, "ThreadFolderRules"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -155,8 +162,15 @@ describe("V2 preview upgrade", () => {
         [73, "ActiveTurnItemIndexes"],
         [74, "ExcludeAttachmentPlaceholdersFromSearch"],
         [75, "SubagentDeliveryState"],
-        [76, "ThreadFolders"],
-        [77, "ThreadFolderRules"],
+        [76, "ProjectionProjectsPinArchive"],
+        [77, "RepairBooleanSettledOverride"],
+        [78, "DropOrchestrationEventCorrelationIndex"],
+        [79, "DelegatedRecoveryIndexes"],
+        [80, "ScheduledTaskThreadMode"],
+        [81, "ProjectionMessageSearchText"],
+        [82, "TurnItemConversationIndex"],
+        [83, "ThreadFolders"],
+        [84, "ThreadFolderRules"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

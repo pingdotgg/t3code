@@ -20,6 +20,8 @@ export class SecretResolver extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<string | undefined>>;
     /** Forgets the given references, or every reference, so the next read asks the provider again. */
     readonly invalidate: (references?: ReadonlyArray<SecretReference>) => Effect.Effect<void>;
+    /** The name the user gave a secret provider, or its id when it has none or is gone. */
+    readonly label: (provider: SecretReference["provider"]) => Effect.Effect<string>;
   }
 >()("@t3tools/secret-provider-core/server/SecretResolver") {}
 
@@ -71,44 +73,63 @@ export const make = Effect.fn("SecretResolver.make")(function* (options: {
       : { driver, config: config.value, configKey: JSON.stringify(config.value) };
   };
 
-  const read: SecretResolver["Service"]["read"] = Effect.fn("SecretResolver.read")(
-    function* (references) {
-      const providers = yield* options.secretProviders;
-      const plans = references.map((reference) => planFor(providers, reference));
+  const isCached = (reference: SecretReference, plan: ReadablePlan) =>
+    cache.get(cacheKey(reference))?.config === plan.configKey;
 
-      const wanted = new Map<
-        string,
-        { readonly plan: ReadablePlan; readonly byReference: Map<string, Array<SecretReference>> }
-      >();
-      references.forEach((reference, index) => {
-        const plan = plans[index];
-        if (plan === undefined || cache.get(cacheKey(reference))?.config === plan.configKey) return;
-        const group = wanted.get(reference.provider) ?? { plan, byReference: new Map() };
-        group.byReference.set(reference.reference, [
-          ...(group.byReference.get(reference.reference) ?? []),
-          reference,
-        ]);
-        wanted.set(reference.provider, group);
-      });
-      for (const { plan, byReference } of wanted.values()) {
-        const values = yield* plan.driver.read(plan.config, [...byReference.keys()]);
-        [...byReference.values()].forEach((sameReference, index) => {
-          for (const reference of sameReference) {
-            cache.set(cacheKey(reference), { config: plan.configKey, value: values[index] });
+  const answer = (
+    references: ReadonlyArray<SecretReference>,
+    plans: ReadonlyArray<ReadablePlan | undefined>,
+  ) =>
+    references.map((reference, index) => {
+      const plan = plans[index];
+      return plan !== undefined && isCached(reference, plan)
+        ? cache.get(cacheKey(reference))?.value
+        : undefined;
+    });
+
+  // Cache hits answer without the lock, so a read waiting on an unlock never stalls a cached one.
+  const read: SecretResolver["Service"]["read"] = Effect.fn("SecretResolver.read")(function* (
+    references,
+  ) {
+    const providers = yield* options.secretProviders;
+    const plans = references.map((reference) => planFor(providers, reference));
+    const isMissing = (reference: SecretReference, index: number) => {
+      const plan = plans[index];
+      return plan !== undefined && !isCached(reference, plan);
+    };
+    if (!references.some(isMissing)) return answer(references, plans);
+
+    return yield* semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const wanted = new Map<
+          string,
+          {
+            readonly plan: ReadablePlan;
+            readonly byReference: Map<string, Array<SecretReference>>;
           }
+        >();
+        references.forEach((reference, index) => {
+          const plan = plans[index];
+          if (plan === undefined || !isMissing(reference, index)) return;
+          const group = wanted.get(reference.provider) ?? { plan, byReference: new Map() };
+          group.byReference.set(reference.reference, [
+            ...(group.byReference.get(reference.reference) ?? []),
+            reference,
+          ]);
+          wanted.set(reference.provider, group);
         });
-      }
-
-      return references.map((reference, index) => {
-        const cached = cache.get(cacheKey(reference));
-        return plans[index] !== undefined && cached?.config === plans[index].configKey
-          ? cached.value
-          : undefined;
-      });
-    },
-    (effect) => semaphore.withPermits(1)(effect),
-    Effect.provideContext(context),
-  );
+        for (const { plan, byReference } of wanted.values()) {
+          const values = yield* plan.driver.read(plan.config, [...byReference.keys()]);
+          [...byReference.values()].forEach((sameReference, index) => {
+            for (const reference of sameReference) {
+              cache.set(cacheKey(reference), { config: plan.configKey, value: values[index] });
+            }
+          });
+        }
+        return answer(references, plans);
+      }),
+    );
+  }, Effect.provideContext(context));
 
   const invalidate: SecretResolver["Service"]["invalidate"] = (references) =>
     semaphore.withPermits(1)(
@@ -118,7 +139,16 @@ export const make = Effect.fn("SecretResolver.make")(function* (options: {
       }),
     );
 
-  return SecretResolver.of({ read, invalidate });
+  const label: SecretResolver["Service"]["label"] = (provider) =>
+    options.secretProviders.pipe(
+      Effect.map(
+        (providers) =>
+          (Object.hasOwn(providers, provider) ? providers[provider]?.label.trim() : undefined) ||
+          provider,
+      ),
+    );
+
+  return SecretResolver.of({ read, invalidate, label });
 });
 
 export const layer = (options: Parameters<typeof make>[0]) =>

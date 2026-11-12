@@ -62,6 +62,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -69,7 +70,7 @@ import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -93,6 +94,8 @@ export {
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
+// eCryptfs permits 143-byte names.
+const MAX_HISTORY_FILENAME_BYTES = 143;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 250;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
@@ -170,6 +173,8 @@ export class TerminalManager extends Context.Service<
       input: TerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
+    readonly getShell: (input: TerminalObserveInput) => Effect.Effect<string, TerminalError>;
+
     /**
      * Attached viewers share one PTY sized to the smallest of them, so a narrow client
      * still sees the whole TUI. Streams and resizes with the same `viewerId` (one client
@@ -214,6 +219,8 @@ export class TerminalManager extends Context.Service<
 
     /** Omit terminalId to close all sessions for the thread. */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
+
+    readonly closeOnSettle: (input: { readonly threadId: string }) => Effect.Effect<void>;
 
     readonly closeIdle: (input: {
       readonly threadId: string;
@@ -283,7 +290,7 @@ interface TerminalSessionState {
   pid: number | null;
   history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
-  pendingProcessEvents: Array<PendingProcessEvent>;
+  pendingProcessEvents: Array<PendingProcessEvent | undefined>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
   exitCode: number | null;
@@ -294,11 +301,13 @@ interface TerminalSessionState {
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
+  shell: string | null;
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  stopOnSettle: boolean;
 }
 
 interface TerminalGrid {
@@ -360,10 +369,9 @@ function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): stri
   ) {
     trimmed = trimmed.slice(1, -1).trim();
   }
-  const firstToken = (trimmed.split(/\s+/)[0] ?? trimmed).trim();
-  if (firstToken.length === 0) return null;
+  // Process names and macOS `comm` paths can contain spaces ("Google Chrome").
   const separators = platform === "win32" ? /[\\/]/ : /\//;
-  const base = firstToken.split(separators).at(-1) ?? firstToken;
+  const base = (trimmed.split(separators).at(-1) ?? trimmed).trim();
   const withoutExe =
     platform === "win32" && base.toLowerCase().endsWith(".exe") ? base.slice(0, -4) : base;
   return withoutExe.length > 0 ? withoutExe : null;
@@ -558,6 +566,10 @@ function shellCandidateFromCommand(
   }
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
+  }
+  // Login shells load ~/.bash_profile, matching macOS terminal startup.
+  if (platform === "darwin" && shellName === "bash") {
+    return { shell: command, args: ["-l"] };
   }
   return { shell: command };
 }
@@ -1138,8 +1150,10 @@ function findStringTerminatorIndex(input: string, start: number): number | null 
     if (codePoint === 0x07 || codePoint === 0x9c || isControlSequenceCancel(codePoint)) {
       return index + 1;
     }
-    if (codePoint === 0x1b && input.charCodeAt(index + 1) === 0x5c) {
-      return index + 2;
+    // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
+    if (codePoint === 0x1b) {
+      if (index + 1 >= input.length) return null;
+      return input.charCodeAt(index + 1) === 0x5c ? index + 2 : index;
     }
   }
   return null;
@@ -1161,10 +1175,15 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   if (cursor >= input.length) {
     return null;
   }
+  // A second ESC restarts the sequence, so leave it for the next pass.
+  if (input.charCodeAt(cursor) === 0x1b) {
+    return cursor;
+  }
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
-const HISTORY_SEQUENCE_START = /[\u001b\u0090\u009b\u009d\u009e\u009f]/;
+// libghostty prints UTF-8 C1 code points (U+0080-U+009F) as text, so only ESC starts a sequence.
+const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
 
 function sanitizeTerminalHistoryChunk(
@@ -1249,47 +1268,6 @@ function sanitizeTerminalHistoryChunk(
       continue;
     }
 
-    if (codePoint === 0x9b) {
-      let cursor = index + 1;
-      while (cursor < input.length) {
-        const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
-        if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
-          const sequence = input.slice(index, cursor + 1);
-          const body = input.slice(index + 1, cursor);
-          if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
-            append(sequence);
-          }
-          index = cursor + 1;
-          break;
-        }
-        cursor += 1;
-      }
-      if (cursor >= input.length) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
-      }
-      continue;
-    }
-
-    if (codePoint === 0x9d || codePoint === 0x90 || codePoint === 0x9e || codePoint === 0x9f) {
-      const terminatorIndex = findStringTerminatorIndex(
-        input,
-        Math.max(index + 1, pendingScanStart),
-      );
-      if (terminatorIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
-      }
-      const sequence = input.slice(index, terminatorIndex);
-      const content = stripStringTerminator(input.slice(index + 1, terminatorIndex));
-      const strip =
-        (codePoint === 0x9d && shouldStripOscSequence(content)) ||
-        (codePoint === 0x90 && shouldStripDcsSequence(content));
-      if (!strip) {
-        append(sequence);
-      }
-      index = terminatorIndex;
-      continue;
-    }
-
     // One slice per printable run: every chunk of coloured output reaches this loop.
     NEXT_HISTORY_SEQUENCE_START.lastIndex = index + 1;
     const nextSequenceStart = NEXT_HISTORY_SEQUENCE_START.exec(input)?.index ?? input.length;
@@ -1303,8 +1281,6 @@ function sanitizeTerminalHistoryChunk(
 function legacySafeThreadId(threadId: string): string {
   return threadId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
-
-const MAX_FILE_NAME_BYTES = 255;
 
 function encodedHistoryThreadPart(threadId: string): string {
   return `terminal_${Base64Url.encode(threadId)}`;
@@ -1388,16 +1364,27 @@ function createTerminalSpawnEnv(
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
+    if (platform === "win32") {
+      const normalizedKey = key.toUpperCase();
+      if (normalizedKey === "TERM_PROGRAM" || normalizedKey === "TERM_PROGRAM_VERSION") continue;
+    }
     spawnEnv[key] = value;
   }
+  // The server inherits its launcher's identity (e.g. Apple_Terminal); shells
+  // and tools inside the integrated terminal should see T3 Code instead.
+  spawnEnv.TERM_PROGRAM = "t3code";
+  spawnEnv.TERM_PROGRAM_VERSION = packageJson.version;
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
       const existingKey =
         platform === "win32"
           ? Object.keys(spawnEnv).find((candidate) => candidate.toLowerCase() === key.toLowerCase())
           : undefined;
-      spawnEnv[existingKey ?? key] =
-        key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value, home) : value;
+      spawnEnv[existingKey ?? key] = expandHomeVariable(
+        platform === "win32" ? key.toUpperCase() : key,
+        value,
+        home,
+      );
     }
   }
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
@@ -1672,28 +1659,46 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
-  // Nested subagent thread ids can encode past the filename limit. Only names that would not fit
-  // switch to hashed ids, so every history file that already exists keeps its path.
-  const historyPath = (threadId: string, terminalId: string) => {
-    const isDefault = terminalId === DEFAULT_TERMINAL_ID;
-    const encodedName = joinHistoryFileName(
-      encodedHistoryThreadPart(threadId),
-      isDefault ? null : Base64Url.encode(terminalId),
+  const encodedHistoryPath = (threadId: string, terminalId: string) =>
+    path.join(
+      logsDir,
+      joinHistoryFileName(
+        encodedHistoryThreadPart(threadId),
+        terminalId === DEFAULT_TERMINAL_ID ? null : Base64Url.encode(terminalId),
+      ),
     );
-    if (encodedName.length <= MAX_FILE_NAME_BYTES) {
-      return path.join(logsDir, encodedName);
-    }
+
+  const historyPath = (threadId: string, terminalId: string) => {
+    const encoded = encodedHistoryPath(threadId, terminalId);
+    if (path.basename(encoded).length <= MAX_HISTORY_FILENAME_BYTES) return encoded;
     return path.join(
       logsDir,
-      joinHistoryFileName(hashedHistoryThreadPart(threadId), isDefault ? null : hashId(terminalId)),
+      joinHistoryFileName(
+        hashedHistoryThreadPart(threadId),
+        terminalId === DEFAULT_TERMINAL_ID ? null : hashId(terminalId),
+      ),
     );
   };
 
-  const legacyHistoryName = (threadId: string) => `${legacySafeThreadId(threadId)}.log`;
-  const legacyHistoryPath = (threadId: string) => path.join(logsDir, legacyHistoryName(threadId));
-  // Ids this long could never have been written under the legacy name.
-  const hasLegacyHistoryPath = (threadId: string) =>
-    Buffer.byteLength(legacyHistoryName(threadId)) <= MAX_FILE_NAME_BYTES;
+  const legacyHistoryPath = (threadId: string) =>
+    path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
+
+  const historyPaths = (threadId: string, terminalId: string) => [
+    ...new Set([
+      historyPath(threadId, terminalId),
+      encodedHistoryPath(threadId, terminalId),
+      ...(terminalId === DEFAULT_TERMINAL_ID ? [legacyHistoryPath(threadId)] : []),
+    ]),
+  ];
+
+  const historyExists = (filePath: string) => {
+    const name = path.basename(filePath);
+    // An oversized old path can itself fail on access. Directory entries also
+    // preserve migration of such histories on filesystems with a larger limit.
+    return name.length <= MAX_HISTORY_FILENAME_BYTES
+      ? fileSystem.exists(filePath)
+      : fileSystem.readDirectory(logsDir).pipe(Effect.map((entries) => entries.includes(name)));
+  };
 
   const readManagerState = SynchronizedRef.get(managerStateRef);
 
@@ -2022,105 +2027,86 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     terminalId: string,
   ) {
     const nextPath = historyPath(threadId, terminalId);
-    if (
-      yield* fileSystem
-        .exists(nextPath)
-        .pipe(
+    for (const sourcePath of historyPaths(threadId, terminalId)) {
+      const migrating = sourcePath !== nextPath;
+      const operation = migrating ? "migrate" : "read";
+      if (
+        !(yield* historyExists(sourcePath).pipe(
           Effect.mapError(
-            (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+            (cause) => new TerminalHistoryError({ operation, threadId, terminalId, cause }),
           ),
-        )
-    ) {
-      const { history: raw, truncated } = yield* readHistoryTail(nextPath).pipe(
+        ))
+      )
+        continue;
+      const { history: raw, truncated } = yield* readHistoryTail(sourcePath).pipe(
         Effect.scoped,
         Effect.mapError(
-          (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+          (cause) => new TerminalHistoryError({ operation, threadId, terminalId, cause }),
         ),
       );
       const history = new BoundedTerminalHistory(historyLineLimit, raw, historyByteLimit);
       const capped = history.value();
-      if (truncated || capped !== raw) {
-        yield* fileSystem
-          .writeFileString(nextPath, capped)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new TerminalHistoryError({ operation: "truncate", threadId, terminalId, cause }),
-            ),
-          );
+      if (migrating || truncated || capped !== raw) {
+        const write = migrating
+          ? Effect.gen(function* () {
+              const temporaryPath = yield* fileSystem.makeTempFileScoped({
+                directory: logsDir,
+                prefix: ".history-",
+              });
+              yield* fileSystem.writeFileString(temporaryPath, capped);
+              yield* fileSystem.rename(temporaryPath, nextPath);
+            }).pipe(Effect.scoped)
+          : fileSystem.writeFileString(nextPath, capped);
+        yield* write.pipe(
+          Effect.mapError(
+            (cause) =>
+              new TerminalHistoryError({
+                operation: migrating ? "migrate" : "truncate",
+                threadId,
+                terminalId,
+                cause,
+              }),
+          ),
+        );
+      }
+      if (migrating) {
+        yield* fileSystem.remove(sourcePath, { force: true }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to remove legacy terminal history", {
+              threadId,
+              terminalId,
+              error,
+            }),
+          ),
+        );
       }
       return history;
     }
-
-    if (terminalId !== DEFAULT_TERMINAL_ID || !hasLegacyHistoryPath(threadId)) {
-      return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
-    }
-
-    const legacyPath = legacyHistoryPath(threadId);
-    if (
-      !(yield* fileSystem
-        .exists(legacyPath)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-          ),
-        ))
-    ) {
-      return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
-    }
-
-    const { history: raw } = yield* readHistoryTail(legacyPath).pipe(
-      Effect.scoped,
-      Effect.mapError(
-        (cause) => new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-      ),
-    );
-    const history = new BoundedTerminalHistory(historyLineLimit, raw, historyByteLimit);
-    const capped = history.value();
-    yield* fileSystem
-      .writeFileString(nextPath, capped)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
-        ),
-      );
-    yield* fileSystem.remove(legacyPath, { force: true }).pipe(
-      Effect.catch((cleanupError) =>
-        Effect.logWarning("failed to remove legacy terminal history", {
-          threadId,
-          error: cleanupError,
-        }),
-      ),
-    );
-    return history;
+    return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
   });
 
   const deleteHistory = Effect.fn("terminal.deleteHistory")(function* (
     threadId: string,
     terminalId: string,
   ) {
-    yield* fileSystem.remove(historyPath(threadId, terminalId), { force: true }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to delete terminal history", {
-          threadId,
-          terminalId,
-          error,
-        }),
-      ),
-    );
-    if (terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryPath(threadId)) {
-      yield* fileSystem.remove(legacyHistoryPath(threadId), { force: true }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to delete terminal history", {
-            threadId,
-            terminalId,
-            error,
-          }),
+    yield* Effect.forEach(
+      historyPaths(threadId, terminalId),
+      (filePath) =>
+        Effect.gen(function* () {
+          if (yield* historyExists(filePath)) {
+            yield* fileSystem.remove(filePath, { force: true });
+          }
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to delete terminal history", {
+              threadId,
+              terminalId,
+              error,
+            }),
+          ),
         ),
-      );
-    }
+      { discard: true },
+    );
   });
 
   const deleteAllHistoryForThread = Effect.fn("terminal.deleteAllHistoryForThread")(function* (
@@ -2241,9 +2227,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return { type: "idle" } as const;
         }
 
+        session.pendingProcessEvents[session.pendingProcessEventIndex] = undefined;
         session.pendingProcessEventIndex += 1;
-        if (session.pendingProcessEventIndex >= session.pendingProcessEvents.length) {
-          session.pendingProcessEvents = [];
+        if (session.pendingProcessEventIndex * 2 >= session.pendingProcessEvents.length) {
+          session.pendingProcessEvents = session.pendingProcessEvents.slice(
+            session.pendingProcessEventIndex,
+          );
           session.pendingProcessEventIndex = 0;
         }
 
@@ -2371,7 +2360,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
   ): Effect.fn.Return<
-    { process: PtyAdapter.PtyProcess; shellLabel: string },
+    { process: PtyAdapter.PtyProcess; shell: string; shellLabel: string },
     PtyAdapter.PtySpawnError
   > {
     if (index >= shellCandidates.length) {
@@ -2414,6 +2403,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (attempt._tag === "Success") {
       return {
         process: attempt.success,
+        shell: candidate.shell,
         shellLabel: formatShellCandidate(candidate),
       };
     }
@@ -2442,6 +2432,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const startingAt = yield* nowIso;
     yield* modifyManagerState((state) => {
       session.status = "starting";
+      session.shell = null;
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.cols = input.cols;
@@ -2516,6 +2507,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             };
             yield* modifyManagerState((state) => {
               session.process = ptyProcess;
+              session.shell = spawnResult.shell;
               session.pid = processPid;
               session.status = "running";
               // onExit may replay an exit immediately; accept it before subscribing.
@@ -2892,11 +2884,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cols,
         rows,
         process: null,
+        shell: null,
         unsubscribeData: null,
         unsubscribeExit: null,
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        stopOnSettle: input.stopOnSettle ?? false,
       };
 
       const createdSession = session;
@@ -2922,6 +2916,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const liveSession = existing.value;
+    if (input.stopOnSettle !== undefined) liveSession.stopOnSettle = input.stopOnSettle;
     const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
     const currentRuntimeEnv = liveSession.runtimeEnv;
     const targetCols = input.cols ?? liveSession.cols;
@@ -2988,6 +2983,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
     );
+
+  const getShell = Effect.fn("terminal.getShell")(function* (input: TerminalObserveInput) {
+    const session = yield* requireSession(input.threadId, input.terminalId);
+    if (session.status !== "running" || session.shell === null) {
+      return yield* new TerminalNotRunningError(input);
+    }
+    return session.shell;
+  });
 
   const openOrAttachForStream = Effect.fnUntraced(function* (requestedInput: TerminalAttachInput) {
     const terminalId = requestedInput.terminalId;
@@ -3471,8 +3474,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const closeOnSettle = Effect.fn("terminal.closeOnSettle")(function* (input: {
+    readonly threadId: string;
+  }) {
+    yield* withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const sessions = yield* sessionsForThread(input.threadId);
+        yield* Effect.forEach(
+          sessions.filter((session) => session.stopOnSettle),
+          (session) => closeSession(input.threadId, session.terminalId, false),
+          { discard: true },
+        );
+      }),
+    );
+    yield* closeIdle(input);
+  });
+
   return TerminalManager.of({
     open,
+    getShell,
     attachStream,
     attachOutputStream,
     observeStream,
@@ -3482,6 +3503,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     clear,
     close,
     closeIdle,
+    closeOnSettle,
     subscribe,
     subscribeMetadata,
   });

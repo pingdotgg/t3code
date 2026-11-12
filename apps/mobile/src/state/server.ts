@@ -12,12 +12,12 @@ import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/stat
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentSession } from "./session";
-import { createThreadListEnvironmentsAtom } from "./thread-list-environments";
 
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   usageLimitSources: true,
   usageLimitsCommand: true,
+  providerCatalogsOnDemand: true,
 });
 export const describeOutdatedServer = createOutdatedServerDescriptionCommand(connectionAtomRuntime);
 export const updateOutdatedServer = createOutdatedServerUpdateCommand(connectionAtomRuntime);
@@ -26,9 +26,6 @@ export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 
-export const threadListEnvironmentsAtom = createThreadListEnvironmentsAtom(
-  environmentServerConfigsAtom,
-);
 
 const environmentThreadFoldersAtom = Atom.family((environmentId: EnvironmentId) => {
   let previousList: ThreadFolderListResult | null = null;
@@ -45,8 +42,9 @@ const environmentThreadFoldersAtom = Atom.family((environmentId: EnvironmentId) 
 export const threadFoldersAtom = (() => {
   let previous: ReadonlyArray<EnvironmentThreadFolder> = [];
   return Atom.make((get) => {
-    const next = [...get(threadListEnvironmentsAtom).threadFolderEnvironmentIds].flatMap(
-      (environmentId) => get(environmentThreadFoldersAtom(environmentId)),
+    const next = [...get(environmentServerConfigsAtom)].flatMap(
+      ([environmentId, config]) => config.environment.capabilities.threadFolders === true
+        ? get(environmentThreadFoldersAtom(environmentId)) : [],
     );
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;

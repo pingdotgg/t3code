@@ -13,6 +13,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -53,6 +54,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const folders = yield* ThreadFolderService.ThreadFolderService;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // True when this request was still current; a replaced or cancelled one records no event.
   const complete = (input: {
@@ -165,6 +167,9 @@ const make = Effect.gen(function* () {
           yield* serverSettings.getSettings,
           projection.thread.projectId,
         ).settings;
+        const worktreePath = projection.thread.worktreePath;
+        const worktreeExists = worktreePath !== null &&
+          (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
         const candidates = yield* folders
           .smartCandidates(input.threadId)
           .pipe(Effect.orElseSucceed(() => []));
@@ -177,7 +182,9 @@ const make = Effect.gen(function* () {
             hasPullRequest:
               visibleThreadPullRequests(projection.thread.pullRequests ?? []).length > 0,
           },
-          cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
+          cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
+          projectTitle: project.value.title,
+          projectId: projection.thread.projectId,
           message: context.message,
           attachments: context.attachments,
           ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),

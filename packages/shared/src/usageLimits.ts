@@ -9,7 +9,9 @@ import {
   type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
+  PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -26,7 +28,8 @@ export function exhaustedUsageWindow(
   now: number,
   model?: string,
 ) {
-  const exhausted = (provider?.usageLimits?.windows ?? []).filter(
+  const windows = provider?.usageLimits?.windows ?? [];
+  const exhausted = windows.filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
       (!window.resetsAt ||
@@ -51,6 +54,13 @@ export function exhaustedUsageWindow(
           (pool === "3p" && (family === "claude" || family === "gpt"))
         );
       });
+    }
+    case "codex": {
+      // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
+      const hasPlanWindows = windows.some(
+        (window) => window.id === "primary" || window.id === "secondary",
+      );
+      return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
     }
     case "opencode":
       return exhausted.find(
@@ -117,12 +127,12 @@ export const CURSOR_USAGE_WINDOWS = [
   {
     id: "totalPercentUsed",
     label: "Overall",
-    description: "Combined usage across both allowances, not a third quota.",
+    description: "All usage on your plan this billing cycle.",
   },
   {
     id: "autoPercentUsed",
     label: "Cursor Models",
-    description: "Grok and Composer use this first. Auto can use either pool.",
+    description: "Grok, Composer, and Auto use this allowance.",
   },
   {
     id: "apiPercentUsed",
@@ -232,6 +242,8 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
   };
 }
 
+const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
+
 export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
@@ -255,6 +267,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
+  const planSources = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
@@ -273,6 +286,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ) {
       creditSources.set(key, next);
     }
+    const previousPlan = planSources.get(key);
+    if (
+      next.plan &&
+      (!previousPlan ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousPlan.limits.checkedAt))
+    ) {
+      planSources.set(key, next);
+    }
     const previous = accounts.get(key);
     if (!previous) {
       accounts.set(key, next);
@@ -288,10 +309,19 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
+    // A hub e-mail names the account better than the driver's default instance name.
+    const hubEmail = [previous, next].some(
+      (account) => account.environments.length === 0 && account.email,
+    );
+    const displayName = previous.displayName ?? next.displayName;
     accounts.set(key, {
       ...previous,
-      displayName: previous.displayName ?? next.displayName,
-      plan: previous.plan ?? next.plan,
+      displayName:
+        hubEmail &&
+        displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()
+          ? null
+          : displayName,
+      plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
@@ -344,7 +374,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         merge(resolveKey(account) ?? key, {
           key,
           driver: account.driver,
-          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          displayName: account.email ? null : hubAccountName(account),
           email: account.email,
           plan: account.plan,
           accentColor: undefined,
@@ -371,24 +401,24 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
 export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
-  const notices: string[] = [];
+  const notices = new Set<string>();
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
       const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
       const name = provider.displayName?.trim() || String(provider.driver);
-      if (notice) notices.push(`${label(environmentLabel, name)}: ${notice}`);
+      if (notice) notices.add(`${label(environmentLabel, name)}: ${notice}`);
     }
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
-        notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
+        notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
-        notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
+        notices.add(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
     }
   }
-  return notices;
+  return [...notices];
 }
 
 export interface LimitPoolMember {
@@ -654,6 +684,56 @@ export function formatDuration(ms: number): string {
   return `${minutes}m`;
 }
 
+/** One redeemable reset as clients offer it; `input` already names the chosen credit. */
+export interface ResetCreditChoice {
+  readonly key: string;
+  readonly summary: string;
+  readonly actionLabel: string;
+  readonly confirmDescription: string;
+  readonly availableCount: number;
+  readonly input: ProviderConsumeResetCreditInput;
+}
+
+export function resetCreditChoices(
+  credits: ServerProviderResetCredits,
+  input: ProviderConsumeResetCreditInput,
+  now: number,
+  compact = false,
+): ReadonlyArray<ResetCreditChoice> {
+  const expiresIn = (at: string | undefined) => (at ? formatDuration(Date.parse(at) - now) : null);
+  if (credits.options && "instanceId" in input) {
+    return credits.options.map((option) => {
+      const expires = expiresIn(option.expiresAt);
+      return {
+        key: option.creditId,
+        summary: `${option.label} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
+        actionLabel: "Use",
+        confirmDescription: `${option.label}: ${option.description} This cannot be undone.`,
+        availableCount: option.availableCount,
+        input: { ...input, creditId: option.creditId },
+      };
+    });
+  }
+  const count = credits.availableCount;
+  const expires = expiresIn(credits.nextExpiresAt);
+  return [
+    {
+      key: "next",
+      summary:
+        count === 0
+          ? "No reset credits banked"
+          : compact
+            ? `${count} banked${expires ? ` · expires in ${expires}` : ""}`
+            : `${count} ${count === 1 ? "reset credit" : "reset credits"} banked${expires ? ` · next expires in ${expires}` : ""}`,
+      actionLabel: "Use reset",
+      confirmDescription:
+        "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      availableCount: count,
+      input,
+    },
+  ];
+}
+
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
@@ -708,8 +788,15 @@ export function withUsageLimitsCommands(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
 ): ServerProvider[] {
+  const supportedDrivers = new Set([
+    ...providersWithLimits(providers).map((provider) => provider.driver),
+    ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
+  ]);
+  const unreadableSource = sources.some(
+    (source) => source.error !== undefined && source.accounts.length === 0,
+  );
   return providers.map((provider) => {
-    if (!hasProviderUsageLimits(provider.driver, providers, sources)) return provider;
+    if (!unreadableSource && !supportedDrivers.has(provider.driver)) return provider;
     const commands = (items: readonly ServerProviderSlashCommand[]) => [
       ...items.filter((command) => command.name !== USAGE_LIMITS_COMMAND.name),
       USAGE_LIMITS_COMMAND,
@@ -834,7 +921,7 @@ export function collectProviderUsageLimits(
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: `${source.label} · ${account.id}`,
+        label: `${source.label} · ${hubAccountName(account)}`,
         sourceLabel: "CLI Proxy",
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {

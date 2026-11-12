@@ -20,6 +20,8 @@ import {
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
+export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: Schema.String });
+
 export type Operation = keyof ProviderTextGeneration;
 
 export interface Request<S extends Schema.Top> {
@@ -81,6 +83,18 @@ export function validFolderPick(
     ? { folderId: generated.folderId }
     : {};
 }
+export const generatedThreadTitle = (raw: string) => {
+  const title = sanitizeThreadTitle(raw);
+  // Some models echo the output schema's key instead of a title.
+  return title.toLowerCase() === "title"
+    ? Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: 'The model returned the placeholder title "title".',
+        }),
+      )
+    : Effect.succeed(title);
+};
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
@@ -157,6 +171,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         folders: input.folders,
         folderContext: input.folderContext,
         message: input.message,
+        projectTitle: input.projectTitle,
         previousTitle: input.previousTitle,
         forkSource: input.forkSource,
         linkedContext: input.linkedContext,
@@ -165,11 +180,22 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       }),
     });
     return {
-      title: sanitizeThreadTitle(generated.title),
+      title: yield* generatedThreadTitle(generated.title),
       ...validFolderPick(input, generated),
       ...(generated.needsRefinement ? { needsRefinement: true } : {}),
     };
   });
+
+  const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
+    Effect.fn(`${name}.generateTranscriptionPostProcessing`)(function* (input) {
+      return yield* run({
+        operation: "generateTranscriptionPostProcessing",
+        cwd: input.cwd,
+        prompt: input.prompt,
+        outputSchema: TranscriptionPostProcessingOutput,
+        modelSelection: input.modelSelection,
+      });
+    });
 
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = Effect.fn(
     `${name}.generateReviewGuide`,
@@ -201,5 +227,6 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateThreadTitle,
     generateReviewGuide,
     classifyThreadFolder,
+    generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 }
