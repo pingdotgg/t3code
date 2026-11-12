@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens, composerMathRanges } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  composerMathRanges,
+  formatLinkedSkillMention,
+} from "./composerInlineTokens.ts";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
-    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please";
+    const linkedSkill = formatLinkedSkillMention({ name: "dup", path: "/a b/dup/SKILL.md" });
+    const text = `Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please ${linkedSkill} go`;
 
     expect(collectComposerInlineTokens(text)).toEqual([
       {
@@ -28,6 +33,14 @@ describe("collectComposerInlineTokens", () => {
         source: "@AGENTS.md",
         start: 50,
         end: 60,
+      },
+      {
+        type: "skill",
+        value: "dup",
+        path: "/a b/dup/SKILL.md",
+        source: "[$dup](/a%20b/dup/SKILL.md)",
+        start: 68,
+        end: 95,
       },
     ]);
   });

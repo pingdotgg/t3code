@@ -52,7 +52,7 @@ import {
   type RichTextMark,
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
+import { composerMathRanges, formatLinkedSkillMention } from "@t3tools/shared/composerInlineTokens";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -819,6 +819,7 @@ function atomJsonForSegment(
       type: "composer-skill",
       attrs: {
         skillName: segment.name,
+        skillPath: segment.path ?? null,
         skillLabel: meta.label,
         skillDescription: meta.description,
       },
@@ -1193,7 +1194,9 @@ function readAtomSource(node: ProseMirrorNode): string {
       return typeof attrs.source === "string" ? attrs.source : "";
     case "composer-skill": {
       const name = typeof attrs.skillName === "string" ? attrs.skillName : "";
-      return name ? `$${name}` : "";
+      if (!name) return "";
+      const path = typeof attrs.skillPath === "string" ? attrs.skillPath : "";
+      return path ? formatLinkedSkillMention({ name, path }) : `$${name}`;
     }
     default:
       return "";

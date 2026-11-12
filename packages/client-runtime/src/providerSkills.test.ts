@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
+  formatProviderSkillMention,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
@@ -70,6 +71,10 @@ describe("getProviderSkillsForSlashMenu", () => {
       "/Users/matt/.agents/skills/browser/SKILL.md",
       "/Users/matt/.agents/skills/code-review/SKILL.md",
     ]);
+    expect(formatProviderSkillMention(skills[2]!, skills)).toBe(
+      "[$code-review](/Users/matt/.agents/skills/code-review/SKILL.md)",
+    );
+    expect(formatProviderSkillMention(skills[1]!, skills)).toBe("$browser");
   });
 
   it("keeps an enabled skill when a disabled duplicate appears first", () => {

@@ -1,3 +1,4 @@
+import { encodeMarkdownLinkDestination } from "./composerTrigger.ts";
 import { markdownMathRanges } from "./markdownMath.ts";
 
 export type ComposerInlineToken =
@@ -11,6 +12,8 @@ export type ComposerInlineToken =
   | {
       readonly type: "skill";
       readonly value: string;
+      /** Set for `[$name](path)`, which binds the mention to one of several same-name skill files. */
+      readonly path?: string;
       readonly source: string;
       readonly start: number;
       readonly end: number;
@@ -32,6 +35,7 @@ const FILE_LINK_TOKEN_REGEX = new RegExp(
   `(^|\\s)\\[((?:\\\\.|[^\\]\\\\]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
   "g",
 );
+const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^)\s]+)\)(?=\s)/g;
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
@@ -67,6 +71,25 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     });
   }
 
+  for (const match of text.matchAll(LINKED_SKILL_TOKEN_REGEX)) {
+    const prefix = match[1] ?? "";
+    const encodedPath = match[3] ?? "";
+    let path = encodedPath;
+    try {
+      path = decodeURIComponent(encodedPath);
+    } catch {}
+    const start = (match.index ?? 0) + prefix.length;
+    const end = start + match[0].length - prefix.length;
+    matches.push({
+      type: "skill",
+      value: match[2] ?? "",
+      path,
+      source: text.slice(start, end),
+      start,
+      end,
+    });
+  }
+
   for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
@@ -93,6 +116,13 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+export function formatLinkedSkillMention(skill: {
+  readonly name: string;
+  readonly path: string;
+}): string {
+  return `[$${skill.name}](${encodeMarkdownLinkDestination(skill.path)})`;
+}
+
 /**
  * Formulas in composer text, ignoring `$` and `\[` inside file links such as `posts.$postId.tsx`.
  * Links are masked with letters, not spaces, so a leading link cannot become an indented code
@@ -104,7 +134,7 @@ export function composerMathRanges(
 ) {
   let masked = text;
   for (const mention of mentions) {
-    if (mention.type !== "mention" || !mention.source.startsWith("[")) continue;
+    if (!mention.source.startsWith("[")) continue;
     masked =
       masked.slice(0, mention.start) +
       "x".repeat(mention.end - mention.start) +

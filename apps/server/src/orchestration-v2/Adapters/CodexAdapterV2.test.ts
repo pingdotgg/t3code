@@ -585,6 +585,7 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly sentInput?: ReadonlyArray<unknown>;
   readonly effort?: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
@@ -677,7 +678,7 @@ function codexReplayPreamble(input: {
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
-          input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
+          input: input.sentInput ?? [{ type: "text", text: input.sentPrompt ?? input.prompt }],
           cwd: "/workspace",
           model: "gpt-5.4",
           approvalPolicy: "never",
@@ -2253,6 +2254,61 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
         }
         assert.isEmpty(assistantMessages(harness.events));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("binds a linked skill mention to its file with a structured skill input", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "linked-skill-thread";
+        const nativeTurnId = "linked-skill-turn";
+        const prompt = "[$dup](/repo/sub/.agents/skills/dup/SKILL.md) go";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-linked-skill",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt,
+              sentInput: [
+                { type: "text", text: "$dup go" },
+                { type: "skill", name: "dup", path: "/repo/sub/.agents/skills/dup/SKILL.md" },
+              ],
+            }),
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("linked-skill-attempt"),
+            text: prompt,
+          }),
+        );
+        yield* harness.firstTerminal;
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

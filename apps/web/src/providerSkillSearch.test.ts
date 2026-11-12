@@ -32,16 +32,18 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "gfc").map((skill) => skill.name)).toEqual(["gh-fix-ci"]);
   });
 
-  it("returns the first enabled definition for each skill name", () => {
+  it("returns each enabled skill file once, including same-name files", () => {
     const skills = [
       makeSkill({ name: "branch-audit", path: "/Users/matt/.codex/skills/branch-audit/SKILL.md" }),
       makeSkill({ name: "browser" }),
       makeSkill({ name: "branch-audit", path: "/Users/matt/.agents/skills/branch-audit/SKILL.md" }),
+      makeSkill({ name: "browser" }),
     ];
 
     expect(searchProviderSkills(skills, "").map((skill) => skill.path)).toEqual([
       "/Users/matt/.codex/skills/branch-audit/SKILL.md",
       "/tmp/browser/SKILL.md",
+      "/Users/matt/.agents/skills/branch-audit/SKILL.md",
     ]);
   });
 });

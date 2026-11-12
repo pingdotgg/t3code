@@ -22,7 +22,7 @@ function escapeMarkdownLinkLabel(label: string): string {
   return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
 }
 
-function encodeMarkdownLinkDestination(path: string): string {
+export function encodeMarkdownLinkDestination(path: string): string {
   return encodeURI(path)
     .replaceAll("(", "%28")
     .replaceAll(")", "%29")

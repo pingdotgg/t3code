@@ -318,6 +318,7 @@ const ComposerSkillExtension = Node.create({
   addAttributes() {
     return {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     };
@@ -392,9 +393,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
+  const skillPath = (node.attrs.skillPath as string | null) ?? null;
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skill = skills.find(
-    (candidate) => candidate.name === skillName && isProviderSkillUserInvocable(candidate),
+    (candidate) =>
+      (skillPath ? candidate.path === skillPath : candidate.name === skillName) &&
+      isProviderSkillUserInvocable(candidate),
   );
   // The node outlives a provider switch, so its stored label can be another provider's.
   const skillLabel = skill

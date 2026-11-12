@@ -65,6 +65,7 @@ const schema = getSchemaByResolvedExtensions(
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
@@ -191,6 +192,7 @@ const plainSchema = getSchemaByResolvedExtensions(
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
@@ -319,6 +321,7 @@ describe("composer rich text document model", () => {
     "-[ ] also literal",
     "@README.md explain this",
     '@"docs/My File.md" and $my-skill please',
+    "[$dup](/repo/sub/.agents/skills/dup/SKILL.md) go",
     "snake_case stays literal",
     "unmatched ** stays literal",
     "**bold** then @README.md then *italic*",
