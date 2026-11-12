@@ -64,6 +64,8 @@ export interface TimelineViewport {
 
 const UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
 const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
+// Wide enough for an overlay scrollbar, which takes no layout space (macOS Firefox).
+const SCROLLBAR_HIT_PX = 16;
 
 /**
  * Owns the timeline scroll node's input listeners for as long as the node is
@@ -86,10 +88,16 @@ export function attachTimelineViewport(
     emit({ source: "wheel", direction: event.deltaY < 0 ? "up" : "down" });
   };
   const handleTouchMove = () => emit({ source: "touch" });
-  // Scrollbar drags produce no wheel/touch events; they are the only
-  // pointerdowns whose target is the scroll node itself rather than a row.
+  // Scrollbar drags produce no wheel/touch events. The scroll node's own padding
+  // also targets it, so only a press at its trailing edge counts.
   const handlePointerDown = (event: PointerEvent) =>
-    emit({ source: "pointer", onScrollbar: event.target === scrollNode });
+    emit({
+      source: "pointer",
+      onScrollbar:
+        event.target === scrollNode &&
+        scrollNode.getBoundingClientRect().right - event.clientX <=
+          Math.max(SCROLLBAR_HIT_PX, scrollNode.offsetWidth - scrollNode.clientWidth),
+    });
   // Clicking message text can leave DOM focus on body, and keyboard scrolling
   // bypasses wheel and pointer events, so scroll keys are heard app-wide.
   // Body keys belong to the main timeline; a side chat's hears only its own.
