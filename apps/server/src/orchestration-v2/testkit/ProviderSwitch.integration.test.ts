@@ -1368,6 +1368,116 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("tells the next provider about the goal the previous provider still owns", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("provider-switch-goal-owner");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number, selection: ModelSelection) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`goal-owner:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`goal-owner:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: selection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("goal-owner:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Goal owner",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* run(1, CODEX_MODEL_SELECTION);
+          const owner = (yield* orchestrator.getThreadProjection(threadId)).providerThreads[0]!;
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:goal-owner-paused"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...owner,
+                  goal: {
+                    objective: "Finish the ZEBRA-42 migration",
+                    status: "paused",
+                    tokensUsed: 25909,
+                  },
+                },
+              },
+            ],
+          });
+          yield* run(2, CLAUDE_MODEL_SELECTION);
+
+          const target = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.equal(target.driver, CLAUDE_DRIVER);
+          // The goal was set natively, so no history message names it.
+          assert.include(target.text, "Finish the ZEBRA-42 migration");
+          assert.include(target.text, "paused");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "provider-switch-goal-owner",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["an older handoff", "a missed request"] as const)(
     "keeps the latest turn when a resume fallback also delivers %s",
     (older) =>
