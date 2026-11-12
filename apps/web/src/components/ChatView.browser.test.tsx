@@ -72,7 +72,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-async function openThreadDetailsOnNonRepository(thread: FakeThread) {
+async function openThreadDetailsOnNonRepository(thread: FakeThread & { worktreePath: string }) {
   const stack = new AsyncDisposableStack();
   try {
     stack.use(installFakeEnvironment([thread]));
@@ -95,18 +95,21 @@ async function openThreadDetailsOnNonRepository(thread: FakeThread) {
     // vcs.status reports a missing folder as a non-repository.
     await vi.waitFor(() =>
       act(() =>
-        emitVcsStatus({
-          _tag: "snapshot",
-          local: {
-            isRepo: false,
-            hasPrimaryRemote: false,
-            isDefaultRef: false,
-            refName: null,
-            hasWorkingTreeChanges: false,
-            workingTree: { files: [], insertions: 0, deletions: 0 },
+        emitVcsStatus(
+          {
+            _tag: "snapshot",
+            local: {
+              isRepo: false,
+              hasPrimaryRemote: false,
+              isDefaultRef: false,
+              refName: null,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            },
+            remote: null,
           },
-          remote: null,
-        }),
+          thread.worktreePath,
+        ),
       ),
     );
     return stack.move();

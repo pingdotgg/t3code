@@ -334,7 +334,7 @@ let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
 let sequence = 1;
-let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+const vcsStatusSubscribers = new Map<string, Queue.Queue<VcsStatusStreamEvent>>();
 let serverConfigSubscriber: Queue.Queue<ServerConfigStreamEvent> | null = null;
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
@@ -418,11 +418,12 @@ const handlers: Record<string, (input: never) => unknown> = {
         : [],
     });
   },
-  [WS_METHODS.subscribeVcsStatus]: () =>
+  [WS_METHODS.subscribeVcsStatus]: ({ cwd }: { readonly cwd: string }) =>
     subscribe<VcsStatusStreamEvent>([], (queue) => {
-      vcsStatusSubscriber = queue;
+      vcsStatusSubscribers.delete(cwd);
+      vcsStatusSubscribers.set(cwd, queue);
       return () => {
-        if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
+        if (vcsStatusSubscribers.get(cwd) === queue) vcsStatusSubscribers.delete(cwd);
       };
     }),
   [WS_METHODS.subscribeServerConfig]: () => subscribeServerConfig(),
@@ -565,7 +566,11 @@ export async function emitServerConfig(overrides?: Partial<ServerConfig>): Promi
   );
 }
 
-export async function emitVcsStatus(event: VcsStatusStreamEvent): Promise<void> {
-  if (vcsStatusSubscriber === null) throw new Error("No VCS status subscription");
-  await Effect.runPromise(Queue.offer(vcsStatusSubscriber, event));
+/** Sends to the subscription for `cwd`, or to the most recent one. */
+export async function emitVcsStatus(event: VcsStatusStreamEvent, cwd?: string): Promise<void> {
+  const subscriber =
+    cwd === undefined ? [...vcsStatusSubscribers.values()].at(-1) : vcsStatusSubscribers.get(cwd);
+  if (subscriber === undefined)
+    throw new Error(`No VCS status subscription for ${cwd ?? "any cwd"}`);
+  await Effect.runPromise(Queue.offer(subscriber, event));
 }

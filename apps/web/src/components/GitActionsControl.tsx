@@ -987,9 +987,7 @@ export default function GitActionsControl({
   );
   // No project threads keep a plain scratch folder in worktreePath, not a checkout.
   const isWorktreeThread =
-    activeThreadContext?.worktreePath != null &&
-    activeProject !== null &&
-    activeProject.isScratch !== true;
+    activeThreadContext?.worktreePath != null && activeProject !== null && !activeProject.isScratch;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
