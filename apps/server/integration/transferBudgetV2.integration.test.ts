@@ -19,7 +19,8 @@ import {
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
-  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellHttpSnapshot,
+  OrchestrationV2ShellResumable,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
   ProviderDriverKind,
@@ -75,6 +76,8 @@ import {
 } from "./TransferBudgetReport.integration.ts";
 import { TRANSFER_HISTORY_TURN_COUNT } from "./fixtures/transferBudget.ts";
 import {
+  FLEET_PROJECT_IDENTITY,
+  fleetProjectCreated,
   LONG_TURN_THREAD_ID,
   longTurnThreadBatches,
   SHELL_IDLE_SUBAGENTS,
@@ -92,7 +95,8 @@ import {
 
 // The opt-ins current web and mobile clients send, as client-runtime's boundedThreadSnapshotHttp.ts,
 // threadHistoryHttp.ts, shellSnapshotHttp.ts, threads.ts and shell.ts send them. Each is `Required`,
-// so an opt-in added to a contract fails typecheck here until this test sends it.
+// so an opt-in added to a contract fails typecheck here until this test sends it. An omitted field
+// differs per request (a cursor, or what the client holds), so each scenario sends its own.
 const CLIENT_BOUNDED_OPT_INS = {
   compactTurnItems: "1",
   dedupeBodies: "1",
@@ -106,7 +110,7 @@ const CLIENT_SHELL_OPT_INS = {
   omitIdleSubagents: "1",
   omitIdleSubagentParents: "1",
   omitOlderSettled: "1",
-} satisfies Required<typeof EnvironmentOrchestrationShellSnapshotQuery.Type>;
+} satisfies Required<Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom">>;
 const CLIENT_THREAD_SUBSCRIPTION = {
   requestCompletionMarker: true,
   acceptBoundedSnapshot: true,
@@ -115,18 +119,23 @@ const CLIENT_THREAD_SUBSCRIPTION = {
   acceptCompactIds: true,
   acceptDedupedBodies: true,
 } satisfies Required<Omit<OrchestrationV2SubscribeThreadInput, "threadId" | "afterSequence">>;
+type ShellResumeField = "afterSequence" | "httpSnapshotFallback" | "knownProjectIdentities";
 const CLIENT_SHELL_SUBSCRIPTION = {
   requestCompletionMarker: true,
   omitIdleSubagents: true,
   omitIdleSubagentParents: true,
   omitOlderSettled: true,
-} satisfies Required<
-  Omit<OrchestrationV2SubscribeShellInput, "afterSequence" | "httpSnapshotFallback">
->;
+} satisfies Required<Omit<OrchestrationV2SubscribeShellInput, ShellResumeField>>;
 const query = (optIns: Readonly<Record<string, string>>) => new URLSearchParams(optIns).toString();
 const CLIENT_BOUNDED_QUERY = query(CLIENT_BOUNDED_OPT_INS);
 const CLIENT_HISTORY_QUERY = query(CLIENT_HISTORY_OPT_INS);
 const CLIENT_SHELL_QUERY = query(CLIENT_SHELL_OPT_INS);
+// A client that holds shell rows names their cursor in the same request.
+const clientShellResumeQuery = (resumeFrom: number) =>
+  query({
+    ...CLIENT_SHELL_OPT_INS,
+    resumeFrom: String(resumeFrom),
+  } satisfies Required<typeof EnvironmentOrchestrationShellSnapshotQuery.Type>);
 
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),
@@ -138,7 +147,10 @@ const decodeHistoryPage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
 );
 const decodeShellSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellHttpSnapshot)),
+);
+const decodeShellResumable = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellResumable)),
 );
 
 const layerPersistence = EventSink.layer.pipe(
@@ -178,7 +190,7 @@ const layerEnrichment = Layer.unwrap(
     return Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
       getAvailable: () =>
         Effect.succeed({
-          repositoryIdentity: null,
+          repositoryIdentity: FLEET_PROJECT_IDENTITY,
           faviconPath: null,
           repositoryIdentityResolved: true,
         }),
@@ -265,10 +277,7 @@ const collectUntil = Effect.fn("transfer.collectUntil")(function* <T extends Str
 });
 type Subscription =
   | ({ readonly thread: ThreadId } & Pick<OrchestrationV2SubscribeThreadInput, "afterSequence">)
-  | ({ readonly shell: true } & Pick<
-      OrchestrationV2SubscribeShellInput,
-      "afterSequence" | "httpSnapshotFallback"
-    >);
+  | ({ readonly shell: true } & Pick<OrchestrationV2SubscribeShellInput, ShellResumeField>);
 function subscriptionStream(
   client: MeasuredWsClient,
   subscription: Subscription,
@@ -459,8 +468,10 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
           const readShell = (query: string) =>
             Effect.gen(function* () {
               const http = yield* get(`/api/orchestration/shell?${query}`);
-              const { threads, snapshotSequence } = yield* decodeShellSnapshot(decoded(http));
-              return { http, rows: threads.length, snapshotSequence };
+              const { threads, snapshotSequence, projectIdentities } = yield* decodeShellSnapshot(
+                decoded(http),
+              );
+              return { http, rows: threads.length, snapshotSequence, projectIdentities };
             });
           // A new socket, read until the subscription caught up or the server ended it.
           const open = (subscription: Subscription) =>
@@ -531,6 +542,8 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
 
           // The transfer thread plus the long-turn thread.
           const earlierThreads = decodedShell.threads.length + 1;
+          // The fleet's project is in a repository. Earlier phases have no project, as on `main`.
+          yield* (yield* ProjectStore.ProjectStoreV2).apply(fleetProjectCreated);
           yield* sink.write({ events: shellFleetEvents(provider) });
           const fleetShellLegacy = yield* readShell("");
           const fleetShell = yield* readShell(CLIENT_SHELL_QUERY);
@@ -538,13 +551,27 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             fleetShellLegacy.rows,
             earlierThreads + SHELL_SETTLED_THREADS + SHELL_IDLE_SUBAGENTS,
           );
-          // A cold connect subscribes from the snapshot it just loaded.
+          const { projectIdentities } = fleetShell;
+          if (projectIdentities === undefined)
+            return yield* Effect.die("Expected the shell snapshot to name its project identities");
+          // A cold connect subscribes from the snapshot it just loaded and names its identities.
+          // Without them the resume sends the project again, in a marked snapshot.
           const fleetShellSubscribe = yield* open({
             shell: true,
             afterSequence: fleetShell.snapshotSequence,
+            knownProjectIdentities: projectIdentities,
           });
           assert.notInclude(fleetShellSubscribe.kinds, "snapshot");
-          // A cursor too old to replay is told to reload over HTTP, not sent a socket snapshot.
+          // A client that holds those rows asks the route whether they still resume, and keeps them.
+          const fleetShellResumeHttp = yield* get(
+            `/api/orchestration/shell?${clientShellResumeQuery(fleetShell.snapshotSequence)}`,
+          );
+          yield* decodeShellResumable(decoded(fleetShellResumeHttp));
+          const fleetShellResume = { http: fleetShellResumeHttp, rows: 0 };
+          // A cursor too old to replay gets the snapshot in the same answer.
+          const staleShellReload = yield* readShell(clientShellResumeQuery(sequence));
+          assert.equal(staleShellReload.rows, fleetShell.rows);
+          // When that request fails, the socket tells the client to reload, with no snapshot.
           const staleShellResume = yield* open({
             shell: true,
             afterSequence: sequence,
@@ -603,6 +630,8 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             fleetShellLegacy,
             fleetShell,
             fleetShellSubscribe,
+            fleetShellResume,
+            staleShellReload,
             staleShellResume,
             staleTodoColdOpen,
           } satisfies TransferBudgetRun;
