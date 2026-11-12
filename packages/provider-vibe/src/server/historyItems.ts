@@ -63,13 +63,14 @@ export function vibeHistoryTurnItem(
   if (entry["type"] === "reasoning") {
     const reasoning = text(entry["text"]);
     if (!reasoning) return undefined;
+    const streaming = entry["generationStatus"] === "in_progress";
     return {
       ...base,
-      status: "completed",
+      status: streaming ? "running" : "completed",
       title: null,
       type: "reasoning",
       text: reasoning,
-      streaming: false,
+      streaming,
     };
   }
   if (entry["type"] !== "effect") return undefined;

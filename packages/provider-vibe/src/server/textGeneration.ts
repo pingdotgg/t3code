@@ -47,7 +47,7 @@ const waitForTurnTerminal = Effect.fn("VibeTextGeneration.waitForTurnTerminal")(
   sessionId: string,
 ) {
   while (true) {
-    const turns = yield* client.sessionTurnsList({ sessionId, limit: 20 });
+    const { items: turns } = yield* client.sessionTurnsList({ sessionId, limit: 20 });
     const active = turns.find((turn) => !TERMINAL_TURN_STATUSES.has(turn.status));
     if (active === undefined) return turns[0];
     yield* Effect.sleep("500 millis");
