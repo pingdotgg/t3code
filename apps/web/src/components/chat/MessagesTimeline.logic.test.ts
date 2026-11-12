@@ -8,6 +8,7 @@ import {
   RunAttemptId,
   TurnItemId,
   RuntimeRequestId,
+  ScheduledTaskId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import {
   applyWorkingWindow,
+  attachSwitchHandoffs,
   applyBackgroundActivityGroups,
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -45,6 +47,75 @@ import {
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 import { presentSlashCommand } from "./timelineSlashCommands";
+
+it.each([
+  "prompt",
+  "automation",
+  "steer",
+  "missing",
+  "other-run",
+  "other-thread",
+  "superseded",
+  "command",
+] as const)(
+  "places a provider switch with its %s prompt, or retains the standalone marker",
+  (kind) => {
+    const at = "2026-11-12T00:00:00Z";
+    const runId = RunId.make("switch-run");
+    const projectedItem = {
+      sourceThreadId: ThreadId.make("switch-thread"),
+      item: { type: "handoff", runId },
+    } as OrchestrationV2ProjectedTurnItem;
+    const marker: MessagesTimelineRow = {
+      kind: "event",
+      id: "handoff",
+      createdAt: at,
+      projectedItem,
+    };
+    const prompt: MessagesTimelineRow = {
+      kind: "message",
+      id: "prompt",
+      createdAt: at,
+      message: {
+        id: MessageId.make("prompt"),
+        role: "user",
+        text: "continue",
+        streaming: false,
+        runId: kind === "other-run" ? RunId.make("other") : runId,
+        createdAt: at,
+        updatedAt: at,
+        ...(kind === "automation" ? { scheduledTaskId: ScheduledTaskId.make("task") } : {}),
+        ...(kind === "steer" ? { inputIntent: "steer" as const } : {}),
+      },
+      projectedItem: {
+        ...projectedItem,
+        sourceThreadId: ThreadId.make(kind === "other-thread" ? "other" : "switch-thread"),
+      },
+      showAssistantMeta: false,
+      showAssistantCopyButton: false,
+      assistantCopyStreaming: false,
+      ...(kind === "superseded" ? { superseded: true } : {}),
+      ...(kind === "command"
+        ? {
+            command: {
+              sigil: "/",
+              name: "compact",
+              args: "",
+              skill: false,
+              standalone: true,
+              state: "done",
+              result: null,
+            },
+          }
+        : {}),
+    };
+    const attaches = ["prompt", "automation", "steer"].includes(kind);
+    const rows = attachSwitchHandoffs(kind === "missing" ? [marker] : [marker, prompt]);
+    expect(rows.some((row) => row.kind === "event")).toBe(!attaches);
+    if (attaches) expect(rows).toEqual([{ ...prompt, switchHandoff: projectedItem.item }]);
+    else expect(rows).toContain(marker);
+  },
+);
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {
@@ -3477,13 +3548,15 @@ describe("v2 run and attempt history", () => {
 
     const collapsedRows = deriveMessagesTimelineRows(common);
     expect(collapsedRows.map((row) => row.id)).toEqual([
-      "context-handoff-entry",
       "initial-user-entry",
       `attempt-fold:${supersededAttemptId}`,
       "superseded-thread-created-entry",
       "steer-user-entry",
       "active-assistant-entry",
     ]);
+    expect(collapsedRows.find((row) => row.id === "initial-user-entry")).toMatchObject({
+      switchHandoff: { type: "handoff", runId },
+    });
     expect(collapsedRows.find((row) => row.kind === "attempt-fold")).toMatchObject({
       attemptId: supersededAttemptId,
       runId,
@@ -3497,7 +3570,6 @@ describe("v2 run and attempt history", () => {
       expandedAttemptIds: new Set([supersededAttemptId]),
     });
     expect(expandedRows.map((row) => row.id)).toEqual([
-      "context-handoff-entry",
       "initial-user-entry",
       `attempt-fold:${supersededAttemptId}`,
       "superseded-assistant-entry",
