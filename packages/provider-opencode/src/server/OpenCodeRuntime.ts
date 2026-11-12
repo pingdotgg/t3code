@@ -242,7 +242,7 @@ const loadOpenCodeProviders = (client: OpencodeClient) =>
     ),
   );
 
-const loadOpenCodeAgents = (client: OpencodeClient) =>
+export const loadOpenCodeAgents = (client: OpencodeClient) =>
   runOpenCodeSdk("app.agents", (signal) => client.app.agents(undefined, { signal })).pipe(
     Effect.map((result): ReadonlyArray<Agent> => result.data ?? []),
   );

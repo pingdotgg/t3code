@@ -267,6 +267,62 @@ const lazyMiseShim = {
 } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
+  it.effect("lists each OpenCode 2 workspace's own agents", () =>
+    Effect.gen(function* () {
+      serverStarts.length = 0;
+      const requested: Array<string> = [];
+      const server = HttpClient.make((request, url) => {
+        const directory = url.searchParams.get("location[directory]");
+        const responses = {
+          ...OPENCODE_2_RESPONSES,
+          ...OPENCODE_2_WORKSPACE_RESPONSES,
+          "/api/agent": {
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              location: { directory },
+              data: [
+                { id: "build", mode: "primary", hidden: false },
+                {
+                  id: directory === "/work" ? "reviewer" : "writer",
+                  mode: "all",
+                  hidden: false,
+                },
+                { id: "internal", mode: "primary", hidden: true },
+              ].map((agent) => ({
+                ...agent,
+                name: agent.id,
+                request: { settings: {}, headers: {}, body: {} },
+                permissions: [],
+              })),
+            }),
+          },
+        };
+        return replayOpenCodeServer(responses, "secret", requested).execute(request);
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+
+      const workAgent = (yield* instance.snapshotForCwd!("/work")).optionDescriptors?.find(
+        (option) => option.id === "agent",
+      );
+      assert.deepStrictEqual(
+        workAgent?.type === "select" ? workAgent.options.map((option) => option.id) : undefined,
+        ["build", "reviewer"],
+      );
+      const otherAgent = (yield* instance.snapshotForCwd!("/other")).optionDescriptors?.find(
+        (option) => option.id === "agent",
+      );
+      assert.deepStrictEqual(
+        otherAgent?.type === "select" ? otherAgent.options.map((option) => option.id) : undefined,
+        ["build", "writer"],
+      );
+      assert.deepStrictEqual(serverStarts, []);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
