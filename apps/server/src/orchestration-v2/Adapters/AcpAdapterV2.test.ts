@@ -5640,114 +5640,192 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("preserves the workspace runtime on background work or failed reactivation", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceB = yield* fs.makeTempDirectoryScoped();
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const instanceId = ProviderInstanceId.make("acp-workspace-reactivation");
-      let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
-      const inputs: Array<AcpAdapterV2RuntimeInput> = [];
-      const nativeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          replaceRuntimeOnActivation: () => true,
-          enablePostSettleContinuation: true,
-          registerExtensions: (context) =>
-            Effect.sync(() => {
-              applyMutation = context.applyBackgroundTaskMutation;
-            }),
-          makeRuntime: (input): ReturnType<AcpAdapterV2Flavor["makeRuntime"]> => {
-            inputs.push(input);
-            if (inputs.length === 2)
-              return Effect.fail(
-                new EffectAcpErrors.AcpTransportError({
-                  detail: "Fixture activation failure",
-                  cause: null,
-                }),
-              );
-            return nativeRuntime(input).pipe(
-              Effect.map((candidate) =>
-                inputs.length === 3
-                  ? {
-                      ...candidate,
-                      start: () =>
-                        candidate.start().pipe(
-                          Effect.tap(() =>
-                            originalMutation({
-                              sessionId,
-                              taskId: "late-workspace-task",
-                              status: "running",
+  it.effect.each(["startTurn", "resumeThread"] as const)(
+    "preserves the workspace runtime on background work or failed reactivation via %s",
+    (activation) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceB = yield* fs.makeTempDirectoryScoped();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-workspace-reactivation");
+        let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
+        const inputs: Array<AcpAdapterV2RuntimeInput> = [];
+        const prompts: Array<string> = [];
+        let originalClosed = false;
+        const nativeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            replaceRuntimeOnActivation: () => true,
+            sessionModeForPolicy: () => "code",
+            enablePostSettleContinuation: true,
+            registerExtensions: (context) =>
+              Effect.sync(() => {
+                applyMutation = context.applyBackgroundTaskMutation;
+              }),
+            makeRuntime: (input): ReturnType<AcpAdapterV2Flavor["makeRuntime"]> => {
+              inputs.push(input);
+              if (inputs.length === 2)
+                return Effect.fail(
+                  new EffectAcpErrors.AcpTransportError({
+                    detail: "Fixture activation failure",
+                    cause: null,
+                  }),
+                );
+              return nativeRuntime(input).pipe(
+                Effect.tap(() =>
+                  inputs.length === 1
+                    ? Effect.addFinalizer(() =>
+                        Effect.sync(() => {
+                          originalClosed = true;
+                        }),
+                      )
+                    : Effect.void,
+                ),
+                Effect.map((candidate) =>
+                  inputs.length === 4
+                    ? {
+                        ...candidate,
+                        setMode: () =>
+                          Effect.fail(
+                            new EffectAcpErrors.AcpTransportError({
+                              detail: "Fixture mode configuration failure",
+                              cause: null,
                             }),
                           ),
-                        ),
-                    }
-                  : candidate,
-              ),
-            );
+                      }
+                    : inputs.length === 3
+                      ? {
+                          ...candidate,
+                          start: () =>
+                            candidate.start().pipe(
+                              Effect.tap(() =>
+                                originalMutation({
+                                  sessionId,
+                                  taskId: "late-workspace-task",
+                                  status: "running",
+                                }),
+                              ),
+                            ),
+                        }
+                      : {
+                          ...candidate,
+                          prompt: (request) => {
+                            prompts.push(input.cwd);
+                            return candidate.prompt(request);
+                          },
+                        },
+                ),
+              );
+            },
           },
-        },
-        continuationRequests: { offer: () => Effect.void },
-      });
-      const threadId = ThreadId.make("thread-workspace-reactivation");
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const runtime = yield* adapter.openSession({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-        providerSessionId: ProviderSessionId.make("session-workspace-reactivation"),
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      if (applyMutation === undefined) return yield* Effect.die("Expected background task handler");
-      const originalMutation = applyMutation;
-      const sessionId = "mock-session-1";
-      assert.equal(providerThread.nativeThreadRef?.nativeId, sessionId);
-      yield* originalMutation({ sessionId, taskId: "workspace-task", status: "running" });
-      const nextPolicy = { ...runtimePolicy, cwd: workspaceB };
-      const resume = () =>
-        runtime.resumeThread({ providerThread, modelSelection, runtimePolicy: nextPolicy });
-      const busy = yield* Effect.exit(resume());
-      assert.isTrue(Exit.isFailure(busy));
-      if (Exit.isFailure(busy))
-        assert.include(Cause.pretty(busy.cause), "background work is running");
-      assert.lengthOf(inputs, 1);
-      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      yield* originalMutation({ sessionId, taskId: "workspace-task", status: "completed" });
-      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-      assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
-      const unchanged = yield* runtime.readThreadSnapshot({ providerThread });
-      assert.equal(unchanged.providerThread.nativeThreadRef?.nativeId, sessionId);
-      assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
-      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      yield* originalMutation({ sessionId, taskId: "late-workspace-task", status: "completed" });
-      yield* resume();
-      assert.deepEqual(
-        inputs.map((input) => [input.cwd, input.runtimePolicy.cwd, input.resumeSessionId]),
-        [
-          [runtimePolicy.cwd, runtimePolicy.cwd, undefined],
-          [workspaceB, workspaceB, sessionId],
-          [workspaceB, workspaceB, sessionId],
-          [workspaceB, workspaceB, sessionId],
-        ],
-      );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+          continuationRequests: { offer: () => Effect.void },
+        });
+        const threadId = ThreadId.make("thread-workspace-reactivation");
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("session-workspace-reactivation"),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        if (applyMutation === undefined)
+          return yield* Effect.die("Expected background task handler");
+        const originalMutation = applyMutation;
+        const sessionId = "mock-session-1";
+        assert.equal(providerThread.nativeThreadRef?.nativeId, sessionId);
+        const nextPolicy = { ...runtimePolicy, cwd: workspaceB };
+        const turnInput = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          messageText: "original workspace history",
+        });
+        const turn = (ordinal: number) =>
+          runtime.startTurn({
+            ...turnInput,
+            ...makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: turnInput.appThread.createdAt,
+              ordinal,
+              messageText: "original workspace history",
+            }),
+          });
+        const completed = runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.map((event) => {
+            assert.isTrue(Option.isSome(event));
+            if (Option.isSome(event) && event.value.type === "turn.terminal")
+              assert.equal(event.value.status, "completed");
+          }),
+        );
+        yield* turn(1);
+        yield* completed;
+        const resume = () =>
+          activation === "resumeThread"
+            ? runtime.resumeThread({ providerThread, modelSelection, runtimePolicy: nextPolicy })
+            : runtime.startTurn({ ...turnInput, runtimePolicy: nextPolicy });
+        yield* originalMutation({ sessionId, taskId: "workspace-task", status: "running" });
+        const busy = yield* Effect.exit(resume());
+        assert.isTrue(Exit.isFailure(busy));
+        if (Exit.isFailure(busy))
+          assert.include(Cause.pretty(busy.cause), "background work is running");
+        assert.lengthOf(inputs, 1);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        yield* originalMutation({ sessionId, taskId: "workspace-task", status: "completed" });
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
+        const unchanged = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.equal(unchanged.providerThread.nativeThreadRef?.nativeId, sessionId);
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(resume())));
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        yield* originalMutation({ sessionId, taskId: "late-workspace-task", status: "completed" });
+        const rejected = yield* Effect.exit(resume());
+        assert.isTrue(Exit.isFailure(rejected));
+        if (Exit.isFailure(rejected))
+          assert.include(Cause.pretty(rejected.cause), "Fixture mode configuration failure");
+        assert.isFalse(originalClosed, "configuration rejection must retain the original process");
+        yield* turn(2);
+        yield* completed;
+        assert.deepEqual(prompts, [runtimePolicy.cwd, runtimePolicy.cwd]);
+        assert.lengthOf(inputs, 4, "returning to the original workspace must reuse its runtime");
+        const retained = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.include(JSON.stringify(retained), "original workspace history");
+        yield* resume();
+        assert.deepEqual(
+          inputs.map((input) => [input.cwd, input.runtimePolicy.cwd, input.resumeSessionId]),
+          [
+            [runtimePolicy.cwd, runtimePolicy.cwd, undefined],
+            [workspaceB, workspaceB, sessionId],
+            [workspaceB, workspaceB, sessionId],
+            [workspaceB, workspaceB, sessionId],
+            [workspaceB, workspaceB, sessionId],
+          ],
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
@@ -6688,143 +6766,157 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("terminalizes an empty successful foreground Bash tool when the turn completes", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const mockAgentPath = yield* bundledMockAgentPath;
-      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
-      const instanceId = ProviderInstanceId.make("acp-test");
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath,
-            environment: (runtimeOrdinal) =>
-              runtimeOrdinal === 1 ? { T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG: "1" } : {},
-            ownDetachedProcessGroup: true,
-            processGroupTerminationGrace: 0,
-            protocolEvents,
-          }),
-          normalizeToolCall: normalizeXAiAcpToolCallState,
-          restartRuntimeAfterInterrupt: true,
-          terminateRuntimeProcessGroupOnInterrupt: true,
-        },
-        selfInvocation,
-      });
-      const threadId = ThreadId.make("thread-acp-empty-successful-bash");
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-empty-successful-bash"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
-        Effect.forkScoped,
-      );
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      yield* runtime.startTurn(
-        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
-      );
+  it.live.each([
+    { replacement: false, activation: "startTurn" },
+    { replacement: true, activation: "startTurn" },
+    { replacement: true, activation: "resumeThread" },
+  ] as const)(
+    "terminalizes an empty successful foreground Bash tool and recovers once ($replacement, $activation)",
+    ({ replacement, activation }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const instanceId = ProviderInstanceId.make("acp-test");
+        let constructions = 0;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            replaceRuntimeOnActivation: () => replacement,
+            makeRuntime: makeMockRuntime({
+              wrapRuntime: (runtime) => {
+                constructions++;
+                return runtime;
+              },
+              childProcessSpawner,
+              mockAgentPath,
+              environment: (runtimeOrdinal) =>
+                runtimeOrdinal === 1 ? { T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG: "1" } : {},
+              ownDetachedProcessGroup: true,
+              protocolEvents,
+            }),
+            normalizeToolCall: normalizeXAiAcpToolCallState,
+            restartRuntimeAfterInterrupt: true,
+            terminateRuntimeProcessGroupOnInterrupt: true,
+          },
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-empty-successful-bash");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-empty-successful-bash"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+        );
 
-      const statuses: string[] = [];
-      let runningStartedAt: DateTime.Utc | null = null;
-      let completedStartedAt: DateTime.Utc | null = null;
-      let completedAt: DateTime.Utc | null = null;
-      let completedInput: string | null = null;
-      let completedOutput: string | null | undefined;
-      let completedExitCode: number | null | undefined;
-      let runningProjectedExitCode: number | undefined = undefined;
-      let terminal = false;
-      while (!terminal) {
-        const event = yield* Queue.take(events);
-        if (
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "tool-call-empty-success-1"
-        ) {
-          statuses.push(event.turnItem.status);
-          if (event.turnItem.status === "running") {
-            runningStartedAt ??= event.turnItem.startedAt;
-            if (event.turnItem.type === "command_execution") {
-              runningProjectedExitCode = event.turnItem.exitCode;
+        const statuses: string[] = [];
+        let runningStartedAt: DateTime.Utc | null = null;
+        let completedStartedAt: DateTime.Utc | null = null;
+        let completedAt: DateTime.Utc | null = null;
+        let completedInput: string | null = null;
+        let completedOutput: string | null | undefined;
+        let completedExitCode: number | null | undefined;
+        let runningProjectedExitCode: number | undefined = undefined;
+        let terminal = false;
+        while (!terminal) {
+          const event = yield* Queue.take(events);
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "tool-call-empty-success-1"
+          ) {
+            statuses.push(event.turnItem.status);
+            if (event.turnItem.status === "running") {
+              runningStartedAt ??= event.turnItem.startedAt;
+              if (event.turnItem.type === "command_execution") {
+                runningProjectedExitCode = event.turnItem.exitCode;
+              }
+            }
+            if (event.turnItem.status === "completed") {
+              completedStartedAt = event.turnItem.startedAt;
+              completedAt = event.turnItem.completedAt;
+              if (event.turnItem.type === "command_execution") {
+                completedInput = event.turnItem.input;
+                completedOutput = event.turnItem.output;
+                completedExitCode = event.turnItem.exitCode;
+              }
             }
           }
-          if (event.turnItem.status === "completed") {
-            completedStartedAt = event.turnItem.startedAt;
-            completedAt = event.turnItem.completedAt;
-            if (event.turnItem.type === "command_execution") {
-              completedInput = event.turnItem.input;
-              completedOutput = event.turnItem.output;
-              completedExitCode = event.turnItem.exitCode;
-            }
-          }
+          if (event.type === "turn.terminal") terminal = true;
         }
-        if (event.type === "turn.terminal") terminal = true;
-      }
 
-      assert.deepEqual(statuses, ["running", "running", "completed"]);
-      assert.deepEqual(completedStartedAt, runningStartedAt);
-      assert.isNotNull(completedAt);
-      assert.equal(completedInput, "true");
-      assert.equal(completedOutput, undefined);
-      assert.equal(
-        runningProjectedExitCode,
-        undefined,
-        "mid-stream exit_code must not project until the tool is terminal",
-      );
-      assert.equal(completedExitCode, 0);
+        assert.deepEqual(statuses, ["running", "running", "completed"]);
+        assert.deepEqual(completedStartedAt, runningStartedAt);
+        assert.isNotNull(completedAt);
+        assert.equal(completedInput, "true");
+        assert.equal(completedOutput, undefined);
+        assert.equal(
+          runningProjectedExitCode,
+          undefined,
+          "mid-stream exit_code must not project until the tool is terminal",
+        );
+        assert.equal(completedExitCode, 0);
 
-      yield* Queue.takeAll(protocolEvents);
-      yield* runtime
-        .startTurn(
-          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
-        )
-        .pipe(Effect.forkScoped);
-      yield* Stream.fromQueue(protocolEvents).pipe(
-        Stream.filter(
-          (event) =>
-            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
-        ),
-        Stream.runHead,
-      );
-      const secondProviderTurnId = idAllocator.derive.providerTurn({
-        driver: ACP_TEST_DRIVER,
-        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
-      });
-      yield* runtime.interruptTurn({
-        providerThread,
-        providerTurnId: secondProviderTurnId,
-        requestRuntimeRestart: true,
-      });
-      yield* runtime.startTurn(
-        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 3 }),
-      );
-      const loadAfterRestart = yield* Stream.fromQueue(protocolEvents).pipe(
-        Stream.filter(
-          (event) =>
-            event.direction === "outgoing" && rawProtocolMethod(event) === "session/resume",
-        ),
-        Stream.runHead,
-      );
-      assert.isTrue(Option.isSome(loadAfterRestart));
-    }).pipe(Effect.provide(layerTest)),
+        yield* Queue.takeAll(protocolEvents);
+        yield* runtime
+          .startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) =>
+              event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+          ),
+          Stream.runHead,
+        );
+        const secondProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
+        });
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: secondProviderTurnId,
+          requestRuntimeRestart: true,
+        });
+        if (activation === "resumeThread")
+          yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 3 }),
+        );
+        assert.equal(constructions, 2, "interrupt recovery must construct one replacement runtime");
+        const loadAfterRestart = yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) =>
+              event.direction === "outgoing" && rawProtocolMethod(event) === "session/resume",
+          ),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(loadAfterRestart));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("drains native ACP cancellation before admitting the next prompt", () =>
