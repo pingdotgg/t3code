@@ -696,6 +696,39 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("does not call a quota refusal a usage limit while every window has room", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      yield* fake.emitHostWide("usage/changed", {
+        ...SUBSCRIPTION_USAGE,
+        window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 20 },
+        weekly: { ...SUBSCRIPTION_USAGE.weekly, usedPercent: 45 },
+      });
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", {
+        turnId: nativeId,
+        terminal: "failed",
+        error: {
+          kind: "modelError",
+          message: QUOTA_MESSAGE,
+          quota: { limitKind: "tierLimit", resetsAtMs: SUBSCRIPTION_USAGE.window.resetsAtMs },
+          retryable: false,
+        },
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.isUndefined(terminal.failure?.resetAt);
+      assert.isFalse(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.title === "Usage limit reached",
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("skips an unreadable usage report without ending the session", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
