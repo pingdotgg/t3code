@@ -70,6 +70,11 @@ if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {
   fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);
 }
 
+const promptCacheTtlMustBe = process.env.T3_FAKE_CLAUDE_PROMPT_CACHE_TTL_MUST_BE;
+if (promptCacheTtlMustBe && process.env.CLAUDE_CODE_PROMPT_CACHE_TTL !== promptCacheTtlMustBe) {
+  fail("CLAUDE_CODE_PROMPT_CACHE_TTL was " + (process.env.CLAUDE_CODE_PROMPT_CACHE_TTL ?? ""), 6);
+}
+
 const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;
 if (stderrText) {
   process.stderr.write(stderrText + "\n");

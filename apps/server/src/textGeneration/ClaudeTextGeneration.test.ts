@@ -65,6 +65,8 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    promptCacheTtlMustBe?: string;
+    hostPromptCacheTtl?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
@@ -88,6 +90,8 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
+      T3_FAKE_CLAUDE_PROMPT_CACHE_TTL_MUST_BE: input.promptCacheTtlMustBe,
+      CLAUDE_CODE_PROMPT_CACHE_TTL: input.hostPromptCacheTtl,
     };
     const environment: NodeJS.ProcessEnv = {
       ...Object.fromEntries(
@@ -232,6 +236,31 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
     }),
+  );
+
+  it.effect.each([
+    { name: "defaults to the 5m prompt cache", hostPromptCacheTtl: undefined, expected: "5m" },
+    { name: "keeps an explicit prompt cache TTL", hostPromptCacheTtl: "1h", expected: "1h" },
+  ])("Claude text generation $name", ({ hostPromptCacheTtl, expected }) =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Cache ttl" } }),
+        promptCacheTtlMustBe: expected,
+        ...(hostPromptCacheTtl === undefined ? {} : { hostPromptCacheTtl }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "thread title",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+          expect(generated.title).toBe(sanitizeThreadTitle("Cache ttl"));
+        }),
+    ),
   );
 
   it.effect("retries without --no-session-persistence when the Claude CLI rejects it", () =>
