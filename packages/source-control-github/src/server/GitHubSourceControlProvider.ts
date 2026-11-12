@@ -61,7 +61,10 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+import {
+  parseGitRemoteHost,
+  readSourceControlHostSettings,
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitHubClient from "../shared/definition.ts";
 import {
@@ -215,6 +218,29 @@ export const makeDiscovery = Effect.gen(function* () {
   const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
   const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
     appSignIn.enabled ? { ...item, appSignIn: true } : item;
+  // A dotless SSH host is an ssh config alias (`gh-work`); its HostName names the forge.
+  const sshConfigHostName = (cwd: string, remoteUrl: string) => {
+    const alias = isSshRemoteUrl(remoteUrl) ? parseGitRemoteHost(remoteUrl)?.hostname : undefined;
+    if (!alias || alias.includes(".") || alias.startsWith("-")) return Effect.succeed(null);
+    return process
+      .run({
+        operation: "GitHubSourceControlProvider.sshConfigHostName",
+        command: "ssh",
+        args: ["-G", alias],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64_000,
+      })
+      .pipe(
+        Effect.map((result) => {
+          const line = result.exitCode === 0 ? /^hostname\s+(\S+)\s*$/mu.exec(result.stdout) : null;
+          const hostName = line ? URL.parse(`https://${line[1]}`)?.host : undefined;
+          return hostName && hostName !== alias ? hostName : null;
+        }),
+        Effect.orElseSucceed(() => null),
+      );
+  };
 
   return {
     type: "managed-cli",
@@ -305,29 +331,33 @@ export const makeDiscovery = Effect.gen(function* () {
       } satisfies SourceControlProviderDiscoveryItem);
     }),
     // Claim disabled hosts so errors identify the setting.
-    refineUnknownRemote: ({ context }) => {
+    refineUnknownRemote: Effect.fn("GitHubSourceControlProvider.refineUnknownRemote")(function* ({
+      cwd,
+      context,
+    }) {
       const url = URL.parse(context.provider.baseUrl);
-      if (!url?.host) return Effect.succeed(null);
-      const host = gitHubApiHostForRemote(context.remoteUrl) ?? url.host;
+      if (!url?.host) return null;
+      const host =
+        gitHubApiHostForRemote(context.remoteUrl) ??
+        (yield* sshConfigHostName(cwd, context.remoteUrl)) ??
+        url.host;
       // A timeout or keyring failure propagates: the registry does not keep that answer.
-      return api.credential(host).pipe(
+      const known = yield* api.credential(host).pipe(
         Effect.as(true),
         Effect.catchTags({
           GitHubCliMissingError: () => Effect.succeed(false),
           GitHubHostDisabledError: () => Effect.succeed(true),
           GitHubNotSignedInError: () => Effect.succeed(false),
         }),
-        Effect.map((known) =>
-          known
-            ? ({
-                kind: SourceControlProviderKind.make("github"),
-                name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
-                baseUrl: host === url.host ? context.provider.baseUrl : `https://${host}`,
-              } as const)
-            : null,
-        ),
       );
-    },
+      return known
+        ? ({
+            kind: SourceControlProviderKind.make("github"),
+            name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+            baseUrl: host === url.host ? context.provider.baseUrl : `https://${host}`,
+          } as const)
+        : null;
+    }),
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
