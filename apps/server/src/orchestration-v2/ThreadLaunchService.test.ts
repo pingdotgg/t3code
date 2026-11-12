@@ -1224,6 +1224,24 @@ it.effect("starts a new worktree thread in a repository with no commits", () =>
   ),
 );
 
+it.effect("checks out a commit-search base when the current branch has no commits", () => {
+  const harness = makeHarness({ hasCommit: () => Effect.succeed(false) });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:commit-search",
+        thread: "thread:launch:commit-search",
+        message: "Say hello",
+        workspace: { type: "worktree", baseRef: ":/initial", branch: "feature" },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+    assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, ":/initial");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
   const harness = makeHarness({

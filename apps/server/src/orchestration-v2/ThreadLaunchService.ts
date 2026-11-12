@@ -541,7 +541,9 @@ const make = Effect.gen(function* () {
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         const unborn = yield* Effect.gen(function* () {
           const cwd = project.workspaceRoot;
-          if (yield* git.hasCommit({ cwd, refName: "HEAD" })) return false;
+          // `:/text` is a commit search, which cannot be asked for a commit type.
+          if (startRef.startsWith(":") || (yield* git.hasCommit({ cwd, refName: "HEAD" })))
+            return false;
           return !(yield* git.hasCommit({ cwd, refName: startRef === "-" ? "@{-1}" : startRef }));
         }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
         if (unborn) {
