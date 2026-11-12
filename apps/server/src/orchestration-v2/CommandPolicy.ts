@@ -92,12 +92,15 @@ export function goalCommandStopsActiveRun(
 
 /**
  * A steer aborts the provider's pending question or approval callback before the person
- * answers it, so while one is pending, any steer waits behind the turn instead.
+ * answers it, so while one is pending, any steer waits behind the turn instead. A request
+ * answered by a message has no callback and does not hold steers.
  */
 export function waitsOnPendingRequest(
   projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
 ): boolean {
-  return projection.runtimeRequests.some((request) => request.status === "pending");
+  return projection.runtimeRequests.some(
+    (request) => request.status === "pending" && request.responseCapability.type !== "message",
+  );
 }
 
 export function resolveMessageDispatchIntent(

@@ -251,7 +251,7 @@ it.each(["user_input", "command"] as const)(
     const projection = dispatchProjection(baseCapabilities);
     const waiting = {
       ...projection,
-      runtimeRequests: [{ kind, status: "pending" }],
+      runtimeRequests: [{ kind, status: "pending", responseCapability: { type: "live" } }],
     } as unknown as OrchestrationV2ThreadProjection;
     for (const deliveryIntent of ["auto", "steer"] as const) {
       assert.deepEqual(
@@ -274,19 +274,25 @@ it.each(["user_input", "command"] as const)(
       CommandPolicy.resolveMessageDispatchIntent(waiting, { type: "start_immediately" }, "restart"),
       { type: "restart_active", targetRunId: activeRunId },
     );
-    const answered = {
-      ...projection,
-      runtimeRequests: [{ kind, status: "resolved" }],
-    } as unknown as OrchestrationV2ThreadProjection;
-    for (const deliveryIntent of ["auto", "steer"] as const) {
-      assert.deepEqual(
-        CommandPolicy.resolveMessageDispatchIntent(
-          answered,
-          { type: "start_immediately" },
-          deliveryIntent,
-        ),
-        { type: "steer_active", targetRunId: activeRunId },
-      );
+    // An answered request, or one answered by a later message, has no callback to abort.
+    for (const request of [
+      { kind, status: "resolved", responseCapability: { type: "live" } },
+      { kind, status: "pending", responseCapability: { type: "message" } },
+    ]) {
+      const nonBlocking = {
+        ...projection,
+        runtimeRequests: [request],
+      } as unknown as OrchestrationV2ThreadProjection;
+      for (const deliveryIntent of ["auto", "steer"] as const) {
+        assert.deepEqual(
+          CommandPolicy.resolveMessageDispatchIntent(
+            nonBlocking,
+            { type: "start_immediately" },
+            deliveryIntent,
+          ),
+          { type: "steer_active", targetRunId: activeRunId },
+        );
+      }
     }
   },
 );
