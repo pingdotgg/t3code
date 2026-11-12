@@ -68,7 +68,7 @@ function AccountChip({ email }: { readonly email: string }) {
 
 // Same mark as the web Limits bar: the instance glyph and badge, or the chip for an email-only account.
 function AccountAvatar({ account }: { readonly account: LimitAccount }) {
-  if (account.email && !account.redeem) return <AccountChip email={account.email} />;
+  if (account.email && !account.displayName) return <AccountChip email={account.email} />;
   return (
     <ProviderInstanceIcon
       provider={account.driver}
