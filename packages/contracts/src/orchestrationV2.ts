@@ -21,6 +21,7 @@ import {
   MessageId,
   EnvironmentId,
   NodeId,
+  OwnedWorkItemId,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
@@ -44,6 +45,7 @@ import {
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
+import { OwnedWorkClosureReason, OwnedWorkItem } from "./ownedWork.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import { ThreadSpecialist } from "./threadSpecialist.ts";
 import {
@@ -490,6 +492,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
+  /** Absent on threads written before owned work existed; read as empty. */
+  ownedWorkItems: Schema.optional(Schema.Array(OwnedWorkItem)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1949,6 +1953,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.owned-work-updated",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -2167,6 +2172,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
+  /** Open owned-work items (including hold/attention). Absent from older servers. */
+  openOwnedWorkCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   /** Excludes wakes and agent messages that advance latestUserMessageAt through the user role. */
@@ -2849,6 +2856,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.owned-work-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -3095,6 +3103,86 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     /** Bind a specialist, or `null` to clear. */
     specialist: Schema.NullOr(ThreadSpecialist),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.assign"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    title: TrimmedNonEmptyString,
+    description: Schema.String,
+    assigneeThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+    createdByThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.claim"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    claimedByThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.progress"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    progress: Schema.String,
+    /** Defaults to the item's current claimer when omitted. */
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.handoff"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    toThreadId: ThreadId,
+    note: Schema.optional(Schema.String),
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.hold"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    reason: Schema.String,
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.resume"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    note: Schema.optional(Schema.String),
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.attention"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    reason: Schema.String,
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    /** Where the work went; required. Not acceptance of the next stage. */
+    closureReason: OwnedWorkClosureReason,
+    /** Required for `handed_off` and `escalation`. */
+    closureTarget: Schema.optional(TrimmedNonEmptyString),
+    closureNote: Schema.optional(Schema.String),
+    actorThreadId: Schema.optional(ThreadId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("owned-work.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: OwnedWorkItemId,
+    /** Always recorded as `canceled`; optional note only. */
+    closureNote: Schema.optional(Schema.String),
+    actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
