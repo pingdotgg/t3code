@@ -108,7 +108,7 @@ const make = Effect.gen(function* () {
     if (link === undefined) return yield* refused("This environment is not linked to that one.");
     const { records, project, cwd } = yield* loadThread(input.threadId);
     const { thread } = records;
-    const hereId = yield* environment.getEnvironmentId;
+    const here = yield* environment.getDescriptor;
     // Calls there carry this thread's modes and name it, as its own agent's calls would.
     const call = <S extends Schema.Decoder<unknown>>(
       tool: string,
@@ -120,7 +120,7 @@ const make = Effect.gen(function* () {
         tool,
         arguments: args,
         limits: { runtimeMode: thread.runtimeMode, interactionMode: thread.interactionMode },
-        sender: { environmentId: hereId, threadId: thread.id, title: thread.title },
+        sender: { environmentId: here.environmentId, threadId: thread.id, title: thread.title },
         success,
       });
     const there = (error: OrchestratorMcpFailure) => refused(`${link.label}: ${error.message}`);
@@ -186,7 +186,7 @@ const make = Effect.gen(function* () {
         return message === null ? [] : [message];
       }),
       coverage: [
-        `This thread continues thread "${thread.title}" (${thread.id}) from environment ${hereId}, moved here by the user.`,
+        `This thread continues thread "${thread.title}" (${thread.id}) from ${here.label} (environment ${here.environmentId}), moved here by the user.`,
         filesLine,
       ].join("\n"),
       budget: DEFAULT_HANDOFF_TOKEN_CAP,

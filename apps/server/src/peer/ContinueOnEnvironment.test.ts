@@ -121,7 +121,7 @@ const setup = (
     Layer.provide(
       Layer.succeed(ServerEnvironment.ServerEnvironment, {
         getEnvironmentId: Effect.succeed(here),
-        getDescriptor: Effect.die("unused"),
+        getDescriptor: Effect.succeed({ environmentId: here, label: "laptop" } as never),
       }),
     ),
     Layer.provide(NodeCrypto.layer),
@@ -162,6 +162,8 @@ it.effect("starts a thread there from this one's conversation, after its files l
     expect(launch.message).toContain("The login test fails on CI.");
     expect(launch.message).toContain("It races the session cookie; I patched auth.ts.");
     expect(launch.message).toContain("2 files written, 1 deleted");
+    // It names this machine as people know it, not only by id.
+    expect(launch.message).toContain(`from laptop (environment ${here})`);
   }).pipe(Effect.provide(layer));
 });
 
