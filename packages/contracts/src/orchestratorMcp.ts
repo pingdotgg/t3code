@@ -319,11 +319,50 @@ export const OrchestratorMcpCreateThreadsResult = Schema.Struct({
 });
 export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThreadsResult.Type;
 
+/**
+ * One-shot provider run (OpenRig `rig exec`): hand a task to a coding harness,
+ * wait for its report, and do not leave a durable specialist seat. Agent-only
+ * MCP; results stay in ordinary thread history (no exec dashboard).
+ */
+export const OrchestratorMcpExecInput = Schema.Struct({
+  task: OrchestratorMcpPrompt.annotate({
+    description:
+      "Bounded task for a one-shot coding harness run. No parent history. Prefer this over `delegate_task` when you need a report and not a lasting owned child seat.",
+  }),
+  title: Schema.optional(OrchestratorMcpTitle),
+  target: Schema.optional(OrchestratorMcpTarget),
+  timeoutMs: Schema.optional(Schema.Finite).annotate({
+    description: "Default 10 min. A timeout does not cancel the run.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  runtimeMode: Schema.optional(
+    OrchestratorMcpRuntimeMode.annotate({
+      description:
+        "Omit unless the user asks for a supervised run. Narrow modes pause for human approval, not read-only. Above yours is rejected.",
+    }),
+  ),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+});
+export type OrchestratorMcpExecInput = typeof OrchestratorMcpExecInput.Type;
+
 export const OrchestratorMcpThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   OrchestrationV2RunStatus,
 ]);
 export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Type;
+
+export const OrchestratorMcpExecResult = Schema.Struct({
+  /** Ordinary top-level thread that holds the run history; not an owned specialist seat. */
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  runId: Schema.NullOr(RunId),
+  status: OrchestratorMcpThreadStatus,
+  report: Schema.NullOr(Schema.String),
+  timedOut: Schema.Boolean,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+});
+export type OrchestratorMcpExecResult = typeof OrchestratorMcpExecResult.Type;
 
 const OrchestratorMcpProjectTarget = Schema.optional(
   ProjectId.annotate({

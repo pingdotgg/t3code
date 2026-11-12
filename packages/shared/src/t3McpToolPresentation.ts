@@ -16,6 +16,7 @@ export type T3McpToolSummaryAction =
   | "schedule-update"
   | "schedule-delete"
   | "thread-create"
+  | "exec"
   | "thread-list"
   | "thread-read"
   | "thread-send"
@@ -164,6 +165,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
+  t3_exec: tool(["Exec", "Running", "Finished", "a one-shot harness"], "exec"),
   t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),
   t3_thread_list: tool(["List", "Listing", "Listed", "T3 threads"], "thread-list"),
   t3_thread_read: tool(["Read", "Reading", "Read", "a T3 thread"], "thread-read"),

@@ -3854,6 +3854,133 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("one-shot exec returns a report without an owned specialist seat", () =>
+    Effect.gen(function* () {
+      const execRunId = RunId.make("run:mcp-exec");
+      const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? liveThreadShell(parentThreadId, { activeRunId: parentRunId })
+                : liveThreadShell(threadId),
+            ),
+          getThreadRecords: (threadId, _includes, filter) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection([])
+                : ({
+                    thread: {
+                      id: threadId,
+                      projectId,
+                      title: "One-shot exec",
+                      createdBy: "agent",
+                      creationSource: "mcp",
+                      modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+                      runtimeMode: "full-access",
+                      interactionMode: "default",
+                      archivedAt: null,
+                      deletedAt: null,
+                      branch: null,
+                      worktreePath: null,
+                    },
+                    runs: [
+                      {
+                        id: execRunId,
+                        ordinal: 1,
+                        status: "completed",
+                        providerInstanceId: codexInstanceId,
+                        modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+                        restartCancelledBackgroundWork: [],
+                      },
+                    ],
+                    ...(filter?.messageRoles?.includes("assistant") === true
+                      ? {
+                          messages: [
+                            {
+                              id: MessageId.make("message:mcp-exec-report"),
+                              runId: execRunId,
+                              role: "assistant",
+                              text: "Fixed the race.",
+                              updatedAt: DateTime.makeUnsafe("2026-11-11T00:00:00Z"),
+                              createdAt: DateTime.makeUnsafe("2026-11-11T00:00:00Z"),
+                            },
+                          ],
+                          turnItems: [
+                            {
+                              id: "item:mcp-exec-report",
+                              runId: execRunId,
+                              type: "assistant_message",
+                              ordinal: 1,
+                              text: "Fixed the race.",
+                              messageId: MessageId.make("message:mcp-exec-report"),
+                            },
+                          ],
+                          providerTurns: [],
+                        }
+                      : { messages: [], turnItems: [], providerTurns: [] }),
+                    contextTransfers: [],
+                    subagents: [],
+                    runtimeRequests: [],
+                    nodes: [],
+                  } as unknown as OrchestrationV2ThreadProjection),
+            ),
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              yield* Ref.update(dispatched, (commands) => [...commands, command]);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+          waitForThread: () =>
+            Effect.succeed({
+              threadId: childThreadId,
+              run: {
+                id: execRunId,
+                status: "completed",
+                restartCancelledBackgroundWork: [],
+              } as never,
+              timedOut: false,
+            }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.exec(scope, { task: "Fix the race in the queue." });
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+
+      assert.equal(result.report, "Fixed the race.");
+      assert.equal(result.status, "completed");
+      assert.equal(result.timedOut, false);
+      assert.equal(result.runId, execRunId);
+      assert.notProperty(result, "taskId");
+      assert.notProperty(result, "archived");
+      const commands = yield* Ref.get(dispatched);
+      assert.isTrue(commands.some((command) => command.type === "thread.create"));
+      assert.isTrue(commands.some((command) => command.type === "message.dispatch"));
+      assert.isFalse(commands.some((command) => command.type === "thread.archive"));
+      assert.isFalse(commands.some((command) => command.type === "delegated_task.request"));
+      assert.isFalse(commands.some((command) => command.type === "thread.created.record"));
+    }),
+  );
+
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },

@@ -182,6 +182,13 @@ export function summarizeT3ToolCalls(
     case "delegate":
       label = phrase("Delegated", "delegate", quantity(countEntities(entityIds("taskId")), "task"));
       break;
+    case "exec":
+      label = phrase(
+        "Finished",
+        "run",
+        quantity(countEntities(entityIds("threadId")), "one-shot exec"),
+      );
+      break;
     case "thread-read":
     case "thread-wait": {
       const targets = threadIds.every((value) => value !== undefined)

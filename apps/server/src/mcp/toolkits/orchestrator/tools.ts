@@ -13,6 +13,8 @@ import {
   OrchestratorMcpFindOrOpenSpecialistResult,
   OrchestratorMcpRetireSpecialistInput,
   OrchestratorMcpRetireSpecialistResult,
+  OrchestratorMcpExecInput,
+  OrchestratorMcpExecResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -264,6 +266,19 @@ const RetireSpecialistTool = Tool.make("retire_specialist", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true);
 
+const ExecTool = Tool.make("t3_exec", {
+  description:
+    "One-shot coding harness run (OpenRig `rig exec`): hand `task` to a provider, wait for its report. Ordinary thread history only: no owned `taskId`, no durable specialist seat, no exec dashboard. Prefer `delegate_task` when you need a lasting child seat to poll or follow up.",
+  parameters: OrchestratorMcpExecInput,
+  success: OrchestratorMcpExecResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "One-shot exec")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
     "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
@@ -431,6 +446,7 @@ export const OrchestratorToolkit = Toolkit.make(
   CreateThreadsTool,
   FindOrOpenSpecialistTool,
   RetireSpecialistTool,
+  ExecTool,
   ThreadListTool,
   ThreadReadTool,
   ThreadUpdateTool,

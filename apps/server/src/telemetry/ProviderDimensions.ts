@@ -150,6 +150,11 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
         targetChosen: threads.some((thread) => asFields(thread).target !== undefined),
       };
     }
+    case "t3_exec":
+      return defined({
+        targetChosen: input.target !== undefined,
+        ...(output.timedOut === true ? { waitTimedOut: true } : {}),
+      });
     case "t3_thread_launch":
       return defined({
         targetChosen: input.modelSelection !== undefined,
