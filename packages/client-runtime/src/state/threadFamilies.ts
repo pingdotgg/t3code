@@ -78,7 +78,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, E>>,
 ) {
   const shellStateValue = (state: AsyncResult.AsyncResult<EnvironmentShellState, E>) =>
-    Option.getOrNull(AsyncResult.value(state));
+    AsyncResult.getOrElse(state, () => null);
   const generationAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => shellStateValue(get(shellStateAtom(environmentId)))?.generation ?? 0).pipe(
       Atom.withLabel(`environment-shell-generation:${environmentId}`),

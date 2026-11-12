@@ -11,7 +11,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -137,12 +137,9 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const layerTestCrypto = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => new Uint8Array(size),
-    digest: (_algorithm, data) => Effect.succeed(data),
-  }),
+const layerTestRandom = Layer.succeed(
+  SecureRandom.SecureRandom,
+  SecureRandom.make((size) => new Uint8Array(size)),
 );
 
 const makeSupervisor = Effect.fn("CommandPerformance.makeSupervisor")(function* (input: {
@@ -174,7 +171,7 @@ const makeSupervisor = Effect.fn("CommandPerformance.makeSupervisor")(function* 
         },
       },
     } as never),
-    subscribeServerConfig: (requestInput) => client.subscribeServerConfig(requestInput),
+    subscribeServerConfig: (requestInput = {}) => client.subscribeServerConfig(requestInput),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
@@ -223,7 +220,7 @@ describe("routine command transport budget", () => {
       if (command.type !== "message.dispatch") {
         throw new Error(`Expected message.dispatch, received ${command.type}`);
       }
-      if (!("sequence" in receipt)) {
+      if ("projection" in receipt) {
         throw new Error("Expected a dispatch receipt");
       }
       const { deliveryIntent: _deliveryIntent, ...formerCommand } = command;
@@ -272,6 +269,6 @@ describe("routine command transport budget", () => {
       });
       expect(currentRpcJsonBytes).toBeLessThanOrEqual(MAX_CURRENT_SEND_RPC_JSON_BYTES);
       expect(currentRpcJsonBytes / formerRpcJsonBytes).toBeLessThanOrEqual(0.000_06);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 });

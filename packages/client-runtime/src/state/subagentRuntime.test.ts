@@ -13,7 +13,10 @@ import {
   isWorkflowScriptMessage,
   projectedSubagentsToRuntime,
   resolveWorkflowOpening,
+  workflowMemberModelSelection,
 } from "./subagentRuntime.ts";
+import { resolveSubagentMetadata } from "./subagentDisplay.ts";
+import { formatSubagentEffort } from "./threadExecution.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -59,6 +62,9 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
           agents: [
             member({
               state: "completed",
+              model: "claude-opus-5[1m]",
+              effort: "xhigh",
+              speed: "standard",
               startedAt: Date.UTC(2026, 7, 1, 10, 0, 0),
               durationMs: 1500,
               completedAt: Date.UTC(2026, 7, 1, 10, 0, 4, 432),
@@ -74,8 +80,47 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(settled?.status).toBe("completed");
     expect(settled?.completedAt).toBe("2026-08-01T10:00:04.432Z");
     expect(settled?.result).toBe("A1");
+    expect(settled?.model).toBe("claude-opus-5[1m]");
+    expect(settled?.effort).toBe("xhigh");
+    expect(settled?.speed).toBe("standard");
     expect(settled?.progress).toBe("Reply with exactly: A1");
     expect(settled?.usage).toEqual({ totalTokens: 71_141, toolUses: 3, durationMs: 1500 });
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    expect(workflowMemberModelSelection(settled!, instanceId)).toEqual({
+      instanceId,
+      model: "claude-opus-5[1m]",
+      options: [
+        { id: "effort", value: "xhigh" },
+        { id: "fastMode", value: false },
+      ],
+    });
+    expect(workflowMemberModelSelection({ model: null, effort: "xhigh" }, instanceId)).toBe(
+      undefined,
+    );
+    const provider = {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [
+        { slug: "claude-opus-5", name: "Claude Opus 5", isCustom: false, capabilities: null },
+      ],
+    };
+    const modelSelection = workflowMemberModelSelection(settled!, instanceId);
+    const { modelSlug } = resolveSubagentMetadata({
+      model: settled!.model,
+      modelSelection,
+      provider,
+    });
+    expect(formatSubagentEffort({ modelSlug, modelSelection, provider })).toBe("xhigh");
+  });
+
+  it("names a workflow by the model it runs on when the provider reports none", () => {
+    const [workflow] = projectedSubagentsToRuntime([subagent({ model: null })]);
+    expect(
+      resolveSubagentMetadata({
+        model: workflow!.model,
+        modelSelection: { model: "claude-opus-5-5" },
+      }).modelLabel,
+    ).toBe("Claude Opus 5.5");
+    expect(resolveSubagentMetadata({ model: workflow!.model }).modelLabel).toBe("Not reported");
   });
 
   it.each(["completed", "cancelled", "failed"] as const)(
@@ -108,8 +153,18 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
         "2026-08-01T10:00:09.000Z",
         "2026-08-01T10:00:01.500Z",
       ]);
+      expect(members?.[0]?.model).toBeNull();
+      expect(members?.[0]?.effort).toBeNull();
+      expect(members?.[0]?.speed).toBeUndefined();
     },
   );
+
+  it("titles an untitled subagent from its prompt without splitting an emoji", () => {
+    const [untitled] = projectedSubagentsToRuntime([
+      subagent({ title: null, prompt: `${"a".repeat(76)}😀 and more work.` }),
+    ]);
+    expect(untitled?.title).toBe(`${"a".repeat(76)}...`);
+  });
 });
 
 describe("deriveWorkflowGroups over a dynamic workflow", () => {

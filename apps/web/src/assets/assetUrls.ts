@@ -4,12 +4,12 @@ import {
   assetUrlStateFromResult,
   blockedAssetUrlState,
   EMPTY_ASSET_URL_ATOM,
+  makeRevisionedAssetUrlFamily,
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AssetResource, type AssetCreateUrlResult, EnvironmentId } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 
 import { assetEnvironment } from "~/state/assets";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -20,73 +20,7 @@ export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
 export type AssetUrlState = RuntimeAssetUrlState & { readonly waiting?: boolean };
 
-type AssetUrlTarget = {
-  readonly environmentId: EnvironmentId;
-  readonly input: { readonly resource: AssetResource };
-};
-
-const decodeRevisionedAssetUrlKey = Schema.decodeUnknownSync(
-  Schema.Tuple([EnvironmentId, AssetResource, Schema.NullOr(Schema.String)]),
-);
-
-const isSettled = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
-  !AsyncResult.isInitial(result) && !result.waiting;
-
-/**
- * The URL is minted per resource and shared across revisions, so reading a
- * different revision (even an earlier one after a revert) re-mints it. An
- * in-flight mint is shared only on first read; after an edit the server must
- * re-read the file, so the re-mint waits for that mint to settle.
- */
-export function makeRevisionedAssetUrlFamily(
-  createUrl: (
-    target: AssetUrlTarget,
-  ) => Atom.Atom<AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>,
-) {
-  // Outside the nodes: a node is dropped once unmounted, and the next read of
-  // its revision must still see the revisions minted since. Never pruned on
-  // purpose: pruning would forget the revision and re-mint on the next mount.
-  // It holds one short entry per file shown, and goes with the registry.
-  const mintedUnder = new WeakMap<AtomRegistry.AtomRegistry, Map<string, string | null>>();
-  const family = Atom.family((key: string) => {
-    const [environmentId, resource, revision] = decodeRevisionedAssetUrlKey(JSON.parse(key));
-    const resourceKey = JSON.stringify([environmentId, resource]);
-    const query = createUrl({ environmentId, input: { resource } });
-    return Atom.transform(
-      query,
-      (get) => {
-        let minted = mintedUnder.get(get.registry);
-        if (minted === undefined) {
-          minted = new Map();
-          mintedUnder.set(get.registry, minted);
-        }
-        const firstRead = !minted.has(resourceKey);
-        let pending = minted.get(resourceKey) !== revision;
-        const current = get.once(query);
-        if (pending && (firstRead || isSettled(current))) {
-          pending = false;
-          minted.set(resourceKey, revision);
-          if (isSettled(current)) get.refresh(query);
-        }
-        get.subscribe(query, (value) => {
-          get.setSelf(value);
-          if (!pending || !isSettled(value)) return;
-          pending = false;
-          minted.set(resourceKey, revision);
-          get.refresh(query);
-        });
-        return get.once(query);
-      },
-      { initialValueTarget: query },
-      // No idle TTL: each mount rebuilds the node, so a revision read again after
-      // another one is compared against the record instead of a cached node.
-    ).pipe(Atom.setIdleTTL(0));
-  });
-  return (target: AssetUrlTarget & { readonly revision: string | null }) =>
-    family(JSON.stringify([target.environmentId, target.input.resource, target.revision]));
-}
-
-export const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
+const revisionedAssetUrl = makeRevisionedAssetUrlFamily(assetEnvironment.createUrl);
 
 /**
  * Pass `revision` for a workspace file whose bytes can change under the same
@@ -172,6 +106,7 @@ function isFileResource(resource: AssetResource): boolean {
   return (
     resource._tag === "workspace-file" ||
     resource._tag === "media-file" ||
-    resource._tag === "draft-workspace-file"
+    resource._tag === "draft-workspace-file" ||
+    (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
   );
 }
