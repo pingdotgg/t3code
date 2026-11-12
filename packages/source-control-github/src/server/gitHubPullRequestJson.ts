@@ -113,6 +113,7 @@ interface ListItemFields {
 interface LabelFields {
   readonly name: string;
   readonly color?: string | null | undefined;
+  readonly description?: string | null | undefined;
 }
 
 interface ReviewRequestFields {
@@ -123,6 +124,7 @@ interface ReviewRequestFields {
 
 interface LatestReviewFields {
   readonly state?: string | null | undefined;
+  readonly isMinimized?: boolean | undefined;
 }
 
 /** Check runs use status/conclusion; commit statuses use a single state. */
@@ -214,6 +216,7 @@ const RawWorkflowRunsSchema = Schema.Struct({
       id: Schema.Int,
       name: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
+      status: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 });
@@ -509,14 +512,21 @@ export function toPullRequestActionSummary(
   };
 }
 
-/** Prefer GitHub's reviewDecision; only use latest reviews when it is absent (e.g. bot approvals). */
+/**
+ * Prefer GitHub's reviewDecision; only use latest reviews when it is absent (e.g. bot approvals).
+ * A review a maintainer hid casts no verdict.
+ */
 function toReviewDecisionWithReviews(
   value: string | null | undefined,
   reviews: ReadonlyArray<LatestReviewFields> | undefined,
 ): PullRequestReviewDecision | null {
   const summarized = toReviewDecision(value);
   if (summarized === "approved" || summarized === "changes-requested") return summarized;
-  const states = new Set((reviews ?? []).map((review) => review.state?.trim().toUpperCase() ?? ""));
+  const states = new Set(
+    (reviews ?? [])
+      .filter((review) => !review.isMinimized)
+      .map((review) => review.state?.trim().toUpperCase() ?? ""),
+  );
   if (states.has("CHANGES_REQUESTED")) return "changes-requested";
   if (summarized === null && states.has("APPROVED")) return "approved";
   return summarized;
@@ -538,7 +548,9 @@ function toReviewDecision(value: string | null | undefined): PullRequestReviewDe
 function toLabels(raw: ReadonlyArray<LabelFields> | undefined): ReadonlyArray<PullRequestLabel> {
   return (raw ?? []).flatMap((label) => {
     const name = trimmed(label.name);
-    return name === null ? [] : [{ name, color: trimmed(label.color) }];
+    return name === null
+      ? []
+      : [{ name, color: trimmed(label.color), description: trimmed(label.description) }];
   });
 }
 
@@ -665,30 +677,36 @@ interface RemarkFields {
   readonly author: ActorFields | null;
   readonly body: string;
   readonly url: string | null;
+  readonly isMinimized: boolean;
 }
 
+// Hidden (minimized) remarks are left out, as github.com collapses them: a maintainer marked them
+// spam, off-topic, or outdated, and they should not reach readers or agents.
 function toComments(raw: {
   readonly comments: ReadonlyArray<RemarkFields & { readonly createdAt: string }>;
   readonly reviews: ReadonlyArray<
     RemarkFields & { readonly state: string; readonly submittedAt: string | null }
   >;
 }): ReadonlyArray<PullRequestComment> {
-  const issueComments = raw.comments.map((comment): PullRequestComment => ({
-    id: comment.id,
-    kind: "issue-comment",
-    author: toActor(comment.author),
-    body: comment.body ?? "",
-    createdAt: comment.createdAt,
-    editedAt: comment.lastEditedAt ?? null,
-    url: trimmed(comment.url),
-    path: null,
-    reviewState: null,
-  }));
+  const issueComments = raw.comments
+    .filter((comment) => !comment.isMinimized)
+    .map((comment): PullRequestComment => ({
+      id: comment.id,
+      kind: "issue-comment",
+      author: toActor(comment.author),
+      body: comment.body ?? "",
+      createdAt: comment.createdAt,
+      editedAt: comment.lastEditedAt ?? null,
+      url: trimmed(comment.url),
+      path: null,
+      reviewState: null,
+    }));
   // Bodiless COMMENTED reviews only hold line comments read separately.
   const reviews = raw.reviews.flatMap((review): ReadonlyArray<PullRequestComment> => {
     const submittedAt = trimmed(review.submittedAt);
     const reviewState = trimmed(review.state);
     if (
+      review.isMinimized ||
       submittedAt === null ||
       ((review.body ?? "").trim().length === 0 && !isReviewVerdict(reviewState))
     ) {
@@ -1107,6 +1125,32 @@ export function decodeWorkflowRunsJson(
   });
 }
 
+// Approval-gated runs (action_required) are read separately as action-required checks.
+const UNFINISHED_WORKFLOW_RUN_STATUSES = new Set([
+  "requested",
+  "queued",
+  "pending",
+  "waiting",
+  "in_progress",
+]);
+
+/** Workflow runs GitHub has not finished, which may have no check runs on the head yet. */
+export function decodeUnfinishedWorkflowRunsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitHubWorkflowRunApproval>, DecodeFailure> {
+  const decoded = decodeWorkflowRuns(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    decoded.success.workflow_runs
+      .filter((run) => UNFINISHED_WORKFLOW_RUN_STATUSES.has(run.status ?? ""))
+      .map((run) => ({
+        id: run.id,
+        name: trimmed(run.name) ?? `Workflow run ${run.id}`,
+        url: trimmed(run.html_url),
+      })),
+  );
+}
+
 export function toPullRequestHeads(result: PullRequestHeads.Result): {
   readonly heads: ReadonlyArray<GitHubPullRequestHead>;
   readonly nextCursor: string | null;
@@ -1300,6 +1344,7 @@ export function toReviewDismissalsPage(result: ReviewDismissals.Result): {
 }
 
 function toThreadComment(comment: ThreadComment, viewer: string | null): PullRequestThreadComment {
+  const reviewUrl = trimmed(comment.pullRequestReview?.url);
   return {
     id: comment.id,
     author: toActor(comment.author),
@@ -1307,6 +1352,7 @@ function toThreadComment(comment: ThreadComment, viewer: string | null): PullReq
     createdAt: comment.createdAt,
     editedAt: comment.lastEditedAt,
     url: trimmed(comment.url),
+    ...(reviewUrl === null ? {} : { reviewUrl }),
     reactions: toReactions(comment.reactionGroups, viewer),
   };
 }
@@ -1321,7 +1367,9 @@ function toReviewThreadEntries(threads: ReviewThreadPage, viewer: string | null)
   const entries = threadNodes.flatMap((thread): ReadonlyArray<GitHubReviewThreadEntry> => {
     const path = trimmed(thread.path);
     const id = trimmed(thread.id);
-    const comments = nodesOf(thread.comments);
+    const loaded = nodesOf(thread.comments);
+    // Hidden comments are left out, as in `toComments`; a thread with none left is dropped.
+    const comments = loaded.filter((comment) => !comment.isMinimized);
     if (path === null || id === null || comments.length === 0) return [];
     return [
       {
@@ -1335,7 +1383,7 @@ function toReviewThreadEntries(threads: ReviewThreadPage, viewer: string | null)
           isOutdated: thread.isOutdated,
           comments: comments.map((comment) => toThreadComment(comment, viewer)),
         },
-        commentCount: thread.comments.totalCount,
+        commentCount: thread.comments.totalCount - (loaded.length - comments.length),
         nextCommentCursor: nextCursorOf(thread.comments.pageInfo),
       },
     ];
@@ -1381,7 +1429,8 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
   const requestedReviewers = nodesOf(pullRequest.reviewRequests).map(
     (node): ActorFields | null => node.requestedReviewer,
   );
-  const latestReviews = nodesOf(pullRequest.latestReviews);
+  // Someone whose review was hidden is not listed as a reviewer.
+  const latestReviews = nodesOf(pullRequest.latestReviews).filter((node) => !node.isMinimized);
   const comments = nodesOf(pullRequest.comments);
   const reviews = nodesOf(pullRequest.reviews);
   const { avatarsByLogin, botLogins } = collectActors([
@@ -1439,14 +1488,18 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
 export function toReviewThreadCommentsPage(result: ReviewThreadComments.Result): {
   readonly belongsToPullRequest: boolean;
   readonly comments: ReadonlyArray<PullRequestThreadComment>;
+  readonly hiddenCount: number;
   readonly nextCursor: string | null;
 } {
   const viewer = trimmed(result.viewer.login);
   const thread = result.node?.__typename === "PullRequestReviewThread" ? result.node : null;
   const pullRequestId = result.repository?.pullRequest?.id;
+  const loaded = nodesOf(thread?.comments);
+  const comments = loaded.filter((comment) => !comment.isMinimized);
   return {
     belongsToPullRequest: pullRequestId !== undefined && pullRequestId === thread?.pullRequest.id,
-    comments: nodesOf(thread?.comments).map((comment) => toThreadComment(comment, viewer)),
+    comments: comments.map((comment) => toThreadComment(comment, viewer)),
+    hiddenCount: loaded.length - comments.length,
     nextCursor: nextCursorOf(thread?.comments.pageInfo),
   };
 }
