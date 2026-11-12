@@ -394,6 +394,46 @@ describe("ConnectionCatalogDocument", () => {
     expect(bearerOnly.remoteDpopTokens).toEqual([]);
   });
 
+  it("re-pairing at another address replaces the login every direct route uses", () => {
+    const lanTarget = new BearerConnectionTarget({ ...BEARER_TARGET, connectionId: "bearer-lan" });
+    const tailnetTarget = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: "bearer-tailnet",
+    });
+    const pairedOverLan = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: lanTarget,
+        profile: new BearerConnectionProfile({ ...BEARER_PROFILE, connectionId: "bearer-lan" }),
+        credential: new BearerConnectionCredential({ token: "expired-token" }),
+      }),
+    );
+    const repairedOverTailnet = registerConnectionInCatalog(
+      pairedOverLan,
+      new BearerConnectionRegistration({
+        target: tailnetTarget,
+        profile: new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          connectionId: "bearer-tailnet",
+          httpBaseUrl: "http://100.64.0.1:3773",
+          wsBaseUrl: "ws://100.64.0.1:3773",
+        }),
+        credential: new BearerConnectionCredential({ token: "fresh-token" }),
+      }),
+      [tailnetTarget, lanTarget],
+    );
+
+    const afterRemovingTailnet = setRoutesInCatalog(repairedOverTailnet, ENVIRONMENT_ID, [
+      lanTarget,
+    ]);
+    expect(afterRemovingTailnet.credentials).toEqual([
+      {
+        connectionId: "bearer-lan",
+        credential: new BearerConnectionCredential({ token: "fresh-token" }),
+      },
+    ]);
+  });
+
   it("keeps an environment's position in the catalog when its routes change", () => {
     const other = new RelayConnectionTarget({
       environmentId: EnvironmentId.make("environment-2"),
