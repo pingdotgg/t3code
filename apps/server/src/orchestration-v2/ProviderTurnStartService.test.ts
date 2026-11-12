@@ -1367,7 +1367,7 @@ effectIt.effect.each([
 );
 
 effectIt.effect.each([false, true])(
-  "OpenCode goal prompts defer switched-provider history only with native support: %s",
+  "OpenCode goal prompts go verbatim whether or not goals are native: %s",
   (nativeGoals) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
@@ -1377,9 +1377,7 @@ effectIt.effect.each([false, true])(
       });
       harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
       yield* harness.start;
-      expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
-        !nativeGoals,
-      );
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
     }),
 );
 

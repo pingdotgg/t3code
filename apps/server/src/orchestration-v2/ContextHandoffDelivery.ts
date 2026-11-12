@@ -12,6 +12,15 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 
+// A first word with a second slash is a path, not a command.
+const SLASH_COMMAND = /^\s*\/[^\s/]+(?:\s|$)/u;
+
+/** Providers only run a native command that opens the prompt, so its turn defers inline context to the next one. */
+export const isSlashCommandMessage = (message: {
+  readonly role: string;
+  readonly text: string;
+}): boolean => message.role === "user" && SLASH_COMMAND.test(message.text);
+
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
