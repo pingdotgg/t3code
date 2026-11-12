@@ -26,6 +26,7 @@ import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   type AntigravityAuthConfig,
   type AntigravityProfile,
+  antigravityAuthConfigIssue,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
@@ -786,6 +787,85 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
+    }),
+  );
+});
+
+it.effect("handles Enterprise license prompts interactively and rejects them headlessly", () =>
+  Effect.gen(function* () {
+    const license = "http://127.0.0.1:49152/";
+    const lines = [
+      `Open the following link to choose your Gemini Enterprise license: ${license}\n`,
+      `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(license)}\n`,
+    ];
+    for (const line of lines) {
+      const received: string[] = [];
+      const handler = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (url) =>
+          Effect.sync(() => {
+            received.push(url);
+          }),
+      });
+      yield* handler(line.slice(0, 12));
+      yield* handler(line.slice(12));
+      expect(received).toEqual([license]);
+      const failure = yield* makeAntigravityStderrHandler()(line).pipe(Effect.flip);
+      expect(isAntigravitySignInRequiredError(failure)).toBe(true);
+    }
+    for (const url of [
+      "http://127.0.0.1:80/",
+      "http://127.0.0.1:49152/?token=x",
+      "http://127.0.0.1:49152/path",
+      "http://localhost:49152/",
+      "http://127.0.0.1:99999/",
+      "http://user@127.0.0.1:49152/",
+    ]) {
+      const handler = makeAntigravityStderrHandler({
+        onAuthorizationUrl: () => Effect.die("Untrusted license link accepted"),
+      });
+      yield* handler(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(url)}\n`);
+    }
+  }),
+);
+
+it.layer(NodeServices.layer)("Enterprise license persistence", (it) => {
+  it.effect("allows license selection and keeps its GCP pair until an explicit override", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const auth: AntigravityAuthConfig = {
+        authMethod: "oauth-business",
+        apiKey: "",
+        gcpProject: "",
+        gcpLocation: "",
+      };
+      expect(antigravityAuthConfigIssue(auth)).toBeNull();
+      expect(antigravityAuthConfigIssue({ ...auth, gcpProject: "override" })).not.toBeNull();
+      const profile = yield* prepareAntigravityProfile({ profileDirectory, auth });
+      const settings = path.join(profile.acpDirectory, "settings.json");
+      yield* fs.writeFileString(
+        settings,
+        encodeUnknownJson({
+          gcp: { project: "selected-license", location: "eu" },
+        }),
+      );
+      yield* prepareAntigravityProfile({ profileDirectory, auth });
+      expect(decodeJson(yield* fs.readFileString(settings))).toEqual({
+        auth: { type: "oauth-business" },
+        gcp: { project: "selected-license", location: "eu" },
+      });
+      yield* prepareAntigravityProfile({
+        profileDirectory,
+        auth: { ...auth, gcpProject: "override", gcpLocation: "us" },
+      });
+      expect(decodeJson(yield* fs.readFileString(settings))).toMatchObject({
+        gcp: { project: "override", location: "us" },
+      });
+      yield* prepareAntigravityProfile({ profileDirectory });
+      expect(decodeJson(yield* fs.readFileString(settings))).toEqual({
+        auth: { type: "oauth-personal" },
+      });
     }),
   );
 });
