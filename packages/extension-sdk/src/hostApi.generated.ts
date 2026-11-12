@@ -122,17 +122,17 @@ type Wire54 = ReadonlyArray<string> | undefined;
 type Wire55 = { readonly inputTokens: number; readonly outputTokens: number } | undefined;
 type Wire57 = "accept" | "acceptForSession" | "acceptAlways" | "decline" | "cancel";
 type Wire59 = { readonly [x: string]: unknown };
-type Wire62 = "completed" | "failed" | "cancelled" | "updated" | "unknown";
-type Wire63 =
+type Wire63 = "completed" | "failed" | "cancelled" | "updated" | "unknown";
+type Wire64 =
   | { readonly environmentId: string; readonly threadId: string; readonly title: string }
   | undefined;
-type Wire64 = "beforeCacheExpires" | "onReturn" | undefined;
-type Wire66 = string | null;
-type Wire67 = "draft" | "active" | "completed" | "superseded";
-type Wire68 = true | undefined;
-type Wire71 = { readonly cursor: string; readonly itemCount: number; readonly lastOrdinal: number };
-type Wire72 = "browser" | "computer" | undefined;
-type Wire73 =
+type Wire65 = "beforeCacheExpires" | "onReturn" | undefined;
+type Wire67 = string | null;
+type Wire68 = "draft" | "active" | "completed" | "superseded";
+type Wire69 = true | undefined;
+type Wire72 = { readonly cursor: string; readonly itemCount: number; readonly lastOrdinal: number };
+type Wire73 = "browser" | "computer" | undefined;
+type Wire74 =
   | {
       readonly _tag: "website";
       readonly pageUrl: string;
@@ -151,12 +151,12 @@ type Wire73 =
       readonly logoUrlDark?: string | undefined;
     }
   | undefined;
-type Wire75 = string | null;
 type Wire76 = string | null;
 type Wire77 = string | null;
 type Wire78 = string | null;
-type Wire80 = string | null;
-type Wire81 =
+type Wire79 = string | null;
+type Wire81 = string | null;
+type Wire82 =
   | "idle"
   | "pending"
   | "running"
@@ -165,42 +165,42 @@ type Wire81 =
   | "failed"
   | "cancelled"
   | "interrupted";
-type Wire82 = string | null;
 type Wire83 = string | null;
 type Wire84 = string | null;
-type Wire98 = {
+type Wire85 = string | null;
+type Wire99 = {
   readonly path: string;
   readonly kind: string;
   readonly additions: number;
   readonly deletions: number;
 };
-type Wire99 = { readonly count: number; readonly additions: number; readonly deletions: number };
-type Wire115 =
+type Wire100 = { readonly count: number; readonly additions: number; readonly deletions: number };
+type Wire116 =
   | { readonly type: "latest_stable" }
   | { readonly type: "run"; readonly runId: string }
   | { readonly type: "checkpoint"; readonly checkpointId: string };
-type Wire116 = ReadonlyArray<{ readonly provider: string; readonly model: string }>;
-type Wire117 = {
+type Wire117 = ReadonlyArray<{ readonly provider: string; readonly model: string }>;
+type Wire118 = {
   readonly [x: string]: {
     readonly hiddenModels?: ReadonlyArray<string> | undefined;
     readonly modelOrder?: ReadonlyArray<string> | undefined;
   };
 };
-type Wire120 = "any-local-files" | "uncommitted-changes" | "tracked-changes";
-type Wire121 = number | null;
-type Wire123 = number | null;
-type Wire125 = "turn" | "paragraph";
-type Wire128 = { readonly provider: string; readonly reference: string };
-type Wire129 = "auto" | "cpu" | string;
-type Wire130 = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1";
-type Wire131 = ReadonlyArray<{ readonly term: string; readonly aliases: ReadonlyArray<string> }>;
-type Wire138 = "repo_conventions" | "conventional_commits" | "custom";
-type Wire139 = "static" | "semantic" | "custom";
-type Wire141 = "merge" | "squash" | "rebase";
-type Wire142 = number | null;
-type Wire143 = { readonly [x: string]: { readonly enabled?: boolean } };
-type Wire148 = "onReturn" | "beforeCacheExpires" | "off";
-type Wire149 =
+type Wire121 = "any-local-files" | "uncommitted-changes" | "tracked-changes";
+type Wire122 = number | null;
+type Wire124 = number | null;
+type Wire126 = "turn" | "paragraph";
+type Wire129 = { readonly provider: string; readonly reference: string };
+type Wire130 = "auto" | "cpu" | string;
+type Wire131 = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1";
+type Wire132 = ReadonlyArray<{ readonly term: string; readonly aliases: ReadonlyArray<string> }>;
+type Wire139 = "repo_conventions" | "conventional_commits" | "custom";
+type Wire140 = "static" | "semantic" | "custom";
+type Wire142 = "merge" | "squash" | "rebase";
+type Wire143 = number | null;
+type Wire144 = { readonly [x: string]: { readonly enabled?: boolean } };
+type Wire149 = "onReturn" | "beforeCacheExpires" | "off";
+type Wire150 =
   | { readonly kind: "after"; readonly minutes: number }
   | {
       readonly kind: "at";
@@ -216,9 +216,9 @@ type Wire149 =
         | "sunday";
       readonly time: string;
     };
-type Wire150 = "balanced" | "performance" | "battery-saver" | "custom";
-type Wire151 = "balanced" | "performance" | "battery-saver";
-type Wire152 = {
+type Wire151 = "balanced" | "performance" | "battery-saver" | "custom";
+type Wire152 = "balanced" | "performance" | "battery-saver";
+type Wire153 = {
   readonly automaticGitFetchInterval?: number;
   readonly providerHealthRefreshInterval?: number;
   readonly hostPowerMonitorActiveInterval?: number;
@@ -228,15 +228,15 @@ type Wire152 = {
   readonly pauseWhenClientLowPower?: boolean;
   readonly pauseWhenOnBattery?: boolean;
 };
-type Wire153 = number | undefined;
-type Wire155 = { readonly [x: string]: unknown };
-type Wire158 = {
+type Wire154 = number | undefined;
+type Wire156 = { readonly [x: string]: unknown };
+type Wire159 = {
   readonly inputCostPerMillionTokens: number;
   readonly outputCostPerMillionTokens: number;
   readonly cacheReadCostPerMillionTokens?: number;
   readonly cacheWriteCostPerMillionTokens?: number;
 };
-type Wire159 = ReadonlyArray<{ readonly term: string; readonly aliases: ReadonlyArray<string> }>;
+type Wire160 = ReadonlyArray<{ readonly term: string; readonly aliases: ReadonlyArray<string> }>;
 type Wire3 = {
   readonly provider?: Wire4;
   readonly instanceId?: Wire4;
@@ -304,33 +304,7 @@ type Wire45 =
       readonly startFromOrigin?: Wire6;
     }
   | undefined;
-type Wire61 =
-  | {
-      readonly kind: "delegated_task";
-      readonly taskIds: ReadonlyArray<string>;
-      readonly childThreadId?: Wire8;
-    }
-  | { readonly kind: "background_task"; readonly work: "subagent"; readonly childThreadId?: Wire8 }
-  | { readonly kind: "background_command" }
-  | { readonly kind: "subagent"; readonly childThreadId?: Wire8 }
-  | { readonly kind: "command" }
-  | {
-      readonly kind: "monitor";
-      readonly pullRequest?:
-        | {
-            readonly host: string;
-            readonly repository: string;
-            readonly number: number;
-            readonly watchStartedAt: string;
-            readonly headSha: string | null;
-            readonly watchEnded?: Wire6;
-          }
-        | undefined;
-    }
-  | { readonly kind: "background_task" }
-  | { readonly kind: "system" }
-  | { readonly kind?: string | undefined };
-type Wire65 =
+type Wire66 =
   | {
       readonly version: 1;
       readonly guest?:
@@ -344,7 +318,7 @@ type Wire65 =
       readonly records: ReadonlyArray<unknown>;
     }
   | undefined;
-type Wire144 = ReadonlyArray<{
+type Wire145 = ReadonlyArray<{
   readonly kind?: "ssh";
   readonly id: string;
   readonly label: string;
@@ -393,7 +367,7 @@ type Wire17 = {
 type Wire25 =
   | { readonly sessionId: string; readonly label: string; readonly access?: Wire26 }
   | undefined;
-type Wire104 = {
+type Wire105 = {
   readonly class: Wire29;
   readonly message: string;
   readonly code: string | null;
@@ -427,7 +401,7 @@ type Wire48 =
       readonly stopCount?: Wire19;
     }
   | undefined;
-type Wire69 = {
+type Wire70 = {
   readonly id: string;
   readonly text: string;
   readonly status: "pending" | "running" | "completed";
@@ -497,7 +471,7 @@ type Wire40 =
       readonly mimeType: string;
       readonly sizeBytes: number;
     };
-type Wire91 = { readonly [x: string]: ReadonlyArray<Wire41 | Wire43> };
+type Wire92 = { readonly [x: string]: ReadonlyArray<Wire41 | Wire43> };
 type Wire46 = {
   readonly driver: string;
   readonly nativeId: string | null;
@@ -521,19 +495,30 @@ type Wire53 =
   | undefined;
 type Wire56 = Wire57 | undefined;
 type Wire58 = Wire59 | undefined;
-type Wire74 =
+type Wire62 = {
+  readonly host: string;
+  readonly repository: string;
+  readonly number: number;
+  readonly watchStartedAt: string;
+  readonly headSha: string | null;
+  readonly watchEnded?: Wire6;
+  readonly section?:
+    | { readonly text: string; readonly outcome: Wire63; readonly summary: string }
+    | undefined;
+};
+type Wire75 =
   | {
       readonly key: string;
       readonly name: string;
       readonly kind: "browser" | "computer" | "integration";
-      readonly icon?: Wire73;
+      readonly icon?: Wire74;
     }
   | undefined;
-type Wire119 = Wire120 | undefined;
-type Wire124 = Wire121 | undefined;
-type Wire122 = Wire123 | undefined;
-type Wire127 = string | Wire128;
-type Wire154 = {
+type Wire120 = Wire121 | undefined;
+type Wire125 = Wire122 | undefined;
+type Wire123 = Wire124 | undefined;
+type Wire128 = string | Wire129;
+type Wire155 = {
   readonly driver: string;
   readonly displayName?: Wire8;
   readonly accentColor?: Wire8;
@@ -542,31 +527,23 @@ type Wire154 = {
     readonly value?: Wire34;
     readonly sensitive?: Wire6;
     readonly valueRedacted?: boolean;
-    readonly secret?: Wire128;
+    readonly secret?: Wire129;
   }>;
   readonly enabled?: boolean;
   readonly config?: unknown;
 };
-type Wire137 = {
-  readonly mode?: Wire138 | undefined;
+type Wire138 = {
+  readonly mode?: Wire139 | undefined;
   readonly customInstructions?: Wire34;
   readonly followChangeRequestTemplates?: Wire6;
 };
-type Wire140 = Wire141 | null;
-type Wire147 = boolean | Wire148;
+type Wire141 = Wire142 | null;
+type Wire148 = boolean | Wire149;
 type Wire49 = Wire3 | undefined;
-type Wire132 = Wire3 | null;
-type Wire134 = Wire3 | null;
+type Wire133 = Wire3 | null;
 type Wire135 = Wire3 | null;
-type Wire133 = ReadonlyArray<Wire7>;
-type Wire60 =
-  | {
-      readonly source: Wire61;
-      readonly outcome: Wire62;
-      readonly summary: string;
-      readonly detail?: Wire34;
-    }
-  | undefined;
+type Wire136 = Wire3 | null;
+type Wire134 = ReadonlyArray<Wire7>;
 type Wire15 = {
   readonly host: string;
   readonly repository: string;
@@ -580,43 +557,61 @@ type Wire15 = {
   readonly watch?: Wire21;
   readonly endedWatch?: Wire21;
 };
-type Wire79 = Wire46 | null;
-type Wire114 = Wire46 | undefined;
-type Wire118 =
+type Wire80 = Wire46 | null;
+type Wire115 = Wire46 | undefined;
+type Wire61 =
+  | {
+      readonly kind: "delegated_task";
+      readonly taskIds: ReadonlyArray<string>;
+      readonly childThreadId?: Wire8;
+    }
+  | { readonly kind: "background_task"; readonly work: "subagent"; readonly childThreadId?: Wire8 }
+  | { readonly kind: "background_command" }
+  | { readonly kind: "subagent"; readonly childThreadId?: Wire8 }
+  | { readonly kind: "command" }
+  | {
+      readonly kind: "monitor";
+      readonly pullRequest?: Wire62 | undefined;
+      readonly otherPullRequests?: ReadonlyArray<Wire62> | undefined;
+    }
+  | { readonly kind: "background_task" }
+  | { readonly kind: "system" }
+  | { readonly kind?: string | undefined };
+type Wire119 =
   | { readonly mode: "off" }
   | {
       readonly mode: "custom";
       readonly rules: {
-        readonly worktreeKeepWhen?: Wire119;
-        readonly worktreeAfterDays: Wire121;
-        readonly worktreeSettledAfterDays?: Wire122;
+        readonly worktreeKeepWhen?: Wire120;
+        readonly worktreeAfterDays: Wire122;
+        readonly worktreeSettledAfterDays?: Wire123;
         readonly worktreeOnMerge: boolean;
         readonly worktreeOnDelete: boolean;
         readonly worktreeUnchanged: boolean;
       };
     }
   | null;
-type Wire126 = Wire127 | undefined;
-type Wire145 = ReadonlyArray<{
+type Wire127 = Wire128 | undefined;
+type Wire146 = ReadonlyArray<{
   readonly kind: "eas";
   readonly id: string;
   readonly label: string;
   readonly appId?: Wire8;
-  readonly accessToken?: Wire127;
+  readonly accessToken?: Wire128;
   readonly maxSessionMinutes?: number;
   readonly idleMinutes?: number;
   readonly maxConcurrentSessions?: number;
 }>;
-type Wire146 = ReadonlyArray<{
+type Wire147 = ReadonlyArray<{
   readonly kind: "simlock";
   readonly id: string;
   readonly label: string;
   readonly gatewayUrl: string;
-  readonly agentToken?: Wire127;
+  readonly agentToken?: Wire128;
   readonly maxLeases?: number;
   readonly maxLeaseMinutes?: number;
 }>;
-type Wire136 = Wire137 | string;
+type Wire137 = Wire138 | string;
 type Wire52 = {
   readonly cursorStoreCwd?: Wire8;
   readonly modelSelection?: Wire49;
@@ -707,51 +702,25 @@ type Wire9 = {
     | undefined;
   readonly deletedAt: string | null;
 };
-type Wire70 = {
-  readonly deferredWork?: Wire71;
+type Wire86 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
-  readonly updatedAt: string;
-  readonly type: "notification";
-  readonly source: Wire61;
-  readonly outcome: Wire62;
-  readonly summary: string;
-  readonly detail?: Wire34;
-};
-type Wire85 = {
-  readonly deferredWork?: Wire71;
-  readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
-  readonly id: string;
-  readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
-  readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly createdBy: Wire10;
   readonly creationSource: Wire11;
@@ -759,36 +728,36 @@ type Wire85 = {
   readonly messageId: string;
   readonly scheduledTaskId?: Wire8;
   readonly senderThreadId?: Wire8;
-  readonly linkedSender?: Wire63;
-  readonly idleCompaction?: Wire64;
+  readonly linkedSender?: Wire64;
+  readonly idleCompaction?: Wire65;
   readonly workflowScript?: Wire6;
   readonly freshContext?: Wire6;
   readonly inputIntent: "turn_start" | "queued_turn" | "steer" | "promoted_queued_to_steer";
   readonly text: string;
   readonly textOmitted?: true;
-  readonly context?: Wire65;
+  readonly context?: Wire66;
   readonly attachments: ReadonlyArray<Wire40>;
   readonly modelSwitch?: { readonly from: Wire3; readonly to: Wire3 } | undefined;
 };
-type Wire86 = {
-  readonly deferredWork?: Wire71;
+type Wire87 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "assistant_message";
   readonly phase?: "commentary" | "partial_answer" | "final_answer" | undefined;
@@ -798,99 +767,99 @@ type Wire86 = {
   readonly attachments?: ReadonlyArray<Wire40> | undefined;
   readonly streaming: boolean;
 };
-type Wire87 = {
-  readonly deferredWork?: Wire71;
+type Wire88 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "reasoning";
   readonly text: string;
   readonly streaming: boolean;
 };
-type Wire88 = {
-  readonly deferredWork?: Wire71;
+type Wire89 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "proposed_plan";
   readonly planId: string;
   readonly markdown: string;
   readonly streaming: boolean;
 };
-type Wire89 = {
-  readonly deferredWork?: Wire71;
+type Wire90 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "todo_list";
   readonly planId: string;
-  readonly steps: ReadonlyArray<Wire69>;
+  readonly steps: ReadonlyArray<Wire70>;
   readonly explanation?: Wire34;
 };
-type Wire90 = {
-  readonly deferredWork?: Wire71;
+type Wire91 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "user_input_request";
   readonly requestId: string;
@@ -914,30 +883,30 @@ type Wire90 = {
         readonly requestId: string;
         readonly questionTextById?: { readonly [x: string]: string } | undefined;
         readonly answers: Wire59;
-        readonly attachmentsByQuestionId: Wire91;
+        readonly attachmentsByQuestionId: Wire92;
       }
     | undefined;
   readonly responseMode?: "message" | undefined;
 };
-type Wire92 = {
-  readonly deferredWork?: Wire71;
+type Wire93 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "file_change";
   readonly fileName: string;
@@ -956,25 +925,25 @@ type Wire92 = {
       }>
     | undefined;
 };
-type Wire93 = {
-  readonly deferredWork?: Wire71;
+type Wire94 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "command_execution";
   readonly input: string;
@@ -985,25 +954,25 @@ type Wire93 = {
   readonly monitor?: Wire6;
   readonly completionWake?: "always" | undefined;
 };
-type Wire94 = {
-  readonly deferredWork?: Wire71;
+type Wire95 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "file_search";
   readonly pattern?: Wire34;
@@ -1016,25 +985,25 @@ type Wire94 = {
       }>
     | undefined;
 };
-type Wire95 = {
-  readonly deferredWork?: Wire71;
+type Wire96 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "web_search";
   readonly patterns?: ReadonlyArray<string> | undefined;
@@ -1042,25 +1011,25 @@ type Wire95 = {
     | ReadonlyArray<{ readonly title?: Wire34; readonly url?: Wire8; readonly snippet?: Wire34 }>
     | undefined;
 };
-type Wire96 = {
-  readonly deferredWork?: Wire71;
+type Wire97 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "approval_request";
   readonly requestId: string;
@@ -1073,125 +1042,125 @@ type Wire96 = {
     | ReadonlyArray<{ readonly decision: Wire57; readonly label: string; readonly warning?: Wire8 }>
     | undefined;
 };
-type Wire97 = {
-  readonly deferredWork?: Wire71;
+type Wire98 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "checkpoint";
   readonly checkpointId: string;
   readonly scopeId: string;
-  readonly files: ReadonlyArray<Wire98>;
-  readonly filesTotal?: Wire99;
+  readonly files: ReadonlyArray<Wire99>;
+  readonly filesTotal?: Wire100;
   readonly filesOmitted?: true;
 };
-type Wire100 = {
-  readonly deferredWork?: Wire71;
+type Wire101 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "run_interrupt_request";
   readonly message: string;
   readonly unresponsiveAt?: string;
 };
-type Wire101 = {
-  readonly deferredWork?: Wire71;
+type Wire102 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "run_interrupt_result";
   readonly message: string;
 };
-type Wire102 = {
-  readonly deferredWork?: Wire71;
+type Wire103 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "system_notice";
   readonly message: string;
 };
-type Wire103 = {
-  readonly deferredWork?: Wire71;
+type Wire104 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "error";
-  readonly failure: Wire104;
+  readonly failure: Wire105;
   readonly retry?:
     | {
         readonly attempt: number;
@@ -1200,25 +1169,25 @@ type Wire103 = {
       }
     | undefined;
 };
-type Wire105 = {
-  readonly deferredWork?: Wire71;
+type Wire106 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "compaction";
   readonly driver: string | null;
@@ -1226,25 +1195,25 @@ type Wire105 = {
   readonly beforeTokenCount?: Wire19;
   readonly afterTokenCount?: Wire19;
 };
-type Wire106 = {
-  readonly deferredWork?: Wire71;
+type Wire107 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "handoff";
   readonly contextHandoffId: string;
@@ -1262,25 +1231,25 @@ type Wire106 = {
     | "manual_context";
   readonly summary?: Wire34;
 };
-type Wire107 = {
-  readonly deferredWork?: Wire71;
+type Wire108 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
   readonly providerThreadId?: Wire8;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "fork";
   readonly source:
@@ -1293,25 +1262,25 @@ type Wire107 = {
       };
   readonly targetThreadId: string;
 };
-type Wire108 = {
-  readonly deferredWork?: Wire71;
+type Wire109 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "thread_created";
   readonly targetThreadId: string;
@@ -1319,25 +1288,25 @@ type Wire108 = {
   readonly targetProviderInstanceId: string;
   readonly targetModel: string;
 };
-type Wire109 = {
-  readonly deferredWork?: Wire71;
+type Wire110 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "secret_request";
   readonly label: string;
@@ -1347,25 +1316,25 @@ type Wire109 = {
   readonly delivery?: "file" | undefined;
   readonly secretStatus: "pending" | "saved" | "declined" | "cancelled";
 };
-type Wire110 = {
-  readonly deferredWork?: Wire71;
+type Wire111 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "link_request";
   readonly url?: Wire8;
@@ -1380,25 +1349,25 @@ type Wire110 = {
   readonly linkedAccess?: Wire26;
   readonly failure?: Wire34;
 };
-type Wire111 = {
-  readonly deferredWork?: Wire71;
+type Wire112 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "subagent";
   readonly subagentId: string;
@@ -1413,25 +1382,25 @@ type Wire111 = {
   readonly promptOmitted?: true;
   readonly resultOmitted?: true;
 };
-type Wire112 = {
-  readonly deferredWork?: Wire71;
+type Wire113 = {
+  readonly deferredWork?: Wire72;
   readonly toolNonExecutionKind?: Wire34;
-  readonly toolSurface?: Wire72;
-  readonly toolIcon?: Wire73;
-  readonly toolSource?: Wire74;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
   readonly id: string;
   readonly threadId: string;
-  readonly runId: Wire75;
-  readonly nodeId: Wire76;
-  readonly providerThreadId: Wire77;
-  readonly providerTurnId: Wire78;
-  readonly nativeItemRef: Wire79;
-  readonly parentItemId: Wire80;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
   readonly ordinal: number;
-  readonly status: Wire81;
-  readonly title: Wire82;
-  readonly startedAt: Wire83;
-  readonly completedAt: Wire84;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
   readonly updatedAt: string;
   readonly type: "dynamic_tool";
   readonly toolName: string | null;
@@ -1440,26 +1409,60 @@ type Wire112 = {
   readonly output?: Wire4;
   readonly outputOmitted?: Wire6;
 };
-type Wire113 = {
+type Wire114 = {
   readonly threadId: string;
   readonly runId?: Wire8;
   readonly checkpointId?: Wire8;
   readonly turnItemId?: Wire8;
-  readonly providerThreadRef?: Wire114;
-  readonly providerTurnRef?: Wire114;
+  readonly providerThreadRef?: Wire115;
+  readonly providerTurnRef?: Wire115;
 };
-type Wire156 = {
+type Wire60 =
+  | {
+      readonly source: Wire61;
+      readonly outcome: Wire63;
+      readonly summary: string;
+      readonly detail?: Wire34;
+    }
+  | undefined;
+type Wire71 = {
+  readonly deferredWork?: Wire72;
+  readonly toolNonExecutionKind?: Wire34;
+  readonly toolSurface?: Wire73;
+  readonly toolIcon?: Wire74;
+  readonly toolSource?: Wire75;
+  readonly id: string;
+  readonly threadId: string;
+  readonly runId: Wire76;
+  readonly nodeId: Wire77;
+  readonly providerThreadId: Wire78;
+  readonly providerTurnId: Wire79;
+  readonly nativeItemRef: Wire80;
+  readonly parentItemId: Wire81;
+  readonly ordinal: number;
+  readonly status: Wire82;
+  readonly title: Wire83;
+  readonly startedAt: Wire84;
+  readonly completedAt: Wire85;
+  readonly updatedAt: string;
+  readonly type: "notification";
+  readonly source: Wire61;
+  readonly outcome: Wire63;
+  readonly summary: string;
+  readonly detail?: Wire34;
+};
+type Wire157 = {
   readonly kind: "cliproxy";
   readonly label?: Wire8;
   readonly url: string;
-  readonly managementKey?: Wire126;
+  readonly managementKey?: Wire127;
   readonly enabled?: Wire6;
 };
-type Wire157 = {
+type Wire158 = {
   readonly kind: "openaiCompatible" | "anthropic";
   readonly label?: Wire8;
   readonly baseUrl: string;
-  readonly apiKey?: Wire126;
+  readonly apiKey?: Wire127;
   readonly enabled?: Wire6;
 };
 type Wire42 = {
@@ -2024,8 +2027,8 @@ export type ThreadSnapshot = {
       readonly creationSource: Wire11;
       readonly scheduledTaskId?: Wire8;
       readonly senderThreadId?: Wire8;
-      readonly linkedSender?: Wire63;
-      readonly idleCompaction?: Wire64;
+      readonly linkedSender?: Wire64;
+      readonly idleCompaction?: Wire65;
       readonly workflowScript?: Wire6;
       readonly id: string;
       readonly threadId: string;
@@ -2033,7 +2036,7 @@ export type ThreadSnapshot = {
       readonly nodeId: string | null;
       readonly role: Wire32;
       readonly text: string;
-      readonly context?: Wire65;
+      readonly context?: Wire66;
       readonly attachments: ReadonlyArray<Wire40>;
       readonly streaming: boolean;
       readonly createdAt: string;
@@ -2050,44 +2053,43 @@ export type ThreadSnapshot = {
       | {
           readonly id: string;
           readonly threadId: string;
-          readonly runId: Wire66;
+          readonly runId: Wire67;
           readonly nodeId: string;
-          readonly status: Wire67;
-          readonly detailInTurnItem?: Wire68;
+          readonly status: Wire68;
+          readonly detailInTurnItem?: Wire69;
           readonly kind: "proposed_plan";
           readonly markdown: string;
         }
       | {
           readonly id: string;
           readonly threadId: string;
-          readonly runId: Wire66;
+          readonly runId: Wire67;
           readonly nodeId: string;
-          readonly status: Wire67;
-          readonly detailInTurnItem?: Wire68;
+          readonly status: Wire68;
+          readonly detailInTurnItem?: Wire69;
           readonly kind: "todo_list";
-          readonly steps: ReadonlyArray<Wire69>;
+          readonly steps: ReadonlyArray<Wire70>;
           readonly explanation?: Wire34;
         }
     >;
     readonly turnItems: ReadonlyArray<
-      | Wire70
-      | Wire85
+      | Wire71
       | Wire86
       | Wire87
       | Wire88
       | Wire89
       | Wire90
-      | Wire92
+      | Wire91
       | Wire93
       | Wire94
       | Wire95
       | Wire96
       | Wire97
-      | Wire100
+      | Wire98
       | Wire101
       | Wire102
       | Wire103
-      | Wire105
+      | Wire104
       | Wire106
       | Wire107
       | Wire108
@@ -2095,6 +2097,7 @@ export type ThreadSnapshot = {
       | Wire110
       | Wire111
       | Wire112
+      | Wire113
       | { readonly type: string }
     >;
     readonly checkpointScopes: ReadonlyArray<{
@@ -2121,8 +2124,8 @@ export type ThreadSnapshot = {
       readonly appRunOrdinal: number | null;
       readonly ref: string;
       readonly status: "ready" | "missing" | "error" | "stale";
-      readonly files: ReadonlyArray<Wire98>;
-      readonly filesTotal?: Wire99;
+      readonly files: ReadonlyArray<Wire99>;
+      readonly filesTotal?: Wire100;
       readonly capturedAt: string;
     }>;
     readonly contextHandoffs: ReadonlyArray<{
@@ -2183,8 +2186,8 @@ export type ThreadSnapshot = {
         | "subagent_result";
       readonly sourceThreadId: string;
       readonly targetThreadId: string;
-      readonly sourcePoint: Wire113;
-      readonly basePoint: Wire113 | null;
+      readonly sourcePoint: Wire114;
+      readonly basePoint: Wire114 | null;
       readonly sourceProviderInstanceId: string | null;
       readonly sourceTokenUsage?: Wire53;
       readonly targetProviderInstanceId: string | null;
@@ -2215,24 +2218,23 @@ export type ThreadSnapshot = {
       readonly sourceThreadId: string;
       readonly sourceItemId: string;
       readonly item:
-        | Wire70
-        | Wire85
+        | Wire71
         | Wire86
         | Wire87
         | Wire88
         | Wire89
         | Wire90
-        | Wire92
+        | Wire91
         | Wire93
         | Wire94
         | Wire95
         | Wire96
         | Wire97
-        | Wire100
+        | Wire98
         | Wire101
         | Wire102
         | Wire103
-        | Wire105
+        | Wire104
         | Wire106
         | Wire107
         | Wire108
@@ -2240,6 +2242,7 @@ export type ThreadSnapshot = {
         | Wire110
         | Wire111
         | Wire112
+        | Wire113
         | { readonly type: string };
     }>;
     readonly updatedAt: string;
@@ -2490,14 +2493,14 @@ export type OrchestrationCommand =
       readonly creationSource: Wire11;
       readonly scheduledTaskId?: Wire8;
       readonly senderThreadId?: Wire8;
-      readonly linkedSender?: Wire63;
-      readonly idleCompaction?: Wire64;
+      readonly linkedSender?: Wire64;
+      readonly idleCompaction?: Wire65;
       readonly freshContext?: Wire6;
       readonly commandId: string;
       readonly threadId: string;
       readonly messageId: string;
       readonly text: string;
-      readonly context?: Wire65;
+      readonly context?: Wire66;
       readonly attachments: ReadonlyArray<Wire40>;
       readonly titleSeed?: Wire8;
       readonly modelSelection?: Wire49;
@@ -2547,7 +2550,7 @@ export type OrchestrationCommand =
       readonly commandId: string;
       readonly threadId: string;
       readonly runId: string;
-      readonly failure: Wire104;
+      readonly failure: Wire105;
     }
   | {
       readonly type: "prepared-run.retry";
@@ -2599,7 +2602,7 @@ export type OrchestrationCommand =
     }
   | {
       readonly type: "queued-run.edit";
-      readonly context?: Wire65;
+      readonly context?: Wire66;
       readonly commandId: string;
       readonly threadId: string;
       readonly runId: string;
@@ -2614,7 +2617,7 @@ export type OrchestrationCommand =
       readonly decision?: Wire56;
       readonly feedback?: Wire34;
       readonly answers?: Wire58;
-      readonly attachmentsByQuestionId?: Wire91 | undefined;
+      readonly attachmentsByQuestionId?: Wire92 | undefined;
     }
   | {
       readonly type: "thread.user-input.dismiss";
@@ -2637,7 +2640,7 @@ export type OrchestrationCommand =
       readonly commandId: string;
       readonly sourceThreadId: string;
       readonly targetThreadId: string;
-      readonly sourcePoint: Wire115;
+      readonly sourcePoint: Wire116;
       readonly title?: Wire8;
       readonly sideChat?: Wire6;
       readonly createdAt?: Wire44;
@@ -2649,7 +2652,7 @@ export type OrchestrationCommand =
       readonly commandId: string;
       readonly sourceThreadId: string;
       readonly targetThreadId: string;
-      readonly sourcePoint: Wire115;
+      readonly sourcePoint: Wire116;
       readonly createdAt?: Wire44;
     }
   | {
@@ -2706,35 +2709,35 @@ export type OrchestrationCommand =
     };
 export type DispatchResult = { readonly sequence: number };
 export type ServerSettings = {
-  readonly favorites?: Wire116 | null | undefined;
-  readonly providerModelPreferences?: Wire117 | null | undefined;
-  readonly worktreeCleanup?: Wire118 | undefined;
+  readonly favorites?: Wire117 | null | undefined;
+  readonly providerModelPreferences?: Wire118 | null | undefined;
+  readonly worktreeCleanup?: Wire119 | undefined;
   readonly storageCleanup?:
     | {
-        readonly worktreeKeepWhen?: Wire119;
-        readonly worktreeAfterDays?: Wire124;
-        readonly worktreeSettledAfterDays?: Wire122;
+        readonly worktreeKeepWhen?: Wire120;
+        readonly worktreeAfterDays?: Wire125;
+        readonly worktreeSettledAfterDays?: Wire123;
         readonly worktreeOnMerge?: Wire6;
         readonly worktreeOnDelete?: Wire6;
         readonly worktreeUnchanged?: Wire6;
-        readonly browserArtifactsAfterDays?: Wire124;
-        readonly logsAfterDays?: Wire124;
+        readonly browserArtifactsAfterDays?: Wire125;
+        readonly logsAfterDays?: Wire125;
       }
     | undefined;
   readonly worktreesDirectory?: Wire34;
   readonly fastWorktreeCheckout?: Wire6;
   readonly previousWorktreesDirectories?: ReadonlyArray<string> | undefined;
-  readonly responseStreamingMode?: Wire125 | undefined;
+  readonly responseStreamingMode?: Wire126 | undefined;
   readonly enableProviderUpdateChecks?: Wire6;
   readonly continueThreadsAfterServerUpdate?: Wire6;
   readonly enableAgentBrowserAccess?: Wire6;
   readonly cloudSpeechCredentials?:
-    | { readonly openai?: Wire126; readonly xai?: Wire126; readonly openrouter?: Wire126 }
+    | { readonly openai?: Wire127; readonly xai?: Wire127; readonly openrouter?: Wire127 }
     | undefined;
   readonly speechModelId?: Wire34;
-  readonly speechAcceleration?: Wire129 | undefined;
-  readonly speechModelUnloadTimeout?: Wire130 | undefined;
-  readonly speechProjectCustomWords?: Wire131 | undefined;
+  readonly speechAcceleration?: Wire130 | undefined;
+  readonly speechModelUnloadTimeout?: Wire131 | undefined;
+  readonly speechProjectCustomWords?: Wire132 | undefined;
   readonly speechPostProcessingModelSelection?: Wire3 | null | undefined;
   readonly projectAgentBrowserAccessOverrides?: { readonly [x: string]: boolean } | undefined;
   readonly defaultAutoPull?: Wire6;
@@ -2749,34 +2752,34 @@ export type ServerSettings = {
   readonly projectSettingsOverrides?:
     | {
         readonly [x: string]: {
-          readonly worktreeCleanup?: Wire118;
-          readonly defaultModelSelection?: Wire132;
+          readonly worktreeCleanup?: Wire119;
+          readonly defaultModelSelection?: Wire133;
           readonly defaultRuntimeMode?: Wire12;
           readonly defaultThreadEnvMode?: Wire5;
           readonly newWorktreesStartFromOrigin?: boolean;
           readonly worktreeSubmodules?: unknown;
           readonly defaultAutoPull?: boolean;
-          readonly defaultProjectScripts?: Wire133;
+          readonly defaultProjectScripts?: Wire134;
           readonly enableAgentBrowserAccess?: boolean;
           readonly enableAgentDeviceAccess?: boolean;
           readonly textGenerationModelSelection?: Wire3;
           readonly threadTitleInstructions?: string;
-          readonly sourceControlWriterModelSelection?: Wire134;
-          readonly reviewGuideModelSelection?: Wire135;
+          readonly sourceControlWriterModelSelection?: Wire135;
+          readonly reviewGuideModelSelection?: Wire136;
           readonly reviewGuideInstructions?: string;
-          readonly sourceControlWritingStyle?: Wire136;
+          readonly sourceControlWritingStyle?: Wire137;
           readonly removeAgentCreditsOnMerge?: boolean;
-          readonly branchNamingMode?: Wire139;
+          readonly branchNamingMode?: Wire140;
           readonly branchNamePrefix?: string;
           readonly branchNameInstructions?: string;
-          readonly pullRequestMergeMethod?: Wire140;
+          readonly pullRequestMergeMethod?: Wire141;
           readonly sidebarAutoSettleOnMerge?: boolean;
-          readonly sidebarAutoSettleAfterDays?: Wire142;
+          readonly sidebarAutoSettleAfterDays?: Wire143;
           readonly sidebarAutoSettleKeepPullRequests?: boolean;
           readonly continueThreadsAfterServerUpdate?: boolean;
-          readonly responseStreamingMode?: Wire125;
-          readonly speechProjectCustomWords?: Wire131;
-          readonly providerInstances?: Wire143;
+          readonly responseStreamingMode?: Wire126;
+          readonly speechProjectCustomWords?: Wire132;
+          readonly providerInstances?: Wire144;
         } & { readonly [x: string]: unknown };
       }
     | undefined;
@@ -2784,16 +2787,16 @@ export type ServerSettings = {
   readonly enableAgentDeviceAccess?: Wire6;
   readonly enableDeviceSupport?: Wire6;
   readonly deviceOnboardingCompleted?: Wire6;
-  readonly deviceHosts?: Wire144 | undefined;
-  readonly easDeviceHosts?: Wire145 | undefined;
-  readonly simlockDeviceHosts?: Wire146 | undefined;
+  readonly deviceHosts?: Wire145 | undefined;
+  readonly easDeviceHosts?: Wire146 | undefined;
+  readonly simlockDeviceHosts?: Wire147 | undefined;
   readonly simlockDeviceHostsEnabled?: Wire6;
   readonly sidebarAutoSettleAfterDays?: number | null | undefined;
-  readonly compactIdleThreads?: Wire147 | undefined;
-  readonly idleCompaction?: Wire148;
+  readonly compactIdleThreads?: Wire148 | undefined;
+  readonly idleCompaction?: Wire149;
   readonly snoozeLimitedThreads?: Wire6;
   readonly autoResumeLimitedThreads?: Wire6;
-  readonly snoozePresets?: ReadonlyArray<Wire149> | undefined;
+  readonly snoozePresets?: ReadonlyArray<Wire150> | undefined;
   readonly hiddenThreadTags?: ReadonlyArray<unknown> | undefined;
   readonly hideTaggedThreads?: Wire6;
   readonly guestSharingEnabled?: Wire6;
@@ -2804,14 +2807,14 @@ export type ServerSettings = {
   readonly backgroundActivity?:
     | {
         readonly schemaVersion?: 1 | undefined;
-        readonly profile?: Wire150 | undefined;
-        readonly baseProfile?: Wire151;
-        readonly overrides?: Wire152 | undefined;
+        readonly profile?: Wire151 | undefined;
+        readonly baseProfile?: Wire152;
+        readonly overrides?: Wire153 | undefined;
       }
     | undefined;
-  readonly automaticGitFetchInterval?: Wire153;
-  readonly providerHealthRefreshInterval?: Wire153;
-  readonly backgroundActivityProfile?: Wire151 | undefined;
+  readonly automaticGitFetchInterval?: Wire154;
+  readonly providerHealthRefreshInterval?: Wire154;
+  readonly backgroundActivityProfile?: Wire152 | undefined;
   readonly defaultTheme?: string | undefined;
   readonly defaultThemeSetAt?: string | undefined;
   readonly environmentIcon?: Wire4;
@@ -2822,17 +2825,17 @@ export type ServerSettings = {
   readonly ghqCloneLayout?: Wire6;
   readonly textGenerationModelSelection?: Wire3 | undefined;
   readonly threadTitleInstructions?: Wire34;
-  readonly branchNamingMode?: Wire139 | undefined;
+  readonly branchNamingMode?: Wire140 | undefined;
   readonly branchNamePrefix?: Wire34;
   readonly branchNameInstructions?: Wire34;
   readonly removeAgentCreditsOnMerge?: Wire6;
-  readonly sourceControlWritingStyle?: Wire136 | undefined;
+  readonly sourceControlWritingStyle?: Wire137 | undefined;
   readonly sourceControlWriterModelSelection?: Wire3 | null | undefined;
   readonly reviewGuidesEnabled?: Wire6;
   readonly reviewGuideModelSelection?: Wire3 | null | undefined;
   readonly reviewGuideInstructions?: Wire34;
-  readonly pullRequestMergeMethod?: Wire141 | null | undefined;
-  readonly providerInstances?: { readonly [x: string]: Wire154 } | undefined;
+  readonly pullRequestMergeMethod?: Wire142 | null | undefined;
+  readonly providerInstances?: { readonly [x: string]: Wire155 } | undefined;
   readonly observability?:
     | {
         readonly otlpTracesUrl?: Wire34;
@@ -2840,10 +2843,10 @@ export type ServerSettings = {
         readonly otlpLogsUrl?: Wire34;
       }
     | undefined;
-  readonly sourceControlHosts?: { readonly [x: string]: Wire155 } | undefined;
+  readonly sourceControlHosts?: { readonly [x: string]: Wire156 } | undefined;
   readonly offeredSourceControlProviders?: { readonly [x: string]: boolean } | undefined;
-  readonly usageLimitSources?: { readonly [x: string]: Wire156 } | undefined;
-  readonly textGenerators?: { readonly [x: string]: Wire157 } | undefined;
+  readonly usageLimitSources?: { readonly [x: string]: Wire157 } | undefined;
+  readonly textGenerators?: { readonly [x: string]: Wire158 } | undefined;
   readonly secretProviders?:
     | {
         readonly [x: string]: {
@@ -2853,7 +2856,7 @@ export type ServerSettings = {
         };
       }
     | undefined;
-  readonly usagePriceOverrides?: { readonly [x: string]: Wire158 } | undefined;
+  readonly usagePriceOverrides?: { readonly [x: string]: Wire159 } | undefined;
   readonly usageModelAliases?: { readonly [x: string]: string } | undefined;
   readonly usageModelFilter?: unknown;
 };
@@ -2872,20 +2875,20 @@ export type ServerSettingsPatch = {
     readonly provider: string;
     readonly modelOrder: ReadonlyArray<string>;
   };
-  readonly favorites?: Wire116;
-  readonly providerModelPreferences?: Wire117;
+  readonly favorites?: Wire117;
+  readonly providerModelPreferences?: Wire118;
   readonly migrateModelPreferences?: {
-    readonly favorites?: Wire116;
-    readonly providerModelPreferences?: Wire117;
+    readonly favorites?: Wire117;
+    readonly providerModelPreferences?: Wire118;
   };
   readonly worktreeCleanup?:
     | { readonly mode: "off" }
     | {
         readonly mode: "custom";
         readonly rules: {
-          readonly worktreeKeepWhen?: Wire120;
-          readonly worktreeAfterDays?: Wire121;
-          readonly worktreeSettledAfterDays?: Wire123;
+          readonly worktreeKeepWhen?: Wire121;
+          readonly worktreeAfterDays?: Wire122;
+          readonly worktreeSettledAfterDays?: Wire124;
           readonly worktreeOnMerge?: boolean;
           readonly worktreeOnDelete?: boolean;
           readonly worktreeUnchanged?: boolean;
@@ -2893,30 +2896,30 @@ export type ServerSettingsPatch = {
       }
     | null;
   readonly storageCleanup?: {
-    readonly worktreeKeepWhen?: Wire120;
-    readonly worktreeAfterDays?: Wire121;
-    readonly worktreeSettledAfterDays?: Wire123;
+    readonly worktreeKeepWhen?: Wire121;
+    readonly worktreeAfterDays?: Wire122;
+    readonly worktreeSettledAfterDays?: Wire124;
     readonly worktreeOnMerge?: boolean;
     readonly worktreeOnDelete?: boolean;
     readonly worktreeUnchanged?: boolean;
-    readonly browserArtifactsAfterDays?: Wire121;
-    readonly logsAfterDays?: Wire121;
+    readonly browserArtifactsAfterDays?: Wire122;
+    readonly logsAfterDays?: Wire122;
   };
   readonly worktreesDirectory?: string;
   readonly fastWorktreeCheckout?: boolean;
-  readonly responseStreamingMode?: Wire125;
+  readonly responseStreamingMode?: Wire126;
   readonly enableProviderUpdateChecks?: boolean;
   readonly continueThreadsAfterServerUpdate?: boolean;
   readonly enableAgentBrowserAccess?: boolean;
   readonly cloudSpeechCredentials?: {
-    readonly openai?: Wire127;
-    readonly xai?: Wire127;
-    readonly openrouter?: Wire127;
+    readonly openai?: Wire128;
+    readonly xai?: Wire128;
+    readonly openrouter?: Wire128;
   };
   readonly speechModelId?: string;
-  readonly speechAcceleration?: Wire129;
-  readonly speechModelUnloadTimeout?: Wire130;
-  readonly speechProjectCustomWords?: Wire159;
+  readonly speechAcceleration?: Wire130;
+  readonly speechModelUnloadTimeout?: Wire131;
+  readonly speechProjectCustomWords?: Wire160;
   readonly speechPostProcessingModelSelection?: Wire3 | null;
   readonly projectAgentBrowserAccessOverrides?: { readonly [x: string]: boolean | null };
   readonly defaultAutoPull?: boolean;
@@ -2929,52 +2932,52 @@ export type ServerSettingsPatch = {
   readonly projectSettingsOverrides?: {
     readonly [x: string]:
       | ({
-          readonly worktreeCleanup?: Wire118;
-          readonly defaultModelSelection?: Wire132;
+          readonly worktreeCleanup?: Wire119;
+          readonly defaultModelSelection?: Wire133;
           readonly defaultRuntimeMode?: Wire12;
           readonly defaultThreadEnvMode?: Wire5;
           readonly newWorktreesStartFromOrigin?: boolean;
           readonly worktreeSubmodules?: unknown;
           readonly defaultAutoPull?: boolean;
-          readonly defaultProjectScripts?: Wire133;
+          readonly defaultProjectScripts?: Wire134;
           readonly enableAgentBrowserAccess?: boolean;
           readonly enableAgentDeviceAccess?: boolean;
           readonly textGenerationModelSelection?: Wire3;
           readonly threadTitleInstructions?: string;
-          readonly sourceControlWriterModelSelection?: Wire134;
-          readonly reviewGuideModelSelection?: Wire135;
+          readonly sourceControlWriterModelSelection?: Wire135;
+          readonly reviewGuideModelSelection?: Wire136;
           readonly reviewGuideInstructions?: string;
-          readonly sourceControlWritingStyle?: Wire137;
+          readonly sourceControlWritingStyle?: Wire138;
           readonly removeAgentCreditsOnMerge?: boolean;
-          readonly branchNamingMode?: Wire139;
+          readonly branchNamingMode?: Wire140;
           readonly branchNamePrefix?: string;
           readonly branchNameInstructions?: string;
-          readonly pullRequestMergeMethod?: Wire140;
+          readonly pullRequestMergeMethod?: Wire141;
           readonly sidebarAutoSettleOnMerge?: boolean;
-          readonly sidebarAutoSettleAfterDays?: Wire142;
+          readonly sidebarAutoSettleAfterDays?: Wire143;
           readonly sidebarAutoSettleKeepPullRequests?: boolean;
           readonly continueThreadsAfterServerUpdate?: boolean;
-          readonly responseStreamingMode?: Wire125;
-          readonly speechProjectCustomWords?: Wire159;
-          readonly providerInstances?: Wire143;
+          readonly responseStreamingMode?: Wire126;
+          readonly speechProjectCustomWords?: Wire160;
+          readonly providerInstances?: Wire144;
         } & { readonly [x: string]: unknown })
       | null;
   };
   readonly enableAgentDeviceAccess?: boolean;
   readonly enableDeviceSupport?: boolean;
   readonly deviceOnboardingCompleted?: boolean;
-  readonly deviceHosts?: Wire144;
-  readonly easDeviceHosts?: Wire145;
-  readonly simlockDeviceHosts?: Wire146;
+  readonly deviceHosts?: Wire145;
+  readonly easDeviceHosts?: Wire146;
+  readonly simlockDeviceHosts?: Wire147;
   readonly simlockDeviceHostsEnabled?: boolean;
   readonly sidebarAutoSettleAfterDays?: number | null;
-  readonly compactIdleThreads?: Wire147;
-  readonly idleCompaction?: Wire148;
+  readonly compactIdleThreads?: Wire148;
+  readonly idleCompaction?: Wire149;
   readonly sidebarAutoSettleKeepPullRequests?: boolean;
   readonly sidebarAutoSettleOnMerge?: boolean;
   readonly autoResumeLimitedThreads?: boolean;
   readonly snoozeLimitedThreads?: boolean;
-  readonly snoozePresets?: ReadonlyArray<Wire149>;
+  readonly snoozePresets?: ReadonlyArray<Wire150>;
   readonly hiddenThreadTags?: ReadonlyArray<string>;
   readonly hideTaggedThreads?: boolean;
   readonly guestSharingEnabled?: boolean;
@@ -2982,13 +2985,13 @@ export type ServerSettingsPatch = {
   readonly promptSuggestionsEnabled?: boolean;
   readonly backgroundActivity?: {
     readonly schemaVersion?: 1;
-    readonly profile?: Wire150;
-    readonly baseProfile?: Wire151;
-    readonly overrides?: Wire152;
+    readonly profile?: Wire151;
+    readonly baseProfile?: Wire152;
+    readonly overrides?: Wire153;
   };
   readonly automaticGitFetchInterval?: number;
   readonly providerHealthRefreshInterval?: number;
-  readonly backgroundActivityProfile?: Wire151;
+  readonly backgroundActivityProfile?: Wire152;
   readonly environmentIcon?:
     | "server"
     | "cloud"
@@ -3011,12 +3014,12 @@ export type ServerSettingsPatch = {
       | { readonly [x: string]: unknown };
   };
   readonly threadTitleInstructions?: string;
-  readonly branchNamingMode?: Wire139;
+  readonly branchNamingMode?: Wire140;
   readonly branchNamePrefix?: string;
   readonly branchNameInstructions?: string;
   readonly removeAgentCreditsOnMerge?: boolean;
   readonly sourceControlWritingStyle?: {
-    readonly mode?: Wire138;
+    readonly mode?: Wire139;
     readonly customInstructions?: string;
     readonly followChangeRequestTemplates?: boolean;
   };
@@ -3024,17 +3027,17 @@ export type ServerSettingsPatch = {
   readonly reviewGuidesEnabled?: boolean;
   readonly reviewGuideModelSelection?: Wire3 | null;
   readonly reviewGuideInstructions?: string;
-  readonly pullRequestMergeMethod?: Wire141 | null;
+  readonly pullRequestMergeMethod?: Wire142 | null;
   readonly observability?: {
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
     readonly otlpLogsUrl?: string;
   };
-  readonly sourceControlHosts?: { readonly [x: string]: Wire155 };
+  readonly sourceControlHosts?: { readonly [x: string]: Wire156 };
   readonly offeredSourceControlProviders?: { readonly [x: string]: boolean };
-  readonly providerInstances?: { readonly [x: string]: Wire154 };
-  readonly usageLimitSources?: { readonly [x: string]: Wire156 | null };
-  readonly textGenerators?: { readonly [x: string]: Wire157 | null };
+  readonly providerInstances?: { readonly [x: string]: Wire155 };
+  readonly usageLimitSources?: { readonly [x: string]: Wire157 | null };
+  readonly textGenerators?: { readonly [x: string]: Wire158 | null };
   readonly secretProviders?: {
     readonly [x: string]: {
       readonly kind: string;
@@ -3042,6 +3045,6 @@ export type ServerSettingsPatch = {
       readonly config?: unknown;
     } | null;
   };
-  readonly usagePriceOverrides?: { readonly [x: string]: Wire158 | null };
+  readonly usagePriceOverrides?: { readonly [x: string]: Wire159 | null };
   readonly usageModelAliases?: { readonly [x: string]: string | null };
 };
