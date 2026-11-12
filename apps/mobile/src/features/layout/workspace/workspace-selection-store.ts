@@ -24,6 +24,7 @@ import { environmentThreadShells, startOpeningEnvironmentThread } from "../../..
 import {
   rememberedSettingsPage,
   rememberedThreadReopens,
+  threadHasPageOpened,
   workspaceSelectionsIn,
   type WorkspaceSelectionCheck,
 } from "./workspace-tab-navigation";
@@ -36,7 +37,7 @@ const REMEMBERS = Platform.OS === "ios";
 let selections: WorkspaceSelections = {};
 let saved = selections;
 let hydration: Promise<void> | null = null;
-// The chat a tab switch or a cold start reopened by itself, while it stays the remembered one.
+// The chat a tab switch or a cold start reopened by itself, until the user opens something.
 let reopened: WorkspaceSelections["threads"];
 let reopenings = 0;
 
@@ -89,8 +90,15 @@ export function currentWorkspaceSelections() {
  */
 export function recordWorkspaceSelections(state: NavigationState | undefined) {
   if (!REMEMBERS || !state) return;
-  selections = workspaceSelectionsIn(state.routes.slice(0, state.index + 1), selections);
-  if (reopened && !sameThread(reopened, selections.threads)) reopened = undefined;
+  const routes = state.routes.slice(0, state.index + 1);
+  selections = workspaceSelectionsIn(routes, selections);
+  // Opening another chat, or anything from the reopened one, makes what is on screen the user's.
+  if (
+    reopened &&
+    (!sameThread(reopened, selections.threads) || threadHasPageOpened(routes, reopened))
+  ) {
+    reopened = undefined;
+  }
 }
 
 function sameThread(

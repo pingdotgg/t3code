@@ -27,6 +27,8 @@ const shellStatus = (state: EnvironmentShellState) => state.status;
 const shellHasError = (state: EnvironmentShellState) => Option.isSome(state.error);
 // The empty placeholder stands until the environment has read its cached shell.
 const shellCacheRead = (state: EnvironmentShellState) => state !== EMPTY_SHELL_STATE;
+// Generation 0 is the cached shell: its rows can predate what happened while the app was closed.
+const shellSynced = (state: EnvironmentShellState) => state.generation !== 0;
 
 const shellCacheReadAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => shellCacheRead(get(environmentShell.stateValueAtom(environmentId)))),
@@ -56,5 +58,6 @@ export function useEnvironmentShellReadiness(environmentId: EnvironmentId | null
     status: useAtomValue(atom, shellStatus),
     hasError: useAtomValue(atom, shellHasError),
     cacheRead: useAtomValue(atom, shellCacheRead),
+    synced: useAtomValue(atom, shellSynced),
   };
 }

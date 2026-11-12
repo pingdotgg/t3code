@@ -80,17 +80,33 @@ export function threadDetailErrorIsCurrent<E>(input: {
 }
 
 /**
- * Whether a chat the workspace reopened by itself must close again. Shells leave idle subagents
- * and older settled chats out, so the reopened chat may have no row; then only its detail can say
- * that it was archived or deleted.
+ * What the screen of a chat the workspace reopened by itself does while no shell row proves the
+ * chat. Only its detail can say it was archived or deleted, and cached detail can predate an
+ * unarchive on another client, so that closes the chat only when no synced read is coming. A chat
+ * with a page the user opened on it or in it is left alone: closing would take that page along.
  */
-export function reopenedThreadIsGone(input: {
+export function reopenedThreadOutcome(input: {
+  readonly alone: boolean;
+  readonly isLoadingConnections: boolean;
+  readonly environmentRegistered: boolean;
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly detailStatus: EnvironmentThreadStatus;
+  readonly detailHasError: boolean;
   readonly thread: {
     readonly archivedAt: string | null;
     readonly deletedAt: string | null;
   } | null;
-}): boolean {
-  if (input.thread === null) return input.detailStatus === "deleted";
-  return input.thread.archivedAt !== null || input.thread.deletedAt !== null;
+}): "keep" | "wait" | "close" {
+  const gone =
+    input.thread === null
+      ? input.detailStatus === "deleted"
+      : input.thread.archivedAt !== null || input.thread.deletedAt !== null;
+  if (!gone || !input.alone) return "keep";
+  const synced = input.thread === null || input.detailStatus === "live";
+  const syncComing =
+    !input.detailHasError &&
+    (input.isLoadingConnections ||
+      (input.environmentRegistered &&
+        (input.connectionState === "connecting" || input.connectionState === "connected")));
+  return !synced && syncComing ? "wait" : "close";
 }

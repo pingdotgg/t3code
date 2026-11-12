@@ -8,6 +8,7 @@ import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setu
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
+  useIsFocused,
   useNavigation,
   useRoute,
   type StaticScreenProps,
@@ -105,7 +106,7 @@ import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
 import {
-  reopenedThreadIsGone,
+  reopenedThreadOutcome,
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
@@ -230,19 +231,18 @@ function UnavailableThreadDraftRedirect(props: { readonly environmentId: Environ
   return <OpeningThreadLoadingScreen />;
 }
 
-/** A chat the workspace reopened by itself and that cannot open: back to the list, for good. */
+/**
+ * A chat the workspace reopened by itself and that cannot open: back to the list, for good.
+ * Render it only for the focused route: going back from any other route acts on the page in front.
+ */
 function ReopenedThreadClose(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const navigation = useNavigation();
-  const routeKey = useRoute().key;
   const close = useEffectEvent(() => {
     forgetWorkspaceThread(props.environmentId, props.threadId);
-    // iOS keeps this screen mounted after a tab switch dropped its route; going back from there
-    // would act on the page in front.
-    if (navigation.getState()?.routes.some((route) => route.key === routeKey)) goBack();
+    goBack();
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaves this route for the list on mount: the workspace reopened the chat by itself and it cannot open
   useEffect(() => {
@@ -292,6 +292,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  const focused = useIsFocused();
   const reopening =
     routeName === "Thread" &&
     !props.inspectorPresentation &&
@@ -299,9 +300,15 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     threadIdRaw !== null
       ? workspaceThreadReopening(environmentId, ThreadId.make(threadIdRaw))
       : null;
-  // A shell row proves a reopened chat exists. Until one arrives, its detail can still close it.
+  // A row of the synced shell proves a reopened chat exists; a cached row can predate its removal.
+  // Until that proof arrives, its detail can still close it.
   const [provenReopening, setProvenReopening] = useState<number | null>(null);
-  if (reopening !== null && selectedThreadListed && provenReopening !== reopening) {
+  if (
+    reopening !== null &&
+    selectedThreadListed &&
+    routeEnvironmentShellState.synced &&
+    provenReopening !== reopening
+  ) {
     setProvenReopening(reopening);
   }
   const reopenedUnproven = reopening !== null && provenReopening !== reopening;
@@ -332,15 +339,25 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const closeReopened = (
     <ReopenedThreadClose environmentId={environmentId} threadId={ThreadId.make(threadIdRaw)} />
   );
-  if (
-    reopenedUnproven &&
-    reopenedThreadIsGone({
-      detailStatus: selectedThreadDetailState.status,
-      thread: selectedThreadKey === routeThreadKey ? selectedThread : null,
-    })
-  ) {
-    return closeReopened;
-  }
+  const detailHasError = threadDetailErrorIsCurrent({
+    connectionState: routeConnectionState,
+    error: detailError,
+    errorBeforeConnected,
+  });
+  const reopened = reopenedUnproven
+    ? reopenedThreadOutcome({
+        // A subagent opened beside the chat lives in this route's params, not on a route above.
+        alone: focused && params.inspector === undefined,
+        isLoadingConnections: !connectionsReady,
+        environmentRegistered: routeEnvironmentRuntime !== null,
+        connectionState: routeConnectionState,
+        detailStatus: selectedThreadDetailState.status,
+        detailHasError,
+        thread: selectedThreadKey === routeThreadKey ? selectedThread : null,
+      })
+    : "keep";
+  if (reopened === "close") return closeReopened;
+  if (reopened === "wait") return <OpeningThreadLoadingScreen />;
 
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
     return withInspectorHeader(
@@ -358,11 +375,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     shellStatus: routeEnvironmentShellState.status,
     shellHasError: routeEnvironmentShellState.hasError,
     detailStatus: selectedThreadDetailState.status,
-    detailHasError: threadDetailErrorIsCurrent({
-      connectionState: routeConnectionState,
-      error: detailError,
-      errorBeforeConnected,
-    }),
+    detailHasError,
     familyPending,
   });
 
@@ -378,6 +391,9 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       detailStatus: selectedThreadDetailState.status,
     })
   ) {
+    // Leaving or replacing a route acts on the page in front, so only the focused route does it.
+    // iOS keeps a screen mounted after its route is gone, and a route can sit under another page.
+    if (!focused) return <OpeningThreadLoadingScreen />;
     // A draft nobody asked for must not take the place of a chat that only failed to reopen.
     return reopenedUnproven ? (
       closeReopened

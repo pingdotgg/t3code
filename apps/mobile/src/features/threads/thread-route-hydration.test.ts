@@ -2,7 +2,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  reopenedThreadIsGone,
+  reopenedThreadOutcome,
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
@@ -168,27 +168,73 @@ describe("threadDetailErrorIsCurrent", () => {
   });
 });
 
-describe("reopenedThreadIsGone", () => {
+describe("reopenedThreadOutcome", () => {
   const open = { archivedAt: null, deletedAt: null };
+  const archived = { ...open, archivedAt: "2026-01-01" };
+  const synced = {
+    alone: true,
+    isLoadingConnections: false,
+    environmentRegistered: true,
+    connectionState: "connected" as const,
+    detailStatus: "live" as const,
+    detailHasError: false,
+    thread: open,
+  };
 
   it("closes a reopened chat only when its detail says it was archived or deleted", () => {
-    expect(reopenedThreadIsGone({ detailStatus: "deleted", thread: null })).toBe(true);
-    expect(
-      reopenedThreadIsGone({ detailStatus: "live", thread: { ...open, archivedAt: "2026-01-01" } }),
-    ).toBe(true);
-    expect(
-      reopenedThreadIsGone({
-        detailStatus: "cached",
-        thread: { ...open, deletedAt: "2026-01-01" },
-      }),
-    ).toBe(true);
-    expect(reopenedThreadIsGone({ detailStatus: "live", thread: open })).toBe(false);
+    expect(reopenedThreadOutcome({ ...synced, thread: archived })).toBe("close");
+    expect(reopenedThreadOutcome({ ...synced, thread: { ...open, deletedAt: "2026-01-01" } })).toBe(
+      "close",
+    );
+    expect(reopenedThreadOutcome({ ...synced, detailStatus: "deleted", thread: null })).toBe(
+      "close",
+    );
+    expect(reopenedThreadOutcome(synced)).toBe("keep");
     for (const detailStatus of ["empty", "cached", "synchronizing", "live"] as const) {
-      expect(reopenedThreadIsGone({ detailStatus, thread: null })).toBe(false);
+      expect(reopenedThreadOutcome({ ...synced, detailStatus, thread: null })).toBe("keep");
     }
   });
 
   it("keeps a chat still being created, whose first read can miss", () => {
-    expect(reopenedThreadIsGone({ detailStatus: "deleted", thread: open })).toBe(false);
+    expect(reopenedThreadOutcome({ ...synced, detailStatus: "deleted" })).toBe("keep");
+  });
+
+  it("leaves the chat alone while another page is on it or in it", () => {
+    // A route above it, a sheet, or a subagent opened in its inspector: closing would remove those.
+    expect(reopenedThreadOutcome({ ...synced, alone: false, thread: archived })).toBe("keep");
+    expect(
+      reopenedThreadOutcome({ ...synced, alone: false, detailStatus: "deleted", thread: null }),
+    ).toBe("keep");
+    expect(
+      reopenedThreadOutcome({
+        ...synced,
+        alone: false,
+        detailStatus: "cached",
+        connectionState: "offline",
+        thread: archived,
+      }),
+    ).toBe("keep");
+  });
+
+  it("trusts cached archived detail only when no synced read is coming", () => {
+    // Another client can unarchive the chat while this app is closed.
+    const cached = { ...synced, detailStatus: "cached" as const, thread: archived };
+    expect(reopenedThreadOutcome(cached)).toBe("wait");
+    expect(reopenedThreadOutcome({ ...cached, detailStatus: "synchronizing" })).toBe("wait");
+    expect(reopenedThreadOutcome({ ...cached, connectionState: "connecting" })).toBe("wait");
+    expect(
+      reopenedThreadOutcome({
+        ...cached,
+        isLoadingConnections: true,
+        environmentRegistered: false,
+        connectionState: "available",
+      }),
+    ).toBe("wait");
+    // No endless loading screen: offline, a failed attempt or a failed read closes it.
+    for (const connectionState of ["offline", "reconnecting", "error", "available"] as const) {
+      expect(reopenedThreadOutcome({ ...cached, connectionState })).toBe("close");
+    }
+    expect(reopenedThreadOutcome({ ...cached, detailHasError: true })).toBe("close");
+    expect(reopenedThreadOutcome({ ...cached, environmentRegistered: false })).toBe("close");
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { restoreSettingsLinkState } from "../../settings/settings-navigation";
 import {
   rememberedThreadReopens,
+  threadHasPageOpened,
   threadReopenedByTab,
   workspaceSelectionsIn,
   workspaceTabColumns,
@@ -68,6 +69,21 @@ describe("reopening the remembered chat", () => {
     );
     expect(threadReopenedByTab([home, thread], [home, thread], selections)).toBe(undefined);
     expect(threadReopenedByTab([home, pullRequest], [home], selections)).toBe(undefined);
+  });
+});
+
+describe("a reopened chat the user opened something from", () => {
+  it("counts a page on its route or a subagent beside it, and nothing else", () => {
+    const sheet = { key: "agents", name: "ThreadAgents" };
+    const other = { key: "b", name: "Thread", params: { environmentId: "env", threadId: "b" } };
+    const withSubagent = { ...thread, params: { ...thread.params, inspector: { type: "thread" } } };
+    expect(threadHasPageOpened([home, thread], thread.params)).toBe(false);
+    expect(threadHasPageOpened([home, thread, sheet], thread.params)).toBe(true);
+    expect(threadHasPageOpened([home, thread, other], thread.params)).toBe(true);
+    expect(threadHasPageOpened([home, withSubagent], thread.params)).toBe(true);
+    // Not on screen: a tab switch away, or the launch state before the chat's route exists.
+    expect(threadHasPageOpened([home], thread.params)).toBe(false);
+    expect(threadHasPageOpened([home, pullRequest], thread.params)).toBe(false);
   });
 });
 

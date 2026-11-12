@@ -69,6 +69,16 @@ export function threadReopenedByTab(
   return next.some((route) => showsThread(route, thread)) ? thread : undefined;
 }
 
+/**
+ * Whether the user opened something from the chat: a page or a sheet on its route, or a subagent
+ * beside it, which lives in the route's `inspector` param. A chat that is not on screen says no.
+ */
+export function threadHasPageOpened(routes: readonly RouteLike[], thread: ThreadSelection) {
+  const index = routes.findLastIndex((route) => showsThread(route, thread));
+  const params = routes[index]?.params as { readonly inspector?: unknown } | undefined;
+  return index >= 0 && (index < routes.length - 1 || params?.inspector !== undefined);
+}
+
 /** Whether a remembered chat or pull request can still be opened. */
 export interface WorkspaceSelectionCheck {
   readonly thread: (selection: ThreadSelection) => boolean;
