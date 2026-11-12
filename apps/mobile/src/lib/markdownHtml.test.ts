@@ -153,6 +153,19 @@ describe("HTML in native Markdown", () => {
       expected.join("\n\n") + "\n\n" + literal,
     );
   });
+
+  it("gives an image on the line under a caption its own block, as a blank line would", async () => {
+    const image = "https://github.com/user-attachments/assets/shot";
+    for (const caption of ["<sub>Before — overview</sub>", "Before — overview"]) {
+      const native = await parseMarkdown(
+        markdownForNativeRendering(`${caption}\n![](${image})`, ENRICHED_INLINE_FILE_LINK_REGEX),
+      );
+      expect(native.children?.at(-1)).toEqual({
+        type: "Paragraph",
+        children: [{ type: "Image", attributes: { url: image } }],
+      });
+    }
+  });
 });
 
 describe("file embeds in native thread and file Markdown", () => {
