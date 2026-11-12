@@ -2500,6 +2500,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { head: "MERGE_HEAD", operation: "merge" },
           { head: "CHERRY_PICK_HEAD", operation: "cherry-pick" },
           { head: "REVERT_HEAD", operation: "revert" },
+          // A conflicted multi-commit `cherry-pick --no-commit` writes only the sequencer; reset
+          // would clear its unmerged entries, so `--continue` would walk past the conflict.
+          { head: "sequencer", operation: "cherry-pick or revert" },
         ] as const;
         const headPaths = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
           "rev-parse",
