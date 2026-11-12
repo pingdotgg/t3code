@@ -175,6 +175,54 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("lists skills from installed Cursor plugins", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-skills-home-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const writeFile = Effect.fn("writeCursorPluginFile")(function* (
+          file: string,
+          contents: string,
+        ) {
+          yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fileSystem.writeFileString(file, contents);
+        });
+        const plugins = path.join(userHome, ".cursor", "plugins");
+        const localPlugin = path.join(plugins, "local", "demo-local");
+        const cachedPlugin = path.join(plugins, "cache", "cursor-public", "demo-cached", "abc123");
+        for (const [plugin, name] of [
+          [localPlugin, "demo-local"],
+          [cachedPlugin, "demo-cached"],
+        ] as const) {
+          yield* writeFile(
+            path.join(plugin, ".cursor-plugin", "plugin.json"),
+            JSON.stringify({ name }),
+          );
+        }
+        yield* writeFile(path.join(cachedPlugin, ".cache-complete"), "");
+        yield* writeFile(
+          path.join(localPlugin, "skills", "local-plugin-skill", "SKILL.md"),
+          "---\ndescription: local plugin skill\n---\n",
+        );
+        yield* writeFile(
+          path.join(cachedPlugin, "skills", "cached-plugin-skill", "SKILL.md"),
+          "---\ndescription: cached plugin skill\n---\n",
+        );
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+        const names = new Set(skills.map((skill) => skill.name));
+        expect([...names]).toEqual(
+          expect.arrayContaining(["cached-plugin-skill", "local-plugin-skill"]),
+        );
+        expect(rewriteCursorSkillMentions("$local-plugin-skill go", names)).toBe(
+          "/local-plugin-skill go",
+        );
+      }),
+    ));
+
   it("finds sibling skills when one skill ships more files than the scan budget", async () =>
     await runNode(
       Effect.gen(function* () {
