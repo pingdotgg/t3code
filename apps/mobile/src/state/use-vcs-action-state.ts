@@ -1,3 +1,4 @@
+import { useEnvironmentQuery } from "./query";
 import { useAtomValue } from "@effect/atom-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
@@ -91,21 +92,30 @@ function formatElapsedSeconds(ms: number | null, nowMs: number): string | null {
 export function useGitActionProgress(target: VcsActionTarget): GitActionProgress {
   const cancelSplit = useAtomCommand(gitEnvironment.cancelCommitWorkflow, { reportFailure: true });
   const actionState = useVcsActionState(target);
+  const workflow = useEnvironmentQuery(
+    target.environmentId && target.cwd
+      ? gitEnvironment.workflowProgress({
+          environmentId: target.environmentId,
+          input: { cwd: target.cwd },
+        })
+      : null,
+  ).data;
+  const running = actionState.isRunning || workflow?.state === "running";
   const { result } = useGitActionResultNotification();
 
   // Only a running action shows elapsed time, so only it subscribes to the second tick.
   const nowMs = useSyncExternalStore(
-    actionState.isRunning ? secondTick.subscribe : subscribeNever,
+    running ? secondTick.subscribe : subscribeNever,
     secondTick.getSnapshot,
   );
 
-  if (actionState.isRunning) {
+  if (running) {
     const description =
       actionState.lastOutputLine ??
       formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs, nowMs);
     return {
       phase: "running",
-      label: actionState.currentLabel,
+      label: workflow?.state === "running" ? workflow.label : actionState.currentLabel,
       description,
       ...(actionState.operation === "split_commits" &&
       actionState.actionId &&

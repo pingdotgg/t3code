@@ -12,6 +12,7 @@ import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
+import { BranchStackControl } from "../BranchStackControl";
 import BaseGitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
@@ -243,6 +244,20 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     ) : null}
                   </div>
                 </ThreadDetailsSection>
+              ) : null}
+
+              {visible.gitActions && props.isGitRepo && props.gitCwd ? (
+                <BranchStackControl
+                  environmentId={props.environmentId}
+                  cwd={props.gitCwd}
+                  threadId={props.threadId}
+                  projectId={props.projectId}
+                  worktreePath={props.worktreePath}
+                  isServerThread={props.isServerThread}
+                  envMode={props.envMode}
+                  {...(props.draftId ? { draftId: props.draftId } : {})}
+                  onBranchChange={props.onActiveThreadBranchOverrideChange}
+                />
               ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (

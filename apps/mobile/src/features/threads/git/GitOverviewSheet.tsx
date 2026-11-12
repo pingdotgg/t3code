@@ -1,3 +1,6 @@
+import { GitWorkflowProgressView } from "./GitWorkflowProgressView";
+import { gitEnvironment } from "../../../state/git";
+import { BranchStackControl } from "./BranchStackControl";
 import { useGitActionProgress } from "../../../state/use-vcs-action-state";
 import * as Dialog from "../../../components/ui/Dialog";
 import { cn } from "../../../lib/cn";
@@ -102,13 +105,38 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
-  const busy = gitOperationLabel !== null;
+  const workflowQuery = useEnvironmentQuery(
+    selectedThreadCwd
+      ? gitEnvironment.workflowProgress({ environmentId, input: { cwd: selectedThreadCwd } })
+      : null,
+  );
+  const busy = gitOperationLabel !== null || workflowQuery.data?.state === "running";
   const progress = useGitActionProgress({ environmentId, cwd: selectedThreadCwd });
   const isRepo = gitStatus.data?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
+  const stackQuery = useEnvironmentQuery(
+    selectedThreadCwd
+      ? gitEnvironment.stackStatus({ environmentId, input: { cwd: selectedThreadCwd } })
+      : null,
+  );
+  const hasStackDescendants =
+    stackQuery.data?.managed === true &&
+    stackQuery.data.layers.some(
+      (layer, index) => layer.current && index < stackQuery.data!.layers.length - 1,
+    );
+  const menuItems = (isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : []).map(
+    (item) =>
+      hasStackDescendants && item.id === "push"
+        ? {
+            ...item,
+            label: gitStatus.data?.hasWorkingTreeChanges
+              ? "Commit, restack & push"
+              : "Restack & push",
+          }
+        : item,
+  );
 
   const sheetMenuItems = menuItems.map((item) => ({
     item: {
@@ -296,6 +324,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           ) : null}
         </ListSection>
       ) : null}
+      {workflowQuery.data ? <GitWorkflowProgressView progress={workflowQuery.data} /> : null}
       <ListSection>
         {sheetMenuItems
           .filter(({ item }) => item.id === "branch")
@@ -423,6 +452,22 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           />
         ) : null}
       </ListSection>
+
+      {isRepo && selectedThreadCwd ? (
+        <BranchStackControl
+          environmentId={environmentId}
+          cwd={selectedThreadCwd}
+          busy={busy}
+          canSwitch={canChangeThreadBranch && canWriteSourceControl}
+          hasWorkingTreeChanges={gitStatus.data?.hasWorkingTreeChanges ?? null}
+          onSwitchBranch={(branch) => {
+            void gitActions.onCheckoutSelectedThreadBranch(branch, true);
+          }}
+          onStart={() => {
+            if (!isInspector) navigation.goBack();
+          }}
+        />
+      ) : null}
 
       {linkedPrLines.length > 0 ? (
         <ListSection title={`Linked ${linkedPrActions.terminology.plural}`}>
