@@ -405,6 +405,7 @@ function BoardPanelResizeHandle(props: {
     onLostPointerCapture: drag.onLostPointerCapture,
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter") return props.onReset(upperId);
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     const frames = measure(event.currentTarget);
     if (!frames) return;
@@ -473,6 +474,7 @@ function BoardColumnResizeHandle(props: {
     onLostPointerCapture: drag.onLostPointerCapture,
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter") return props.onResize(panelId, null);
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     props.onResize(
@@ -605,8 +607,18 @@ export function TaskBoardPage() {
     dropTargetRef.current = null;
   };
   const handleDragEnd = (event: DragEndEvent) => {
-    const target = dropTargetRef.current;
     const moved = event.active.id as BoardPanelId;
+    // A quick flick can release before any pointermove reaches the tracker below.
+    const start = event.activatorEvent;
+    const board = boardRef.current;
+    const target =
+      dropTargetRef.current ??
+      (board !== null && start instanceof PointerEvent
+        ? findDropTarget(board, moved, {
+            x: start.clientX + event.delta.x,
+            y: start.clientY + event.delta.y,
+          })
+        : null);
     if (target !== null) updateLayout((current) => moveBoardPanel(current, moved, target));
     endDrag();
   };

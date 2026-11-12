@@ -42,6 +42,14 @@ describe("groupThreadsByPanel", () => {
       [
         thread("approval", { hasPendingApprovals: true }),
         thread("done"),
+        thread("unseen-failure", {
+          latestRun: { status: "failed", completedAt: "2026-01-01T09:00:00.000Z" } as never,
+        }),
+        thread("seen-failure", {
+          latestRun: { status: "failed", completedAt: "2026-01-01T09:00:00.000Z" } as never,
+          lastVisitedAt: "2026-01-01T09:30:00.000Z",
+          updatedAt: "2026-01-01T08:00:00.000Z",
+        }),
         thread("settled", { settledOverride: "settled", hasPendingApprovals: true }),
         thread("snoozed", { snoozedUntil: "2026-01-02T00:00:00.000Z" }),
         thread("archived", { archivedAt: "2026-01-01T00:00:00.000Z" }),
@@ -56,7 +64,8 @@ describe("groupThreadsByPanel", () => {
       NOW,
     );
     expect(ids(groups.attention)).toEqual(["approval"]);
-    expect(ids(groups.done)).toEqual(["done"]);
+    expect(ids(groups.done)).toEqual(["done", "seen-failure"]);
+    expect(ids(groups.failed)).toEqual(["unseen-failure"]);
     expect(ids(groups.settled)).toEqual(["settled"]);
     expect(ids(groups.snoozed)).toEqual(["snoozed"]);
     expect(ids(groups.working)).toEqual([]);

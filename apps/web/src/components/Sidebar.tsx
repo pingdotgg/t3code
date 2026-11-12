@@ -2604,7 +2604,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
         const selectionState = useThreadSelectionStore.getState();
-        if (selectionState.hasSelection() && selectionState.selectedThreadKeys.has(threadKey)) {
+        // Only sidebar rows act on the sidebar's selection; other surfaces pass options.
+        if (
+          options === undefined &&
+          selectionState.hasSelection() &&
+          selectionState.selectedThreadKeys.has(threadKey)
+        ) {
           await handleMultiSelectContextMenu(position);
           return;
         }

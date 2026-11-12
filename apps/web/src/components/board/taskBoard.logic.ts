@@ -7,6 +7,7 @@ import {
 
 import type { SidebarThreadSummary } from "../../types";
 import {
+  hasUnseenFailure,
   isSidebarHiddenThread,
   resolveSidebarThreadStatus,
   type SidebarThreadStatus,
@@ -44,6 +45,8 @@ export type BoardThread = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
+  | "latestRun"
+  | "lastVisitedAt"
 > &
   ThreadSnoozeShell;
 
@@ -62,7 +65,10 @@ const PANEL_BY_STATUS: Record<SidebarThreadStatus, BoardPanelId> = {
 function resolveBoardPanel(thread: BoardThread, now: string): BoardPanelId {
   if (thread.settledOverride === "settled") return "settled";
   if (effectiveSnoozed(thread, { now })) return "snoozed";
-  return PANEL_BY_STATUS[resolveSidebarThreadStatus(thread)];
+  const status = resolveSidebarThreadStatus(thread);
+  // The card's label reads an unopened failed run as Failed after its runtime is gone.
+  if (status === "ready" && hasUnseenFailure(thread)) return "failed";
+  return PANEL_BY_STATUS[status];
 }
 
 function timestampOf(value: string | null | undefined): number {
