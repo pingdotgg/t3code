@@ -7589,6 +7589,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, JSON.stringify(cwd));
       assert.notInclude(terminal.failure.message, "repeated API errors");
+
+      // The CLI reads credentials once at startup; a retry after `claude auth login` needs a new process.
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-auth-retry"),
+          text: "Continue.",
+          attachments: [],
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
+        }),
+      );
+      assert.lengthOf(harness.processQueues, 2);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
