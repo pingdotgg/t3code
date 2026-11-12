@@ -50,7 +50,7 @@ import {
   type PluginActivation,
   type PluginApiServices,
 } from "./PluginApi.ts";
-import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
+import { errorText, isPluginCodeError, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
@@ -236,6 +236,12 @@ interface Found {
 // absolute path loads files from disk in both, and plugin code resolves its own imports.
 const requireFromDisk = NodeModule.createRequire(process.execPath);
 
+// A failed plugin's row shows the plugin's own error text, a deliberate exception to fixed messages.
+const pluginFailureText = (cause: Cause.Cause<PluginCodeError>) => {
+  const error = Cause.squash(cause);
+  return errorText(isPluginCodeError(error) ? error.cause : error);
+};
+
 const isPluginDefinition = (value: unknown): value is PluginDefinition =>
   typeof value === "object" &&
   value !== null &&
@@ -332,11 +338,14 @@ const make = Effect.gen(function* () {
   const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
     Effect.tryPromise({
       try: () => pluginCodeScope.run(pluginId, () => Promise.resolve().then(cleanup)),
-      catch: (cause) => new PluginCodeError({ cause }),
+      catch: (cause) => new PluginCodeError({ pluginId, stage: "cleanup", cause }),
     }).pipe(
       Effect.catchTags({
         PluginCodeError: (error) =>
-          Effect.logWarning("plugin cleanup failed", { pluginId, reason: error.message }),
+          Effect.logWarning("plugin cleanup failed", {
+            pluginId,
+            reason: errorText(error.cause),
+          }),
       }),
     );
 
@@ -382,7 +391,7 @@ const make = Effect.gen(function* () {
         }
         return definition;
       },
-      catch: (cause) => new PluginCodeError({ cause }),
+      catch: (cause) => new PluginCodeError({ pluginId: plugin.id, stage: "load", cause }),
     });
 
   const activatePlugin = Effect.fn("PluginHost.activate")(function* (plugin: DiscoveredPlugin) {
@@ -433,7 +442,7 @@ const make = Effect.gen(function* () {
           if (definition._tag === "Failure") {
             return yield* setRecord(plugin.id, {
               status: "failed",
-              failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
+              failure: { stage: "load", message: pluginFailureText(definition.cause) },
             });
           }
           const activation = makePluginActivation();
@@ -456,7 +465,8 @@ const make = Effect.gen(function* () {
                     pluginCodeScope.run(plugin.id, () =>
                       Promise.resolve().then(() => definition.value.activate(api)),
                     ),
-                  catch: (cause) => new PluginCodeError({ cause }),
+                  catch: (cause) =>
+                    new PluginCodeError({ pluginId: plugin.id, stage: "activate", cause }),
                 }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
               ).pipe(Effect.exit);
               if (activated._tag === "Success" && Option.isSome(activated.value)) {
@@ -472,7 +482,7 @@ const make = Effect.gen(function* () {
                   stage: "activate",
                   message:
                     activated._tag === "Failure"
-                      ? errorText(Cause.squash(activated.cause))
+                      ? pluginFailureText(activated.cause)
                       : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
                 },
               });

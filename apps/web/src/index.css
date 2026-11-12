@@ -1101,12 +1101,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-size: var(--surface-grain-size);
 }
 
-/* Settings or Usage shown as a page (a plugin's `app.pageFrame`) hides the thread kept mounted
-   under it. */
-[data-slot="sidebar-inset"]:has(~ [data-app-route-page]) {
-  display: none;
-}
-
 /* Suppress all transitions during theme changes */
 .no-transitions,
 .no-transitions *,
