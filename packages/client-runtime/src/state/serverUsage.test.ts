@@ -232,7 +232,13 @@ const makeRefreshingHarness = Effect.fn("ServerUsageTest.makeRefreshingHarness")
       input.awaitRefresh === true
         ? Deferred.succeed(followUpStarted, undefined).pipe(Effect.andThen(followUp))
         : Effect.void,
-    (input) => [cursorSource(input.awaitRefresh !== true)],
+    // The saved answer differs from the plain one, so a test can tell which was kept.
+    (input) => [
+      {
+        ...cursorSource(input.awaitRefresh !== true),
+        ...(input.provisional === true ? { scannedFiles: 0 } : {}),
+      },
+    ],
   );
   return { ...harness, followUpStarted };
 });
