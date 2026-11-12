@@ -499,6 +499,8 @@ function makeLocalCommandHarness(input: {
       id: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
       runId: attemptRunId,
       providerThreadId: parentProviderThread.id,
+      // The parent's first turn ran before a provider-side /clear moved it to a new session.
+      ...(ordinal === 1 ? { nativeThreadId: "side-chat-parent-native-before-clear" } : {}),
       status: "completed" as const,
     },
     turn: {
@@ -1348,6 +1350,9 @@ effectIt.effect.each([
       expect(
         harness.forkThread.mock.calls[0]?.[0].sourceProviderTurns?.map((turn) => turn.id),
       ).toEqual(forks ? ["side-chat-parent-turn-1"] : undefined);
+      expect(
+        harness.forkThread.mock.calls[0]?.[0].sourceProviderThread.nativeThreadRef?.nativeId,
+      ).toBe(forks ? "side-chat-parent-native-before-clear" : undefined);
       expect(harness.projection().contextTransfers).toMatchObject([
         { id: "side-chat-fork", status: transferStatus },
       ]);

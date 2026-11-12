@@ -1228,6 +1228,27 @@ export function latestProviderTurnForAttempt<
   return latest;
 }
 
+/** A provider can move a thread to a new native session (Claude's /clear); older turns stay in the one they ran in. */
+export function withAttemptNativeSession(
+  providerThread: OrchestrationV2ProviderThread,
+  attempt: { readonly nativeThreadId?: string | null | undefined } | undefined,
+): OrchestrationV2ProviderThread {
+  const nativeThreadRef = providerThread.nativeThreadRef;
+  const nativeThreadId = attempt?.nativeThreadId;
+  if (
+    nativeThreadRef === null ||
+    nativeThreadId == null ||
+    nativeThreadRef.nativeId === nativeThreadId
+  ) {
+    return providerThread;
+  }
+  return {
+    ...providerThread,
+    nativeThreadRef: { ...nativeThreadRef, nativeId: nativeThreadId },
+    nativeConversationHeadRef: null,
+  };
+}
+
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,

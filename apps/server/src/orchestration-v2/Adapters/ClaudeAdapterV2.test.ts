@@ -3665,12 +3665,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : harness.providerThread;
       };
       assert.equal(latest().nativeThreadRef?.nativeId, "cleared-native-session");
+      // The cleared session still runs in the live process.
+      yield* harness.runtime.startTurn(turn(2, latest()));
+      assert.equal(harness.processQueues.length, 1);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(latest().nativeThreadRef?.nativeId, "cleared-native-session");
       yield* harness.runtime.interruptTurn({
         providerThread: latest(),
         providerTurnId: lastProviderTurn(harness.events).id,
         requestRuntimeRestart: true,
       });
-      yield* harness.runtime.startTurn(turn(2, latest()));
+      yield* harness.runtime.startTurn(turn(3, latest()));
       assert.equal(harness.processQueues.length, 2);
       assert.equal(harness.getOpenedOptions()?.resume, "cleared-native-session");
     }).pipe(

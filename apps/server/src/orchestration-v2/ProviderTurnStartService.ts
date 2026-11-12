@@ -3,6 +3,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   CommandId,
   latestProviderTurnForAttempt,
+  withAttemptNativeSession,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
@@ -1142,12 +1143,15 @@ export const layer: Layer.Layer<
           const sourceRun = sourceProjection.runs.find(
             (candidate) => candidate.id === nativeForkTransfer.sourcePoint.runId,
           );
-          const sourceProviderThread = sourceProjection.providerThreads.find(
-            (candidate) => candidate.id === sourceRun?.providerThreadId,
-          );
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
+          const currentSourceProviderThread = sourceProjection.providerThreads.find(
+            (candidate) => candidate.id === sourceRun?.providerThreadId,
+          );
+          const sourceProviderThread =
+            currentSourceProviderThread &&
+            withAttemptNativeSession(currentSourceProviderThread, sourceAttempt);
           const sourceProviderTurn =
             latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
             sourceProjection.providerTurns.find(

@@ -2,6 +2,7 @@ import {
   CheckpointId,
   CheckpointScopeId,
   latestProviderTurnForAttempt,
+  withAttemptNativeSession,
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
   ThreadId,
@@ -287,7 +288,10 @@ export const layer: Layer.Layer<
         runsToRollback.length === 0
           ? { providerThread }
           : yield* session.rollbackThread({
-              providerThread,
+              providerThread:
+                rollbackTarget.type === "provider_turn"
+                  ? withAttemptNativeSession(providerThread, targetAttempt)
+                  : providerThread,
               target: rollbackTarget,
               providerThreadTurns,
             });

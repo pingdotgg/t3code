@@ -407,7 +407,8 @@ const seedRollbackHistory = Effect.gen(function* () {
     providerSessionId,
     appThreadId: threadId,
     ownerNodeId: null,
-    nativeThreadRef: null,
+    // Runs 1-2 ran before a provider-side /clear moved the thread to a new native session.
+    nativeThreadRef: { driver, nativeId: "native-session-cleared", strength: "strong" as const },
     nativeConversationHeadRef: null,
     status: "idle" as const,
     firstRunOrdinal: 1,
@@ -500,6 +501,7 @@ const seedRollbackHistory = Effect.gen(function* () {
           providerInstanceId,
           providerThreadId,
           providerTurnId: turnId(attemptOrdinal),
+          nativeThreadId: ordinal <= 2 ? "native-session-original" : "native-session-cleared",
           reason: "initial",
           status: "completed",
           startedAt: now,
@@ -558,6 +560,7 @@ const seedRollbackHistory = Effect.gen(function* () {
   }
 
   const rollbackCounts: number[] = [];
+  const rollbackSessions: Array<string | null | undefined> = [];
   const restored: CheckpointId[] = [];
   const deletedRefs: CheckpointId[] = [];
   const committed: OrchestrationV2DomainEvent[] = [];
@@ -598,6 +601,7 @@ const seedRollbackHistory = Effect.gen(function* () {
               rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                 Effect.gen(function* () {
                   rollbackCounts.push(yield* resolveCodexRollbackTurnCount(input));
+                  rollbackSessions.push(input.providerThread.nativeThreadRef?.nativeId);
                   return { providerThread: input.providerThread };
                 }),
             } as never),
@@ -626,6 +630,7 @@ const seedRollbackHistory = Effect.gen(function* () {
     checkpointId,
     rollback,
     rollbackCounts,
+    rollbackSessions,
     restored,
     deletedRefs,
     committed,
@@ -662,6 +667,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         yield* history.rollback(2);
 
         assert.deepEqual(history.rollbackCounts, [4]);
+        assert.deepEqual(history.rollbackSessions, ["native-session-original"]);
         assert.deepEqual(history.restored, [checkpointId(2)]);
         assert.sameMembers(history.deletedRefs, [3, 4, 5, 6].map(checkpointId));
         const runs = yield* sql<{ ordinal: number; status: string }>`
@@ -707,6 +713,11 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           yield* history.rollback(0);
 
           assert.deepEqual(history.rollbackCounts, [1, 3, 3]);
+          assert.deepEqual(history.rollbackSessions, [
+            "native-session-cleared",
+            "native-session-original",
+            "native-session-original",
+          ]);
           assert.sameMembers(history.deletedRefs, [1, 2, 3, 4, 5, 6].map(history.checkpointId));
           assert.sameMembers(
             history.committed

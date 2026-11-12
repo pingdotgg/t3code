@@ -276,6 +276,7 @@ const RollbackTargetAttempts = Schema.Array(
   OrchestrationV2RunAttemptJsonSchema.mapFields(({ id, providerTurnId }) => ({
     id,
     providerTurnId,
+    nativeThreadId: Schema.NullOr(Schema.String),
   })),
 );
 const decodeRollbackTargetAttempts = Schema.decodeUnknownEffect(RollbackTargetAttempts);
@@ -5666,7 +5667,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
             const [attemptRows, runRows, sessionRows, rolledBackAttempts, staleRows] =
               yield* Effect.all([
-                sql`SELECT attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+                sql`SELECT attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId",
+              json_extract(attempt.payload_json, '$.nativeThreadId') AS "nativeThreadId"
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run
               ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
