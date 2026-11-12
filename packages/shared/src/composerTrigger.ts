@@ -45,6 +45,36 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+/** Continue an already open @ search across spaces without finding old mentions in prose. */
+export function continueComposerPathTrigger(
+  text: string,
+  cursorInput: number,
+  previous: ComposerTrigger | null,
+  previousText: string,
+  previousQueryEnd: number,
+): { trigger: ComposerTrigger & { kind: "path" }; queryEnd: number } | null {
+  if (previous?.kind !== "path") return null;
+  const cursor = clampCursor(text, cursorInput);
+  const start = previous.rangeStart;
+  const queryEnd = previousQueryEnd + text.length - previousText.length;
+  // Only edits within the active query may extend its range. A caret jump must
+  // not absorb the unchanged suffix of the prompt into a mention replacement.
+  if (
+    text[start] !== "@" ||
+    cursor <= start ||
+    cursor > queryEnd ||
+    text.slice(0, start + 1) !== previousText.slice(0, start + 1) ||
+    text.slice(queryEnd) !== previousText.slice(previousQueryEnd)
+  )
+    return null;
+  const query = text.slice(start + 1, cursor);
+  if (/[\r\n\t\uFFFC]/u.test(query)) return null;
+  return {
+    trigger: { kind: "path", query, rangeStart: start, rangeEnd: cursor },
+    queryEnd,
+  };
+}
+
 /** A second slash makes the whole word a path, even when the caret precedes that slash. */
 export function isPathWord(
   text: string,

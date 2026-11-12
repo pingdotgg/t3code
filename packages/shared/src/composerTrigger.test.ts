@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  continueComposerPathTrigger,
   detectComposerTrigger,
   parseSideChatCommand,
   serializeComposerFileLink,
@@ -109,5 +110,46 @@ describe("parseSideChatCommand", () => {
     expect(parseSideChatCommand("/sidebar")).toBeNull();
     expect(parseSideChatCommand("/btwx")).toBeNull();
     expect(parseSideChatCommand("ask /side later")).toBeNull();
+  });
+});
+
+describe("active path query continuation", () => {
+  it("keeps spaces and the far query boundary while moving the caret", () => {
+    const before = "Inspect @Foreign then summarize";
+    const cursor = "Inspect @Foreign".length;
+    const text = "Inspect @Foreign Subsidiaries then summarize";
+    const end = "Inspect @Foreign Subsidiaries".length;
+    const result = continueComposerPathTrigger(
+      text,
+      end,
+      detectComposerTrigger(before, cursor),
+      before,
+      cursor,
+    );
+    expect(result).toEqual({
+      trigger: { kind: "path", query: "Foreign Subsidiaries", rangeStart: 8, rangeEnd: end },
+      queryEnd: end,
+    });
+    const back = continueComposerPathTrigger(text, cursor, result!.trigger, text, result!.queryEnd);
+    expect(back?.trigger.query).toBe("Foreign");
+    expect(
+      continueComposerPathTrigger(text, end, back!.trigger, text, back!.queryEnd)?.trigger.query,
+    ).toBe("Foreign Subsidiaries");
+    expect(continueComposerPathTrigger(text, text.length, result!.trigger, text, end)).toBeNull();
+    expect(continueComposerPathTrigger(text, end, null, before, cursor)).toBeNull();
+  });
+
+  it.each(["\n", "\r", "\t", "\uFFFC"])("ends at the %j boundary", (boundary) => {
+    const before = "@Foreign";
+    const text = before + boundary;
+    expect(
+      continueComposerPathTrigger(
+        text,
+        text.length,
+        detectComposerTrigger(before, before.length),
+        before,
+        before.length,
+      ),
+    ).toBeNull();
   });
 });

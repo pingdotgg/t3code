@@ -897,7 +897,7 @@ describe("model mention chips", () => {
 describe("pasting into a path query", () => {
   const skillLabelFor = (name: string) => ({ label: name, description: null });
 
-  function paste(prompt: string | ProseMirrorNode, pasted: string, pathQueryActive = true) {
+  function paste(prompt: string | ProseMirrorNode, pasted: string, pathQueryActive?: boolean) {
     const promptDoc =
       typeof prompt === "string"
         ? ProseMirrorNode.fromJSON(schema, buildDocJson(prompt, skillLabelFor))
@@ -929,6 +929,9 @@ describe("pasting into a path query", () => {
       const doc = paste("Open @", path);
       expect(boldText(doc)).toEqual([]);
       expect(serializeEditorDoc(doc).value).toBe(`Open @${path}`);
+      const continued = paste("Open @Foreign ", path, true);
+      expect(boldText(continued)).toEqual([]);
+      expect(serializeEditorDoc(continued).value).toBe(`Open @Foreign ${path}`);
     },
   );
 
@@ -939,12 +942,25 @@ describe("pasting into a path query", () => {
     expect(serializeEditorDoc(doc).value).toBe(
       "Open @src/__test__.tsx and **this**\n- [ ] then **that**",
     );
+    const continued = paste(
+      "Open @Foreign ",
+      "__Subsidiaries__.md and **this**\n- [ ] then __that__",
+      true,
+    );
+    expect(boldText(continued)).toEqual(["that"]);
+    expect(serializeEditorDoc(continued).value).toBe(
+      "Open @Foreign __Subsidiaries__.md and **this**\n- [ ] then **that**",
+    );
+    expect(boldText(paste("Open @Foreign ", "__Subsidiaries__.md\t__that__", true))).toEqual([
+      "that",
+    ]);
   });
 
   it("parses markdown after Escape dismisses the path query", () => {
     const doc = paste("Open @", "__hello__ world", false);
     expect(boldText(doc)).toEqual(["hello"]);
     expect(serializeEditorDoc(doc).value).toBe("Open @**hello** world");
+    expect(boldText(paste("Open @Foreign ", "__hello__ world", false))).toEqual(["hello"]);
   });
 
   it("keeps the rest of the path's line on that line", () => {

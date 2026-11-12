@@ -142,6 +142,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
+  hasSelection: () => boolean;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -1412,11 +1413,23 @@ function ComposerPromptEditorTiptapInner(
             );
             return true;
           }
+          const { $from } = view.state.selection;
+          const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
+          const literalLength = literalText
+            ? 0
+            : pastedPathQueryLength(lineBefore, pastedText, readCallbacks().isPathQueryActive?.());
+          const pastedSuffix = pastedText.slice(literalLength);
           const importFragment = readCallbacks().importContextFragment;
           let text =
             !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
-              : pastedText;
+              ? importPastedComposerText(
+                  {
+                    getData: (format) =>
+                      format === "text/plain" ? pastedSuffix : clipboardData.getData(format),
+                  },
+                  importFragment,
+                )
+              : pastedSuffix;
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
             token?.type === "mention" ||
@@ -1431,11 +1444,7 @@ function ComposerPromptEditorTiptapInner(
             const offset = flatToMarkdown(map, pmToFlat(map, view.state.selection.from));
             if (offset > 0 && !/\s/.test(map.value[offset - 1]!)) text = ` ${text}`;
           }
-          const { $from } = view.state.selection;
-          const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
-          const literalLength = literalText
-            ? 0
-            : pastedPathQueryLength(lineBefore, text, readCallbacks().isPathQueryActive?.());
+          text = pastedText.slice(0, literalLength) + text;
           const editorInstance = (view.dom as TiptapEditorHTMLElement).editor;
           if (editorInstance) {
             const $paste = view.state.selection.$from;
@@ -1729,6 +1738,7 @@ function ComposerPromptEditorTiptapInner(
         readSnapshot();
         return selectionRangeRef.current;
       },
+      hasSelection: () => editor !== null && !editor.state.selection.empty,
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
         if (!editor) return;
