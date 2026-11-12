@@ -3,11 +3,18 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
+  ChatAttachmentId,
+  PersistChatAttachmentsError,
+  type PersistChatAttachmentsInput,
+  type ChatImageAttachment,
   type AttachmentCreateUploadUrlInput,
   AttachmentUploadSigningKeyError,
 } from "@t3tools/contracts";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Layer from "effect/Layer";
+import * as Base64 from "effect/encoding/Base64";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,6 +27,9 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import {
   attachmentFileExtension,
+  attachmentRelativePath,
+  chatAttachmentStableKey,
+  createDeterministicAttachmentId,
   createPendingAttachmentId,
   parseThreadSegmentFromAttachmentId,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
@@ -30,7 +40,7 @@ import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
 import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerConfig from "../config.ts";
-import { inferImageExtension } from "../imageMime.ts";
+import { parseBase64DataUrl, inferImageExtension } from "../imageMime.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
@@ -63,6 +73,83 @@ function decodeClaims(encodedPayload: string): AttachmentUploadClaims | null {
     return null;
   }
 }
+
+export class AttachmentUpload extends Context.Service<
+  AttachmentUpload,
+  {
+    readonly persistChatAttachments: (
+      input: PersistChatAttachmentsInput,
+    ) => Effect.Effect<ReadonlyArray<ChatImageAttachment>, PersistChatAttachmentsError>;
+  }
+>()("t3/assets/AttachmentUpload") {}
+
+const make = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(function* (
+    input: PersistChatAttachmentsInput,
+  ) {
+    return yield* Effect.forEach(
+      input.attachments.map((attachment, index) => ({ attachment, index })),
+      Effect.fn("ws.assets.persistChatAttachment")(function* ({ attachment, index }) {
+        const parsed = parseBase64DataUrl(attachment.dataUrl);
+        if (parsed === null || parsed.mimeType !== attachment.mimeType.toLowerCase()) {
+          return yield* new PersistChatAttachmentsError({
+            message: `Attachment ${attachment.name} has an invalid image payload.`,
+          });
+        }
+        const bytes = yield* Effect.fromResult(Base64.decode(parsed.base64)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PersistChatAttachmentsError({
+                message: `Attachment ${attachment.name} is not valid base64.`,
+                cause,
+              }),
+          ),
+        );
+        if (bytes.byteLength !== attachment.sizeBytes) {
+          return yield* new PersistChatAttachmentsError({
+            message: `Attachment ${attachment.name} size does not match its payload.`,
+          });
+        }
+        const rawId = createDeterministicAttachmentId(
+          input.threadId,
+          chatAttachmentStableKey(input.messageId, index, bytes),
+        );
+        if (rawId === null) {
+          return yield* new PersistChatAttachmentsError({
+            message: "Could not allocate an attachment identifier.",
+          });
+        }
+        const persisted = {
+          type: "image" as const,
+          id: ChatAttachmentId.make(rawId),
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        };
+        yield* fileSystem
+          .writeFile(path.join(config.attachmentsDir, attachmentRelativePath(persisted)!), bytes)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PersistChatAttachmentsError({
+                  message: `Could not persist attachment ${attachment.name}.`,
+                  cause,
+                }),
+            ),
+          );
+        return persisted;
+      }),
+      { concurrency: 2 },
+    );
+  });
+  return AttachmentUpload.of({ persistChatAttachments });
+});
+
+export const layer = Layer.effect(AttachmentUpload, make);
 
 export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(function* (
   input: AttachmentCreateUploadUrlInput,

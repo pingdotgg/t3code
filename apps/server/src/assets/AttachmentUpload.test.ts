@@ -1,4 +1,5 @@
 import * as AssetSigner from "./AssetSigner.ts";
+import * as AttachmentUpload from "./AttachmentUpload.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -7,7 +8,7 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ChatAttachmentId } from "@t3tools/contracts";
+import { ChatAttachmentId, ThreadId, MessageId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -62,6 +63,40 @@ const encodeLegacyAttachmentUploadClaims = Schema.encodeEffect(
 );
 
 describe("AttachmentUpload", () => {
+  it.effect.each([
+    undefined,
+    {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-11-09T00:00:00.000Z",
+      appName: "Terminal",
+      windowTitle: "build.log",
+      accessibleText: "error: build failed",
+    },
+  ])("inline image uploads preserve their source (%j)", (source) =>
+    Effect.gen(function* () {
+      const uploads = yield* AttachmentUpload.AttachmentUpload;
+      const config = yield* ServerConfig.ServerConfig;
+      const attachments = yield* uploads.persistChatAttachments({
+        threadId: ThreadId.make("thread-persist"),
+        messageId: MessageId.make("message-persist"),
+        attachments: [
+          {
+            type: "image",
+            name: "capture.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            dataUrl: "data:image/png;base64,iVBORw==",
+            ...(source ? { source } : {}),
+          },
+        ],
+      });
+      expect(attachments[0]?.source).toEqual(source);
+      expect(
+        NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${attachments[0]!.id}.png`)),
+      ).toEqual(Buffer.from([137, 80, 78, 71]));
+    }).pipe(Effect.provide(AttachmentUpload.layer.pipe(Layer.provideMerge(layerTest)))),
+  );
+
   it.effect.each([false, true])(
     "persists and replays immutable uploads (hard links unsupported: %s)",
     (unsupported) =>
