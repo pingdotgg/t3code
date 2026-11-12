@@ -106,6 +106,7 @@ const FLEET_SHELL_BUDGET = {
 // About 14% above the observed 75 KB. The window holds the working run only: 2 nodes, 2 subagents,
 // 1 plan, 1 provider turn and the last finished turn's checkpoint. When finished runs ride along
 // it holds 82 nodes, 82 subagents, 41 plans, 41 provider turns, 40 checkpoints and 740 KB.
+// The working run's ready handoff ships without its 256 KB history; with it the open is 339 KB.
 const STALE_TODO_BUDGET = {
   decodedBytes: 85_000,
   rows: 75,

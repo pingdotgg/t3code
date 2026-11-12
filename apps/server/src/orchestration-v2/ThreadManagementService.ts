@@ -687,7 +687,15 @@ const make = Effect.gen(function* () {
   const transcriptExportPermits = yield* Semaphore.make(2);
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
-      const { projection } = yield* getThreadSnapshot(threadId);
+      yield* ensureProjectionTranscript(threadId);
+      const byteFloor = yield* orchestrator.getTranscriptByteFloor(
+        threadId,
+        PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+      );
+      if (byteFloor > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+        return yield* new ThreadTranscriptTooLargeError({ threadId });
+      }
+      const { projection } = yield* orchestrator.getThreadSnapshot(threadId);
       const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
       const transcript = {
         threadId: projection.thread.id,

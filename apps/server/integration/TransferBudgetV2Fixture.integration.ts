@@ -2,6 +2,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   EventId,
   MessageId,
   NodeId,
@@ -446,6 +447,7 @@ export const STALE_TODO_THREAD_ID = ThreadId.make("transfer-budget-stale-todo-li
 export const STALE_TODO_SETTLED_RUNS = 40;
 export const STALE_TODO_SUBAGENTS_PER_RUN = 2;
 export const STALE_TODO_LIVE_ROWS = 600;
+const STALE_TODO_HANDOFF_HISTORY_BYTES = 256 * 1024;
 const staleTodoCheckpointId = (index: number) =>
   CheckpointId.make(`checkpoint:thread:${STALE_TODO_THREAD_ID}:ordinal:${index + 1}`);
 /** The checkpoint clients read the last finished turn's diff from. */
@@ -742,7 +744,50 @@ export function staleTodoListThreadBatches(
                 exitCode: 0,
               },
       });
-    if (live) return events;
+    if (live) {
+      // A ready handoff rides along with every window. Its history and delivery are for the
+      // provider turn start and must not reach a client.
+      const earlierItemId = TurnItemId.make(`turn-item:stale-todo:${index}:handoff-source`);
+      events.push({
+        ...common,
+        id: EventId.make(`stale-todo-handoff-${index}`),
+        type: "context-handoff.updated",
+        payload: {
+          id: ContextHandoffId.make(`handoff:run:${runKey}`),
+          transferId: null,
+          threadId,
+          targetRunId: runId,
+          fromProviderThreadIds: [providerThreadId],
+          toProviderThreadId: providerThreadId,
+          coveredRunOrdinals: { from: 1, to: index },
+          strategy: "full_thread_summary",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: text(index, 6, 1_024),
+          history: {
+            messages: [
+              {
+                role: "user",
+                text: text(index, 7, STALE_TODO_HANDOFF_HISTORY_BYTES),
+                threadId,
+                runId: null,
+                itemId: earlierItemId,
+                providerThreadId,
+                status: "completed",
+                kind: "user_message",
+              },
+            ],
+            coverage: "full",
+            omittedItems: 0,
+          },
+          delivery: { nativeThreadId: "native", status: "injected", itemIds: [earlierItemId] },
+          createdByProviderInstanceId: providerInstanceId,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      return events;
+    }
 
     message("assistant", text(index, 5, 1_200));
     const checkpointId = staleTodoCheckpointId(index);

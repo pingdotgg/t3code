@@ -890,6 +890,7 @@ it.effect(
         Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
         Layer.provide(
           Layer.mock(Orchestrator.OrchestratorV2)({
+            getTranscriptByteFloor: () => Effect.succeed(0),
             getThreadSnapshot: (threadId) =>
               Queue.offer(started, threadId).pipe(
                 Effect.andThen(Deferred.await(gates.get(threadId)!)),
