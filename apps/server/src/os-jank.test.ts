@@ -189,6 +189,48 @@ effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an 
   ),
 );
 
+effectIt.effect(
+  "hydrates a missing SSH_AUTH_SOCK from the login shell and keeps an explicit one",
+  () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() =>
+        vi
+          .spyOn(NodeChildProcess, "execFileSync")
+          .mockReturnValue(
+            [
+              "__T3CODE_ENV_PATH_START__",
+              "/usr/local/bin",
+              "__T3CODE_ENV_PATH_END__",
+              "__T3CODE_ENV_SSH_AUTH_SOCK_START__",
+              "/run/user/1000/ssh-agent.sock",
+              "__T3CODE_ENV_SSH_AUTH_SOCK_END__",
+            ].join("\n"),
+          ),
+      ),
+      () =>
+        Effect.gen(function* () {
+          const missing: NodeJS.ProcessEnv = { SHELL: "/bin/bash", PATH: "/usr/bin" };
+          const explicit: NodeJS.ProcessEnv = {
+            SHELL: "/bin/bash",
+            PATH: "/usr/bin",
+            SSH_AUTH_SOCK: "/custom/agent.sock",
+          };
+
+          for (const env of [missing, explicit]) {
+            yield* fixPath().pipe(
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(HostProcess.Environment, env),
+              Effect.provide(NodeServices.layer),
+            );
+          }
+
+          assert.equal(missing.SSH_AUTH_SOCK, "/run/user/1000/ssh-agent.sock");
+          assert.equal(explicit.SSH_AUTH_SOCK, "/custom/agent.sock");
+        }),
+      (probe) => Effect.sync(() => probe.mockRestore()),
+    ),
+);
+
 effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
   Effect.gen(function* () {
     const env: NodeJS.ProcessEnv = { Path: "C:\\Windows" };
