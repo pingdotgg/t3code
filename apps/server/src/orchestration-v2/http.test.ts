@@ -18,6 +18,8 @@ import { expect, it } from "@effect/vitest";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -97,7 +99,13 @@ const items = Schema.decodeUnknownSync(Schema.Array(OrchestrationV2TurnItem))(
 );
 
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
-const serveOrchestrationHttp = (allowed: () => boolean) =>
+const serveOrchestrationHttp = (
+  allowed: () => boolean,
+  wrapThreadManagement: (
+    service: ThreadManagementService.ThreadManagementServiceShape,
+  ) => ThreadManagementService.ThreadManagementServiceShape = (service) => service,
+  onAuthenticated: Effect.Effect<void> = Effect.void,
+) =>
   Effect.gen(function* () {
     const runtime = ProviderReplayHarness.layerWithRegistry(
       { name: "thread-transcript" },
@@ -137,19 +145,33 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
       ),
       Layer.provide(
         Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
-          Effect.suspend(() =>
-            effect.pipe(
-              Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-                sessionId: AuthSessionId.make("test-session"),
-                subject: "test",
-                method: "bearer-access-token",
-                scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
-              }),
+          onAuthenticated.pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                effect.pipe(
+                  Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+                    sessionId: AuthSessionId.make("test-session"),
+                    subject: "test",
+                    method: "bearer-access-token",
+                    scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
+                  }),
+                ),
+              ),
             ),
           ),
         ),
       ),
-      Layer.provide(Layer.succeedContext(services)),
+      Layer.provide(
+        Layer.succeedContext(
+          Context.add(
+            services,
+            ThreadManagementService.ThreadManagementService,
+            wrapThreadManagement(
+              Context.get(services, ThreadManagementService.ThreadManagementService),
+            ),
+          ),
+        ),
+      ),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
@@ -292,5 +314,49 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
       [thread.id, ...Array.from({ length: 25 }, (_, index) => `settled-${index + 1}`)].toSorted(),
     );
     expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 1 }]);
+  }),
+);
+
+it.effect("runs at most two whole-thread reads at once", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>();
+    const allAuthenticated = yield* Deferred.make<void>();
+    let authenticated = 0;
+    let inFlight = 0;
+    const { handler } = yield* serveOrchestrationHttp(
+      () => true,
+      (service) => ({
+        ...service,
+        getThreadSnapshot: (threadId) =>
+          Effect.gen(function* () {
+            inFlight += 1;
+            yield* Deferred.await(gate);
+            return yield* service.getThreadSnapshot(threadId);
+          }).pipe(Effect.ensuring(Effect.sync(() => (inFlight -= 1)))),
+      }),
+      Effect.suspend(() =>
+        ++authenticated === 4 ? Deferred.succeed(allAuthenticated, undefined) : Effect.void,
+      ),
+    );
+    const read = Effect.promise(() =>
+      handler(
+        new Request(`http://localhost/api/orchestration/threads/${thread.id}`, {
+          headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+        }),
+      ),
+    );
+
+    const reads = yield* Effect.forkChild(
+      Effect.all(
+        Array.from({ length: 4 }, () => read),
+        { concurrency: "unbounded" },
+      ),
+    );
+    // The rest of each request runs without suspending until it reads or waits for a permit.
+    yield* Deferred.await(allAuthenticated);
+    expect(inFlight).toBe(2);
+    yield* Deferred.succeed(gate, undefined);
+    const responses = yield* Fiber.join(reads);
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200]);
   }),
 );
