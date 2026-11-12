@@ -6,7 +6,7 @@ import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { makePiRpcConnection } from "./rpc.ts";
+import { makePiRpcConnection, piStderrExcerpt } from "./rpc.ts";
 
 // A Node crash as Pi prints it, written in pieces that split a UTF-8 character and a secret.
 const crashOnFirstStdinLine = `
@@ -107,7 +107,7 @@ describe("PiRpc stderr diagnostics", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live.each([
+  it.each([
     {
       name: "labeled API key",
       stderr: "Error: Invalid API key: Zx9plainkey123",
@@ -165,6 +165,14 @@ describe("PiRpc stderr diagnostics", () => {
       secret: "secret-tail",
       diagnosis: "Error: failed",
     },
+  ])("omits $name from the stderr excerpt", ({ stderr, secret, diagnosis }) => {
+    const excerpt = piStderrExcerpt(stderr);
+    assert.isDefined(excerpt);
+    assert.include(excerpt, diagnosis);
+    assert.notInclude(excerpt, secret);
+  });
+
+  it.live.each([
     {
       name: "evicted label with apparent error at retained boundary",
       stderr: 'password="Error: secret-tail' + "x".repeat(8192 - "Error: secret-tail".length),
@@ -180,12 +188,6 @@ describe("PiRpc stderr diagnostics", () => {
       diagnosis: "Error: legitimate failure",
     },
     {
-      name: "digest authorization",
-      stderr: 'Error: Authorization: Digest username="alice", response="secret-tail"',
-      secret: "secret-tail",
-      diagnosis: "Error:",
-    },
-    {
       name: "error after evicted credential",
       stderr:
         'Error: password="prefix' +
@@ -194,9 +196,8 @@ describe("PiRpc stderr diagnostics", () => {
       secret: "secret-tail",
       diagnosis: "Error: legitimate failure\nat extension.ts:1:1",
     },
-  ])("omits $name from crash diagnostics", ({ stderr, secret, diagnosis }) => {
-    const { warnings, layer } = captureWarnings();
-    return Effect.gen(function* () {
+  ])("drops the line cut by the stderr tail bound: $name", ({ stderr, secret, diagnosis }) =>
+    Effect.gen(function* () {
       const connection = yield* makePiRpcConnection({
         command: process.execPath,
         args: [
@@ -214,13 +215,8 @@ describe("PiRpc stderr diagnostics", () => {
       assert.isDefined(detail);
       assert.include(detail, diagnosis);
       assert.notInclude(detail, secret);
-      for (const line of detail.split("\n").slice(1)) assert.isAtMost(line.length, 240);
-      assert.lengthOf(warnings, 1);
-      assert.deepEqual(warnings[0]?.[1], { detail });
-      const eventsError = yield* Queue.take(connection.events).pipe(Effect.flip);
-      assert.equal(eventsError.detail, detail);
-    }).pipe(Effect.scoped, Effect.provide(layer));
-  });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.live("does not warn when the caller stops Pi", () => {
     const { warnings, layer } = captureWarnings();

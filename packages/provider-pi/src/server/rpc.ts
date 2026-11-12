@@ -214,7 +214,7 @@ function redactPiStderrLine(line: string): string {
  * The last error line of Pi's stderr and the stack frames under it, redacted.
  * Other stderr can carry prompts or debug output, so it is never surfaced.
  */
-function piStderrExcerpt(tail: string): string | undefined {
+export function piStderrExcerpt(tail: string): string | undefined {
   const lines = NodeUtil.stripVTControlCharacters(tail)
     .split(/\r?\n/)
     .map((line) => line.trim());
