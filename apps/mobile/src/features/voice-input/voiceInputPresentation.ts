@@ -53,6 +53,7 @@ export function resolveVoiceComposerPresentation(
       };
     }
     case "transcribing":
+    case "post-processing":
       return {
         leadingAction: "cancel",
         trailingAction: "confirm",

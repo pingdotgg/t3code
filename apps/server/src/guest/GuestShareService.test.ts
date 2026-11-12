@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -79,6 +80,7 @@ const layerOrchestration = Layer.mergeAll(
 const hostname = Ref.makeUnsafe<string | null>("env.t3.test");
 const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
   inspectConnector: Effect.map(Ref.get(hostname), (value) => ({
+    pid: 1,
     readyConnections: 1,
     hostname: value,
     protocol: "http2",
@@ -88,7 +90,7 @@ const layerProviders = Layer.mock(ProviderRegistry.ProviderRegistry)({
   getProviders: Effect.succeed([]),
 });
 const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-guest-share-" });
-// The real cleanup also closes terminals and previews; these tests only need the files gone.
+// The real cleanup also closes terminals, previews and devices; these tests only need the files gone.
 const layerCleanup = Layer.effect(
   ResourceCleanupService.ResourceCleanupService,
   Effect.gen(function* () {
@@ -98,6 +100,7 @@ const layerCleanup = Layer.effect(
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
+      cleanupDevices: () => Effect.void,
       cleanupAttachments: (attachmentIds) =>
         Effect.forEach(
           attachmentIds,
@@ -109,7 +112,10 @@ const layerCleanup = Layer.effect(
         ),
     };
   }),
-).pipe(Layer.provide(layerConfig), Layer.provide(NodeServices.layer));
+).pipe(
+  Layer.provide(layerConfig),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 class RecordedAnalytics extends Context.Service<
   RecordedAnalytics,
   Ref.Ref<ReadonlyArray<Readonly<Record<string, unknown>>>>
@@ -142,7 +148,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(layerConfig),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const threadId = ThreadId.make("thread:guest-share-service");
@@ -959,6 +965,82 @@ it.effect("serves the shared thread's files to its guest, never another thread's
     );
     assert.isDefined(shareId);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("gives a fork's guest the files on messages the fork shows from its source", () =>
+  Effect.gen(function* () {
+    const { orchestrator } = yield* shareThread;
+    const guestShares = yield* GuestShareService.GuestShareService;
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const ownerImage = Effect.fn(function* (name: string) {
+      const image = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+        name,
+        mimeType: "image/png",
+        sizeBytes: PNG.length,
+      };
+      yield* fileSystem.writeFile(
+        resolveAttachmentPath({ attachmentsDir, attachment: image })!,
+        PNG,
+      );
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`owner:${name}`),
+        threadId,
+        messageId: MessageId.make(`message:${name}`),
+        text: name,
+        attachments: [image],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      return image;
+    });
+    const inherited = yield* ownerImage("before.png");
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const now = yield* DateTime.now;
+    yield* (yield* EventSink.EventSinkV2).write({
+      events: [
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId: run.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const later = yield* ownerImage("after.png");
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    assert.equal(
+      (yield* guestShares.attachment(session, inherited.id)).attachment.id,
+      inherited.id,
+    );
+    // The source's messages after the fork point are not part of the fork.
+    assert.equal(
+      (yield* Effect.flip(guestShares.attachment(session, later.id))).reason,
+      "unavailable",
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("serves an image on the host only when an agent reply the guest sees shows it", () =>

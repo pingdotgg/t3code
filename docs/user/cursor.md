@@ -15,6 +15,17 @@ The adapter currently uses the SDK's local-agent runtime so runs operate in the 
 workspace. Cursor cloud agents need repository and cloud-environment configuration that T3 Code does
 not expose yet.
 
+Custom Cursor MCP servers and plugins are not configured in T3 Code. They load from the environment
+machine's Cursor config when the agent opens: project `.cursor/mcp.json`, user `~/.cursor/mcp.json`,
+and installed plugins under `~/.cursor/plugins`. Plugin tools
+can appear without a login; OAuth MCP servers still need credentials. Run `agent mcp login <server>`
+with the cwd set to the T3 project root (tokens land in
+`~/.cursor/projects/<folder-slug>/mcp-auth.json`). Cursor desktop Connections auth does not write
+that file, and the local SDK cannot complete interactive MCP OAuth itself—auth attempts fail with
+messages such as "MCP authentication is not supported in local SDK runs" or that the auth server
+does not support dynamic client registration. After you add or change skills, plugins, or MCP
+servers, or after a successful CLI login, use **Restart agent session**.
+
 ## Sign in
 
 Choose **Sign in**, then open the sign-in page and complete it in your browser. T3 Code
@@ -36,19 +47,22 @@ The adapter supports:
 - creating and resuming local Cursor agent threads;
 - changing the model and model parameters between turns;
 - assistant text, reasoning, tool activity, plans, and todo streaming;
-- thread-scoped T3 Code MCP tools;
+- thread-scoped T3 Code MCP tools alongside ambient Cursor MCP/plugins from disk;
 - image attachments;
-- interruption, queued app messages, and orchestrator-owned interrupt/restart steering;
+- interruption, queued app messages, and in-turn steering;
 - provider conversation snapshots through `Agent.messages.list()`;
 - Cursor `task` subagents, projected as read-only child app threads with their tool activity and
   final result.
 
-The public SDK does not currently expose native agent fork, conversation rollback, active steering,
-or interactive approval callbacks. Direct active steering is advertised as unsupported, while V2
-steering uses the orchestrator's interrupt-and-restart path and preserves the app run identity across
-provider turns. Same-provider Cursor forks use the orchestrator's portable full-thread context
-handoff into a fresh Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter
-intentionally uses the authenticated, thread-scoped MCP server instead.
+The public SDK does not currently expose native agent fork, conversation rollback, or interactive
+approval callbacks. A text-only steer reaches the current run without restarting it.
+When Cursor cannot deliver the steer, the same message is queued for the next turn after
+this run finishes. If you press Stop, that follow-up stays held until you resume the queue. Steers
+with attachments and provider or runtime changes that must apply immediately interrupt and restart
+the run.
+Same-provider Cursor forks use the orchestrator's portable full-thread context handoff into a fresh
+Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter intentionally uses the
+authenticated, thread-scoped MCP server instead.
 
 Portable handoffs summarize eligible timeline items and can omit the end of long messages. Read
 [Context in portable handoffs](./portable-handoffs.md) before using a fork for work whose exact
