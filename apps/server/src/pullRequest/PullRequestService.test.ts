@@ -4355,6 +4355,26 @@ it.effect("leaves a mark alone when the host could not say what the head has of 
   }),
 );
 
+it.effect("reports a file pushed to after the diff the reader ticked was drawn as changed", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "shown-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.filesViewed(GITLAB_REFERENCE);
+    yield* TestClock.adjust("61 seconds");
+    revisions.set("src/a.ts", "pushed-a");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "shown-a" }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
 it.effect("forgets what the head had of a marked file once a mutation moves the head", () =>
   Effect.gen(function* () {
     const revisions = new Map([["src/a.ts", "blob-a"]]);
