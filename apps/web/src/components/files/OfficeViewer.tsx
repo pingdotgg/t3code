@@ -250,8 +250,9 @@ function ExtendedOfficeViewer(props: {
           className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
           role="status"
         >
-          Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} rows ·{" "}
-          {sheet.columns.toLocaleString()} columns
+          Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} row
+          {sheet.rowCount === 1 ? "" : "s"} · {sheet.columns.toLocaleString()} column
+          {sheet.columns === 1 ? "" : "s"}
           {fileSize !== undefined
             ? ` · ${fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}`
             : ""}
