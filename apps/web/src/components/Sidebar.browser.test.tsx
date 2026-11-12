@@ -8,12 +8,13 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { act, fakeTimers, render } from "../../test/render";
+import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useOpenLocalWorkspace } from "../hooks/useOpenLocalWorkspace";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useQuietThreadShells } from "../state/entities";
@@ -21,6 +22,11 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
+import { registerPluginReplacement } from "../plugins/pluginRegistry";
+import { pluginUiAtom } from "../plugins/pluginUi";
+import { pluginUi } from "../plugins/pluginUiParts";
+import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { AppSidebarLayout } from "./AppSidebarLayout";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
@@ -28,6 +34,7 @@ import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock("../hooks/useOpenLocalWorkspace", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("../state/session", { spy: true });
@@ -47,9 +54,107 @@ vi.mock("../commandPaletteBus", () => ({
   isCommandPaletteOpen: () => false,
 }));
 vi.mock("./sidebar/SidebarChrome", () => ({
-  SidebarChromeHeader: () => null,
-  SidebarChromeFooter: () => null,
+  SidebarChromeHeader: () => <div data-testid="sidebar-header">Brand</div>,
+  SidebarChromeFooter: () => <div data-testid="sidebar-footer">Footer</div>,
+  SidebarBrandWidthProbe: () => null,
 }));
+
+it.each(["original", "reordered", "replaced"] as const)(
+  "opens folders once from every region of the %s sidebar",
+  async (layout) => {
+    using stack = new DisposableStack();
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    await page.viewport(1280, 800);
+    await using _viewport = {
+      [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+    };
+    const open = vi
+      .fn<ReturnType<typeof useOpenLocalWorkspace>["open"]>()
+      .mockImplementation(async (request) => ({
+        version: 1,
+        requestId: request.requestId,
+        ok: true,
+        projectId: ProjectId.make("dropped-project"),
+        threadId: ThreadId.make("dropped-thread"),
+      }));
+    using _workspace = vi
+      .spyOn(await import("../hooks/useOpenLocalWorkspace"), "useOpenLocalWorkspace")
+      .mockReturnValue({ ready: true, open });
+    using _bridge = stubGlobal("desktopBridge", {
+      getClientPlatform: () => "linux",
+      getPathForFile: (file: File) => `/projects/${file.name}`,
+      getLocalEnvironmentEnabled: () => false,
+      getLocalEnvironmentBootstraps: () => [],
+      onMenuAction: () => () => {},
+    });
+    vi.mocked(useProjects).mockReturnValue([]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([]);
+    appAtomRegistry.set(pluginUiAtom, pluginUi);
+    stack.defer(() => appAtomRegistry.set(pluginUiAtom, null));
+    if (layout !== "original") {
+      stack.defer(
+        registerPluginReplacement(
+          "app.sidebar",
+          (pieces) =>
+            layout === "reordered" ? (
+              <>
+                {pieces.footer}
+                {pieces.header}
+                {pieces.threads}
+              </>
+            ) : (
+              <button>Settings navigation</button>
+            ),
+          {
+            environmentId: EnvironmentId.make("environment:sidebar-drop"),
+            pluginId: "sidebar-drop",
+            pluginName: "Sidebar drop",
+          },
+        ),
+      );
+    }
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <AppSidebarLayout>{null}</AppSidebarLayout>
+      </AppAtomRegistryProvider>,
+    );
+    const targets =
+      layout === "replaced"
+        ? [screen.getByRole("button", { name: "Settings navigation" })]
+        : [
+            screen.getByTestId("sidebar-header"),
+            screen.getByRole("button", { name: "New thread", exact: true }),
+            screen.getByTestId("sidebar-footer"),
+          ];
+    for (const [index, target] of targets.entries()) {
+      const dataTransfer = new DataTransfer();
+      const folder = new File([], `folder-${index}`);
+      dataTransfer.items.add(folder);
+      // Synthetic File items have no native directory entry.
+      Object.defineProperty(dataTransfer, "items", {
+        value: [
+          {
+            kind: "file",
+            getAsFile: () => folder,
+            webkitGetAsEntry: () => ({ isDirectory: true }),
+          },
+        ],
+      });
+      const drag = new DragEvent("dragover", { dataTransfer, bubbles: true, cancelable: true });
+      await act(() => target.element().dispatchEvent(drag));
+      expect(drag.defaultPrevented).toBe(true);
+      const drop = new DragEvent("drop", { dataTransfer, bubbles: true, cancelable: true });
+      await act(() => target.element().dispatchEvent(drop));
+      expect(drop.defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(index + 1));
+      expect(open.mock.calls[index]?.[0]).toMatchObject({
+        workspaceRoot: `/projects/folder-${index}`,
+        platform: "linux",
+        type: "open-workspace",
+      });
+    }
+  },
+);
 
 function project(id: string): Project {
   return {
