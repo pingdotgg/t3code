@@ -1042,87 +1042,129 @@ it.effect("fails the run when its ownership check cannot be read before calling 
   }),
 );
 
-it.effect(
-  "dispatches only attachment-free compact commands through the native compaction path",
-  () =>
-    Effect.gen(function* () {
-      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      const calls: Array<string> = [];
-      const attachment = ChatFileAttachment.make({
-        type: "file",
-        id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
-        name: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 1,
+it.effect("routes compaction and goal commands and marks cross-thread agent messages", () =>
+  Effect.gen(function* () {
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const calls: Array<string> = [];
+    const attachment = ChatFileAttachment.make({
+      type: "file",
+      id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    });
+    const origin =
+      '[Message from another thread\'s agent (thread "thread:sender").' +
+      " This is agent-authored coordination, not a message from the human user.]";
+    const agent = { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") } as const;
+    const cases: ReadonlyArray<{
+      readonly text: string;
+      readonly expected: string;
+      readonly attachments?: ReadonlyArray<ChatFileAttachment>;
+      readonly createdBy?: "user" | "agent";
+      readonly senderThreadId?: ThreadId;
+      readonly driver?: ProviderDriverKind;
+      readonly nativeGoals?: boolean;
+    }> = [
+      { text: " /compact ", expected: "compact" },
+      { text: "/compact", attachments: [attachment], expected: "/compact" },
+      { text: "Continue the work", expected: "Continue the work" },
+      { createdBy: "agent", text: "Continue the work", expected: "Continue the work" },
+      { ...agent, text: "Continue the work", expected: `${origin}\n\nContinue the work` },
+      {
+        ...agent,
+        driver: ProviderDriverKind.make("pi"),
+        text: "/review the diff",
+        expected: "/review the diff",
+      },
+      { ...agent, text: "/goal finish", expected: "/goal finish" },
+      {
+        ...agent,
+        driver: ProviderDriverKind.make("antigravity"),
+        nativeGoals: true,
+        text: "/goal finish",
+        expected: "/goal finish",
+      },
+      {
+        ...agent,
+        driver: ProviderDriverKind.make("opencode"),
+        nativeGoals: false,
+        text: "/goal finish",
+        expected: `${origin}\n\n/goal finish`,
+      },
+      { ...agent, text: "/goal clear", expected: "/goal clear" },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const threadId = ThreadId.make(`thread:compact-routing:${index}`);
+      const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
+      const caseDriver = testCase.driver ?? driver;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make(`command:compact-routing:${index}`),
+        appThread: rootAppThread(threadId),
+        providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
+        session: {
+          driver: caseDriver,
+          providerSession: {
+            capabilities: { turns: { supportsNativeGoals: testCase.nativeGoals } },
+          },
+          events: Stream.never,
+          startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+            Effect.sync(() => {
+              calls.push(input.message.text);
+            }),
+          compactThread: () =>
+            Effect.sync(() => {
+              calls.push("compact");
+            }),
+        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        run: {
+          id: RunId.make(`run:compact-routing:${index}`),
+          threadId,
+          ordinal: 1,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        } as OrchestrationV2Run,
+        rootNode: {
+          id: NodeId.make(`node:compact-routing:${index}`),
+        } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make(`checkpoint:compact-routing:${index}`),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ProviderThreadId.make(`provider-thread:compact-routing:${index}`),
+          driver: caseDriver,
+        } as OrchestrationV2ProviderThread,
+        attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make(`message:compact-routing:${index}`),
+          text: testCase.text,
+          attachments: testCase.attachments ?? [],
+          createdBy: testCase.createdBy ?? "user",
+          creationSource: "web",
+          ...(testCase.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: testCase.senderThreadId }),
+        },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
       });
-      const cases = [
-        { text: " /compact ", attachments: [], expected: "compact" },
-        { text: "/compact", attachments: [attachment], expected: "prompt" },
-        { text: "Continue the work", attachments: [], expected: "prompt" },
-      ];
-      for (const [index, testCase] of cases.entries()) {
-        const threadId = ThreadId.make(`thread:compact-routing:${index}`);
-        const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
-        yield* runExecution.startRootRun({
-          commandId: CommandId.make(`command:compact-routing:${index}`),
-          appThread: rootAppThread(threadId),
-          providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
-          session: {
-            events: Stream.never,
-            startTurn: () =>
-              Effect.sync(() => {
-                calls.push("prompt");
-              }),
-            compactThread: () =>
-              Effect.sync(() => {
-                calls.push("compact");
-              }),
-          } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-          run: {
-            id: RunId.make(`run:compact-routing:${index}`),
-            threadId,
-            ordinal: 1,
-            providerInstanceId: ProviderInstanceId.make("codex"),
-          } as OrchestrationV2Run,
-          rootNode: {
-            id: NodeId.make(`node:compact-routing:${index}`),
-          } as OrchestrationV2ExecutionNode,
-          checkpointScope: {
-            id: CheckpointScopeId.make(`checkpoint:compact-routing:${index}`),
-          } as OrchestrationV2CheckpointScope,
-          providerThread: {
-            id: ProviderThreadId.make(`provider-thread:compact-routing:${index}`),
-            driver,
-          } as OrchestrationV2ProviderThread,
-          attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
-          attemptId,
-          providerTurnOrdinal: 1,
-          message: {
-            messageId: MessageId.make(`message:compact-routing:${index}`),
-            text: testCase.text,
-            attachments: testCase.attachments,
-            createdBy: "user",
-            creationSource: "web",
-          },
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-          runtimePolicy: {
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-            approvalPolicy: "never",
-            sandboxPolicy: {
-              type: "readOnly",
-              access: { type: "fullAccess" },
-              networkAccess: false,
-            },
-          },
-        });
-      }
-      assert.deepEqual(
-        calls,
-        cases.map((testCase) => testCase.expected),
-      );
-    }).pipe(Effect.provide(layerRunExecutionTest)),
+    }
+    assert.deepEqual(
+      calls,
+      cases.map((testCase) => testCase.expected),
+    );
+  }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>

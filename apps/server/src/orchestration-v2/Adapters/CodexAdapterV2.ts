@@ -104,6 +104,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { withProviderMessageOrigin } from "../providerMessageOrigin.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
@@ -7440,7 +7441,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...turnInput,
                     message: {
                       ...turnInput.message,
-                      text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                      text: withProviderMessageOrigin(
+                        turnInput.message,
+                        `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                        CODEX_PROVIDER,
+                      ),
                     },
                   })
                 : Effect.succeed([]),

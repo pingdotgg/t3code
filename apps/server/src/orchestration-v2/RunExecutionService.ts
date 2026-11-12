@@ -1,7 +1,9 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
+import { isCrossThreadAgentMessage, withProviderMessageOrigin } from "./providerMessageOrigin.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  parseGoalCommand,
   CommandId,
   type EventId,
   type ModelSelection,
@@ -188,6 +190,16 @@ function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
 }
 
 /** Launching runs still ingest running subagents; taking them over would duplicate events. */
+export function acceptsNativeGoalCommands(
+  session: Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "driver" | "providerSession">,
+): boolean {
+  return (
+    session.driver === "codex" ||
+    session.driver === "claudeAgent" ||
+    session.providerSession.capabilities.turns.supportsNativeGoals === true
+  );
+}
+
 export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"]): boolean {
   return status === "completed";
 }
@@ -1897,6 +1909,19 @@ export const layer: Layer.Layer<
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
+        const goalCommand =
+          isCrossThreadAgentMessage(turnInput.message) && acceptsNativeGoalCommands(input.session)
+            ? parseGoalCommand(input.message)
+            : null;
+        // Native goal objectives go verbatim: providers cap their length.
+        const providerText =
+          goalCommand === null
+            ? withProviderMessageOrigin(
+                turnInput.message,
+                turnInput.message.text,
+                input.session.driver,
+              )
+            : turnInput.message.text;
         const startTurn = compact
           ? (input.session.compactThread?.(turnInput) ??
             Effect.fail(
@@ -1911,7 +1936,10 @@ export const layer: Layer.Layer<
                 }),
               }),
             ))
-          : input.session.startTurn(turnInput);
+          : input.session.startTurn({
+              ...turnInput,
+              message: { ...turnInput.message, text: providerText },
+            });
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.

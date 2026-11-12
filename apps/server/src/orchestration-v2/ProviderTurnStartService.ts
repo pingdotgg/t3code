@@ -61,6 +61,7 @@ import {
   makeProviderFailure,
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { isCrossThreadAgentMessage } from "./providerMessageOrigin.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
@@ -870,10 +871,7 @@ export const layer: Layer.Layer<
         records: message.context?.records ?? [],
       });
       // Native goal commands go verbatim; handoff history waits a turn.
-      const goalDriver =
-        session.driver === "codex" ||
-        session.driver === "claudeAgent" ||
-        session.providerSession.capabilities.turns.supportsNativeGoals === true;
+      const goalDriver = RunExecutionService.acceptsNativeGoalCommands(session);
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
@@ -1756,11 +1754,16 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
+          const messageHeading = isCrossThreadAgentMessage(turnInput.message)
+            ? "Agent message:"
+            : "User message:";
           yield* start({
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
+              text: goalCommand
+                ? turnInput.message.text
+                : withInlineContext(context, turnInput.message.text, messageHeading),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
