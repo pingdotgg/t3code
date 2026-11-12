@@ -626,6 +626,57 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
+  it("ends each task of a wait_all MultiResult with its own status and output", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-wait-all",
+        title: "multi-wait (wait_all)",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: [
+              "019f44a6-4820-7402-925d-bc862ee711dd",
+              "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+            ],
+            timeout_ms: 360000,
+          },
+          rawOutput: {
+            type: "TaskOutput",
+            MultiResult: {
+              mode: "wait_all",
+              results: [
+                {
+                  task_id: "019f44a6-4820-7402-925d-bc862ee711dd",
+                  status: "completed",
+                  exit_code: 0,
+                  output: "FIRST_DONE",
+                },
+                {
+                  task_id: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+                  status: "failed",
+                  exit_code: 1,
+                  output: "SECOND_FAILED",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "019f44a6-4820-7402-925d-bc862ee711dd",
+        status: "completed",
+        appendOutput: "FIRST_DONE",
+      },
+      {
+        taskId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+        status: "failed",
+        appendOutput: "SECOND_FAILED",
+      },
+    ]);
+  });
+
   it("keeps every requested monitor running when a completed poll has no terminal task status", () => {
     expect(
       extractXAiBackgroundTaskCompletion({
