@@ -1099,7 +1099,12 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Language")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-40"
+                aria-label={gt("Language")}
+              >
                 <SelectValue>
                   {languageValue === SYSTEM_LANGUAGE
                     ? m(TIMESTAMP_FORMAT_LABELS.locale)
@@ -1107,11 +1112,11 @@ export function GeneralSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={SYSTEM_LANGUAGE}>
+                <SelectItem value={SYSTEM_LANGUAGE}>
                   {m(TIMESTAMP_FORMAT_LABELS.locale)}
                 </SelectItem>
                 {SUPPORTED_LOCALES.map((locale) => (
-                  <SelectItem hideIndicator key={locale} value={locale}>
+                  <SelectItem key={locale} value={locale}>
                     {nativeLanguageName(locale)}
                   </SelectItem>
                 ))}
