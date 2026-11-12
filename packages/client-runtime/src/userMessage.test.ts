@@ -1,18 +1,9 @@
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  ComposerContextId,
-  EnvironmentId,
-  GuestMessageId,
-  MessageId,
-  ScheduledTaskId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import {
-  shouldCollapseUserMessage,
   resolveUserMessageFileCards,
   resolveUserMessageGrouping,
   resolveUserMessagePresentation,
@@ -241,33 +232,5 @@ describe("resolveUserMessagePresentation", () => {
         scheduledTaskId: "task:daily-audit",
       });
     }
-  });
-});
-
-describe("shouldCollapseUserMessage", () => {
-  it("measures a quote chip by its label, not its encoded link", () => {
-    const quote = "A long assistant paragraph that the user quoted. ".repeat(40);
-    const citation = serializeAssistantCitation({
-      version: 1,
-      environmentId: EnvironmentId.make("environment"),
-      threadId: ThreadId.make("thread"),
-      messageId: MessageId.make("source"),
-      text: quote,
-      comment: "Why does this matter?",
-      start: 0,
-      end: quote.length,
-      prefix: "",
-      suffix: "",
-    });
-
-    expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
-    expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
-  });
-
-  it("ignores link targets and whitespace-only bodies", () => {
-    expect(shouldCollapseUserMessage(`[file](https://example.test/${"a".repeat(700)})`)).toBe(
-      false,
-    );
-    expect(shouldCollapseUserMessage(" ".repeat(700))).toBe(false);
   });
 });

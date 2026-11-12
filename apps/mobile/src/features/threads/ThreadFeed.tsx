@@ -2129,7 +2129,6 @@ function renderFeedEntry(
                       value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                     >
                       <CollapsibleUserMessageBody
-                        text={renderedText}
                         collapsible={foldRowId === null}
                         expanded={props.expandedWorkRows[`message:${message.id}`] ?? false}
                         onToggle={() =>
