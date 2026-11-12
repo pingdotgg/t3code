@@ -6475,7 +6475,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         !source ||
         !(
-          (source.id === worktreeContinuationOfRunId && isBlockingRun(source)) ||
+          (source.id === worktreeContinuationOfRunId && isActiveRun(source)) ||
           isRestartContinuationSource(source, projection.providerTurns) ||
           continuationFailedBeforePrompt(source, projection.providerTurns)
         ) ||
@@ -14480,7 +14480,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.worktreeContinuation === undefined
             ? undefined
             : (yield* getProjectionWithPendingEvents(command.threadId, events)).runs.find(
-                isBlockingRun,
+                isActiveRun,
               );
         yield* dispatchThreadMutation(command, events, effects);
         if (command.worktreeContinuation !== undefined) {

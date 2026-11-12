@@ -2643,21 +2643,22 @@ it.effect("settles native subagents when a workspace handoff completes the root 
         providerSessionId: ProviderSessionId.make("session:subagent-workspace-handoff"),
         session: {
           events: Stream.empty,
-          subscribeEvents: Effect.succeed({
-            // The provider event stream stays open: only settled children may end ingestion.
-            events: Stream.concat(
-              Stream.fromIterable([
-                childThreadCreatedEvent(ids),
-                { type: "subagent.updated", driver, subagent: runningSubagent },
-                { type: "node.updated", driver, node: runningNode },
-                { type: "node.updated", driver, node: runningChildNode },
-                { type: "turn_item.updated", driver, turnItem: runningTurnItem },
-                rootTerminalEvent(ids, "interrupted"),
-              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-              Stream.never,
-            ),
-            close: Deferred.succeed(ingestionDone, undefined),
-          }),
+          subscribeEvents: () =>
+            Effect.succeed({
+              // The provider event stream stays open: only settled children may end ingestion.
+              events: Stream.concat(
+                Stream.fromIterable([
+                  childThreadCreatedEvent(ids),
+                  { type: "subagent.updated", driver, subagent: runningSubagent },
+                  { type: "node.updated", driver, node: runningNode },
+                  { type: "node.updated", driver, node: runningChildNode },
+                  { type: "turn_item.updated", driver, turnItem: runningTurnItem },
+                  rootTerminalEvent(ids, "interrupted"),
+                ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
+                Stream.never,
+              ),
+              close: Deferred.succeed(ingestionDone, undefined),
+            }),
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
@@ -2900,6 +2901,7 @@ it.effect("interrupts open tool items but preserves completed tools on a planned
     const ids = backgroundScenarioIds(key);
     const runningId = TurnItemId.make(`${ids.itemId}:running`);
     const completedId = TurnItemId.make(`${ids.itemId}:completed`);
+    const now = yield* DateTime.now;
     const { ingested, observed } = yield* captureRootRunTermination({
       key,
       shouldFinalizeRun: () => Effect.succeed(true),
@@ -2910,6 +2912,21 @@ it.effect("interrupts open tool items but preserves completed tools on a planned
             backgroundTurnItemEvent(ids, "dynamic_tool", "pending", 1),
             backgroundTurnItemEvent(ids, "dynamic_tool", "running", 2, runningId),
             backgroundTurnItemEvent(ids, "dynamic_tool", "running", 3, completedId),
+            {
+              type: "provider_turn.updated" as const,
+              driver,
+              providerTurn: {
+                id: ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+                providerThreadId: ids.providerThreadId,
+                nodeId: ids.rootNodeId,
+                runAttemptId: ids.attemptId,
+                nativeTurnRef: null,
+                ordinal: 2,
+                status: "running" as const,
+                startedAt: now,
+                completedAt: null,
+              },
+            },
             backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedId),
           ]),
           Stream.fail(
@@ -4250,27 +4267,28 @@ function runBackgroundItemScenario(
           ...(options?.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : { hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread }),
-          subscribeEvents: () => Effect.gen(function* () {
-            yield* options?.onSubscribe ?? Effect.void;
-            const source = makeEvents(ids);
-            const events = (Stream.isStream(source) ? source : Stream.fromIterable(source)).pipe(
-              Stream.concat(
-                Stream.fromEffect(
-                  Effect.andThen(
-                    options?.onEventsConsumed ?? Effect.void,
-                    options?.afterEvents?.(previewActivity) ?? Effect.void,
-                  ),
-                ).pipe(Stream.drain),
-              ),
-            );
-            return {
-              events:
-                options?.keepEventStreamOpen === true
-                  ? events.pipe(Stream.concat(Stream.never))
-                  : events,
-              close: Deferred.succeed(ingestionDone, undefined),
-            };
-          }),
+          subscribeEvents: () =>
+            Effect.gen(function* () {
+              yield* options?.onSubscribe ?? Effect.void;
+              const source = makeEvents(ids);
+              const events = (Stream.isStream(source) ? source : Stream.fromIterable(source)).pipe(
+                Stream.concat(
+                  Stream.fromEffect(
+                    Effect.andThen(
+                      options?.onEventsConsumed ?? Effect.void,
+                      options?.afterEvents?.(previewActivity) ?? Effect.void,
+                    ),
+                  ).pipe(Stream.drain),
+                ),
+              );
+              return {
+                events:
+                  options?.keepEventStreamOpen === true
+                    ? events.pipe(Stream.concat(Stream.never))
+                    : events,
+                close: Deferred.succeed(ingestionDone, undefined),
+              };
+            }),
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {

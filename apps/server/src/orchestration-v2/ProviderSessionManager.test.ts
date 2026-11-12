@@ -1787,8 +1787,8 @@ it.effect(
           modelSelection,
           runtimePolicy,
         });
-        const firstClient = yield* runtime.subscribeEvents!;
-        const secondClient = yield* runtime.subscribeEvents!;
+        const firstClient = yield* runtime.subscribeEvents!();
+        const secondClient = yield* runtime.subscribeEvents!();
         const oldQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(oldQueue);
         const statuses = [{ key: "watch", text: "Watching 4 files" }];
@@ -1843,7 +1843,7 @@ it.effect(
           modelSelection,
           runtimePolicy,
         });
-        const replacementClient = yield* replacement.subscribeEvents!;
+        const replacementClient = yield* replacement.subscribeEvents!();
         const newQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(newQueue);
         yield* Queue.offer(oldQueue!, {
@@ -1908,7 +1908,7 @@ it.effect.each(["session metadata", "session status changes", "provider work"] a
           modelSelection,
           runtimePolicy,
         });
-        const subscriber = yield* runtime.subscribeEvents!;
+        const subscriber = yield* runtime.subscribeEvents!();
         const observed = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* subscriber.events.pipe(
           Stream.runForEach((event) => Queue.offer(observed, event)),
@@ -2141,7 +2141,7 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         modelSelection,
         runtimePolicy,
       });
-      const subscription = yield* runtime.subscribeEvents!;
+      const subscription = yield* runtime.subscribeEvents!();
       const published = yield* Queue.unbounded<void>();
       // The pump updates the stall watch before it publishes a turn item.
       const collected = yield* subscription.events.pipe(
@@ -4328,7 +4328,7 @@ it.effect.each([
             modelSelection: selection,
             runtimePolicy,
           });
-          const subscription = yield* secondRuntime.subscribeEvents!;
+          const subscription = yield* secondRuntime.subscribeEvents!();
           const terminal = yield* subscription.events.pipe(
             Stream.filter((event) => event.type === "turn.terminal"),
             Stream.runHead,
@@ -4877,7 +4877,7 @@ it.effect.each([
             runtimePolicy,
           });
           // The pump marks the thread idle before subscribers see its terminal.
-          const subscription = yield* runtime.subscribeEvents!;
+          const subscription = yield* runtime.subscribeEvents!();
           yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
             type: "turn.terminal",
             driver: CODEX_DRIVER,
