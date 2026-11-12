@@ -663,6 +663,61 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a bound task whose thread was archived stops scheduling instead of retrying", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:test");
+    const archived = yield* Ref.make(false);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementThreadArchivedError({
+                  threadId: input.threadId,
+                }),
+              ),
+            getThreadShell: () =>
+              Effect.map(Ref.get(archived), (isArchived) =>
+                threadShell(projectId, isArchived ? { archivedAt: "2026-11-03T00:00:00Z" } : {}),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:archived-destination"),
+        title: "Check progress",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId: ThreadId.make("thread:archived"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* Ref.set(archived, true);
+      yield* Effect.exit(service.runNow({ id: task.id }));
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(current?.enabled, false);
+      assert.isNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a first run whose thread was deleted before it bound removes the task", () =>
   Effect.gen(function* () {
     const layer = ScheduledTaskService.layer.pipe(
