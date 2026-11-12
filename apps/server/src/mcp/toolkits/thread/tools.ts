@@ -119,7 +119,7 @@ const OWNED_WORK_READ_ACTIONS = ["list", "read"] as const;
 const OwnedWorkTool = Tool.make("t3_owned_work", {
   ...commandTool,
   description:
-    "Thread Details owned work: list/read; assign (`title`); claim/progress/hold/resume/attention/handoff/complete/cancel (`itemId`). `complete` needs `closureReason`; handed_off/escalation need `closureTarget`. Omit `threadId` for this thread.",
+    "Thread Details owned work: list/read; assign (`title`, optional `assigneeThreadId` destination seat; item stays on home `threadId`, assignee claims via inbox); claim/progress/hold/resume/attention/handoff/complete/cancel (`itemId` on home thread). `complete` needs `closureReason`; handed_off/escalation need `closureTarget`. Omit `threadId` for this thread.",
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...OWNED_WORK_READ_ACTIONS,

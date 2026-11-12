@@ -1945,6 +1945,15 @@ const WsOrchestrationV2ReadAgentTeamRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.r
   error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2ListOwnedWorkInboxRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.listOwnedWorkInbox,
+  {
+    payload: OrchestrationV2RpcSchemas.listOwnedWorkInbox.input,
+    success: OrchestrationV2RpcSchemas.listOwnedWorkInbox.output,
+    error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {
   payload: OrchestrationV2RpcSchemas.subscribeShell.input,
   success: OrchestrationV2RpcSchemas.subscribeShell.output,
@@ -2316,6 +2325,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2PreviewSpecialistTemplateRpc,
   WsOrchestrationV2AddSpecialistsFromTemplateRpc,
   WsOrchestrationV2ReadAgentTeamRpc,
+  WsOrchestrationV2ListOwnedWorkInboxRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,

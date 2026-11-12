@@ -13,19 +13,22 @@ import {
   OWNED_WORK_CLOSURE_UX,
   OwnedWorkItemId,
   specialistMcpServerEntries,
+  type AgentTeamSeatView,
   type EnvironmentId,
+  type OrchestrationV2OwnedWorkInboxEntry,
   type OwnedWorkItem,
   type ThreadId,
   type ThreadSpecialist,
 } from "@t3tools/contracts";
 import { EllipsisIcon, ListTodoIcon, PlusIcon, UserRoundIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn, randomUUID } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQuietThreadProjection, useThreadShell } from "../../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { waitForAtomValue } from "../../state/waitForAtomValue";
@@ -41,6 +44,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -133,10 +137,12 @@ function seatMeta(bound: ThreadSpecialist, archived: boolean) {
     .join(" · ");
 }
 
+const OPEN_DESTINATION = "open";
+
 /**
  * Labs Agent Teams in Thread Details folds two concepts into one section:
  * - Specialist: durable @key role binding for this thread (the seat)
- * - Work: owned-work board living on this thread (assign → claim → close)
+ * - Work: home-thread board plus cross-seat inbox (OpenRig-style destination assign)
  */
 export function ThreadAgentTeamPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -169,9 +175,13 @@ function ThreadAgentTeamPanelInner(props: {
   const [assignOpen, setAssignOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [destination, setDestination] = useState<string>(OPEN_DESTINATION);
+  const [seats, setSeats] = useState<ReadonlyArray<AgentTeamSeatView>>([]);
+  const [inbox, setInbox] = useState<ReadonlyArray<OrchestrationV2OwnedWorkInboxEntry>>([]);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const assignTitleId = useId();
   const assignDescriptionId = useId();
+  const assignDestinationId = useId();
   const assignFormId = useId();
 
   const setSpecialist = useOrchestrationCommand(threadEnvironment.setSpecialist, {
@@ -196,7 +206,62 @@ function ThreadAgentTeamPanelInner(props: {
   const resume = useOrchestrationCommand(threadEnvironment.resumeOwnedWork, {
     label: "resume owned work",
   });
+  const markUnread = useOrchestrationCommand(threadEnvironment.markUnread, {
+    label: "owned work nudge",
+    reportFailure: false,
+  });
+  const readAgentTeam = useAtomCommand(threadEnvironment.readAgentTeam, { reportFailure: false });
+  const listOwnedWorkInbox = useAtomCommand(threadEnvironment.listOwnedWorkInbox, {
+    reportFailure: false,
+  });
   const { archiveThread, unarchiveThread } = useThreadActions();
+
+  const refreshInbox = async () => {
+    const result = await listOwnedWorkInbox({
+      environmentId: props.environmentId,
+      input: { projectId: props.shell.projectId, actorThreadId: props.threadId },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) setInbox([]);
+      return;
+    }
+    setInbox(result.value.entries);
+  };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- load team seats + cross-seat inbox for this project
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [teamResult, inboxResult] = await Promise.all([
+        readAgentTeam({
+          environmentId: props.environmentId,
+          input: { projectId: props.shell.projectId },
+        }),
+        listOwnedWorkInbox({
+          environmentId: props.environmentId,
+          input: { projectId: props.shell.projectId, actorThreadId: props.threadId },
+        }),
+      ]);
+      if (cancelled) return;
+      if (teamResult._tag === "Success") {
+        setSeats(teamResult.value.seats.filter((seat) => seat.status !== "archived"));
+      }
+      if (inboxResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(inboxResult)) setInbox([]);
+        return;
+      }
+      setInbox(inboxResult.value.entries);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    props.environmentId,
+    props.shell.projectId,
+    props.threadId,
+    readAgentTeam,
+    listOwnedWorkInbox,
+  ]);
 
   const dirty =
     fields.key !== (bound?.key ?? "") ||
@@ -238,7 +303,9 @@ function ThreadAgentTeamPanelInner(props: {
     setBusyItemId(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       reportFailure(failureTitle, squashAtomCommandFailure(result));
+      return;
     }
+    void refreshInbox();
   };
 
   const beginEdit = () => {
@@ -333,6 +400,7 @@ function ThreadAgentTeamPanelInner(props: {
   const openAssign = () => {
     setTitle("");
     setDescription("");
+    setDestination(OPEN_DESTINATION);
     setAssignOpen(true);
   };
 
@@ -342,6 +410,7 @@ function ThreadAgentTeamPanelInner(props: {
     if (!readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)) return;
     const itemId = OwnedWorkItemId.make(`owned-work:${randomUUID()}`);
     const trimmedDescription = description.trim();
+    const assigneeThreadId = destination === OPEN_DESTINATION ? null : (destination as ThreadId);
     setBusyItemId(itemId);
     const result = await assign({
       environmentId: props.environmentId,
@@ -350,6 +419,7 @@ function ThreadAgentTeamPanelInner(props: {
         itemId,
         title: trimmed,
         ...(trimmedDescription === "" ? {} : { description: trimmedDescription }),
+        assigneeThreadId,
         createdByThreadId: props.threadId,
       },
     });
@@ -358,15 +428,24 @@ function ThreadAgentTeamPanelInner(props: {
       reportFailure("Could not assign work", squashAtomCommandFailure(result));
       return;
     }
+    if (assigneeThreadId !== null && assigneeThreadId !== props.threadId) {
+      void markUnread({
+        environmentId: props.environmentId,
+        input: { threadId: assigneeThreadId },
+      });
+    }
     setTitle("");
     setDescription("");
+    setDestination(OPEN_DESTINATION);
     setAssignOpen(false);
+    void refreshInbox();
   };
 
   if (props.density !== "full") {
     const bits = [
       bound === undefined ? null : `@${bound.key}`,
       openItems.length > 0 ? `${openItems.length} open` : null,
+      inbox.length > 0 ? `${inbox.length} inbox` : null,
     ].filter(Boolean);
     if (bits.length === 0) return null;
     return (
@@ -388,6 +467,22 @@ function ThreadAgentTeamPanelInner(props: {
 
   const meta = bound === undefined ? null : seatMeta(bound, archived);
   const workBusy = busyItemId !== null;
+  const boardRows = openItems.map((item) => ({
+    key: `board:${item.id}`,
+    homeThreadId: props.threadId,
+    item,
+    source: "board" as const,
+    homeLabel: undefined as string | undefined,
+  }));
+  const inboxRows = inbox.map((entry) => ({
+    key: `inbox:${entry.homeThreadId}:${entry.item.id}`,
+    homeThreadId: entry.homeThreadId,
+    item: entry.item,
+    source: "inbox" as const,
+    homeLabel:
+      entry.homeSpecialistKey !== undefined ? `@${entry.homeSpecialistKey}` : entry.homeLabel,
+  }));
+  const workRows = [...inboxRows, ...boardRows];
 
   return (
     <ThreadDetailsSection
@@ -582,7 +677,8 @@ function ThreadAgentTeamPanelInner(props: {
           </li>
         ) : null}
 
-        {openItems.map((item) => {
+        {workRows.map((row) => {
+          const { item, homeThreadId, source, homeLabel } = row;
           const waiting = item.status === "on_hold" || item.status === "needs_attention";
           const claimable =
             item.status === "assigned" || item.status === "handed_off"
@@ -597,9 +693,13 @@ function ThreadAgentTeamPanelInner(props: {
           const canCancel =
             item.createdByThreadId === props.threadId || item.claimedByThreadId === props.threadId;
           const itemBusy = busyItemId === item.id;
+          const detail =
+            source === "inbox"
+              ? `${workStatusDetail(item, props.threadId)}${homeLabel === undefined ? "" : ` · from ${homeLabel}`}`
+              : workStatusDetail(item, props.threadId);
           return (
             <li
-              key={item.id}
+              key={row.key}
               className={cn(
                 "flex min-w-0 items-center rounded-lg py-1.5",
                 THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
@@ -617,9 +717,7 @@ function ThreadAgentTeamPanelInner(props: {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-foreground/80">{item.title}</p>
-                <p className="truncate text-2xs text-muted-foreground">
-                  {workStatusDetail(item, props.threadId)}
-                </p>
+                <p className="truncate text-2xs text-muted-foreground">{detail}</p>
               </div>
               {canOperate && !archived && waiting && ownsActive ? (
                 <ThreadDetailsControl
@@ -634,7 +732,7 @@ function ThreadAgentTeamPanelInner(props: {
                         resume({
                           environmentId: props.environmentId,
                           input: {
-                            threadId: props.threadId,
+                            threadId: homeThreadId,
                             itemId: item.id,
                             actorThreadId: props.threadId,
                           },
@@ -659,7 +757,7 @@ function ThreadAgentTeamPanelInner(props: {
                         claim({
                           environmentId: props.environmentId,
                           input: {
-                            threadId: props.threadId,
+                            threadId: homeThreadId,
                             itemId: item.id,
                             claimedByThreadId: props.threadId,
                           },
@@ -684,7 +782,7 @@ function ThreadAgentTeamPanelInner(props: {
                         complete({
                           environmentId: props.environmentId,
                           input: {
-                            threadId: props.threadId,
+                            threadId: homeThreadId,
                             itemId: item.id,
                             closureReason: OWNED_WORK_CLOSURE_UX.done.reason,
                             actorThreadId: props.threadId,
@@ -723,7 +821,7 @@ function ThreadAgentTeamPanelInner(props: {
                             cancel({
                               environmentId: props.environmentId,
                               input: {
-                                threadId: props.threadId,
+                                threadId: homeThreadId,
                                 itemId: item.id,
                                 actorThreadId: props.threadId,
                               },
@@ -750,6 +848,7 @@ function ThreadAgentTeamPanelInner(props: {
           if (!open) {
             setTitle("");
             setDescription("");
+            setDestination(OPEN_DESTINATION);
           }
         }}
       >
@@ -757,7 +856,8 @@ function ThreadAgentTeamPanelInner(props: {
           <DialogHeader>
             <DialogTitle>Assign work</DialogTitle>
             <DialogDescription>
-              Add an item to this thread’s work board. Claim it here when ready to take it.
+              Create owned work on this board and optionally name a destination seat. That seat
+              claims it from their inbox; actions still target this home thread.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -782,6 +882,31 @@ function ThreadAgentTeamPanelInner(props: {
                   autoComplete="off"
                 />
               </label>
+              <div className="grid gap-1.5">
+                <span id={assignDestinationId} className="text-xs font-medium text-foreground">
+                  Destination
+                </span>
+                <Select
+                  value={destination}
+                  onValueChange={(value) => {
+                    if (value !== null) setDestination(value);
+                  }}
+                  disabled={workBusy}
+                >
+                  <SelectTrigger size="sm" aria-labelledby={assignDestinationId} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value={OPEN_DESTINATION}>This board · open to claim</SelectItem>
+                    {seats.map((seat) => (
+                      <SelectItem key={seat.threadId} value={seat.threadId}>
+                        @{seat.key}
+                        {seat.threadId === props.threadId ? " · this seat" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
               <label htmlFor={assignDescriptionId} className="grid gap-1.5">
                 <span className="text-xs font-medium text-foreground">
                   Notes <span className="font-normal text-muted-foreground">(optional)</span>

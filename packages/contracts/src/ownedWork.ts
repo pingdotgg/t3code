@@ -4,9 +4,8 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, OwnedWorkItemId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
- * Durable owned work on a thread: assign → claim → progress → hold/attention → handoff → close.
- * Closing stores delivery (`closureReason`), not acceptance of the next stage.
- * Inspired by OpenRig `rig queue`; Work lives in Thread Details, not the chat footer.
+ * Home-thread owned work (OpenRig queue-inspired). `assigneeThreadId` is the destination seat;
+ * assignees act through `listOwnedWorkInbox` against the home id. Closure records delivery only.
  */
 export const OwnedWorkItemStatus = Schema.Literals([
   "assigned",
@@ -126,6 +125,16 @@ export type OwnedWorkItem = typeof OwnedWorkItem.Type;
 export const openOwnedWorkCount = (
   items: ReadonlyArray<OwnedWorkItem> | null | undefined,
 ): number => items?.filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status)).length ?? 0;
+
+/** Whether an open item should appear in `actorThreadId`'s cross-seat inbox. */
+export const ownedWorkInboxRelevant = (item: OwnedWorkItem, actorThreadId: ThreadId): boolean => {
+  if (!OPEN_OWNED_WORK_STATUSES.has(item.status)) return false;
+  if (item.claimedByThreadId === actorThreadId) return true;
+  return (
+    (item.status === "assigned" || item.status === "handed_off") &&
+    item.assigneeThreadId === actorThreadId
+  );
+};
 
 export const appendOwnedWorkHistory = (
   history: ReadonlyArray<OwnedWorkHistoryEntry> | null | undefined,

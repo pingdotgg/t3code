@@ -33,6 +33,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.previewSpecialistTemplate]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.addSpecialistsFromTemplate]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.readAgentTeam]: "orchestration",
+  [ORCHESTRATION_V2_WS_METHODS.listOwnedWorkInbox]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: "orchestrationV2",

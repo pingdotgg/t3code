@@ -2272,6 +2272,11 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.project_id": input.projectId }).pipe(
             Effect.andThen(agentTeams.read(input)),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.listOwnedWorkInbox]: (input) =>
+          Effect.annotateCurrentSpan({
+            "orchestration_v2.project_id": input.projectId,
+            "orchestration_v2.thread_id": input.actorThreadId,
+          }).pipe(Effect.andThen(agentTeams.listOwnedWorkInbox(input))),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
           Stream.unwrap(subscribeOrchestrationV2Shell(input)),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>

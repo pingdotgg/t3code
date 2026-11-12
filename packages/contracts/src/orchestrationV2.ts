@@ -93,6 +93,8 @@ import {
   OrchestrationV2PreviewSpecialistTemplateResult,
 } from "./teamTemplates.ts";
 import {
+  OrchestrationV2ListOwnedWorkInboxInput,
+  OrchestrationV2ListOwnedWorkInboxResult,
   OrchestrationV2ReadAgentTeamInput,
   OrchestrationV2ReadAgentTeamResult,
 } from "./agentTeam.ts";
@@ -3844,6 +3846,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   previewSpecialistTemplate: "orchestration.previewSpecialistTemplate",
   addSpecialistsFromTemplate: "orchestration.addSpecialistsFromTemplate",
   readAgentTeam: "orchestration.readAgentTeam",
+  listOwnedWorkInbox: "orchestration.listOwnedWorkInbox",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
@@ -4565,6 +4568,10 @@ export const OrchestrationV2RpcSchemas = {
   readAgentTeam: {
     input: OrchestrationV2ReadAgentTeamInput,
     output: OrchestrationV2ReadAgentTeamResult,
+  },
+  listOwnedWorkInbox: {
+    input: OrchestrationV2ListOwnedWorkInboxInput,
+    output: OrchestrationV2ListOwnedWorkInboxResult,
   },
   subscribeShell: {
     input: OrchestrationV2SubscribeShellInput,

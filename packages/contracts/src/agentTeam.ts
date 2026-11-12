@@ -7,6 +7,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { OwnedWorkItem } from "./ownedWork.ts";
 import { SpecialistTemplateSource } from "./teamTemplates.ts";
 import { ThreadSpecialistKey } from "./threadSpecialist.ts";
 
@@ -54,3 +55,28 @@ export const OrchestrationV2ReadAgentTeamResult = Schema.Struct({
   seats: Schema.Array(AgentTeamSeatView),
 });
 export type OrchestrationV2ReadAgentTeamResult = typeof OrchestrationV2ReadAgentTeamResult.Type;
+
+/**
+ * Cross-seat owned-work obligations for one actor (OpenRig `rig queue list --owned`).
+ * Items still live on their home thread; the actor claims/acts against that home id.
+ */
+export const OrchestrationV2OwnedWorkInboxEntry = Schema.Struct({
+  homeThreadId: ThreadId,
+  homeSpecialistKey: Schema.optional(ThreadSpecialistKey),
+  homeLabel: Schema.optional(TrimmedNonEmptyString),
+  item: OwnedWorkItem,
+});
+export type OrchestrationV2OwnedWorkInboxEntry = typeof OrchestrationV2OwnedWorkInboxEntry.Type;
+
+export const OrchestrationV2ListOwnedWorkInboxInput = Schema.Struct({
+  projectId: ProjectId,
+  actorThreadId: ThreadId,
+});
+export type OrchestrationV2ListOwnedWorkInboxInput =
+  typeof OrchestrationV2ListOwnedWorkInboxInput.Type;
+
+export const OrchestrationV2ListOwnedWorkInboxResult = Schema.Struct({
+  entries: Schema.Array(OrchestrationV2OwnedWorkInboxEntry),
+});
+export type OrchestrationV2ListOwnedWorkInboxResult =
+  typeof OrchestrationV2ListOwnedWorkInboxResult.Type;
