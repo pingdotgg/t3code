@@ -542,6 +542,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect.each(["constructor", "toString", "valueOf"])(
+    "creates a provider instance whose id is the Object.prototype name %s",
+    (name) =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make(name);
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId,
+          instance: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        });
+
+        const settings = yield* serverSettings.getSettings;
+        assert.isTrue(Object.hasOwn(settings.providerInstances, instanceId));
+        assert.equal(settings.providerInstances[instanceId]?.driver, "codex");
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("pauses provider-instance mutations while a settings snapshot is in use", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
