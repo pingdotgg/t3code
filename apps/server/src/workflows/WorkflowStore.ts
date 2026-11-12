@@ -89,6 +89,11 @@ export class WorkflowStore extends Context.Service<
       status: "running" | "waiting",
       detail: string | null,
     ) => Effect.Effect<void>;
+    /**
+     * A wait or an agent of the run is over. The run is running again, unless another it started
+     * side by side is still out, which it then waits on.
+     */
+    readonly runResumed: (runId: string) => Effect.Effect<void>;
     readonly runPaused: (runId: string, detail: string) => Effect.Effect<void>;
     readonly runEnded: (
       runId: string,
@@ -209,6 +214,30 @@ const make = Effect.gen(function* () {
         `,
       );
     }),
+    runResumed: Effect.fn("WorkflowStore.runResumed")(function* (runId) {
+      const at = yield* now;
+      const out = yield* sql<{ name: string; kind: string }>`
+        SELECT name, kind FROM workflow_steps
+        WHERE run_id = ${runId} AND status = 'running' AND kind IN ('wait', 'ask', 'agent')
+        ORDER BY started_at, rowid LIMIT 1
+      `.pipe(Effect.orDie);
+      const waiting = out[0];
+      const detail =
+        waiting === undefined
+          ? null
+          : waiting.kind === "agent"
+            ? `agent ${waiting.name}`
+            : waiting.name;
+      yield* write(
+        runId,
+        sql`
+          UPDATE workflow_runs
+          SET status = ${waiting === undefined ? "running" : "waiting"}, detail = ${detail},
+              updated_at = ${at}
+          WHERE run_id = ${runId} AND ended_at IS NULL
+        `,
+      );
+    }),
     runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail) {
       const at = yield* now;
       yield* write(
@@ -250,7 +279,8 @@ const make = Effect.gen(function* () {
         INSERT INTO workflow_steps (run_id, name, kind, status, attempts, started_at)
         VALUES (${runId}, ${name}, ${kind}, 'running', 1, ${at})
         ON CONFLICT (run_id, name) DO UPDATE
-        SET status = 'running', attempts = attempts + 1, detail = NULL, ended_at = NULL
+        SET status = 'running', attempts = attempts + 1, detail = NULL, ended_at = NULL,
+            started_at = excluded.started_at
         RETURNING attempts
       `.pipe(Effect.orDie);
       yield* PubSub.publish(changes, runId);

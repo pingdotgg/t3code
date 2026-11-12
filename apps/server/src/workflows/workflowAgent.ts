@@ -101,7 +101,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       Schema.Void,
       Effect.andThen(
         run.store.stepEnded(run.runId, name, "completed", null),
-        run.store.runStatus(run.runId, "running", null),
+        run.store.runResumed(run.runId),
       ),
     );
 
