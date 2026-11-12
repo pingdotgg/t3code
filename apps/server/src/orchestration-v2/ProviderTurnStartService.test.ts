@@ -68,10 +68,13 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (worktreesDir = managedWorktreesDir, baseDir = "/tmp/t3-home") =>
   Layer.mergeAll(
     Path.layer,
-    Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
+    Layer.mock(ServerConfig.ServerConfig)({
+      worktreesDir,
+      baseDir,
+    } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
   );
 
@@ -274,6 +277,8 @@ function makeLocalCommandHarness(input: {
   readonly nativeGoals?: boolean;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
+  readonly baseDir?: string;
+  readonly branch?: string | null;
   readonly workspaceRoot?: string;
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
   readonly fileSystem?: FileSystem.FileSystem;
@@ -374,7 +379,12 @@ function makeLocalCommandHarness(input: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
       projectId: ProjectId.make("project-native-account-command"),
-      branch: input.worktreePath === undefined ? null : "feature/restore",
+      branch:
+        input.branch !== undefined
+          ? input.branch
+          : input.worktreePath === undefined
+            ? null
+            : "feature/restore",
       worktreePath: input.worktreePath ?? null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2ThreadProjection["thread"],
@@ -963,7 +973,7 @@ function makeLocalCommandHarness(input: {
         }),
         IdAllocator.layer,
         Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(input.worktreesDir, input.baseDir),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -1194,6 +1204,30 @@ effectIt.effect(
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect("recreates a missing No project folder only under the scratch root", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-home-" });
+    yield* fileSystem.makeDirectory(path.join(baseDir, "scratch"));
+    for (const [worktreePath, recreated] of [
+      [path.join(baseDir, "scratch", "2026-05-01-chat"), true],
+      [path.join(baseDir, "elsewhere"), false],
+    ] as const) {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreePath,
+        branch: null,
+        baseDir,
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      yield* harness.start;
+      expect(yield* fileSystem.exists(worktreePath)).toBe(recreated);
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
 );
 
 effectIt.effect(

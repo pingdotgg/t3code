@@ -447,6 +447,7 @@ const make = Effect.gen(function* () {
 
   const reportOrphanWorktrees = Effect.fn("StorageCleanup.reportOrphanWorktrees")(function* (
     roots: ReadonlyArray<string>,
+    scratchRoot: string | null,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
     entries: StorageCleanupReportEntry[],
   ) {
@@ -581,6 +582,18 @@ const make = Effect.gen(function* () {
             for (const target of nested.length > 0 ? nested : [worktreePath]) yield* report(target);
           }
         }).pipe(Effect.orElseSucceed(() => undefined));
+      }
+    }
+    if (scratchRoot !== null) {
+      for (const name of yield* fs
+        .readDirectory(scratchRoot)
+        .pipe(Effect.orElseSucceed(() => []))) {
+        const target = path.join(scratchRoot, name);
+        const directory = yield* Effect.gen(function* () {
+          if (pathKey(yield* fs.realPath(target)) !== pathKey(target)) return false;
+          return (yield* fs.stat(target)).type === "Directory";
+        }).pipe(Effect.orElseSucceed(() => false));
+        if (directory) yield* report(target);
       }
     }
     for (const key of orphanSizes.keys()) {
@@ -934,14 +947,30 @@ const make = Effect.gen(function* () {
       );
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
     }
+    // No project threads work in plain folders directly under the scratch root.
+    const scratchRoot = yield* fs
+      .realPath(path.resolve(config.baseDir, "scratch"))
+      .pipe(Effect.orElseSucceed(() => null));
+    const inScratchRoot = (worktreePath: string) =>
+      scratchRoot === null
+        ? Effect.succeed(false)
+        : fs.realPath(path.dirname(worktreePath)).pipe(
+            Effect.map((parent) => pathKey(parent) === pathKey(scratchRoot)),
+            Effect.orElseSucceed(() => false),
+          );
     const worktreePathReason = Effect.fn("StorageCleanup.worktreePathReason")(function* (
       worktreePath: string,
+      scratch: boolean,
     ) {
       // Allow symlinked parents, never a symlinked worktree directory.
       const realPath = yield* fs.realPath(worktreePath);
       const realParent = yield* fs.realPath(path.dirname(worktreePath));
       if (realPath !== path.join(realParent, path.basename(worktreePath)))
         return "worktree is a symbolic link";
+      if (scratch)
+        return scratchRoot !== null && pathKey(realParent) === pathKey(scratchRoot)
+          ? null
+          : "outside the scratch folder";
       if (!roots.some((root) => inside(root, realPath)))
         return "outside the managed worktree folder";
       if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
@@ -1034,12 +1063,13 @@ const make = Effect.gen(function* () {
           ),
         );
         if (!exists) return;
+        const scratch = thread.branch === null && (yield* inScratchRoot(worktreePath));
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);
         if (project === undefined) return keep("project is unavailable");
         if (
-          thread.branch === null ||
+          (thread.branch === null && !scratch) ||
           !group.every((member) => storageCleanupThreadIdle(member, now, serverSettings))
         )
           return keep(waitForStop("thread is running or has pending work"));
@@ -1081,24 +1111,26 @@ const make = Effect.gen(function* () {
               ? settledFor === null
                 ? "not settled"
                 : `settled for ${settledDays} of ${settings.worktreeSettledAfterDays} days`
-              : settings.worktreeOnMerge
+              : !scratch && settings.worktreeOnMerge
                 ? "not merged"
-                : settings.worktreeUnchanged
+                : !scratch && settings.worktreeUnchanged
                   ? "has commits beyond the default branch"
                   : "no rules apply";
         // Only Git-based rules can make a not-yet-due worktree eligible, so skip Git otherwise.
-        if (!eligible && !settings.worktreeUnchanged && !settings.worktreeOnMerge)
+        if (!eligible && (scratch || (!settings.worktreeUnchanged && !settings.worktreeOnMerge)))
           return keep(notDueReason);
-        const pathReason = yield* worktreePathReason(worktreePath);
+        const pathReason = yield* worktreePathReason(worktreePath, scratch);
         if (pathReason !== null) return keep(pathReason);
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
-        if (yield* branchChanged(worktreePath, thread.branch))
+        if (!scratch && (yield* branchChanged(worktreePath, thread.branch)))
           return keep("repository or branch changed");
-        const changes = yield* localChangesReason(worktreePath, settings);
+        const changes = scratch ? null : yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
-        const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        if (!eligible) {
+        const head = scratch
+          ? null
+          : yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
+        if (!eligible && head !== null) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
           const remotes = yield* git.execute({
             operation: "StorageCleanup.listRemotes",
@@ -1289,19 +1321,21 @@ const make = Effect.gen(function* () {
         yield* withWorkspaceLease(
           worktreePath,
           Effect.gen(function* () {
-            const pathReason = yield* worktreePathReason(worktreePath);
+            const pathReason = yield* worktreePathReason(worktreePath, scratch);
             if (pathReason !== null) return keep(pathReason);
             const blockedWhileMeasuring = yield* blockedSinceCheck();
             if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
-            if (yield* branchChanged(worktreePath, thread.branch))
-              return keep("repository or branch changed since check");
-            if (
-              (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-              head.commitSha
-            )
-              return keep("commit changed since check");
-            const finalChanges = yield* localChangesReason(worktreePath, settings);
-            if (finalChanges !== null) return keep(finalChanges);
+            if (head !== null) {
+              if (yield* branchChanged(worktreePath, thread.branch))
+                return keep("repository or branch changed since check");
+              if (
+                (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+                head.commitSha
+              )
+                return keep("commit changed since check");
+              const finalChanges = yield* localChangesReason(worktreePath, settings);
+              if (finalChanges !== null) return keep(finalChanges);
+            }
             const currentSettings = yield* settingsService.getSettings;
             const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
             if (
@@ -1314,6 +1348,19 @@ const make = Effect.gen(function* () {
               )
             )
               return keep("settings changed since check");
+            if (scratch) {
+              yield* fs.remove(worktreePath, { recursive: true });
+              entries.push({
+                ...entry,
+                outcome: "removed",
+                reason: sentence(removalReason),
+                bytes,
+              });
+              // The next turn recreates the folder empty.
+              return yield* Effect.logInfo("storage cleanup removed scratch folder", {
+                threadId: thread.id,
+              });
+            }
             // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
             if (settings.worktreeKeepWhen === "tracked-changes")
               yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
@@ -1357,6 +1404,7 @@ const make = Effect.gen(function* () {
     }
     yield* reportOrphanWorktrees(
       roots,
+      scratchRoot,
       yield* projectStore.list({ includeDeleted: true }),
       entries,
     );

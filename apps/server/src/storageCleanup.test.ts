@@ -2115,6 +2115,9 @@ describe("storage cleanup reports and local file policies", () => {
         const folder = `${scratchRoot}/2026-05-01-old-chat`;
         yield* fixture.fs.makeDirectory(folder, { recursive: true });
         yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+        const unused = `${scratchRoot}/2026-04-01-unused`;
+        yield* fixture.fs.makeDirectory(unused);
+        yield* fixture.fs.utimes(unused, 1, 1);
         fixture.setProjectRoots([fixture.repo, scratchRoot]);
         fixture.setStoredWorktreePaths([]);
         fixture.setThreads([
@@ -2123,6 +2126,7 @@ describe("storage cleanup reports and local file policies", () => {
         const report = yield* fixture.service.runNow;
         expect(report.entries).toEqual([
           expect.objectContaining({ path: folder, outcome: "removed" }),
+          expect.objectContaining({ path: unused, outcome: "kept", threadId: null }),
         ]);
         expect(yield* fixture.fs.exists(folder)).toBe(false);
       }),

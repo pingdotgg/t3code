@@ -186,6 +186,7 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    const serverConfig = yield* ServerConfig.ServerConfig;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -248,6 +249,20 @@ export const layer: Layer.Layer<
           path: worktreePath,
         });
       },
+    );
+
+    // Storage cleanup removes idle No project folders; the next turn starts in an empty one.
+    const recreateMissingScratchFolder = Effect.fn(
+      "ProviderTurnStartService.recreateMissingScratchFolder",
+    )(
+      function* (worktreePath: string) {
+        if (!path.isAbsolute(worktreePath) || path.resolve(worktreePath) !== worktreePath) return;
+        if (yield* fileSystem.exists(worktreePath)) return;
+        const scratchRoot = yield* fileSystem.realPath(path.join(serverConfig.baseDir, "scratch"));
+        if ((yield* fileSystem.realPath(path.dirname(worktreePath))) !== scratchRoot) return;
+        yield* fileSystem.makeDirectory(worktreePath);
+      },
+      (effect) => Effect.ignore(effect),
     );
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
@@ -650,6 +665,8 @@ export const layer: Layer.Layer<
         }
       }
       const { worktreePath, branch } = projection.thread;
+      if (worktreePath !== null && branch === null)
+        yield* recreateMissingScratchFolder(worktreePath);
       if (worktreePath !== null && branch !== null) {
         const exists = yield* fileSystem
           .exists(worktreePath)
