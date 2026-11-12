@@ -457,6 +457,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("matches square brackets in the query literally", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
+        yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
+
+        for (const query of ["game/[i", "game/[id]"]) {
+          const result = yield* searchWorkspaceEntries({ cwd, query, limit: 10 });
+          expect(result.entries.map((entry) => entry.path)).toContain(
+            "src/app/game/[id]/index.tsx",
+          );
+        }
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
