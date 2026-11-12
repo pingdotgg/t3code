@@ -6282,29 +6282,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
-    /** Index columns of a thread's own turn items in timeline order. `where` narrows the read. */
-    const readTimelineItems = Effect.fn("ProjectionStore.readTimelineItems")(function* (
+    const readTimelineIndex: (
       threadId: ThreadId,
-      runs: ProjectionRecords<"runs">["runs"],
-      includePersistentOutput: boolean,
-      where: Statement.Fragment = sql``,
-      limit: Statement.Fragment = sql``,
-    ) {
-      const rows = yield* sql<{
-        turn_item_id: string;
-        run_id: string | null;
-        node_id: string | null;
-        parent_item_id: string | null;
-        type: OrchestrationV2TurnItem["type"];
-        input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
-        created_by: "user" | "agent" | "system" | null;
-        message_id: string | null;
-        status: OrchestrationV2TurnItem["status"];
-        ordinal: number;
-        persistent_output: number;
-        attempt_id: string | null;
-        attempt_status: string | null;
-      }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
+      seen: ReadonlySet<ThreadId>,
+      includePersistentOutput?: boolean,
+    ) => Effect.Effect<TimelineIndex, ProjectionStoreV2Error> = Effect.fn(
+      "ProjectionStore.readTimelineIndex",
+    )(
+      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includePersistentOutput = false) {
+        const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
+        const rows = yield* sql<{
+          turn_item_id: string;
+          run_id: string | null;
+          node_id: string | null;
+          parent_item_id: string | null;
+          type: OrchestrationV2TurnItem["type"];
+          input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
+          created_by: "user" | "agent" | "system" | null;
+          message_id: string | null;
+          status: OrchestrationV2TurnItem["status"];
+          ordinal: number;
+          persistent_output: number;
+          attempt_id: string | null;
+          attempt_status: string | null;
+        }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
           ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
           ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
           ${
@@ -6324,45 +6325,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )`
             : sql``
         }
-        WHERE item.thread_id = ${threadId} ${where}
-        ORDER BY item.ordinal ASC, item.turn_item_id ASC ${limit}`;
-      const runStatuses = new Map(runs.map((run) => [String(run.id), run.status]));
-      return rows.map((row): TimelineIndexItem => ({
-        id: TurnItemId.make(row.turn_item_id),
-        threadId,
-        runId: row.run_id === null ? null : RunId.make(row.run_id),
-        nodeId: row.node_id === null ? null : NodeId.make(row.node_id),
-        parentItemId: row.parent_item_id === null ? null : TurnItemId.make(row.parent_item_id),
-        type: row.type,
-        status: row.status,
-        ordinal: row.ordinal,
-        runStatus: row.run_id === null ? undefined : runStatuses.get(row.run_id),
-        attemptId: row.attempt_id,
-        attemptStatus: row.attempt_status,
-        persistentOutput: row.persistent_output === 1,
-        ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
-        ...(row.created_by === null ? {} : { createdBy: row.created_by }),
-        ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
-      }));
-    });
-    const localTimelineRow = (item: TimelineIndexItem): TimelineIndexRow => ({
-      sourceThreadId: item.threadId,
-      sourceItemId: item.id,
-      visibility: "local",
-      item,
-    });
-
-    const readTimelineIndex: (
-      threadId: ThreadId,
-      seen: ReadonlySet<ThreadId>,
-      includePersistentOutput?: boolean,
-    ) => Effect.Effect<TimelineIndex, ProjectionStoreV2Error> = Effect.fn(
-      "ProjectionStore.readTimelineIndex",
-    )(
-      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includePersistentOutput = false) {
-        const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
-        const items = yield* readTimelineItems(threadId, records.runs, includePersistentOutput);
-        const local = items.map(localTimelineRow);
+        WHERE item.thread_id = ${threadId}
+        ORDER BY item.ordinal ASC, item.turn_item_id ASC`;
+        const runStatuses = new Map(records.runs.map((run) => [String(run.id), run.status]));
+        const items: Array<TimelineIndexItem> = rows.map((row) => ({
+          id: TurnItemId.make(row.turn_item_id),
+          threadId,
+          runId: row.run_id === null ? null : RunId.make(row.run_id),
+          nodeId: row.node_id === null ? null : NodeId.make(row.node_id),
+          parentItemId: row.parent_item_id === null ? null : TurnItemId.make(row.parent_item_id),
+          type: row.type,
+          status: row.status,
+          ordinal: row.ordinal,
+          runStatus: row.run_id === null ? undefined : runStatuses.get(row.run_id),
+          attemptId: row.attempt_id,
+          attemptStatus: row.attempt_status,
+          persistentOutput: row.persistent_output === 1,
+          ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
+          ...(row.created_by === null ? {} : { createdBy: row.created_by }),
+          ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
+        }));
+        const local: Array<TimelineIndexRow> = items.map((item) => ({
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          visibility: "local",
+          item,
+        }));
         const isVisible = createOrchestrationV2TurnItemVisibility({
           runs: records.runs,
           attempts: records.attempts,
@@ -6472,16 +6460,105 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     /**
-     * Reads parts of a thread's own timeline without indexing all of it. Null for a thread that
-     * shows fork ancestry: its rows come from other threads, so callers read the full index.
+     * Index columns of the thread's own turn items that `where` selects, in timeline order. The
+     * same columns as `readTimelineIndex`, which reads every row and stays as it is.
+     */
+    const readTimelineWindow = Effect.fn("ProjectionStore.readTimelineWindow")(function* (
+      threadId: ThreadId,
+      runs: ProjectionRecords<"runs">["runs"],
+      includePersistentOutput: boolean,
+      where: Statement.Fragment,
+      limit: Statement.Fragment = sql``,
+    ) {
+      const rows = yield* sql<{
+        turn_item_id: string;
+        run_id: string | null;
+        node_id: string | null;
+        parent_item_id: string | null;
+        type: OrchestrationV2TurnItem["type"];
+        input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
+        created_by: "user" | "agent" | "system" | null;
+        message_id: string | null;
+        status: OrchestrationV2TurnItem["status"];
+        ordinal: number;
+        persistent_output: number;
+        attempt_id: string | null;
+        attempt_status: string | null;
+      }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
+          ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
+          ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
+          ${
+            includePersistentOutput ? sql`CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END` : sql`0`
+          } AS persistent_output,
+          CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
+          CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
+          CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id
+        FROM orchestration_v2_projection_turn_items AS item
+        ${
+          includePersistentOutput
+            ? sql`LEFT JOIN orchestration_v2_projection_nodes AS node ON node.node_id = item.node_id
+        LEFT JOIN orchestration_v2_projection_run_attempts AS attempt ON attempt.attempt_id = (
+          SELECT attempt_id FROM orchestration_v2_projection_run_attempts
+          WHERE run_id = item.run_id AND root_node_id = COALESCE(node.root_node_id, item.node_id)
+          ORDER BY attempt_ordinal DESC LIMIT 1
+        )`
+            : sql``
+        }
+        WHERE item.thread_id = ${threadId} ${where}
+        ORDER BY item.ordinal ASC, item.turn_item_id ASC ${limit}`;
+      const runStatuses = new Map(runs.map((run) => [String(run.id), run.status]));
+      return rows.map((row): TimelineIndexItem => ({
+        id: TurnItemId.make(row.turn_item_id),
+        threadId,
+        runId: row.run_id === null ? null : RunId.make(row.run_id),
+        nodeId: row.node_id === null ? null : NodeId.make(row.node_id),
+        parentItemId: row.parent_item_id === null ? null : TurnItemId.make(row.parent_item_id),
+        type: row.type,
+        status: row.status,
+        ordinal: row.ordinal,
+        runStatus: row.run_id === null ? undefined : runStatuses.get(row.run_id),
+        attemptId: row.attempt_id,
+        attemptStatus: row.attempt_status,
+        persistentOutput: row.persistent_output === 1,
+        ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
+        ...(row.created_by === null ? {} : { createdBy: row.created_by }),
+        ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
+      }));
+    });
+    const localTimelineRow = (item: TimelineIndexItem): TimelineIndexRow => ({
+      sourceThreadId: item.threadId,
+      sourceItemId: item.id,
+      visibility: "local",
+      item,
+    });
+
+
+    /**
+     * Reads parts of a thread's own timeline without indexing all of it. Null when callers read
+     * the full index instead: the thread shows fork ancestry, so its rows come from other threads,
+     * or a full index of this snapshot is cached already.
      */
     const openLocalTimeline = Effect.fn("ProjectionStore.openLocalTimeline")(function* (
       threadId: ThreadId,
       includePersistentOutput = false,
     ) {
-      // The full index reads a fork's runs and attempts itself, so do not load them here first.
-      if (inheritedRunFork((yield* getThreadRecords(threadId, [])).thread) !== null) return null;
+      // A read that only the full index can answer left it cached, and it answers faster than
+      // a window. The key is the one `readSnapshotTimelineIndex` uses.
+      const cached = timelineIndexes.get(`${includePersistentOutput ? "work" : "plain"}:${threadId}`);
+      if (
+        cached !== undefined &&
+        (yield* latestThreadEventSequence(threadId, cached.index.threadIds)) === cached.sequence
+      )
+        return null;
+      // Checked in SQL, so a fork loads no runs and no thread here before the full index does.
+      const ownRowsOnly = yield* sql`
+        SELECT 1 FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId}
+          AND NOT (json_extract(payload_json, '$.forkedFrom.type') IS 'run'
+            AND json_extract(payload_json, '$.lineage.sideChat') IS NOT 1)`;
+      if (ownRowsOnly.length === 0) return null;
       const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
+      if (inheritedRunFork(records.thread) !== null) return null;
       const superseded = records.attempts.filter((attempt) => attempt.status === "superseded");
       const stopRequests =
         superseded.length === 0
@@ -6563,7 +6640,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         hidden,
         visibleBefore,
         read: (where: Statement.Fragment, limit?: Statement.Fragment) =>
-          readTimelineItems(threadId, records.runs, includePersistentOutput, where, limit),
+          readTimelineWindow(threadId, records.runs, includePersistentOutput, where, limit),
       };
     });
     type LocalTimeline = NonNullable<Effect.Success<ReturnType<typeof openLocalTimeline>>>;
@@ -6651,7 +6728,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
      * Selects an older history page from the rows near its cursor instead of the whole thread.
      * `select` must give the same page as it does on the full index, so the window grows until
      * the page ends inside rows whose inputs are all known. Null when only the full index can
-     * answer: a cursor that names no visible row of this thread, or a jump to a target entry.
+     * answer: a cursor that names no visible row of this thread. With `workMode` "work" the
+     * caller passes the group's first row as `throughEntryId`, and without it passes none.
      */
     const selectHistoryPageInWindow = Effect.fn("ProjectionStore.selectHistoryPageInWindow")(
       function* <
@@ -6675,7 +6753,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const decoded = Result.try(() => decodeThreadHistoryCursor(input.cursor));
         if (Result.isFailure(decoded) || decoded.success.st !== threadId) return null;
         const cursor = decoded.success;
-        if ((input.workMode === "work") !== (input.throughEntryId !== undefined)) return null;
         // Looked up by key alone: with the thread in the query, SQLite scans the thread's index.
         const ends = (yield* sql<{ turn_item_id: string; thread_id: string; ordinal: number }>`
           SELECT turn_item_id, thread_id, ordinal FROM orchestration_v2_projection_turn_items
@@ -6834,11 +6911,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const local = yield* openLocalTimeline(threadId, workMode !== undefined);
-            const full =
-              local === null
-                ? yield* readSnapshotTimelineIndex(threadId, workMode !== undefined)
+            const withWork = workMode !== undefined;
+            // A jump to a target entry selects from the whole index.
+            const local =
+              (workMode === "work") === (throughEntryId !== undefined)
+                ? yield* openLocalTimeline(threadId, withWork)
                 : null;
+            const full =
+              local === null ? yield* readSnapshotTimelineIndex(threadId, withWork) : null;
             if ((local ?? full)?.records.thread.deletedAt !== null)
               return yield* new ProjectionStoreThreadNotFoundError({ threadId });
             const revisions = yield* sql<{
@@ -6886,8 +6966,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     select,
                   );
             const whole = Effect.gen(function* () {
-              const index =
-                full ?? (yield* readSnapshotTimelineIndex(threadId, workMode !== undefined));
+              const index = full ?? (yield* readSnapshotTimelineIndex(threadId, withWork));
               const indexed = index.visible.map((row, position): IndexedTimelineRow => ({
                 ...row,
                 position,
