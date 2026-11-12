@@ -772,7 +772,6 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const capabilities = yield* instance.snapshot.resolveMaintenance().pipe(
           Effect.provideService(HostProcess.Environment, {
             PATH: "",
-            T3CODE_CLI_FALLBACK_DIRS: "",
           }),
         );
         const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(

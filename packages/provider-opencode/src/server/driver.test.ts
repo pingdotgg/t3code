@@ -923,7 +923,7 @@ const npmGlobalInstall = (prefix: string, packagePath: ReadonlyArray<string>, bi
 const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
   ProviderMaintenance.resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation), {
     binaryPath,
-    env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+    env: { PATH: "" },
   }).pipe(
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,

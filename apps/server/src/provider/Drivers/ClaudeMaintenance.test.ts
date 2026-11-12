@@ -120,7 +120,7 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
         // which tools (e.g. npm) are discoverable. Without this, a real `npm` in
         // /usr/local/bin or /opt/homebrew/bin would be found and switch the
         // version lookup from the npm registry HTTP API to a spawned `npm view`.
-        T3CODE_CLI_FALLBACK_DIRS: "",
+
         ...(programFiles ? { PROGRAMFILES: programFiles } : {}),
       }),
     ),

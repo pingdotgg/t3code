@@ -77,7 +77,7 @@ describe("Node runtime selection", () => {
       const directory = yield* fs.makeTempDirectoryScoped();
       const platform = yield* HostProcess.Platform;
       const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
-      const env = { PATH: directory, T3CODE_CLI_FALLBACK_DIRS: "" };
+      const env = { PATH: directory };
       expect(
         Result.isFailure(
           yield* resolveNodeExecutable("Local device support", env).pipe(Effect.result),
@@ -156,7 +156,6 @@ describe("Node runtime selection", () => {
       yield* fs.link(executable, node);
       const error = yield* resolveNodeExecutable("Local device support", {
         PATH: directory,
-        T3CODE_CLI_FALLBACK_DIRS: "",
       }).pipe(Effect.provideService(HostProcess.ExecutablePath, executable), Effect.flip);
       expect(error._tag).toBe("NodeRuntimeUnavailableError");
       expect(error.message).toContain("Install Node.js");
@@ -178,7 +177,6 @@ describe("Node runtime selection", () => {
       expect(
         yield* resolveNodeExecutable("Local device support", {
           PATH: directory,
-          T3CODE_CLI_FALLBACK_DIRS: "",
         }),
       ).toBe(node);
     }).pipe(
@@ -201,7 +199,6 @@ describe("Node runtime selection", () => {
         yield* fs.symlink(process.execPath, node);
         const error = yield* resolveNodeExecutable("Local device support", {
           PATH: directory,
-          T3CODE_CLI_FALLBACK_DIRS: "",
         }).pipe(Effect.flip);
         expect(error.message).toContain("Install Node.js");
       }).pipe(

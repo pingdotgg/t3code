@@ -1019,7 +1019,9 @@ function resolveKnownPosixCliDirs(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
 ): ReadonlyArray<string> {
-  const override = env.T3CODE_CLI_FALLBACK_DIRS;
+  // Fall back to process.env so tests can disable fallback dirs globally via
+  // process.env.T3CODE_CLI_FALLBACK_DIRS="" without setting it on every call.
+  const override = env.T3CODE_CLI_FALLBACK_DIRS ?? process.env.T3CODE_CLI_FALLBACK_DIRS;
   if (override !== undefined) {
     return override
       .split(pathDelimiterForPlatform(platform))
@@ -1027,7 +1029,7 @@ function resolveKnownPosixCliDirs(
       .filter((dir) => dir.length > 0);
   }
 
-  const home = env.HOME?.trim();
+  const home = (env.HOME ?? process.env.HOME)?.trim();
   const dirs: string[] = [];
 
   if (home) {
@@ -1049,14 +1051,14 @@ function resolveKnownPosixCliDirs(
   dirs.push("/usr/local/sbin");
 
   // npm global prefix (if set)
-  const npmPrefix = env.npm_config_prefix?.trim();
+  const npmPrefix = env.npm_config_prefix ?? process.env.npm_config_prefix;
   if (npmPrefix) {
     dirs.push(`${npmPrefix}/bin`);
   }
 
   // nvm: search all installed versions (newest first) so a CLI installed in
   // an older version's bin dir is still found when the newest lacks it.
-  const nvmDir = env.NVM_DIR?.trim() ?? (home ? `${home}/.nvm` : undefined);
+  const nvmDir = env.NVM_DIR ?? process.env.NVM_DIR ?? (home ? `${home}/.nvm` : undefined);
   if (nvmDir) {
     try {
       const versionsDir = NodePath.join(nvmDir, "versions", "node");

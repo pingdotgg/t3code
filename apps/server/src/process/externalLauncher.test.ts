@@ -96,7 +96,6 @@ const layerTest = (input: {
     ),
     Layer.succeed(HostProcess.Platform, input.platform),
     Layer.succeed(HostProcess.Environment, {
-      T3CODE_CLI_FALLBACK_DIRS: "",
       ...input.env,
     }),
     Layer.succeed(
@@ -105,7 +104,7 @@ const layerTest = (input: {
     ),
     ConfigProvider.layer(
       ConfigProvider.fromEnv({
-        env: { T3CODE_CLI_FALLBACK_DIRS: "", ...input.env },
+        env: { ...input.env },
         preserveEmptyStrings: true,
       }),
     ),
@@ -173,7 +172,6 @@ it.effect.skipIf(windowsHost)(
           PATH: binDir,
           DISPLAY: ":0",
           ELECTRON_RUN_AS_NODE: "1",
-          T3CODE_CLI_FALLBACK_DIRS: "",
         }),
       );
 
@@ -185,7 +183,7 @@ it.effect.skipIf(windowsHost)(
         })),
         ["xdg-open", "code"].map((command) => ({
           command,
-          env: { PATH: binDir, DISPLAY: ":0", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: binDir, DISPLAY: ":0" },
           extendEnv: false,
         })),
       );
@@ -222,7 +220,6 @@ it.effect.skipIf(windowsHost)(
         Effect.provideService(HostProcess.Environment, {
           PATH: binDir,
           DISPLAY: ":0",
-          T3CODE_CLI_FALLBACK_DIRS: "",
         }),
       );
 
@@ -267,13 +264,11 @@ it.effect.skipIf(windowsHost)(
             ),
             Effect.provideService(HostProcess.Environment, {
               PATH: binDir,
-              T3CODE_CLI_FALLBACK_DIRS: "",
             }),
           );
           // Only editors borrow the session display; a browser must not open on that screen.
           assert.deepEqual(spawned.find((command) => command.command === "xdg-open")?.options.env, {
             PATH: binDir,
-            T3CODE_CLI_FALLBACK_DIRS: "",
           });
           return spawned.find((command) => command.command === "codium")?.options.env;
         });
@@ -296,16 +291,13 @@ it.effect.skipIf(windowsHost)(
           WAYLAND_DISPLAY: "wayland-1",
           // Raw, not the $'...' quoting `systemctl show-environment` would print.
           XAUTHORITY: "/home/user/auth files/cookie",
-          T3CODE_CLI_FALLBACK_DIRS: "",
         },
       );
       assert.deepEqual(yield* launchEnv({ stdout: "invalid JSON" }), {
         PATH: binDir,
-        T3CODE_CLI_FALLBACK_DIRS: "",
       });
       assert.deepEqual(yield* launchEnv({ stdout: '{"data":[42]}' }), {
         PATH: binDir,
-        T3CODE_CLI_FALLBACK_DIRS: "",
       });
       assert.deepEqual(
         yield* launchEnv({
@@ -315,7 +307,7 @@ it.effect.skipIf(windowsHost)(
             method: "spawn",
           }),
         }),
-        { PATH: binDir, T3CODE_CLI_FALLBACK_DIRS: "" },
+        { PATH: binDir },
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -609,7 +601,6 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
     const resolve = resolveEditorCommand(editor, {
       HOME: home,
       PATH: "",
-      T3CODE_CLI_FALLBACK_DIRS: "",
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
@@ -646,7 +637,6 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     const resolve = resolveEditorCommand(editor, {
       HOME: home,
       PATH: binDir,
-      T3CODE_CLI_FALLBACK_DIRS: "",
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, withSystemBin(path, systemBin)),

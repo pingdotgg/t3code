@@ -558,7 +558,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       const profileDirectory = path.join(directory, "profile");
       const result = yield* prepareAntigravityProfile({
         profileDirectory,
-        baseEnv: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+        baseEnv: { PATH: "" },
       }).pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) {

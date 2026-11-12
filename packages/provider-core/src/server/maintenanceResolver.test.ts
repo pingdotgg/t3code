@@ -264,7 +264,7 @@ it.layer(
   Layer.mergeAll(
     NodeServices.layer,
     NodeCrypto.layer,
-    Layer.succeed(HostProcess.Environment, { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" }),
+    Layer.succeed(HostProcess.Environment, { PATH: "" }),
   ),
 )("providerMaintenance", (it) => {
   it.effect("prefers the installer's own latest version over the npm registry", () =>
@@ -372,7 +372,6 @@ it.layer(
         ).pipe(
           Effect.provideService(HostProcess.Environment, {
             PATH: npmBinDir,
-            T3CODE_CLI_FALLBACK_DIRS: "",
           }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -594,7 +593,7 @@ it.layer(
   it.effect("stays manual-only when the binary cannot be located", () =>
     resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
       binaryPath: "package-tool",
-      env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+      env: { PATH: "" },
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
       Effect.map((capabilities) => {
@@ -1130,7 +1129,7 @@ it.layer(
           binaryPath: "package-tool",
           resolvedCommandPath: NodePath.join(tempDir, "mise", "shims", "package-tool"),
           realCommandPath: nixMise,
-          env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: "" },
           platform: "linux",
         },
       ).pipe(
@@ -1164,7 +1163,7 @@ it.layer(
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: shim,
-        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD", T3CODE_CLI_FALLBACK_DIRS: "" },
+        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       }).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
@@ -1179,7 +1178,7 @@ it.layer(
       writeExecutable(script);
       const posix = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: script,
-        env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+        env: { PATH: "" },
       }).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
@@ -1207,7 +1206,7 @@ it.layer(
         const updateCommand = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
           resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
             binaryPath: link,
-            env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+            env: { PATH: "" },
           }).pipe(
             Effect.map((capabilities) => capabilities.update),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -1294,7 +1293,6 @@ it.layer(
         ).pipe(
           Effect.provideService(HostProcess.Environment, {
             PATH: fixture.inheritPath ? pnpmBinDir : "",
-            T3CODE_CLI_FALLBACK_DIRS: "",
           }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -1381,7 +1379,6 @@ it.layer(
           Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provideService(HostProcess.Environment, {
             PATH: "",
-            T3CODE_CLI_FALLBACK_DIRS: "",
           }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -1501,7 +1498,7 @@ it.layer(
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
-          { binaryPath: nativePath, env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" } },
+          { binaryPath: nativePath, env: { PATH: "" } },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
         expect(capabilities.update).toBeNull();
@@ -1561,7 +1558,7 @@ it.layer(
           packageToolUpdate,
           {
             binaryPath: link,
-            env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+            env: { PATH: "" },
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
@@ -1619,7 +1616,7 @@ it.layer(
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
         binaryPath: nativePath,
-        env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+        env: { PATH: "" },
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
       expect(capabilities.update?.env).toEqual({ TOOL_HOME: tempDir });
@@ -1800,7 +1797,7 @@ it.layer(
           packageToolUpdate,
           {
             binaryPath: customPath,
-            env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+            env: { PATH: "" },
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
@@ -1826,7 +1823,7 @@ it.layer(
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
           binaryPath: customPath,
-          env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(capabilities.update).toMatchObject({
           executable: customPath,
@@ -1838,7 +1835,7 @@ it.layer(
         writeExecutable(NodePath.join(misePath, "package-tool"));
         const mise = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
           binaryPath: NodePath.join(misePath, "package-tool"),
-          env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(mise.update).toBeNull();
 
@@ -1858,7 +1855,7 @@ it.layer(
         NodeFS.symlinkSync(miseBinary, wrapper);
         const viaWrapper = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
           binaryPath: wrapper,
-          env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(viaWrapper.update).toBeNull();
       }),
@@ -1986,7 +1983,7 @@ it.layer(
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseMappedNative, {
           binaryPath: nativePath,
-          env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
         expect(capabilities.update).toEqual({
@@ -2238,7 +2235,7 @@ it.layer(
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: link,
-        env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+        env: { PATH: "" },
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
       expect(capabilities.update).toMatchObject({
@@ -2264,7 +2261,7 @@ it.layer(
         NodeFS.symlinkSync(shim, link);
         const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
           binaryPath: link,
-          env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+          env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
         expect((yield* resolve).update).toBeNull();
@@ -2289,7 +2286,7 @@ it.layer(
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: kegBinary,
-        env: { PATH: "", T3CODE_CLI_FALLBACK_DIRS: "" },
+        env: { PATH: "" },
       }).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(

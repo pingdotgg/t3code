@@ -655,7 +655,6 @@ it.effect(
         Effect.provideService(HostProcess.Environment, {
           HOME: baseDir,
           PATH: "",
-          T3CODE_CLI_FALLBACK_DIRS: "",
         }),
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(
