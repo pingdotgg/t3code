@@ -2901,6 +2901,31 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
       );
+
+      // A second open must reclaim a different tab while the first page is unloading.
+      const closingPage = desktopConnections[3]!.context.page;
+      closingPage.beforeUnload = "listen";
+      closingPage.unloadGate = Promise.withResolvers<void>();
+      const closeRequests = yield* Queue.unbounded<void>();
+      const close = manager.close;
+      const closeSpy = vi
+        .spyOn(manager, "close")
+        .mockImplementation((input) =>
+          Queue.offer(closeRequests, undefined).pipe(Effect.andThen(close(input))),
+        );
+      yield* Effect.addFinalizer(() => Effect.sync(() => closeSpy.mockRestore()));
+      const firstOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
+      yield* Queue.take(closeRequests);
+      yield* Effect.promise(() => closingPage.pagehideWatched.promise);
+      const secondOpen = yield* open("agent-concurrent").pipe(Effect.forkScoped);
+      yield* Queue.take(closeRequests);
+      closingPage.unloadGate.resolve();
+      const concurrent = yield* Effect.all([Fiber.join(firstOpen), Fiber.join(secondOpen)]);
+      expect(concurrent.every((status) => status.available)).toBe(true);
+      const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      expect(remaining).toHaveLength(32);
+      expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
+      expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

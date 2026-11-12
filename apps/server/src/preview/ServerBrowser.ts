@@ -1525,10 +1525,15 @@ const make = Effect.gen(function* () {
   const isVisible = (tab: ServerTab) =>
     tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
 
+  const reclaimingTabs = new Set<ServerTab>();
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
+      (tab) =>
+        tab.control.agentId !== null &&
+        !reclaimingTabs.has(tab) &&
+        !isVisible(tab) &&
+        tab.usedAt < cutoff,
     );
   };
 
@@ -1539,8 +1544,15 @@ const make = Effect.gen(function* () {
     if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
     const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
     if (longestIdle) {
-      await runPromise(manager.close({ threadId: longestIdle.threadId, tabId: longestIdle.tabId }));
-      dropTab(longestIdle, false);
+      reclaimingTabs.add(longestIdle);
+      try {
+        await runPromise(
+          manager.close({ threadId: longestIdle.threadId, tabId: longestIdle.tabId }),
+        );
+        dropTab(longestIdle, false);
+      } finally {
+        reclaimingTabs.delete(longestIdle);
+      }
     }
   };
 
