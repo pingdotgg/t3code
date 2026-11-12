@@ -53,17 +53,28 @@ const layerSpawner = (input: { readonly status: CommandResult; readonly prefs: C
     }),
   );
 
-const layerNet = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
+const layerNet = (input: {
+  readonly ipv4: boolean;
+  readonly ipv6: boolean;
+  readonly tailnet?: boolean;
+}) =>
   Layer.succeed(NetService.NetService, {
     canListenOnHost: () => Effect.succeed(true),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
-    hasListenerOnHost: (_port, host) => Effect.succeed(host === "::1" ? input.ipv6 : input.ipv4),
+    hasListenerOnHost: (_port, host) =>
+      Effect.succeed(
+        host === "127.0.0.1"
+          ? input.ipv4
+          : host === "::1"
+            ? input.ipv6
+            : (host === "100.64.1.2" || host === "bb-1.tail1234.ts.net") && input.tailnet === true,
+      ),
     reserveLoopbackPort: () => Effect.succeed(40_000),
     findAvailablePort: (preferred) => Effect.succeed(preferred),
   });
 
 const resolveTargets = (input: {
-  readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
+  readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean; readonly tailnet?: boolean };
   readonly tailscale: { readonly status: CommandResult; readonly prefs: CommandResult };
   readonly hostname: string;
   readonly username?: string | null;
@@ -116,6 +127,20 @@ describe("RemoteOpenTargets", () => {
       const targets = yield* resolveTargets({
         sshd: { ipv4: false, ipv6: false },
         tailscale: TAILSCALE_SSH,
+        hostname: "bb-1",
+        username: "t3-user",
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+      ]);
+    }),
+  );
+
+  it.effect("advertises the tailnet name when sshd listens only on the tailnet address", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: false, ipv6: false, tailnet: true },
+        tailscale: TAILSCALE_UP,
         hostname: "bb-1",
         username: "t3-user",
       });
