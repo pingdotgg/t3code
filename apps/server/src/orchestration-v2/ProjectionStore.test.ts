@@ -3637,7 +3637,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* task(`task:old:${status}`, child, "completed");
         yield* task(`task:new:${status}`, child, status);
       }
-      for (const status of ["running", "failed"] as const) {
+      for (const status of ["running", "failed", "interrupted"] as const) {
         const child = yield* addChild(`child:follow-up:${status}`);
         yield* task(`task:follow-up:${status}`, child, "completed");
         const requestedAt = DateTime.makeUnsafe("2026-11-02T00:00:00Z");
@@ -3671,6 +3671,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ) SELECT 'run:newer-completed', thread_id, 2, provider, 'completed', requested_at, completed_at,
         json_set(payload_json, '$.id', 'run:newer-completed', '$.ordinal', 2, '$.status', 'completed')
         FROM orchestration_v2_projection_runs WHERE run_id = 'run:follow-up:running'`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (
+        run_id, thread_id, ordinal, provider, status, requested_at, completed_at, payload_json
+      ) SELECT 'run:held', thread_id, 2, provider, 'queued', requested_at, NULL,
+        json_set(payload_json, '$.id', 'run:held', '$.ordinal', 2, '$.status', 'queued',
+          '$.queueHeld', json('true'))
+        FROM orchestration_v2_projection_runs WHERE run_id = 'run:follow-up:interrupted'`;
       const idle = yield* addChild("child:idle");
       yield* task("task:idle", idle, "idle");
       yield* addChild("child:without-task");
@@ -3697,7 +3703,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             ELSE 0 END`;
       assert.isTrue(plan.some((row) => row.detail.includes("subagent_parent_idx")));
       const first = yield* store.listPreviousAgents({ threadId, limit: 12 });
-      assert.equal(first.total, 141);
+      assert.equal(first.total, 142);
       assert.equal(first.failedCount, 2);
       assert.equal(first.agents.length, 12);
       assert.isBelow(JSON.stringify(first).length, 6000);
@@ -3706,7 +3712,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const identities = all.agents.map((agent) =>
         JSON.stringify([agent.childThreadId, agent.remoteChild?.environmentId]),
       );
-      assert.equal(new Set(identities).size, 141);
+      assert.equal(new Set(identities).size, 142);
+      assert.equal(
+        all.agents.find((agent) => agent.childThreadId === "child:follow-up:interrupted")?.status,
+        "interrupted",
+      );
     }),
   );
   it.effect("record reads select subagents by id", () => subagentRecordsSelectById);

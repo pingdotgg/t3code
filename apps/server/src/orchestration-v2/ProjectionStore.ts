@@ -8841,10 +8841,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(task.remote_child, '$.threadId')) AS identity
           FROM tasks task
           LEFT JOIN orchestration_v2_projection_threads child ON child.thread_id = task.child_thread_id
-          LEFT JOIN orchestration_v2_projection_runs run ON run.run_id = (
-            SELECT run_id FROM orchestration_v2_projection_runs
-            WHERE thread_id = task.child_thread_id ORDER BY ordinal DESC LIMIT 1
-          )
+          LEFT JOIN orchestration_v2_projection_runs run
+            ON run.run_id = ${presentedShellRunId(sql`task.child_thread_id`)}
           WHERE task.rank = 1 AND (task.child_thread_id IS NULL OR
             (child.thread_id IS NOT NULL AND child.deleted_at IS NULL))
           UNION ALL
@@ -8852,10 +8850,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             json_extract(child.payload_json, '$.providerInstanceId'), child.created_at,
             json_array(child.thread_id, NULL, NULL)
           FROM orchestration_v2_projection_threads child
-          LEFT JOIN orchestration_v2_projection_runs run ON run.run_id = (
-            SELECT run_id FROM orchestration_v2_projection_runs
-            WHERE thread_id = child.thread_id ORDER BY ordinal DESC LIMIT 1
-          )
+          LEFT JOIN orchestration_v2_projection_runs run
+            ON run.run_id = ${presentedShellRunId(sql`child.thread_id`)}
           WHERE child.deleted_at IS NULL
             AND CASE WHEN json_valid(child.payload_json)
               THEN json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
@@ -8869,6 +8865,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT 1 FROM orchestration_v2_projection_runs live
               WHERE live.thread_id = children.child_thread_id
                 AND live.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                AND NOT (live.status = 'queued'
+                  AND json_extract(live.payload_json, '$.queueHeld') IS 1)
             )
         ), page AS (
           SELECT * FROM previous ORDER BY created_at DESC, identity ASC LIMIT ${limit}
