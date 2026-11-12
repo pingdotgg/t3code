@@ -1032,6 +1032,7 @@ describe("providerMaintenanceRunner", () => {
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          classifyThreadFolder: () => Effect.die("unused"),
           generateTranscriptionPostProcessing: () => Effect.die("unused"),
           generateThreadTitle: () =>
             Effect.sync(() => {

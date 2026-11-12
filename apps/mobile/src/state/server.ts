@@ -26,7 +26,6 @@ export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 
-
 const environmentThreadFoldersAtom = Atom.family((environmentId: EnvironmentId) => {
   let previousList: ThreadFolderListResult | null = null;
   let previous: ReadonlyArray<EnvironmentThreadFolder> = [];
@@ -42,9 +41,10 @@ const environmentThreadFoldersAtom = Atom.family((environmentId: EnvironmentId) 
 export const threadFoldersAtom = (() => {
   let previous: ReadonlyArray<EnvironmentThreadFolder> = [];
   return Atom.make((get) => {
-    const next = [...get(environmentServerConfigsAtom)].flatMap(
-      ([environmentId, config]) => config.environment.capabilities.threadFolders === true
-        ? get(environmentThreadFoldersAtom(environmentId)) : [],
+    const next = [...get(environmentServerConfigsAtom)].flatMap(([environmentId, config]) =>
+      config.environment.capabilities.threadFolders === true
+        ? get(environmentThreadFoldersAtom(environmentId))
+        : [],
     );
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;

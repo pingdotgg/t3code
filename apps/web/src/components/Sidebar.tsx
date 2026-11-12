@@ -1,3 +1,7 @@
+import { readThreadFolderMembers } from "@t3tools/client-runtime/state/thread-folders";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { orchestrationEnvironment } from "../state/orchestration";
 import {
   type EnvironmentThreadFolder,
   resolveFolderReorder,
@@ -1813,14 +1817,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
   const handleThreadFolderSettle = useStableCallback(
-    (folder: EnvironmentThreadFolder, action: "settle" | "unsettle") => {
-      const members =
-        threadFolderBlocksRef.current.find((block) => block.key === scopedThreadFolderKey(folder))
-          ?.threads ?? [];
+    async (folder: EnvironmentThreadFolder, action: "settle" | "unsettle") => {
+      let members: ReadonlyArray<EnvironmentThreadShell>;
+      try {
+        members = (
+          await readThreadFolderMembers(folder, threads, async (threadId) => {
+            const result = await executeAtomQuery(
+              appAtomRegistry,
+              orchestrationEnvironment.threadFamily({
+                environmentId: folder.environmentId,
+                input: { threadId },
+              }),
+              { refresh: true, reportFailure: false },
+            );
+            if (result._tag !== "Success") throw new Error("Could not load folder threads.");
+            return result.value.threads.map((thread) =>
+              presentThreadShell(folder.environmentId, thread),
+            );
+          })
+        ).filter((thread) => thread.archivedAt === null && thread.deletedAt === null);
+      } catch {
+        toastManager.add({ type: "error", title: "Could not load folder threads" });
+        return;
+      }
       if (action === "settle") {
-        settleThreads(
-          members.filter((thread) => thread.settledOverride !== "settled").map(threadShellKey),
-        );
+        const coSettlingKeys = new Set(members.map(threadShellKey));
+        for (const thread of members) {
+          if (thread.settledOverride !== "settled") {
+            attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
+          }
+        }
         return;
       }
       for (const thread of members) {
@@ -2267,9 +2293,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     restoreDragScroll();
     const threads = contextDragThreads();
     const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
-    const title = folderDrop === FOLDER_DROP_UNFILE
-      ? "Remove from folder"
-      : (threadRef && readThreadShell(threadRef)?.title.trim()) || "Thread";
+    const title =
+      folderDrop === FOLDER_DROP_UNFILE
+        ? "Remove from folder"
+        : (threadRef && readThreadShell(threadRef)?.title.trim()) || "Thread";
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
   };

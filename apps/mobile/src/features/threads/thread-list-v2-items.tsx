@@ -43,7 +43,14 @@ import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, type PressableProps, Text as RNText, useWindowDimensions, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  type PressableProps,
+  Text as RNText,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -213,6 +220,7 @@ function ThreadListV2Section(props: {
     readonly accessibilityLabel: string;
     readonly accessibilityHint: string;
   };
+  readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
   readonly onPress?: PressableProps["onPress"];
 }) {
@@ -273,6 +281,7 @@ function ThreadListV2Section(props: {
       }}
       className={className}
       disabled={props.disclosure.disabled}
+      onLongPress={props.onLongPress}
       onTouchStart={props.onTouchStart}
       onPress={props.onPress ?? props.disclosure.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}

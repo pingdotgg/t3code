@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type EnvironmentThreadFolder,
   layoutThreadFolders,
+  readThreadFolderMembers,
   resolveFolderReorder,
   threadFolderCollect,
   type ThreadFolderCollectChoice,
@@ -150,5 +151,29 @@ describe("threadFolderCollectChoices", () => {
       branches: ["old/*", "feat/a", "feat/b"],
       worktrees: ["t3-1", "t3-2"],
     });
+  });
+});
+
+describe("readThreadFolderMembers", () => {
+  it("loads missing members once per family and excludes other folders and environments", async () => {
+    const loaded = thread(local, "loaded");
+    const old = thread(local, "old");
+    const sibling = thread(local, "sibling");
+    const reads: ThreadId[] = [];
+    const result = await readThreadFolderMembers(
+      folder(local, "f", ["loaded", "old", "sibling", "archived"]),
+      [loaded, thread(remote, "old")],
+      async (id) => {
+        reads.push(id);
+        return id === old.id ? [old, sibling, thread(local, "unfiled"), thread(remote, "old")] : [];
+      },
+    );
+    expect(result).toEqual([loaded, old, sibling]);
+    expect(reads).toEqual([old.id, ThreadId.make("archived")]);
+    await expect(
+      readThreadFolderMembers(folder(local, "f", ["missing"]), [], async () => {
+        throw new Error("offline");
+      }),
+    ).rejects.toThrow("offline");
   });
 });

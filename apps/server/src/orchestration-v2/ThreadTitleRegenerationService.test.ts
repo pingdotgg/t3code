@@ -439,7 +439,10 @@ describe("ThreadTitleRegenerationService", () => {
 
           const call = harness.generateThreadTitle.mock.calls[index]?.[0];
           assert.deepStrictEqual(call?.folders, harness.candidates);
-          assert.deepStrictEqual(harness.applySmartPick.mock.calls[index], [threadId, "folder:reviews"]);
+          assert.deepStrictEqual(harness.applySmartPick.mock.calls[index], [
+            threadId,
+            "folder:reviews",
+          ]);
           assert.equal(call?.previousTitle, "Seed title");
           assert.equal(call?.cwd, testCase.cwd);
           assert.include(call?.message, "USER:\nInvestigate the flaky login test");

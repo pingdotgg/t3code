@@ -1,5 +1,5 @@
 import type { EnvironmentThreadFolder } from "@t3tools/client-runtime/state/thread-folders";
-import { makeThreadShellFixture } from "../../test-fixtures";
+import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
   folders: [] as EnvironmentThreadFolder[],
+  familyThreads: [] as ReturnType<typeof makeRawThreadShell>[],
+  familyReads: [] as string[],
   folderRequests: [] as { environmentId: string; input: ThreadFolderMutation }[],
   requests: [] as {
     action: string;
@@ -37,6 +39,17 @@ const state = vi.hoisted(() => ({
   }[],
   afterRequest: undefined as (() => void) | undefined,
   heldActions: new Map<string, Promise<void>>(),
+}));
+
+vi.mock("../../state/orchestration", () => ({
+  orchestrationEnvironment: { threadFamily: (value: unknown) => value },
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  executeAtomQuery: async (_registry: unknown, target: { input: { threadId: string } }) => {
+    state.familyReads.push(target.input.threadId);
+    return { _tag: "Success", value: { threads: state.familyThreads } };
+  },
 }));
 
 vi.mock("react", () => ({
@@ -93,30 +106,30 @@ vi.mock("../../state/atom-registry", () => ({
       atom === "thread-folders"
         ? state.folders
         : atom === "connected-environments"
-        ? state.connectedEnvironmentIds
-        : atom === "thread-drop-busy"
-          ? state.dropBusy
-          : atom === "thread-shells"
-            ? state.shells
-            : atom === "queued-thread-keys"
-              ? new Set<string>()
-              : new Map(
-                  [...state.scopes.keys()].map((environmentId) => [
-                    environmentId,
-                    {
-                      environment: {
-                        capabilities: {
-                          threadFolders: true,
-                          threadSettlement: true,
-                          threadSnooze: true,
-                          threadPinning: true,
-                          threadPinReorder: true,
-                          threadTitleRegeneration: true,
+          ? state.connectedEnvironmentIds
+          : atom === "thread-drop-busy"
+            ? state.dropBusy
+            : atom === "thread-shells"
+              ? state.shells
+              : atom === "queued-thread-keys"
+                ? new Set<string>()
+                : new Map(
+                    [...state.scopes.keys()].map((environmentId) => [
+                      environmentId,
+                      {
+                        environment: {
+                          capabilities: {
+                            threadFolders: true,
+                            threadSettlement: true,
+                            threadSnooze: true,
+                            threadPinning: true,
+                            threadPinReorder: true,
+                            threadTitleRegeneration: true,
+                          },
                         },
                       },
-                    },
-                  ]),
-                ),
+                    ]),
+                  ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -219,6 +232,8 @@ beforeEach(() => {
   state.requests = [];
   state.shells = [];
   state.folders = [];
+  state.familyThreads = [];
+  state.familyReads = [];
   state.folderRequests = [];
   state.dialogs = [];
   state.alerts = [];
@@ -595,6 +610,36 @@ describe("thread archive guard", () => {
 });
 
 describe("folder actions", () => {
+  it("unsettles unloaded folder members while leaving active and unrelated threads alone", async () => {
+    const loaded = makeThread({ id: ThreadId.make("loaded"), settledOverride: "settled" });
+    const old = makeRawThreadShell({ id: ThreadId.make("old"), settledOverride: "settled" });
+    const active = makeRawThreadShell({ id: ThreadId.make("active"), settledOverride: "active" });
+    state.shells = [loaded];
+    state.familyThreads = [
+      old,
+      active,
+      makeRawThreadShell({ id: ThreadId.make("unrelated"), settledOverride: "settled" }),
+    ];
+    const folder: EnvironmentThreadFolder = {
+      environmentId: primaryEnvironmentId,
+      id: ThreadFolderId.make("f"),
+      name: "Work",
+      icon: null,
+      rule: null,
+      autoFile: false,
+      ruleSetAt: null,
+      createdAt: loaded.createdAt,
+      updatedAt: loaded.updatedAt,
+      threadIds: [loaded.id, old.id, active.id, ThreadId.make("archived")],
+    };
+    expect(await useThreadListActions().settleFolder(folder, false)).toBe(true);
+    expect(state.requests.map(({ action, input }) => [action, input.threadId])).toEqual([
+      ["unsettle", loaded.id],
+      ["unsettle", old.id],
+    ]);
+    expect(state.familyReads).toEqual([old.id, "archived"]);
+  });
+
   it("reorders only within the folder's environment and rejects moves at the ends", async () => {
     const folder: EnvironmentThreadFolder = {
       environmentId: primaryEnvironmentId,

@@ -12,6 +12,8 @@ import { olderSettledThreads } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
 
+vi.mock("../../state/server", () => ({ threadFoldersAtom: Atom.make([]) }));
+
 vi.mock("../../state/threads", () => ({
   olderSettledThreads: { shelfAtom: vi.fn() },
   threadFamilies: { mountRows: () => () => {} },
@@ -41,6 +43,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   const environmentIds = new Set([environmentId, otherEnvironmentId]);
   const input: Parameters<typeof useThreadListV2>[0] = {
     threads,
+    collapsedFolders: [],
     pendingTasks: [],
     environmentId: null,
     projectRefs: null,

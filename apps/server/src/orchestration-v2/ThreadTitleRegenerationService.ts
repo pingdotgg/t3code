@@ -168,7 +168,8 @@ const make = Effect.gen(function* () {
           projection.thread.projectId,
         ).settings;
         const worktreePath = projection.thread.worktreePath;
-        const worktreeExists = worktreePath !== null &&
+        const worktreeExists =
+          worktreePath !== null &&
           (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
         const candidates = yield* folders
           .smartCandidates(input.threadId)

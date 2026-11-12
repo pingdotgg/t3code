@@ -328,7 +328,11 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
       TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
       ThreadFolderService.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(ProjectionStore.layer, ProjectStore.layer, TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer))),
+          Layer.mergeAll(
+            ProjectionStore.layer,
+            ProjectStore.layer,
+            TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
+          ),
         ),
       ),
     ),

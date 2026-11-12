@@ -1,3 +1,7 @@
+import { readThreadFolderMembers } from "@t3tools/client-runtime/state/thread-folders";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { ThreadFolderId, type ThreadFolderMutation } from "@t3tools/contracts";
 import {
   type EnvironmentThreadFolder,
@@ -303,14 +307,38 @@ export function useThreadListActions(): {
     );
   };
   const settleFolder = async (folder: EnvironmentThreadFolder, settled: boolean) => {
-    const members = appAtomRegistry
-      .get(environmentThreadShells.threadShellsAtom)
-      .filter(
-        (thread) =>
-          thread.environmentId === folder.environmentId &&
-          folder.threadIds.includes(thread.id) &&
-          (thread.settledOverride === "settled") !== settled,
+    let allMembers: ReadonlyArray<EnvironmentThreadShell>;
+    try {
+      allMembers = await readThreadFolderMembers(
+        folder,
+        appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+        async (threadId) => {
+          const result = await executeAtomQuery(
+            appAtomRegistry,
+            orchestrationEnvironment.threadFamily({
+              environmentId: folder.environmentId,
+              input: { threadId },
+            }),
+            { refresh: true, reportFailure: false },
+          );
+          if (result._tag !== "Success") throw new Error("Could not load folder threads.");
+          return result.value.threads.map((thread) =>
+            presentThreadShell(folder.environmentId, thread),
+          );
+        },
       );
+    } catch {
+      Dialog.alert("Could not change folder", "Could not load every thread. Try again.");
+      return false;
+    }
+    const members = allMembers.filter(
+      (thread) =>
+        thread.environmentId === folder.environmentId &&
+        folder.threadIds.includes(thread.id) &&
+        thread.archivedAt === null &&
+        thread.deletedAt === null &&
+        (thread.settledOverride === "settled") !== settled,
+    );
     const results = await Promise.all(
       members.map((thread) => (settled ? settleThread(thread) : unsettleThread(thread))),
     );

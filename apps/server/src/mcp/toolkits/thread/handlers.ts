@@ -12,7 +12,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
@@ -121,10 +121,10 @@ const writeFolders = Effect.fn("mcp.writeThreadFolders")(function* (input: {
   let mutation: ThreadFolderMutation;
   switch (input.action) {
     case "create": {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       mutation = {
         type: "folder.create",
-        folderId: ThreadFolderId.make(`folder:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`),
+        folderId: ThreadFolderId.make(`folder:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
         name: yield* required(input.name, "name"),
         ...(input.icon === undefined ? {} : { icon: input.icon }),
         ...(input.rule === undefined ? {} : { rule: input.rule }),

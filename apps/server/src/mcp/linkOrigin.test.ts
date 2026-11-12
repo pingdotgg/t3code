@@ -132,8 +132,12 @@ const layerTools = Layer.mergeAll(
       list: () => Effect.succeed([]),
     }),
   ),
-  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-  Layer.provide(Layer.mock(ThreadFolderService.ThreadFolderService)({})),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      Layer.mock(ThreadFolderService.ThreadFolderService)({}),
+    ),
+  ),
   Layer.provide(
     Layer.mock(ProjectService.ProjectService)({
       getById: (id) =>

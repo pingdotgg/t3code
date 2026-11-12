@@ -76,7 +76,7 @@ const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = {
   globe: "globe",
   monitor: "desktopcomputer",
   search: "magnifyingglass",
-  bot: "sparkles",
+  bot: "robot",
   wrench: "hammer",
   folder: "folder",
   bug: "ladybug",

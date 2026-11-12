@@ -217,3 +217,29 @@ export function threadFolderCollectChoices(
   };
   return { branches: rank("branch"), worktrees: rank("worktree") };
 }
+
+export async function readThreadFolderMembers<
+  T extends { readonly id: ThreadId; readonly environmentId: EnvironmentId },
+>(
+  folder: EnvironmentThreadFolder,
+  loaded: ReadonlyArray<T>,
+  readFamily: (threadId: ThreadId) => Promise<ReadonlyArray<T>>,
+): Promise<ReadonlyArray<T>> {
+  const ids = new Set(folder.threadIds);
+  const members = new Map(
+    loaded
+      .filter((thread) => thread.environmentId === folder.environmentId && ids.has(thread.id))
+      .map((thread) => [thread.id, thread]),
+  );
+  const visited = new Set(members.keys());
+  for (const id of ids) {
+    if (visited.has(id)) continue;
+    visited.add(id);
+    for (const thread of await readFamily(id)) {
+      if (thread.environmentId !== folder.environmentId) continue;
+      visited.add(thread.id);
+      if (ids.has(thread.id)) members.set(thread.id, thread);
+    }
+  }
+  return [...members.values()];
+}

@@ -558,6 +558,7 @@ const make = Effect.gen(function* () {
               shell === null ||
               shell.deletedAt !== null ||
               shell.archivedAt !== null ||
+              shell.settledOverride === "settled" ||
               shell.lineage.relationshipToParent === "subagent"
             )
               return false;
