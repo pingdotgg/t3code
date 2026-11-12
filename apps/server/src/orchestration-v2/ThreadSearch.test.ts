@@ -71,6 +71,8 @@ const thread = (
     readonly subagentOf?: ThreadId;
     readonly sideChatOf?: ThreadId;
     readonly title?: string;
+    readonly branch?: string | null;
+    readonly tags?: ReadonlyArray<string>;
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
     readonly branchPullRequest?: ThreadLinkedPullRequest;
@@ -91,7 +93,7 @@ const thread = (
     modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
     runtimeMode: "full-access",
     interactionMode: "default",
-    branch: null,
+    branch: overrides.branch ?? null,
     worktreePath: null,
     linkedPullRequest: overrides.linkedPullRequest ?? null,
     branchPullRequest: overrides.branchPullRequest ?? null,
@@ -116,6 +118,7 @@ const thread = (
     archivedAt: overrides.archivedAt ?? null,
     settledOverride: overrides.settledAt === undefined ? null : "settled",
     settledAt: overrides.settledAt ?? null,
+    ...(overrides.tags === undefined ? {} : { tags: [...overrides.tags] }),
     lastVisitedAt: null,
     deletedAt: overrides.deletedAt ?? null,
   },
@@ -1270,6 +1273,88 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
         ),
         ["Clean up auth tokens"],
       );
+    }),
+  );
+});
+
+it.layer(layerTest)("ThreadSearch.findRoster", (it) => {
+  it.effect("returns shell metadata and message hit strength for topic discovery", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:roster");
+      const otherProject = ProjectId.make("project:roster-other");
+      yield* createProject(project);
+      yield* createProject(otherProject);
+      const titled = ThreadId.make("thread:roster-titled");
+      const fromMessages = ThreadId.make("thread:roster-messages");
+      const subagent = ThreadId.make("thread:roster-subagent");
+      const elsewhere = ThreadId.make("thread:roster-elsewhere");
+      yield* Effect.forEach(
+        [
+          thread(titled, project, {
+            title: "Checkpoint restore bugs",
+            branch: "fix/checkpoint-restore",
+            tags: ["orchestration"],
+          }),
+          thread(fromMessages, project, {
+            title: "Unrelated work",
+            branch: "feat/elsewhere",
+            tags: ["web"],
+          }),
+          message(
+            fromMessages,
+            "roster-msg",
+            "user",
+            "the checkpoint restore path still drops the ref",
+            { minute: 3 },
+          ),
+          message(
+            fromMessages,
+            "roster-msg-2",
+            "assistant",
+            "checkpoint restore needs the hidden ref",
+            { minute: 4 },
+          ),
+          thread(subagent, project, {
+            title: "Checkpoint restore helper",
+            subagentOf: titled,
+          }),
+          message(subagent, "roster-sub", "user", "checkpoint restore internals"),
+          thread(elsewhere, otherProject, { title: "Checkpoint restore elsewhere" }),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+
+      const { matches } = yield* search.findRoster({
+        topic: "checkpoint restore",
+        projectId: project,
+        limit: 5,
+      });
+      assert.deepEqual(
+        matches.map((match) => match.threadId),
+        [titled, fromMessages],
+      );
+      assert.deepEqual(matches[0], {
+        threadId: titled,
+        projectId: project,
+        title: "Checkpoint restore bugs",
+        why: "title",
+        relation: "owns",
+        branch: "fix/checkpoint-restore",
+        providerInstanceId,
+        model: "gpt-5",
+        tags: ["orchestration"],
+        latestActivityAt: DateTime.formatIso(at(0)),
+      });
+      assert.equal(matches[1]?.why, "user");
+      assert.equal(matches[1]?.relation, "discussed");
+      assert.equal(matches[1]?.branch, "feat/elsewhere");
+      assert.deepEqual(matches[1]?.tags, ["web"]);
+      assert.isTrue((matches[1]?.hitStrength ?? 0) > 0);
+      assert.isAtLeast(matches[1]?.messageHits ?? 0, 1);
+      assert.equal(matches[1]?.latestActivityAt, DateTime.formatIso(at(3)));
     }),
   );
 });

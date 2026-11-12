@@ -142,6 +142,26 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       };
     }),
   ),
+  t3_roster_find: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const { caller } = yield* readCaller();
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const { matches } = yield* threadSearch
+        .findRoster({
+          topic: input.topic,
+          ...(input.limit === undefined ? {} : { limit: input.limit }),
+          projectId: input.projectId ?? caller?.projectId,
+        })
+        .pipe(Effect.mapError(unavailable));
+      return {
+        matches: matches.map((match) => ({
+          ...match,
+          link: McpInvocationContext.threadLinkFor(scope, match.threadId, match.title),
+        })),
+      };
+    }),
+  ),
   t3_thread_transfer: McpToolAccess.either(
     (input) => input.action === "status",
     McpToolAccess.reads((input) =>
