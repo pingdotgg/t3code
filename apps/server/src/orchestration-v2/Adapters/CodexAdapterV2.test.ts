@@ -231,6 +231,37 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("grants a multi-folder thread's other folders only to a writable sandbox", () =>
+    Effect.gen(function* () {
+      const workspace = {
+        folders: [{ name: "api", path: "/work/api", isGitRepository: true }],
+        extraRoots: ["/work/api"],
+      };
+      const build = (runtimeMode: "approval-required" | "auto-accept-edits" | "full-access") =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: `native-workspace-${runtimeMode}`,
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode, interactionMode: "default", cwd: "/work/app", workspace },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: false,
+        });
+
+      const autoAcceptEdits = yield* build("auto-accept-edits");
+      assert.deepEqual(autoAcceptEdits.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/work/api"],
+      });
+      assert.deepEqual((yield* build("approval-required")).sandboxPolicy, { type: "readOnly" });
+      assert.deepEqual((yield* build("full-access")).sandboxPolicy, { type: "dangerFullAccess" });
+      // The folder list reaches the model without T3 Code's MCP tools.
+      assert.deepEqual(Object.keys(autoAcceptEdits.additionalContext ?? {}), ["t3_code_workspace"]);
+      assert.include(
+        autoAcceptEdits.additionalContext?.["t3_code_workspace"]?.value,
+        "- api (Git repository): /work/api",
+      );
+    }),
+  );
+
   it.effect("sends the chosen cyber access program, else the model's default", () =>
     Effect.gen(function* () {
       const build = (value?: string, cyberAccess?: { defaultProgram: string | undefined }) =>

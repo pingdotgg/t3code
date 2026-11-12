@@ -157,6 +157,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { buildWorkspaceInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
@@ -798,10 +799,20 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
-    const sandboxPolicy =
+    const baseSandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+    const extraRoots = input.runtimePolicy.workspace?.extraRoots ?? [];
+    const sandboxPolicy =
+      baseSandboxPolicy?.type === "workspaceWrite" && extraRoots.length > 0
+        ? {
+            ...baseSandboxPolicy,
+            writableRoots: [
+              ...new Set([...(baseSandboxPolicy.writableRoots ?? []), ...extraRoots]),
+            ],
+          }
+        : baseSandboxPolicy;
     const selectedEffort =
       getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
       codexDefaultReasoningEffortOverride(input.modelSelection.model);
@@ -836,10 +847,18 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+    // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
+    const workspaceInstructions = buildWorkspaceInstructions(input.runtimePolicy);
+    const workspaceContext =
+      workspaceInstructions === ""
         ? undefined
-        : { ...t3Context, ...appContext };
+        : { t3_code_workspace: { kind: "application" as const, value: workspaceInstructions } };
+    const additionalContext =
+      t3Context === undefined &&
+      workspaceContext === undefined &&
+      Object.keys(appContext).length === 0
+        ? undefined
+        : { ...t3Context, ...workspaceContext, ...appContext };
     return yield* decodeCodexTurnStartParams({
       threadId: input.nativeThreadId,
       input: input.codexInput,

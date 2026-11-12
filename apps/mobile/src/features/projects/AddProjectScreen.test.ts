@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   baseDirectory: "",
   projects: [] as string[],
+  trackedFolders: [] as unknown[],
+  scanResult: null as unknown,
   existingProjects: [] as {
     environmentId: string;
     id: string;
@@ -30,6 +32,7 @@ const state = vi.hoisted(() => ({
   }[],
   cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
+  createSent: null as (() => void) | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
@@ -140,14 +143,17 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-// Only filesystem.browse of `~` answers, with the host's home as its parentPath.
+// filesystem.browse of `~` answers with the host's home as its parentPath; a scan answers scanResult.
 vi.mock("../../state/use-atom-query-runner", () => ({
   useAtomQueryRunner:
     () =>
-    async ({ input }: { input?: { partialPath?: string } }) =>
-      input?.partialPath === "~"
-        ? AsyncResult.success({ parentPath: "/home/tester", entries: [] })
-        : undefined,
+    async ({ input }: { input?: { partialPath?: string; workspaceRoot?: string } }) => {
+      if (input?.partialPath === "~") {
+        return AsyncResult.success({ parentPath: "/home/tester", entries: [] });
+      }
+      if (input?.workspaceRoot === undefined) return undefined;
+      return state.scanResult ?? AsyncResult.failure(Cause.fail(new Error("Scan failed")));
+    },
 }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
@@ -168,13 +174,15 @@ vi.mock("../../state/sourceControl", () => ({
 vi.mock("../../state/projects", () => ({
   projectEnvironment: {
     createNew: () => state.createNewResult,
-    create: ({ input }: { input: { workspaceRoot: string } }) => {
+    create: ({ input }: { input: { workspaceRoot: string; trackedFolders?: unknown } }) => {
       if (!state.scopes.has(AuthOrchestrationOperateScope)) {
         return Promise.resolve(
           AsyncResult.failure(Cause.fail(new Error("Project creation denied"))),
         );
       }
       state.projects.push(input.workspaceRoot);
+      state.trackedFolders.push(input.trackedFolders);
+      state.createSent?.();
       return state.createResult ?? Promise.resolve(AsyncResult.success(undefined));
     },
   },
@@ -540,19 +548,23 @@ describe("local project navigation", () => {
     state.scopes = new Set([AuthOrchestrationOperateScope]);
     state.baseDirectory = baseDirectory;
     state.projects = [];
+    state.trackedFolders = [];
+    state.scanResult = null;
     state.dispatch.mockReset();
     state.alert.mockReset();
     state.waitForProject.mockReset();
     const created = Promise.withResolvers<ReturnType<typeof AsyncResult.success<void>>>();
     const projected = Promise.withResolvers<unknown>();
+    const sent = Promise.withResolvers<void>();
     state.createResult = created.promise;
+    state.createSent = sent.resolve;
     state.waitForProject.mockReturnValue(projected.promise);
     const submit = findAction(
       renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
       "Add project",
     );
     if (!submit) throw new Error("Add project action missing");
-    return { created, projected, submit };
+    return { created, projected, sent: sent.promise, submit };
   }
 
   it("keeps navigation in place and explains a project projection timeout", async () => {
@@ -590,6 +602,45 @@ describe("local project navigation", () => {
     } finally {
       state.existingProjects = [];
     }
+  });
+
+  it("offers the repositories a scan finds before adding the project", async () => {
+    const { created, projected } = setup();
+    state.scanResult = AsyncResult.success({
+      workspaceRoot: "/tmp/t3-mobile-audit-fixture",
+      isGitRepository: false,
+      codeWorkspaceFile: null,
+      folders: ["api", "web"].map((name) => ({
+        path: `/tmp/t3-mobile-audit-fixture/${name}`,
+        name,
+        isGitRepository: true,
+        source: "child",
+      })),
+    });
+    created.resolve(AsyncResult.success(undefined));
+    projected.resolve(null);
+    const root = createRoot(document.createElement("div"));
+    mountedRoots.push(root);
+    let screen: ReactNode;
+    function Observer() {
+      screen = AddProjectLocalFolderScreen({ environmentId: "environment" });
+      return null;
+    }
+    await act(() => root.render(createElement(Observer)));
+    await act(() => findAction(screen, "Add project")?.());
+
+    state.scanResult = null;
+
+    expect(state.projects).toEqual([]);
+    await act(() => findAction(screen, "Add with 2 repositories")?.());
+
+    expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture"]);
+    expect(state.trackedFolders).toEqual([
+      [
+        { path: "/tmp/t3-mobile-audit-fixture/api", name: "api" },
+        { path: "/tmp/t3-mobile-audit-fixture/web", name: "web" },
+      ],
+    ]);
   });
 
   it("does not replace a reopened flow when the previous submission finishes", async () => {
@@ -701,12 +752,12 @@ describe("local project navigation", () => {
   ])(
     "waits for projection then selects the draft from $origin",
     async ({ withDraft, withChooser }) => {
-      const { created, projected, submit } = setup();
+      const { created, projected, sent, submit } = setup();
       const navigation = mountProjectFlow(withDraft, withChooser, true);
       const before = navigation.getState();
       const submission = submit();
       created.resolve(AsyncResult.success(undefined));
-      await created.promise;
+      await sent;
       expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture"]);
       expect(navigation.getState()).toBe(before);
       projected.resolve({ environmentId: "environment", id: "project" });

@@ -9,6 +9,7 @@ export interface AcpRuntimePolicy {
   readonly cwd: string | null;
   readonly approvalPolicy?: unknown;
   readonly sandboxPolicy?: unknown;
+  readonly workspace?: { readonly extraRoots: ReadonlyArray<string> } | undefined;
 }
 
 export type AcpPermissionDisposition = "allow" | "ask" | "deny";
@@ -111,15 +112,16 @@ function acpWorkspaceWriteAllowsMutation(
     const canonicalCwd = acpCanonicalPathForContainment(cwd);
     if (canonicalCwd !== undefined) roots.push(canonicalCwd);
   }
-  const writableRoots = sandboxPolicy.writableRoots;
-  if (Array.isArray(writableRoots)) {
-    for (const writableRoot of writableRoots) {
-      if (typeof writableRoot !== "string") continue;
-      const resolved = resolveAcpPermissionPath(writableRoot, cwd);
-      if (resolved === undefined) continue;
-      const canonicalRoot = acpCanonicalPathForContainment(resolved);
-      if (canonicalRoot !== undefined) roots.push(canonicalRoot);
-    }
+  const writableRoots = [
+    ...(Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : []),
+    ...(runtimePolicy.workspace?.extraRoots ?? []),
+  ];
+  for (const writableRoot of writableRoots) {
+    if (typeof writableRoot !== "string") continue;
+    const resolved = resolveAcpPermissionPath(writableRoot, cwd);
+    if (resolved === undefined) continue;
+    const canonicalRoot = acpCanonicalPathForContainment(resolved);
+    if (canonicalRoot !== undefined) roots.push(canonicalRoot);
   }
   if (roots.length === 0) return false;
 

@@ -93,6 +93,13 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  WorkspaceFoldersError,
+  WorkspaceListFoldersInput,
+  WorkspaceListFoldersResult,
+  WorkspaceScanFoldersInput,
+  WorkspaceScanFoldersResult,
+} from "./workspaceFolders.ts";
+import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -429,6 +436,8 @@ export const WS_METHODS = {
   shellOpenInEditor: "shell.openInEditor",
 
   filesystemBrowse: "filesystem.browse",
+  workspaceListFolders: "workspace.listFolders",
+  workspaceScanFolders: "workspace.scanFolders",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1441,6 +1450,18 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsWorkspaceListFoldersRpc = Rpc.make(WS_METHODS.workspaceListFolders, {
+  payload: WorkspaceListFoldersInput,
+  success: WorkspaceListFoldersResult,
+  error: Schema.Union([WorkspaceFoldersError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceScanFoldersRpc = Rpc.make(WS_METHODS.workspaceScanFolders, {
+  payload: WorkspaceScanFoldersInput,
+  success: WorkspaceScanFoldersResult,
+  error: Schema.Union([WorkspaceFoldersError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -2235,6 +2256,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsWorkspaceListFoldersRpc,
+  WsWorkspaceScanFoldersRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

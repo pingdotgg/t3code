@@ -322,6 +322,9 @@ export function makeCursorAgentOptions(input: {
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
+      ...(input.runtimePolicy.workspace === undefined
+        ? {}
+        : { dirs: [...input.runtimePolicy.workspace.extraRoots] }),
       autoReview: policy.autoReview,
       settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
       sandboxOptions: {
@@ -2495,7 +2498,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, runtimePolicy: turnInput.runtimePolicy })}`;
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,

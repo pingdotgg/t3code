@@ -59,6 +59,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -66,6 +67,7 @@ export const layerEventInfrastructure = Layer.mergeAll(
 );
 
 const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provide(WorkspaceFolders.layer),
   Layer.provide(ProjectStore.layer),
 );
 
