@@ -7628,6 +7628,34 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         now: reset,
       })).find((row) => row.id === threadId)!;
       assert.deepEqual(due.limitRecovery, recovery);
+      const wakeRunId = RunId.make("run:limit-shell:notification-wake");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:notification-wake"),
+        type: "run.created",
+        threadId,
+        runId: wakeRunId,
+        nodeId: NodeId.make("node:limit-shell:notification-wake"),
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: wakeRunId,
+          ordinal: original.ordinal + 4,
+          rootNodeId: NodeId.make("node:limit-shell:notification-wake"),
+          userMessageId: MessageId.make("message:limit-shell:notification-wake"),
+          status: "completed",
+          startedAt: DateTime.add(now, { seconds: 19 }),
+          completedAt: DateTime.add(now, { seconds: 19 }),
+        },
+      });
+      assert.deepEqual(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, now: reset })).find(
+          (row) => row.id === threadId,
+        )?.limitRecovery,
+        recovery,
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${wakeRunId}`;
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
         (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
         VALUES ('limit-shell:pending-request', ${threadId}, ${original.rootNodeId}, 'approval', 'pending', ${DateTime.formatIso(now)}, '{}')`;
