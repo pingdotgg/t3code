@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -382,6 +383,10 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
 };
 
 const AVATAR_CACHE_CAPACITY = 500;
+// Each lookup runs two `az` Python processes in turn; a list with many authors must not start
+// them all at once on the host that also runs the user's agents.
+/** @public */
+export const MAX_AVATAR_LOOKUPS = 2;
 // People rarely change their picture, and a lookup costs two `az` processes.
 const AVATAR_TTL = "6 hours";
 // Short enough that signing in to `az` shows pictures without a server restart.
@@ -473,6 +478,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const avatarLookups = yield* Semaphore.make(MAX_AVATAR_LOOKUPS);
   const avatarCache = yield* Cache.makeWith(
     ({ cwd, identity }: Parameters<AzureDevOpsCli["Service"]["getIdentityAvatar"]>[0]) =>
       invokeGraph({
@@ -501,6 +507,7 @@ export const make = Effect.gen(function* () {
           const mimeType = sniffAvatarMimeType(bytes.success);
           return mimeType === null ? null : { bytes: bytes.success, mimeType };
         }),
+        avatarLookups.withPermits(1),
       ),
     {
       capacity: AVATAR_CACHE_CAPACITY,

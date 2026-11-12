@@ -408,6 +408,44 @@ describe("AzureDevOpsCli.layer", () => {
       }).pipe(Effect.provide(layer)),
     );
 
+    it.effect("caps how many `az` processes concurrent avatar lookups start", () =>
+      Effect.gen(function* () {
+        let inFlight = 0;
+        let peakInFlight = 0;
+        mockRun.mockImplementation((input) =>
+          Effect.gen(function* () {
+            inFlight += 1;
+            peakInFlight = Math.max(peakInFlight, inFlight);
+            // Yield like a subprocess so the other lookups get a chance to start.
+            yield* Effect.yieldNow;
+            yield* Effect.yieldNow;
+            inFlight -= 1;
+            return processOutput(
+              JSON.stringify({
+                value: input.args.includes("descriptors")
+                  ? "aad.descriptor"
+                  : Buffer.from(png).toString("base64"),
+              }),
+            );
+          }),
+        );
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+
+        yield* Effect.all(
+          Array.from({ length: 8 }, (_, index) =>
+            az.getIdentityAvatar({
+              cwd: "/home",
+              identity: { ...identity, identityId: identity.identityId.replace(/.$/u, `${index}`) },
+            }),
+          ),
+          { concurrency: "unbounded" },
+        );
+
+        assert.strictEqual(mockRun.mock.calls.length, 16);
+        assert.isAtMost(peakInFlight, AzureDevOpsCli.MAX_AVATAR_LOOKUPS);
+      }).pipe(Effect.provide(layer)),
+    );
+
     it.effect("returns null for bytes that are not an image", () =>
       Effect.gen(function* () {
         mockRun
