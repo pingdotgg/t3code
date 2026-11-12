@@ -97,6 +97,13 @@ export class Workflows extends Context.Service<
       readonly request: WebhookRequest;
       readonly deliveryId?: string;
     }) => Effect.Effect<Option.Option<{ readonly runId: string }>, WorkflowError>;
+    /** What workflows keep in the store under keys starting with `prefix`, for a person to see. */
+    readonly stored: (
+      prefix: string,
+    ) => Effect.Effect<ReadonlyArray<{ readonly key: string; readonly value: Schema.Json }>>;
+    /** Set a key of the store from outside a run, as a person flipping a switch does. */
+    readonly storeSet: (key: string, value: Schema.Json) => Effect.Effect<void, WorkflowInputError>;
+    readonly storeDelete: (key: string) => Effect.Effect<void, WorkflowInputError>;
     /** Recent runs and open questions, now and again after every change. */
     readonly watch: Stream.Stream<WorkflowRunsSnapshot>;
     /**
@@ -135,6 +142,11 @@ export const layerDisabled = Layer.succeed(
     deliver: Effect.fn("Workflows.deliver")(function* () {
       return yield* Effect.succeed(Option.none<{ readonly runId: string }>());
     }),
+    stored: Effect.fn("Workflows.stored")(function* () {
+      return yield* Effect.succeed<ReadonlyArray<{ key: string; value: Schema.Json }>>([]);
+    }),
+    storeSet: refuse,
+    storeDelete: refuse,
     watch: Stream.concat(Stream.make({ runs: [], questions: [] }), Stream.never),
     sweep: Effect.void,
   }),

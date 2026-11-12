@@ -33,6 +33,13 @@ import {
   type Woke,
   type WorkflowDefinition,
 } from "./workflow.ts";
+import {
+  forStep,
+  KeyValues,
+  layerKeyValues,
+  layerSignalSender,
+  SignalSender,
+} from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import {
   HOOK_PREFIX,
@@ -57,6 +64,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   registered: ReadonlyArray<readonly [WorkflowDefinition, EngineWorkflow]>,
 ) {
   const store = yield* WorkflowStore.WorkflowStore;
+  const keyValues = yield* KeyValues;
+  const sender = yield* SignalSender;
   const scope = yield* Scope.Scope;
   const agents = yield* WorkflowAgents;
   const random = yield* SecureRandom.SecureRandom;
@@ -266,6 +275,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           reason: row.detail ?? undefined,
         }),
       ),
+      Effect.provideContext(forStep(keyValues, sender, `${row.run_id}/${END_STEP}`)),
       Effect.matchCauseEffect({
         onSuccess: () => store.stepEnded(row.run_id, END_STEP, "completed", null),
         onFailure: (cause) =>
@@ -337,11 +347,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
   );
 
-  return Workflows.of({
-    start,
-    hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
-    deliver,
-    signal: Effect.fn("Workflows.signal")(function* (address, value, options) {
+  const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
+    function* (address, value, options) {
       // A sender's retry of a signal that already woke a wait is not a second signal.
       if (yield* store.signalSeen(options.id)) return "delivered" as const;
       const valueJson = WorkflowStore.jsonText(value);
@@ -369,7 +376,16 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       );
       yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt });
       return "buffered" as const;
-    }),
+    },
+  );
+  // Steps were registered before this engine existed; now they can signal through it.
+  sender.current = signal;
+
+  return Workflows.of({
+    start,
+    hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
+    deliver,
+    signal,
     resume,
     cancel: Effect.fn("Workflows.cancel")(function* (runId, reason) {
       const row = yield* requireRun(runId);
@@ -420,6 +436,18 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       }
     }, Effect.scoped),
     questions,
+    stored: Effect.fn("Workflows.stored")(function* (prefix) {
+      return (yield* keyValues.list(prefix)).map((row) => ({
+        key: row.key,
+        value: WorkflowStore.jsonValue(row.valueJson),
+      }));
+    }),
+    storeSet: Effect.fn("Workflows.storeSet")(function* (key, value) {
+      yield* keyValues.set(key, WorkflowStore.jsonText(value));
+    }),
+    storeDelete: Effect.fn("Workflows.storeDelete")(function* (key) {
+      yield* keyValues.delete(key);
+    }),
     watch,
     sweep,
   });
@@ -440,6 +468,7 @@ export const layer = (definitions: ReadonlyArray<WorkflowDefinition>) => {
   return Layer.effect(Workflows, make(registered)).pipe(
     Layer.provide(layerDefinitions),
     Layer.provide(WorkflowStore.layer),
+    Layer.provide(Layer.merge(layerKeyValues, layerSignalSender)),
     Layer.provide(ClusterWorkflowEngine.layer),
     Layer.provide(SingleRunner.layer({ runnerStorage: "sql" })),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),

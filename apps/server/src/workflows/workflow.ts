@@ -13,6 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
 import { checkOutput } from "../orchestration-v2/runOutput.ts";
+import { forStep, type InStep, KeyValues, SignalSender } from "./stepServices.ts";
 import type { ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
@@ -45,6 +46,8 @@ export class RunContext extends Context.Service<
     readonly store: WorkflowStore.WorkflowStore["Service"];
     /** Names used so far in this pass over the body: two steps with one name would share a result. */
     readonly names: Set<string>;
+    /** What the code of the step `name` may use. */
+    readonly forStep: (name: string) => Context.Context<InStep>;
   }
 >()("t3/workflows/workflow/RunContext") {}
 
@@ -145,10 +148,12 @@ const DEFAULT_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 s
 export const step = <A, I, E>(
   name: string,
   options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
-  execute: Effect.Effect<A, E>,
+  code: Effect.Effect<A, E, InStep>,
 ): Effect.Effect<A, StepFailed, InRun> =>
   Effect.flatMap(claim(name), (run) => {
     const retry = options.retry ?? DEFAULT_RETRY;
+    // Made per try, so a retry numbers its signals from the start again.
+    const execute = Effect.suspend(() => Effect.provideContext(code, run.forStep(name)));
     return journaled(
       run,
       name,
@@ -292,7 +297,9 @@ export interface WorkflowDefinition {
   readonly resumeAfter: ReadonlyArray<Duration.Input>;
   readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger>;
   /** Fails with the reason as text: by here nothing reads the error but a person. */
-  readonly onEnd: ((payload: never, end: RunEnd) => Effect.Effect<void, string>) | undefined;
+  readonly onEnd:
+    | ((payload: never, end: RunEnd) => Effect.Effect<void, string, InStep>)
+    | undefined;
   // The registry holds workflows of every payload type; `workflow` is where the types are checked.
   readonly body: (
     payload: never,
@@ -337,7 +344,7 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
      * lock. It gets the payload and the run's id, not the body's values, so name what the run
      * takes after its id. It must be safe to run for a run that took nothing.
      */
-    readonly onEnd?: (payload: P, end: RunEnd) => Effect.Effect<unknown, EndError>;
+    readonly onEnd?: (payload: P, end: RunEnd) => Effect.Effect<unknown, EndError, InStep>;
   },
   body: (
     payload: P,
@@ -387,6 +394,8 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
   return engine.toLayer((payload, runId) =>
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
+      const keyValues = yield* KeyValues;
+      const sender = yield* SignalSender;
       yield* Activity.make({
         name: "run/begin",
         execute: store.runStarted({
@@ -429,7 +438,13 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
         ),
         Effect.provideService(
           RunContext,
-          RunContext.of({ runId, workflow: definition.name, store, names: new Set() }),
+          RunContext.of({
+            runId,
+            workflow: definition.name,
+            store,
+            names: new Set(),
+            forStep: (name) => forStep(keyValues, sender, `${runId}/${name}`),
+          }),
         ),
       );
       yield* Activity.make({

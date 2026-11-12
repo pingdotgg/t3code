@@ -75,7 +75,8 @@ export default ({
 ];
 ```
 
-The API object holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`, `ask`, the
+The API object holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`, `ask`, `store`,
+`signal`, the
 triggers `every`, `daily`, `webhook` with their payload schemas `Tick` and `WebhookRequest`, and
 Effect's `Effect`, `Schema`, `Option`, `Duration`, `Schedule`. Take everything from it, and list each name you use in the function's parameter: a name that is
 not listed, `Option` for example, is not defined. An
@@ -186,6 +187,43 @@ workflow(
 API. If `onEnd` fails, a finished run pauses at the `onEnd` step, and a cancelled run's is tried
 again up to five times; `show` has the error.
 
+## The store
+
+`store` holds state that outlives a run and is shared by every workflow on the server: a cursor,
+a switch, a counter, a queue. Its values change over time, so read and write it inside `step` or
+`onEnd`, never in the body between steps.
+
+```ts
+const seen = store.entry("issues/seen", Schema.String); // one key and the Schema of its value
+
+const fresh =
+  yield *
+  step(
+    "fetch",
+    { returns: Schema.Array(Issue) },
+    Effect.gen(function* () {
+      const since = yield* seen.get; // Option
+      const issues = yield* fetchIssuesAfter(Option.getOrUndefined(since));
+      if (issues[0]) yield* seen.set(issues[0].createdAt);
+      return issues;
+    }),
+  );
+```
+
+| Call                              | Does                                                                                     |
+| --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `store.entry(key, Schema)`        | One key. `.get` gives an `Option`; `.set(value)`; `.delete`.                             |
+| `entry.update((current) => next)` | Reads and writes as one action; `current` is an `Option`. Returning `undefined` deletes. |
+| `store.entries(prefix, Schema)`   | Every `{ key, value }` whose key starts with `prefix`, in key order.                     |
+| `store.transaction(effect)`       | Everything the effect reads and writes happens together, or not at all if it fails.      |
+| `signal(address, value)`          | Wakes a `wait`: `{ runId, wait }` or `{ workflow, key }`. Inside `step` or `onEnd` only. |
+
+Use `update` or `transaction` whenever a write depends on a read: several runs share the store.
+A step that fails after writing is run again, so write what is safe to write twice, or put the
+writes in one `transaction` with the part that can fail. A person sees and changes the store with
+`t3 workflow store list [prefix]`, `store set <key> '<json>'` and `store delete <key>`, which is
+how a switch a workflow reads gets flipped.
+
 ## Triggers
 
 A workflow with `triggers` starts by itself, and its `payload` is what the trigger gives.
@@ -231,6 +269,7 @@ t3 workflow questions                     # what runs are asking a person
 t3 workflow signal '{"choice":"upgrade"}' --run <run> --wait upgrade   # answer a question
 t3 workflow signal '<json>' --workflow <name> --key <key>              # wake a keyed wait
 t3 workflow hooks                         # webhook URL paths
+t3 workflow store list [prefix]           # what workflows keep between runs
 ```
 
 Run states: `running` (also while it sleeps), `waiting` (on an agent, a signal or a question), `paused` (a step failed),

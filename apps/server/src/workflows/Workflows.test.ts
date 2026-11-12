@@ -15,12 +15,14 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
+import { signal, store } from "./stepServices.ts";
 import { sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0092 from "../persistence/Migrations/092_Workflows.ts";
 import Migration0093 from "../persistence/Migrations/093_WorkflowTriggers.ts";
 import Migration0094 from "../persistence/Migrations/094_WorkflowStepEnvironment.ts";
 import Migration0095 from "../persistence/Migrations/095_WorkflowRunInput.ts";
+import Migration0096 from "../persistence/Migrations/096_WorkflowStore.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
@@ -127,6 +129,65 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
 };
 
 /** Write a change, ask a person whether to merge it, then land it in the writer's own thread. */
+const tally = store.entry("tally", Schema.Number);
+const stored = [
+  /** Counts itself in the store, with the first try of the step failing after it counted. */
+  workflow(
+    "tally",
+    {
+      version: 1,
+      payload: Schema.Struct({ wrong: Schema.optional(Schema.Boolean) }),
+      returns: Schema.Number,
+    },
+    (payload) =>
+      payload.wrong === true
+        ? step(
+            "read",
+            { returns: Schema.Number, ...once },
+            Effect.as(store.entry("tally", Schema.String).get, 0),
+          )
+        : step(
+            "count",
+            { returns: Schema.Number, ...once },
+            tally
+              .update((current) => Option.getOrElse(current, () => 0) + 1)
+              .pipe(Effect.map(Option.getOrElse(() => 0))),
+          ),
+  ),
+  /** Waits in line for a door that `opener` opens. */
+  workflow(
+    "door",
+    { version: 1, payload: Schema.Struct({ door: Schema.String }), returns: Schema.String },
+    (payload) =>
+      Effect.map(
+        wait("open", { returns: Schema.String, key: payload.door }),
+        Option.getOrElse(() => "never"),
+      ),
+  ),
+  workflow(
+    "opener",
+    { version: 1, payload: Schema.Struct({ door: Schema.String, fail: Schema.Boolean }) },
+    (payload) =>
+      step(
+        "open",
+        { returns: Schema.Void, retry: { times: 1 } },
+        Effect.gen(function* () {
+          // Written and taken back together when the step fails after writing.
+          yield* store.transaction(
+            Effect.gen(function* () {
+              yield* store.entry(`doors/${payload.door}`, Schema.String).set("open");
+              const tries = yield* store
+                .entry(`tries/${payload.door}`, Schema.Number)
+                .update((current) => Option.getOrElse(current, () => 0) + 1);
+              if (payload.fail && Option.contains(tries, 1)) return yield* Effect.fail("slipped");
+            }),
+          );
+          yield* signal({ workflow: "door", key: payload.door }, "came in");
+        }),
+      ),
+  ),
+];
+
 const fix = workflow(
   "fix",
   {
@@ -235,14 +296,21 @@ const harness = Effect.gen(function* () {
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
-    Effect.all([Migration0092, Migration0093, Migration0094, Migration0095], { discard: true }),
+    Effect.all([Migration0092, Migration0093, Migration0094, Migration0095, Migration0096], {
+      discard: true,
+    }),
     database,
   );
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
-  const engine = WorkflowEngine.layer([...definitions(counts, failures), fix, ...triggered]).pipe(
+  const engine = WorkflowEngine.layer([
+    ...definitions(counts, failures),
+    fix,
+    ...triggered,
+    ...stored,
+  ]).pipe(
     Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
     Layer.provide(database),
     Layer.provide(NodeCrypto.layer),
@@ -647,6 +715,62 @@ it.effect(
               ["end:hold:cancelled:not needed", 1],
               ["end:hold:cancelled:changed my mind", 1],
             ],
+          );
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "the store is shared by runs, survives a restart, and a failed transaction writes nothing",
+  () =>
+    Effect.gen(function* () {
+      const { boot } = yield* harness;
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const runs = yield* Effect.forEach(["a", "b", "c"], (key) =>
+            workflows.start("tally", {}, { idempotencyKey: key }),
+          );
+          const counted = yield* Effect.forEach(runs, (run) =>
+            workflows.waitFor(run.runId, status("completed")),
+          );
+          assert.sameMembers(
+            counted.map((run) => run.result),
+            [1, 2, 3],
+          );
+        }),
+      );
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const next = yield* workflows.start("tally", {}, { idempotencyKey: "d" });
+          assert.equal((yield* workflows.waitFor(next.runId, status("completed"))).result, 4);
+          // A key read with another schema is the step's failure, with the key in the reason.
+          const wrong = yield* workflows.start("tally", { wrong: true }, { idempotencyKey: "w" });
+          const paused = yield* workflows.waitFor(wrong.runId, status("paused"));
+          assert.include(paused.detail ?? "", "The stored value at tally does not fit its schema");
+
+          // The first try fails inside the transaction, so the door it opened is not there, and
+          // the try count it raised is 1 again on the second try, which is the one that signals.
+          const waiting = yield* workflows.start("door", { door: "east" }, { idempotencyKey: "e" });
+          yield* workflows.waitFor(waiting.runId, status("waiting"));
+          const opener = yield* workflows.start(
+            "opener",
+            { door: "east", fail: true },
+            { idempotencyKey: "o" },
+          );
+          yield* workflows.waitFor(opener.runId, status("paused"));
+          assert.equal((yield* workflows.get(waiting.runId)).run.status, "waiting");
+          const clean = yield* workflows.start(
+            "opener",
+            { door: "east", fail: false },
+            { idempotencyKey: "o2" },
+          );
+          yield* workflows.waitFor(clean.runId, status("completed"));
+          assert.equal(
+            (yield* workflows.waitFor(waiting.runId, status("completed"))).result,
+            "came in",
           );
         }),
       );

@@ -44,6 +44,9 @@ An agent step can run on another machine: give it the id of a
 [linked environment](remote-access.md#link-another-environment) and a project there. The run itself stays on the
 server that started it.
 
+Workflows can keep state between runs, such as a switch or a cursor. `t3 workflow store list`
+shows it, and `t3 workflow store set <key> '<json>'` changes it.
+
 ## Webhooks
 
 `t3 workflow hooks` prints a URL path for each webhook a workflow listens on. Add your server's

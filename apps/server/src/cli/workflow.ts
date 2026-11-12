@@ -229,6 +229,84 @@ const hooksCommand = Command.make("hooks", {
   ),
 );
 
+const StoreResult = Schema.Struct({
+  entries: Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.Json })),
+});
+const keyArgument = Argument.String("key").pipe(Argument.withDescription("The key in the store."));
+
+const storeListCommand = Command.make("list", {
+  ...projectLocationFlags,
+  prefix: Argument.String("prefix").pipe(
+    Argument.withDescription("Only keys that start with this."),
+    Argument.withDefault(""),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("List what workflows keep in the store."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.store.list")(function* (tools) {
+        const { entries } = yield* tools.call(
+          "t3_workflow",
+          { action: "store", ...(flags.prefix === "" ? {} : { key: flags.prefix }) },
+          StoreResult,
+        );
+        if (flags.json) return yield* printJson(entries);
+        for (const entry of entries) {
+          yield* Console.log(entry.key);
+          yield* printJson(entry.value);
+        }
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const storeSetCommand = Command.make("set", {
+  ...projectLocationFlags,
+  key: keyArgument,
+  value: Argument.String("value").pipe(Argument.withDescription("The value, as JSON.")),
+}).pipe(
+  Command.withDescription("Set a key of the store, as a person flipping a switch does."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const value = yield* jsonArgument(flags.value, "The value");
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.workflow.store.set")(function* (tools) {
+          yield* tools.call(
+            "t3_workflow",
+            { action: "store_set", key: flags.key, value },
+            StoreResult,
+          );
+          yield* Console.log(`Set ${flags.key}.`);
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
+const storeDeleteCommand = Command.make("delete", {
+  ...projectLocationFlags,
+  key: keyArgument,
+}).pipe(
+  Command.withDescription("Delete a key of the store."),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.workflow.store.delete")(function* (tools) {
+        yield* tools.call("t3_workflow", { action: "store_delete", key: flags.key }, StoreResult);
+        yield* Console.log(`Deleted ${flags.key}.`);
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const storeCommand = Command.make("store").pipe(
+  Command.withDescription("See and change what workflows keep between runs."),
+  Command.withSubcommands([storeListCommand, storeSetCommand, storeDeleteCommand]),
+);
+
 export const workflowCommand = Command.make("workflow").pipe(
   Command.withDescription("Start, inspect and steer durable workflow runs on the running server."),
   Command.withSubcommands([
@@ -240,5 +318,6 @@ export const workflowCommand = Command.make("workflow").pipe(
     signalCommand,
     questionsCommand,
     hooksCommand,
+    storeCommand,
   ]),
 );
