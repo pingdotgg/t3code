@@ -25,6 +25,8 @@ export interface SourceControlMediaRequest {
   readonly url: string;
   /** Request headers to forward, such as `range`. */
   readonly headers: Readonly<Record<string, string>>;
+  /** `owner/name` of the change request the media is in, else of the checkout it was shown in. */
+  readonly repository?: string;
 }
 
 /** The server side of a definition's `credentials.appSignIn`. */

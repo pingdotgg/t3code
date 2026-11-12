@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   compactDynamicToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
+  mcpToolResultOutput,
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -187,6 +188,13 @@ describe("toolOutputImages", () => {
     ]);
     expect(toolOutputImages([mcpImage])).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
     expect(toolOutputImages(mcpImage)).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    const structuredContent = { screenshot: { mimeType: "image/png", width: 728, height: 354 } };
+    const content = [text, mcpImage];
+    const output = mcpToolResultOutput({ content, structuredContent });
+    expect(toolOutputImages(output)).toEqual([{ mimeType: "image/png", data: "AAAA" }]);
+    expect(output).toEqual({ content, structuredContent });
+    expect(mcpToolResultOutput({ content: [text], structuredContent })).toBe(structuredContent);
+    expect(mcpToolResultOutput({ content })).toBe(content);
   });
 
   it("skips types the server must not serve inline", () => {
