@@ -892,11 +892,12 @@ export function useThreadComposerState(input: {
     providerSubagentStatus,
     isCompacting,
     compactBeforeSend:
-      compactTokens === null || selectedThreadKey === null || keepFullHistory
+      compactTokens === null || selectedThreadKey === null
         ? null
         : {
             tokens: compactTokens,
-            keepFullHistory: () => setKeepFullHistory(selectedThreadKey, true),
+            keepFullHistory,
+            toggleKeepFullHistory: () => setKeepFullHistory(selectedThreadKey, !keepFullHistory),
           },
     composerDraftKey,
     followUpBehavior,

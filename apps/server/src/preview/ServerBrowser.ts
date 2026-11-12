@@ -389,6 +389,7 @@ const IDLE_SWEEP_INTERVAL = "1 minute";
 
 const DOWNLOAD_LIMIT = 20;
 const ABORTED_NAVIGATION_DOWNLOAD_WAIT_MS = 5_000;
+const PAGE_CLOSE_GRACE_MS = 5_000;
 const DOWNLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 
 const tabKey = (threadId: string, tabId: string) => `${threadId}\u0000${tabId}`;
@@ -765,6 +766,28 @@ const make = Effect.gen(function* () {
 
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
+  // Closing the session makes the desktop destroy its webview, which drops an unload still in
+  // progress, and `runBeforeUnload` resolves before it runs. So wait for the page's `pagehide`.
+  const unloadDesktopPage = async (page: Page) => {
+    const unloaded = Promise.withResolvers<void>();
+    const timeout = setTimeout(unloaded.resolve, PAGE_CLOSE_GRACE_MS);
+    const binding = `__t3PreviewUnloaded${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+    void (async () => {
+      await page.exposeFunction(binding, unloaded.resolve);
+      await page.evaluate((name) => {
+        const target = globalThis as unknown as {
+          addEventListener: (type: string, listener: () => void) => void;
+        };
+        target.addEventListener("pagehide", () =>
+          Reflect.apply(Reflect.get(target, name), target, []),
+        );
+      }, binding);
+      await page.close({ runBeforeUnload: true });
+    })().catch(unloaded.resolve);
+    await unloaded.promise;
+    clearTimeout(timeout);
+  };
+
   const dropTab = (tab: ServerTab, closeSession: boolean) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
@@ -777,8 +800,22 @@ const make = Effect.gen(function* () {
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
-    else void tab.page.close().catch(constVoid);
-    if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
+    else {
+      const page = tab.page;
+      // `runBeforeUnload` returns before the page closes, so closing an isolated context
+      // must wait for it. A pending dialog would block `beforeunload` from running at all.
+      const closed = page.isClosed()
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => page.once("close", () => resolve()));
+      // A renderer that never finishes unloading would outlive its tab, so force it closed.
+      const forceClose = setTimeout(() => void page.close().catch(constVoid), PAGE_CLOSE_GRACE_MS);
+      void closed.then(() => clearTimeout(forceClose));
+      void page
+        .close({ runBeforeUnload: tab.dialog === null })
+        .catch(() => page.close())
+        .catch(constVoid);
+      if (tab.isolatedContext) void closed.then(() => page.context().close()).catch(constVoid);
+    }
     void tab.recording?.encoder.close().catch(constVoid);
     void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
     reportLiveTabs();
@@ -1036,6 +1073,11 @@ const make = Effect.gen(function* () {
       });
     });
     page.on("dialog", (dialog) => {
+      // Closing is already decided, so an unsaved-changes guard must not keep the page open.
+      if (tab.closing && dialog.type() === "beforeunload") {
+        void dialog.accept().catch(constVoid);
+        return;
+      }
       tab.dialog = dialog;
       broadcastControl(tab);
     });
@@ -2243,6 +2285,10 @@ const make = Effect.gen(function* () {
           reason: "humanControl",
         });
       void tab.control.close().catch(constVoid);
+      if (tab.desktop && tab.dialog === null) {
+        tab.closing = true;
+        await unloadDesktopPage(tab.page);
+      }
       await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
       dropTab(tab, false);
       return {};

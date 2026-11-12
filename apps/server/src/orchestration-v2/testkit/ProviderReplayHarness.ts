@@ -518,6 +518,7 @@ export function layerWithRegistry<Error>(
         recoverDelegatedTask: orchestrator.recoverDelegatedTask,
         cancelDelegatedTask: orchestrator.cancelDelegatedTask,
         delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+        streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
       });
     }),
   ).pipe(Layer.provide(layerOrchestratorProvided));
