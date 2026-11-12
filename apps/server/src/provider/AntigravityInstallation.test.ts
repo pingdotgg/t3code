@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -126,6 +126,7 @@ interface HarnessOptions {
   readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
+  readonly connectTimeout?: boolean;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -188,8 +189,18 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           requests.push(request.url);
+          if (options.connectTimeout) {
+            return Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  cause: new Error("Connect Timeout Error (attempted address: dl.google.com:443)"),
+                }),
+              }),
+            );
+          }
           const response = HttpClientResponse.fromWeb(
             request,
             new Response(null, {
@@ -203,15 +214,17 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
               },
             }),
           );
-          return Object.defineProperty(response, "stream", {
-            value:
-              options.body ??
-              Stream.make(
-                archive.subarray(0, 31),
-                archive.subarray(31, 149),
-                archive.subarray(149),
-              ),
-          });
+          return Effect.succeed(
+            Object.defineProperty(response, "stream", {
+              value:
+                options.body ??
+                Stream.make(
+                  archive.subarray(0, 31),
+                  archive.subarray(31, 149),
+                  archive.subarray(149),
+                ),
+            }),
+          );
         }),
       ),
     ),
@@ -351,6 +364,73 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         [previousReleaseId],
       );
     }),
+  );
+
+  it.effect(
+    "names the connection failure instead of disk space when the download cannot connect",
+    () =>
+      Effect.gen(function* () {
+        const { installation, validations } = yield* makeHarness({ connectTimeout: true });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).not.toMatch(/disk space/i);
+        expect(state.message).toMatch(/connect|network|download/i);
+        expect(validations).toEqual([]);
+      }),
+  );
+
+  // The runtime's own abort is a real process; Windows has no POSIX sh.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "explains that the linux-arm64 runtime needs 4 KiB pages when it aborts on a 16 KiB kernel",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Google's linux-arm64 build aborts like this on Asahi and Raspberry Pi 5 kernels.
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          String(command.command).endsWith(executableName)
+            ? realSpawner.spawn(
+                ChildProcess.make(
+                  "sh",
+                  [
+                    "-c",
+                    "echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; kill -ABRT $$",
+                  ],
+                  { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+                ),
+              )
+            : realSpawner.spawn(command),
+        );
+        const { installation } = yield* makeHarness({
+          arch: "arm64",
+          useDefaultValidation: true,
+          spawner,
+        });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/page/i);
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a 16 KiB-page linux-arm64 kernel before downloading the runtime",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.command === "getconf"
+            ? realSpawner.spawn(ChildProcess.make("sh", ["-c", "echo 16384"], command.options))
+            : realSpawner.spawn(command),
+        );
+        const { installation, requests } = yield* makeHarness({ arch: "arm64", spawner });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/4 KiB/);
+        expect(requests).toEqual([]);
+      }),
   );
 
   it.effect.each(["download", "extract", "active pointer"] as const)(
@@ -730,6 +810,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(yield* installation.resolve(executableName)).toMatchObject({
           source: "override",
         });
+        expect(
+          yield* installation
+            .resolve(`~/external/${executableName}`)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, baseDir)),
+        ).toMatchObject({ source: "override", executablePath: externalExecutable });
         yield* fs.remove(externalHarness);
         expect(yield* installation.resolve(externalExecutable).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",

@@ -19,7 +19,8 @@ The v2 checks pin these invariants:
   large work groups until expansion. Messages and items outside those groups remain in normal
   history paging. Required control records and
   the at-least-one-row rule can exceed the byte target; it is not a hard cap.
-- The bounded snapshot does not retain the full duplicate conversation-message table.
+- The bounded snapshot does not retain the full duplicate conversation-message table. Messages of
+  a run that is still in progress are the exception: all of them accompany the window.
 - Older activity is fetched in bounded HTTP pages and merged without disturbing the live scroll
   window.
 - Clients with confirmed history paging opt into socket snapshot fallbacks that use the same
@@ -41,7 +42,8 @@ The v2 checks pin these invariants:
   requested.
   Explicit cross-environment transcript exports preserve full tool bodies so the destination
   agent can read the context. The export rejects timeline JSON above the file attachment limit
-  before sending it; the client still applies its attachment limit to the complete file.
+  before sending it, and before decoding any row when the tool output text alone is over that
+  limit; the client still applies its attachment limit to the complete file.
 - Live command output reaches a client only through `orchestration.subscribeCommandOutput`, which
   an expanded command row opens and closes with itself. Raw output deltas are never orchestration
   events: adapters send them to the
@@ -67,12 +69,27 @@ These are neither compressed WebSocket captures nor measurements of server RSS, 
 fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
 these tests so regressions fail locally. The transfer budget integration test
 (`apps/server/integration/transferBudgetV2.integration.test.ts`) sends the opt-ins current clients
-send and caps the decoded bytes and rows of the bounded snapshot and one older page for a 900-row
-agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. It
-also caps the bytes and the node, subagent, plan, provider turn and checkpoint counts of the
-bounded snapshot for a thread of 40 finished runs behind one working run, so finished runs cannot
-ride along with a window. When clients gain an opt-in, add it to the test's client queries and give
-a fixture the data it saves.
+send. Its opt-in objects are typed `Required` against the contracts, so an opt-in added to a
+contract fails typecheck until the test sends it; give a fixture the data the opt-in saves. The
+test caps decoded bytes and rows for a 900-row agent turn in both states: while the turn runs (the
+bounded snapshot and one older page) and after it finishes (the deferred cold open over HTTP and
+over the socket alone, and the first page of its deferred work). It caps the socket bytes of three
+resumes that must not send a snapshot: a thread after one ordinary turn, an idle thread, and a
+shell cursor too old to replay. It caps the cold-connect shell for a sidebar of settled threads and
+idle subagents, and the subscription a client opens from that snapshot. It also caps the bytes and
+the node, subagent, plan, provider turn and checkpoint counts of the bounded snapshot for a thread
+of 40 finished runs behind one working run, so finished runs cannot ride along with a window. The
+working run has a ready context handoff, so its history cannot ride along either.
+
+CI prints every row in the job summary. The pull request comment compares the budgeted rows with
+`main`, lists the rows that changed or failed, and names each ceiling a pull request raises. A row
+added to `scenarioRows` in `TransferBudgetReport.integration.ts` reaches the pass/fail check, the
+summary and the comment.
+
+The server config has its own budget in `apps/server/src/ws.test.ts`. A client that asks for
+catalog digests and status deltas gets the provider list of its first config in under 1 KiB, for a
+provider with 250 slash commands and 200 skills. The lists load with the first cwd snapshot, and a
+machine refresh sends back an empty provider list.
 
 ## Event store and startup
 
@@ -104,9 +121,9 @@ sessions. The orchestrator still validates the current thread before applying se
 
 Read receipts use `ProjectionStore.getThread` to load only canonical thread metadata. A visit
 advances `lastVisitedAt` monotonically without changing `updatedAt` or decoding history. Shell
-queries use a covering thread/run index for item counts and a partial index for nonterminal
-background items, including idle items. Latest user-message reads use an index ordered by update
-time.
+queries read item counts from a per-thread, per-run table that turn-item triggers keep exact, and
+use a partial index for nonterminal background items, including idle items. Latest user-message
+reads use an index ordered by update time.
 
 Command palette results keep live VCS and linked pull-request queries leased to the visible
 viewport, including a small overscan region. Cached badges remain available while leases are
