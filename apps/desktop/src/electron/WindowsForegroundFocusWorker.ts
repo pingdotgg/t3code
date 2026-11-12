@@ -32,13 +32,7 @@ async function findTarget(
   const children = await App.byPid(target.processId, { timeout: 0 })
     .then((app) => app.children())
     .catch(() => []);
-  return (
-    children.find((candidate) => matchesTarget(candidate, target)) ??
-    (await App.list())
-      .filter((candidate) => candidate.pid === target.processId)
-      .map((candidate) => candidate.asElement())
-      .find((candidate) => matchesTarget(candidate, target))
-  );
+  return children.find((candidate) => matchesTarget(candidate, target));
 }
 
 const cachedElements = new Map<number, Element>();
