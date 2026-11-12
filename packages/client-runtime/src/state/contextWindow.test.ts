@@ -35,6 +35,7 @@ function sendInput(
     readonly selected?: ProviderInstanceId;
     readonly onlyEarlierConversationUsage?: boolean;
     readonly unstartedFork?: boolean;
+    readonly returnToEarlierInstance?: boolean;
     readonly slashCommands?: ReadonlyArray<string>;
     readonly dismissed?: boolean;
     readonly heldQueue?: boolean;
@@ -165,6 +166,51 @@ function sendInput(
       ],
     });
   }
+  if (overrides.returnToEarlierInstance === true) {
+    // The thread ran on `claude`, handed off to `claudeOtherHome`, and the user switches back.
+    const otherSelection = { instanceId: claudeOtherHome, model: "claude-opus-4-6" };
+    Object.assign(projection, {
+      thread: {
+        ...projection.thread,
+        providerInstanceId: claudeOtherHome,
+        modelSelection: otherSelection,
+        activeProviderThreadId: ProviderThreadId.make("provider-thread-other-home"),
+      },
+      providerThreads: [
+        {
+          ...providerThread("provider-thread-earlier"),
+          nativeThreadRef: { type: "claude-session", sessionId: "session-a" },
+        },
+        {
+          ...providerThread("provider-thread-other-home"),
+          providerInstanceId: claudeOtherHome,
+          nativeThreadRef: { type: "claude-session", sessionId: "session-b" },
+        },
+      ],
+      providerTurns: [
+        {
+          providerThreadId: ProviderThreadId.make("provider-thread-earlier"),
+          tokenUsage: { usedTokens: 293_611, updatedAt: lastTurnAt },
+        },
+        {
+          providerThreadId: ProviderThreadId.make("provider-thread-other-home"),
+          tokenUsage: { usedTokens: 121_853, updatedAt: "2026-10-30T14:50:00.000Z" },
+        },
+      ],
+      runs: [
+        ...projection.runs,
+        {
+          id: RunId.make("run-2"),
+          ordinal: 2,
+          providerInstanceId: claudeOtherHome,
+          modelSelection: otherSelection,
+          status: "completed",
+          startedAt: "2026-10-30T14:40:00.000Z",
+          contextHandoffId: "handoff-1",
+        },
+      ],
+    });
+  }
   const selected = overrides.selected ?? claude;
   return {
     projection,
@@ -244,6 +290,11 @@ describe("compactBeforeSendTokens", () => {
       unstartedFork: true,
       selected: claudeOtherHome,
       expected: false,
+    },
+    {
+      name: "after switching back to a Claude instance whose stale conversation resumes",
+      returnToEarlierInstance: true,
+      expected: true,
     },
     { name: "for a provider without /compact", slashCommands: [], expected: false },
     {
