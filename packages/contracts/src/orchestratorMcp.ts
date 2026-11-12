@@ -679,13 +679,13 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Default true: runs post in this thread. False: new thread per run.",
+      description: "Default true: runs post here. False: new thread per run.",
     }),
   ),
   freshSession: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Runs share one thread but each starts a fresh session without earlier runs' context. Unbound: the first run makes the thread.",
+        "Each run starts a fresh session in one shared thread. Unbound: the first run makes it.",
     }),
   ),
   target: Schema.optional(

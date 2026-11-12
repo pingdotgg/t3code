@@ -37,7 +37,7 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   weekdays: Schema.optional(
     Schema.Array(
       Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
-        description: "Weekday. 0 is Sunday, 6 is Saturday.",
+        description: "0 Sunday, 6 Saturday.",
       }),
     ).annotate({
       description: "Default: every day.",
@@ -79,7 +79,7 @@ const ScheduledTaskWebhookSignatureFields = {
   }),
   encoding: Schema.Literals(["hex", "base64"]),
   prefix: Schema.String.annotate({
-    description: "Text before the digest, such as 'sha256='. Empty for none.",
+    description: "Text before the digest, e.g. 'sha256='; empty for none.",
   }),
 };
 
@@ -113,7 +113,7 @@ const ScheduledTaskWebhookDedupe = Schema.Struct({
     Schema.Int.check(Schema.isBetween({ minimum: 10, maximum: 3600 })),
   ),
 }).annotate({
-  description: "Replay and coalesce key templates. Window in seconds, default 120.",
+  description: "Replay and coalesce key templates. Window default 120.",
 });
 
 export const MAX_WEBHOOK_FILTERS = 16;
@@ -152,7 +152,7 @@ export type ScheduledTaskWebhookFilterOp = ScheduledTaskWebhookFilter["op"];
 const ScheduledTaskWebhookFilters = Schema.Array(ScheduledTaskWebhookFilter)
   .check(Schema.isMaxLength(MAX_WEBHOOK_FILTERS))
   .annotate({
-    description: "All must match. Max 16. Omitted: keep stored. [] clears.",
+    description: "All must match. Omitted: keep stored. [] clears.",
   });
 
 const ScheduledTaskWebhookSchedule = Schema.Struct({
@@ -204,9 +204,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
     type: Schema.Literal("interval"),
     everyMs: ScheduledTaskIntervalMs.check(
       Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS),
-    ).annotate({
-      description: "Min 60000.",
-    }),
+    ),
   }),
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
