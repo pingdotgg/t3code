@@ -6832,6 +6832,94 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #17270 root text_delta frames stream the reply before the block's snapshot
+  it.effect("streams Claude assistant text deltas before the completed snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("text-stream-attempt"),
+          text: "Write two paragraphs",
+          attachments: [],
+        }),
+      );
+      const stream = (event: unknown) =>
+        claudeSdkFrame({
+          type: "stream_event",
+          event,
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "stream-frame",
+        });
+      yield* harness.offerAndWait(
+        stream({ type: "message_start", message: { id: "text-message" } }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "First paragraph.\n\n" },
+        }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Second paragraph." },
+        }),
+      );
+      yield* harness.offerAndWait(stream({ type: "content_block_stop", index: 0 }));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "text-snapshot",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "text-message",
+            model: "claude-sonnet-4-6",
+            content: [{ type: "text", text: "First paragraph.\n\nSecond paragraph." }],
+          },
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, makeResultFrame({ uuid: "text-result", result: "" }));
+      yield* Queue.take(harness.terminalReceipts);
+      const replies = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      // The stream's own item carries the reply; the block's snapshot does not repeat it.
+      assert.deepEqual(
+        [...new Set(replies.map((item) => item.nativeItemRef?.nativeId))],
+        ["text-message:text:0"],
+      );
+      assert.equal(replies.at(-1)?.text, "First paragraph.\n\nSecond paragraph.");
+      assert.equal(replies.at(-1)?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
   it.effect.each(["cancelled", "interrupted", "denied", "permission_denied", undefined])(
     "preserves native tool non-execution metadata %s without inferring a denial from text",
