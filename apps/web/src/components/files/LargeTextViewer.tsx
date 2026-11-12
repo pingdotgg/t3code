@@ -231,9 +231,7 @@ export default function LargeTextViewer(props: {
           <TooltipPopup>
             {props.delimiter ? (
               <>
-                <span className="block">
-                  {countLabel(meta.count ? meta.columns : 0, "column")}
-                </span>
+                <span className="block">{countLabel(meta.count ? meta.columns : 0, "column")}</span>
               </>
             ) : null}
             <span className="block">

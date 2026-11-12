@@ -482,7 +482,7 @@ function ProviderSettingsTextInput({
         spellCheck={false}
       />
       {rejected !== null ? (
-        <p className="text-2xs text-destructive">Enter a valid value. It was not saved.</p>
+        <p className="text-caption text-destructive">Enter a valid value. It was not saved.</p>
       ) : null}
     </div>
   );
