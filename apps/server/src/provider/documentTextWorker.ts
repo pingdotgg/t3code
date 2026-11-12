@@ -409,6 +409,8 @@ function* rtf(source: string): Generator<string, void> {
         i++;
         if (fallback) fallback--;
         else if (rest[0] === "*") state.skip = true;
+        // A backslash before a line break is \par; TextEdit ends paragraphs this way.
+        else if (!state.skip && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
         else if (!state.skip && ["\\", "{", "}"].includes(rest[0]!)) yield rest[0]!;
         else if (!state.skip && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
       }
