@@ -559,6 +559,17 @@ describe("pull request detail decoding", () => {
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
   });
 
+  it("tells a pull request waiting in the merge queue apart from one that is not queued", () => {
+    const passing = [check({ name: "build", status: "COMPLETED", conclusion: "SUCCESS" })];
+    const queued = detailOf(passing, {
+      autoMergeRequest: null,
+      isInMergeQueue: true,
+      mergeQueueEntry: { state: "AWAITING_CHECKS", position: 1 },
+    });
+
+    expect(queued).not.toEqual(detailOf(passing, { autoMergeRequest: null }));
+  });
+
   it("shows a re-running check once, as the run that is happening now", () => {
     const detail = detailOf([
       inWorkflow({
