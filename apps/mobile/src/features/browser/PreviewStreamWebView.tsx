@@ -330,9 +330,14 @@ function PreviewStreamDocumentView({
           </AppText>
           {control?.canOperate ? (
             <Button
-              label={control.controller === "you" ? "Release control" : "Take control"}
+              label={
+                control.controller === "you"
+                  ? "Release control"
+                  : control.controller === "another-viewer"
+                    ? "Take over control"
+                    : "Take control"
+              }
               tone="secondary"
-              disabled={control.controller === "another-viewer"}
               onPress={() =>
                 command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
               }

@@ -177,13 +177,16 @@ export class SessionControl {
     return result;
   }
 
-  async take(viewerId: string) {
+  async take(viewerId: string, afterDrain: () => Promise<void> = async () => {}) {
     this.assertOpen();
-    if (this.owner !== null && this.owner !== viewerId) {
-      throw new BrowserControlInterrupted({ message: "Another viewer controls this browser tab." });
-    }
     if (this.owner !== viewerId) this.changeOwner(viewerId);
-    return this.human(viewerId, async () => {});
+    const epoch = this.epoch;
+    return this.enqueue(async () => {
+      await Promise.all(this.handoff);
+      await afterDrain();
+      this.assertOpen();
+      if (epoch !== this.epoch || this.owner !== viewerId) throw new BrowserControlInterrupted();
+    });
   }
 
   async release(viewerId: string, afterDrain: () => Promise<void> = async () => {}) {
