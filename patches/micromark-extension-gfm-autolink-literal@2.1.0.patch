@@ -1,0 +1,99 @@
+diff --git a/dev/lib/syntax.js b/dev/lib/syntax.js
+index 904e27200ae4980183beda525d33feef70c2e7f7..ebdfdee9fe55e799853500e8ced3829174d6a2f0 100644
+--- a/dev/lib/syntax.js
++++ b/dev/lib/syntax.js
+@@ -662,7 +662,8 @@ function tokenizePath(effects, ok) {
+     if (
+       code === codes.eof ||
+       markdownLineEndingOrSpace(code) ||
+-      unicodeWhitespace(code)
++      unicodeWhitespace(code) ||
++      cjkPunctuation(code)
+     ) {
+       return ok(code)
+     }
+@@ -762,7 +763,8 @@ function tokenizeTrail(effects, ok, nok) {
+       // So is whitespace.
+       code === codes.eof ||
+       markdownLineEndingOrSpace(code) ||
+-      unicodeWhitespace(code)
++      unicodeWhitespace(code) ||
++      cjkPunctuation(code)
+     ) {
+       return ok(code)
+     }
+@@ -791,7 +793,8 @@ function tokenizeTrail(effects, ok, nok) {
+       code === codes.leftParenthesis ||
+       code === codes.leftSquareBracket ||
+       markdownLineEndingOrSpace(code) ||
+-      unicodeWhitespace(code)
++      unicodeWhitespace(code) ||
++      cjkPunctuation(code)
+     ) {
+       return ok(code)
+     }
+@@ -981,3 +984,16 @@ function previousUnbalanced(events) {
+ 
+   return result
+ }
++
++// CJK and full-width punctuation (`，`, `。`, `（`) ends a URL the way whitespace does,
++// since CJK prose puts no space after a link.
++function cjkPunctuation(code) {
++  return (
++    code !== null &&
++    ((code >= 0x3000 && code <= 0x303f) ||
++      (code >= 0xfe10 && code <= 0xfe1f) ||
++      (code >= 0xfe30 && code <= 0xfe6f) ||
++      (code >= 0xff00 && code <= 0xffef)) &&
++    unicodePunctuation(code)
++  )
++}
+diff --git a/lib/syntax.js b/lib/syntax.js
+index dffbaf15146b34d3b3f634286629ccb148866f4c..df4dabf94635b0f45537bfea969b49bd0baaed11 100644
+--- a/lib/syntax.js
++++ b/lib/syntax.js
+@@ -584,7 +584,7 @@ function tokenizePath(effects, ok) {
+     if (code === 33 || code === 34 || code === 38 || code === 39 || code === 41 || code === 42 || code === 44 || code === 46 || code === 58 || code === 59 || code === 60 || code === 63 || code === 93 || code === 95 || code === 126) {
+       return effects.check(trail, ok, pathAtPunctuation)(code);
+     }
+-    if (code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code)) {
++    if (code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code) || cjkPunctuation(code)) {
+       return ok(code);
+     }
+     effects.consume(code);
+@@ -665,7 +665,7 @@ function tokenizeTrail(effects, ok, nok) {
+     // `<` is an end.
+     code === 60 ||
+     // So is whitespace.
+-    code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code)) {
++    code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code) || cjkPunctuation(code)) {
+       return ok(code);
+     }
+     return nok(code);
+@@ -687,7 +687,7 @@ function tokenizeTrail(effects, ok, nok) {
+   function trailBracketAfter(code) {
+     // Whitespace or something that could start a resource or reference is the end.
+     // Switch back to trail otherwise.
+-    if (code === null || code === 40 || code === 91 || markdownLineEndingOrSpace(code) || unicodeWhitespace(code)) {
++    if (code === null || code === 40 || code === 91 || markdownLineEndingOrSpace(code) || unicodeWhitespace(code) || cjkPunctuation(code)) {
+       return ok(code);
+     }
+     return trail(code);
+@@ -852,3 +852,16 @@ function previousUnbalanced(events) {
+   }
+   return result;
+ }
++
++// CJK and full-width punctuation (`，`, `。`, `（`) ends a URL the way whitespace does,
++// since CJK prose puts no space after a link.
++function cjkPunctuation(code) {
++  return (
++    code !== null &&
++    ((code >= 0x3000 && code <= 0x303f) ||
++      (code >= 0xfe10 && code <= 0xfe1f) ||
++      (code >= 0xfe30 && code <= 0xfe6f) ||
++      (code >= 0xff00 && code <= 0xffef)) &&
++    unicodePunctuation(code)
++  )
++}

@@ -175,6 +175,7 @@ overrides:
   # Resolve below remark-math so Vite, Metro and Node use the same tokenizer.
   "remark-math>micromark-extension-math": npm:micromark-extension-llm-math@3.1.0
   micromark-extension-gfm-table: 2.1.1
+  micromark-extension-gfm-autolink-literal: 2.1.0
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
   "@tailwindcss/node": "catalog:"
@@ -275,6 +276,7 @@ patchedDependencies:
   "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
+  micromark-extension-gfm-autolink-literal@2.1.0: patches/micromark-extension-gfm-autolink-literal@2.1.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
