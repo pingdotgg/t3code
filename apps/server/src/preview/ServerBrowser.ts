@@ -2914,7 +2914,16 @@ const make = Effect.gen(function* () {
             return;
           }
           await tab.accessibility
-            .subscribe(viewer.id, (document) => viewer.offer({ _tag: "accessibility", document }))
+            .subscribe(
+              viewer.id,
+              (document) =>
+                viewer.offer({ _tag: "accessibility", document }) &&
+                (document !== null ||
+                  viewer.offer({
+                    _tag: "accessibilityNotice",
+                    message: AccessibilityNotice.unavailable,
+                  })),
+            )
             .catch(() => {
               if (request !== accessibilityRequest) return;
               accessible = false;

@@ -336,7 +336,8 @@ interface Capture {
 }
 
 interface Subscriber {
-  readonly offer: (document: PreviewAccessibilityDocument) => boolean;
+  /** `null` withdraws a document that no longer describes the page. */
+  readonly offer: (document: PreviewAccessibilityDocument | null) => boolean;
   pending: boolean;
 }
 
@@ -370,6 +371,9 @@ export class ServerBrowserAccessibility {
   /** Bumped by any frame navigation; a capture that spans one cannot be acted on. */
   private frameChanges = 0;
   private latest: Capture | null = null;
+  /** Viewers may still show a document from before the last main-frame navigation. */
+  private outdated = false;
+  private unavailable = false;
   private chain: Promise<void> = Promise.resolve();
   private queued: Promise<void> | null = null;
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -534,6 +538,7 @@ export class ServerBrowserAccessibility {
     this.run += 1;
     this.ready = null;
     this.latest = null;
+    this.outdated = this.unavailable = false;
     this.queued = null;
     if (this.settleTimer !== null) clearTimeout(this.settleTimer);
     if (this.redeliverTimer !== null) clearTimeout(this.redeliverTimer);
@@ -550,8 +555,10 @@ export class ServerBrowserAccessibility {
   }
 
   private readonly onFrameNavigated = (frame: Frame) => {
-    if (frame === this.page.mainFrame()) this.latest = null;
-    else this.dropFrameSession(frame);
+    if (frame === this.page.mainFrame()) {
+      this.outdated ||= this.latest !== null;
+      this.latest = null;
+    } else this.dropFrameSession(frame);
     this.forgetTargets();
   };
 
@@ -619,9 +626,14 @@ export class ServerBrowserAccessibility {
     const captured = await this.capture(main, run).catch((cause: unknown) => {
       if (run !== this.run) return null;
       this.onError(cause);
+      this.withdraw();
       throw cause;
     });
-    if (!captured || run !== this.run || !captured.root) return;
+    if (!captured || run !== this.run) return;
+    if (!captured.root) {
+      this.withdraw();
+      return;
+    }
     const targets =
       frameChanges === this.frameChanges
         ? captured.targets
@@ -641,17 +653,27 @@ export class ServerBrowserAccessibility {
       json,
       targets,
     };
+    this.outdated = this.unavailable = false;
+    for (const subscriber of this.subscribers.values()) subscriber.pending = true;
+    this.deliver();
+  }
+
+  /** Clears viewers still showing a page that navigated away when its successor cannot be read. */
+  private withdraw() {
+    if (this.latest || !this.outdated) return;
+    this.outdated = false;
+    this.unavailable = true;
     for (const subscriber of this.subscribers.values()) subscriber.pending = true;
     this.deliver();
   }
 
   /** Viewer queues drop under backpressure; retry with whatever is newest then. */
   private deliver() {
-    const latest = this.latest;
-    if (!latest) return;
+    const document = this.latest?.document ?? (this.unavailable ? null : undefined);
+    if (document === undefined) return;
     let waiting = false;
     for (const subscriber of this.subscribers.values()) {
-      if (subscriber.pending) subscriber.pending = !subscriber.offer(latest.document);
+      if (subscriber.pending) subscriber.pending = !subscriber.offer(document);
       waiting ||= subscriber.pending;
     }
     if (waiting && this.redeliverTimer === null) {
@@ -714,6 +736,11 @@ export class ServerBrowserAccessibility {
     );
     const [main_, ...rest] = trees;
     if (!main_) throw new Error("The page's accessibility tree is unavailable.");
+    // A read that spans a new document mixes two pages; the navigation queued a fresh read.
+    const { frameTree: after } = (await main.send("Page.getFrameTree")) as {
+      frameTree: FrameTreeNode;
+    };
+    if (after.frame.loaderId !== frameTree.frame.loaderId) return null;
     const built = buildAccessibilityTree([main_, ...rest.filter((tree) => tree !== null)]);
     return {
       token,

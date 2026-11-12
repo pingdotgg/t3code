@@ -572,19 +572,31 @@ it("refuses actions on a document whose frame navigated until it is read again",
   }
 });
 
-it("rejects the subscription when the first capture fails, so the viewer is told", async () => {
+it("rejects the first failed capture, and withdraws a navigated page whose successor cannot be read", async () => {
+  vi.useFakeTimers();
   let readable = false;
+  let label = "Page";
+  let loader = "main-loader";
+  let duringRead: (() => void) | null = null;
   const main = fakeSession(
     () => {
       if (!readable) throw new Error("Target closed");
-      return [node("1", "RootWebArea", { label: "Page" })];
+      duringRead?.();
+      duringRead = null;
+      return [node("1", "RootWebArea", { label })];
     },
     { id: "main" },
+  );
+  const send = main.send.getMockImplementation()!;
+  main.send.mockImplementation(async (method, input) =>
+    method === "Page.getFrameTree"
+      ? { frameTree: { frame: { id: "main", loaderId: loader } } }
+      : send(method, input),
   );
   const page = fakePage(main, new Map());
   const onError = vi.fn();
   const mirror = new ServerBrowserAccessibility(page as unknown as Page, onError);
-  const offer = vi.fn(() => true);
+  const offer = vi.fn((_document: unknown) => true);
   try {
     await expect(mirror.subscribe("viewer", offer)).rejects.toThrow();
     expect(offer).not.toHaveBeenCalled();
@@ -598,8 +610,31 @@ it("rejects the subscription when the first capture fails, so the viewer is told
     expect(offer).toHaveBeenCalledWith(
       expect.objectContaining({ root: { id: "0.1", role: "document", name: "Page" } }),
     );
+
+    // A read that a navigation interrupts holds the old page and is never shown.
+    offer.mockClear();
+    label = "Old page";
+    duringRead = () => {
+      loader = "next-loader";
+      page.events.emit("framenavigated", page);
+    };
+    await mirror.refresh();
+    expect(offer).not.toHaveBeenCalled();
+
+    readable = false;
+    await expect(mirror.refresh()).rejects.toThrow();
+    expect(offer.mock.calls).toEqual([[null]]);
+
+    readable = true;
+    label = "Next page";
+    await mirror.refresh();
+    expect(offer.mock.lastCall![0]).toMatchObject({
+      document: "3:next-loader",
+      root: { name: "Next page" },
+    });
   } finally {
     await mirror.close();
+    vi.useRealTimers();
   }
 });
 
