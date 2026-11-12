@@ -638,6 +638,13 @@ export const make = Effect.gen(function* () {
       }
       return { path, records, malformedRecords };
     });
+    const livePaths = new Set(files.map((file) => file.path));
+    for (const file of read) {
+      if (file.failed || !file.path.endsWith(".jsonl.zst")) continue;
+      const originalPath = file.path.slice(0, -4);
+      // A successfully read archive replaces the original's saved records and diagnostics.
+      if (!livePaths.has(originalPath) && fileCache.delete(originalPath)) cacheDirty = true;
+    }
     const unread = failedPaths + read.filter((file) => file.failed).length;
     yield* Effect.annotateCurrentSpan({
       "usage.files": files.length,

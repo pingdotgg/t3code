@@ -118,7 +118,13 @@ describe("Antigravity process environment", () => {
     });
 
     expect(spawn.command).toBe("/usr/bin/agy");
-    expect(spawn.args).toEqual(["acp"]);
+    expect(spawn.args).toEqual([
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+    ]);
     expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
   });
