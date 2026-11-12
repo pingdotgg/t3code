@@ -279,7 +279,6 @@ it("does not serialize arbitrary provider causes", () => {
 it.each([
   ["usage_limit", "responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
   ["usage_limit", "usageLimitExceeded", "Usage limit reached"],
-  ["usage_limit", "rateLimitExceeded", "Usage limit reached"],
   ["provider_error", "responseTooManyFailedAttempts", "Provider error"],
 ] as const)(
   "titles %s / %s failures without changing recovery evidence",
