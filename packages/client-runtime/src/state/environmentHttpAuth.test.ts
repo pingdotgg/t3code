@@ -146,6 +146,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
           },
         };
       }),
+    rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("HTTP requests must not renew a socket's token."),
   });
   const signer = ManagedRelay.ManagedRelayDpopSigner.of({

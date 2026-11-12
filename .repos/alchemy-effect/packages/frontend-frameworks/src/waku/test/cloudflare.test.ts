@@ -1,8 +1,8 @@
-import { isDeployTarget } from "../../core/index.ts";
-import * as Effect from "effect/Effect";
 import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
 import type * as ViteModule from "vite";
 import { describe, expect, it } from "vitest";
+import { isDeployTarget } from "../../core/index.ts";
 import cloudflareTargetFactory, {
   makeWakuCloudflareTarget,
   makeWakuPluginOptions,
@@ -17,9 +17,7 @@ const context = {
   phase: "build",
 } as const;
 
-const flatten = (
-  plugins: ReadonlyArray<ViteModule.PluginOption>,
-): Array<ViteModule.Plugin> =>
+const flatten = (plugins: ReadonlyArray<ViteModule.PluginOption>): Array<ViteModule.Plugin> =>
   (plugins as Array<unknown>)
     .flat(8)
     .filter(
@@ -77,9 +75,7 @@ describe("makeWakuPluginOptions", () => {
       wakuDirectory: WAKU_DIR,
       pluginOptions: { main: "./src/worker-entry.ts" },
     });
-    expect(relative.main).toBe(
-      NodePath.resolve("/project", "src/worker-entry.ts"),
-    );
+    expect(relative.main).toBe(NodePath.resolve("/project", "src/worker-entry.ts"));
     // The topology stays pinned even with a user main.
     expect(relative.viteEnvironments).toEqual({
       entry: "rsc",
@@ -89,8 +85,7 @@ describe("makeWakuPluginOptions", () => {
 
   it("defaults compatibilityFlags to nodejs_als (waku needs AsyncLocalStorage)", () => {
     expect(
-      makeWakuPluginOptions({ root: "/project", wakuDirectory: WAKU_DIR })
-        .compatibilityFlags,
+      makeWakuPluginOptions({ root: "/project", wakuDirectory: WAKU_DIR }).compatibilityFlags,
     ).toEqual(["nodejs_als"]);
     expect(
       makeWakuPluginOptions({
@@ -152,12 +147,7 @@ describe("makeWakuCloudflareTarget", () => {
 
   it("declares the workerd bundle conditions and cloudflare: externals", () => {
     const target = makeWakuCloudflareTarget();
-    expect(target.bundle?.conditions).toEqual([
-      "workerd",
-      "worker",
-      "module",
-      "browser",
-    ]);
+    expect(target.bundle?.conditions).toEqual(["workerd", "worker", "module", "browser"]);
     expect(target.bundle?.external).toEqual(["cloudflare:"]);
   });
 
@@ -180,19 +170,13 @@ describe("makeWakuCloudflareTarget", () => {
     });
     const plugins = flatten(Effect.runSync(target.vitePlugins(context)));
     expect(plugins.length).toBeGreaterThan(0);
-    expect(
-      plugins.some((plugin) => plugin.name.startsWith("distilled-cloudflare")),
-    ).toBe(true);
+    expect(plugins.some((plugin) => plugin.name.startsWith("distilled-cloudflare"))).toBe(true);
   });
 
   it("surfaces the config's main as the generic user-entry carriage", () => {
     expect(makeWakuCloudflareTarget().entry).toBeUndefined();
-    expect(
-      makeWakuCloudflareTarget({ compatibilityDate: "2026-03-10" }).entry,
-    ).toBeUndefined();
-    expect(
-      makeWakuCloudflareTarget({ main: "./src/worker-entry.ts" }).entry,
-    ).toEqual({
+    expect(makeWakuCloudflareTarget({ compatibilityDate: "2026-03-10" }).entry).toBeUndefined();
+    expect(makeWakuCloudflareTarget({ main: "./src/worker-entry.ts" }).entry).toEqual({
       main: "./src/worker-entry.ts",
     });
   });
