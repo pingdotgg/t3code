@@ -51,8 +51,10 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
   });
   const folder = page.getByRole("button", { name: /^render/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "true");
-  await userEvent.click(folder);
-  await expect.element(folder).toHaveAttribute("aria-expanded", "false");
+  // The shift guard drops pointer presses on a row that appeared under 500ms ago; keys pass.
+  folder.element().focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText(second.title, { exact: true })).not.toBeInTheDocument();
   await userEvent.fill(page.getByRole("combobox", { name: "Search threads" }), "search-target");
   const result = page.getByRole("option", { name: /Thread search-target/ });
   await expect.element(result).toBeVisible();

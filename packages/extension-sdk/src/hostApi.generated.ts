@@ -261,6 +261,7 @@ type Wire21 =
       readonly wakes: number;
       readonly awaitingBaseline?: "all" | "checks" | undefined;
       readonly checksAwaitedSince?: string | null | undefined;
+      readonly checksPending?: Wire6;
     }
   | undefined;
 type Wire22 = {
