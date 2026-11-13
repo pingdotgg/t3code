@@ -24,6 +24,7 @@ import type {
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
+  detail?: string;
   destructive?: boolean;
   disabled?: boolean;
   header?: boolean;
@@ -40,6 +41,7 @@ export type QuitShortcutHintEvent =
 export interface ContextMenuItemSchemaType {
   readonly id: string;
   readonly label: string;
+  readonly detail?: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly header?: boolean;
@@ -52,6 +54,7 @@ export interface ContextMenuItemSchemaType {
 export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
+  detail: Schema.optionalKey(Schema.String),
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
@@ -334,6 +337,8 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
   installedPath: Schema.NullOr(Schema.String),
   onPath: Schema.Boolean,
   shadowedBy: Schema.optionalKey(Schema.String),
+  /** For an installed `t3` that is off PATH: the shell startup file that adds it, and whether it has. */
+  pathSetup: Schema.optionalKey(Schema.Struct({ file: Schema.String, added: Schema.Boolean })),
   /** The app's bundled `t3` launcher, which runs without Node or a PATH entry. */
   launcherPath: Schema.NullOr(Schema.String),
 });
@@ -628,6 +633,12 @@ export interface DesktopPreviewOpenLinkEvent {
   tabId: string;
   url: string;
   background: boolean;
+}
+
+export interface DesktopPreviewFindResultEvent {
+  tabId: string;
+  activeMatchOrdinal: number;
+  matches: number;
 }
 
 export const DesktopPreviewRecordingInputSchema = Schema.Union([
@@ -988,6 +999,13 @@ export const DesktopPreviewSetZoomFactorInputSchema = Schema.Struct({
   zoomFactor: Schema.Number.check(Schema.isGreaterThan(0)),
 });
 
+export const DesktopPreviewFindInPageInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  text: Schema.NonEmptyString.check(Schema.isMaxLength(1000)),
+  forward: Schema.Boolean,
+  newSession: Schema.Boolean,
+});
+
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   audioMuted: Schema.Boolean,
@@ -1050,6 +1068,8 @@ export interface DesktopBridge {
   getSystemLocale: () => string | null;
   /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
   getPreferredSystemLanguages: () => readonly string[];
+  /** False when the OS turned off middle-click PRIMARY paste (`gtk-enable-primary-paste`). */
+  getPrimaryPasteEnabled?: () => boolean;
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
@@ -1092,6 +1112,8 @@ export interface DesktopBridge {
   ) => Promise<AuthAccessTokenResult>;
   fetchSshSessionState: (httpBaseUrl: string, bearerToken: string) => Promise<AuthSessionState>;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
+  /** Fires with a prompt's request id once it is answered, cancelled, expired or abandoned. */
+  onSshPasswordPromptSettled: (listener: (requestId: string) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
@@ -1142,6 +1164,7 @@ export interface DesktopBridge {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
+    addToPath: () => Promise<DesktopCliCommandState>;
   };
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
@@ -1240,6 +1263,7 @@ export interface DesktopPreviewBridge {
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;
   refresh: (tabId: string) => Promise<void>;
+  stopLoading: (tabId: string) => Promise<void>;
   zoomIn: (tabId: string) => Promise<void>;
   zoomOut: (tabId: string) => Promise<void>;
   resetZoom: (tabId: string) => Promise<void>;
@@ -1247,6 +1271,12 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
+  findInPage: (
+    tabId: string,
+    text: string,
+    options: { forward: boolean; newSession: boolean },
+  ) => Promise<void>;
+  stopFindInPage: (tabId: string) => Promise<void>;
   /** Tells the tab's server whether its webview is on screen. */
   setShown: (tabId: string, shown: boolean) => Promise<void>;
   openDevTools: (tabId: string) => Promise<void>;
@@ -1299,12 +1329,15 @@ export interface DesktopPreviewBridge {
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
+  onFindResult: (listener: (event: DesktopPreviewFindResultEvent) => void) => () => void;
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Which button takes focus on open. Defaults to Cancel; destructive confirms always keep Cancel. */
+  readonly initialFocus?: "confirm" | "cancel";
 }
 
 export interface LocalApi {

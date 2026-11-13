@@ -1,10 +1,7 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import {
-  pickableProjectGroups,
-  resolveScratchProjectScopeKey,
-} from "@t3tools/client-runtime/state/project-grouping";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import {
   useAppearancePreferences,
   useAndroidFloatingTabs,
@@ -25,14 +22,20 @@ import { FLOATING_TABS } from "../layout/workspace/floating-workspace-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
-import { useProjects, useNavigationThreadShells } from "../../state/entities";
+import { useProjects } from "../../state/entities";
+import { steadyNavigationThreadShellsAtom } from "../../state/threads";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
-import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
+import {
+  useLaunchingThreads,
+  usePendingNewTasks,
+  type PendingNewTask,
+} from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -42,13 +45,12 @@ import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenuItems } from "../home/home-list-filter-menu";
-import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
-import { WORKSPACE_LIST_SCROLL_INSETS } from "../layout/workspace/workspace-list-insets";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
@@ -117,7 +119,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const insets = useSafeAreaInsets();
   const { fabClearance, fabSize } = useAndroidControlSizing();
   const projects = useProjects();
-  const threads = useNavigationThreadShells();
+  const threads = useAtomValue(steadyNavigationThreadShellsAtom);
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -137,6 +139,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
+  const launchingThreads = useLaunchingThreads(threads);
   const activeNewTask = useActiveNewTask();
   const queuedThreadKeys = useQueuedThreadKeys();
   const selectDetail = useSelectWorkspaceDetail();
@@ -166,12 +169,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           )
         ? [options.selectedEnvironmentId]
         : [];
-  // A legacy per-environment scratch key resolves here on every render; the stored
-  // value is only rewritten when the user picks a filter.
-  const resolvedProjectKey = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
-    sidebarProjectGroupingMode: options.projectGroupingMode,
-    sidebarProjectGroupingOverrides: {},
-  });
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -200,9 +197,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       ),
     [projectScopes],
   );
-  // An archived project's filter reads as all projects, matching the filter menu.
-  const selectedProjectScope =
-    pickableProjectGroups(projectScopes).find((scope) => scope.key === resolvedProjectKey) ?? null;
+  const selectedProjectScope = resolveHomeProjectFilterScope(projectScopes, projects, options);
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
@@ -265,7 +260,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
-    threads,
+    threads: launchingThreads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
     projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
@@ -552,26 +547,43 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       }}
     />
   );
+  const showAddEnvironment =
+    !catalogState.isLoadingConnections &&
+    !catalogState.hasReadyEnvironment &&
+    !catalogState.hasConnectingEnvironment;
   const listEmpty = (
-    <Text
-      className={
-        Platform.OS === "android"
-          ? "px-4 py-4 text-center text-sm text-drawer-foreground-muted"
-          : "px-2 py-4 text-sm text-drawer-foreground-muted"
-      }
-    >
-      {catalogState.isLoadingConnections
-        ? "Loading threads…"
-        : Platform.OS === "android" && !catalogState.hasConnections
-          ? "No environments connected"
-          : props.searchQuery.trim().length > 0
-            ? threadSearch.isPending
-              ? "Searching thread messages…"
-              : "No matching threads"
-            : selectedProjectScope !== null
-              ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
-    </Text>
+    <View>
+      <Text
+        className={
+          Platform.OS === "android"
+            ? "px-4 py-4 text-center text-sm text-drawer-foreground-muted"
+            : "px-2 py-4 text-sm text-drawer-foreground-muted"
+        }
+      >
+        {catalogState.isLoadingConnections
+          ? "Loading threads…"
+          : showAddEnvironment
+            ? "No environments connected"
+            : props.searchQuery.trim().length > 0
+              ? threadSearch.isPending
+                ? "Searching thread messages…"
+                : "No matching threads"
+              : selectedProjectScope !== null
+                ? `No threads in ${selectedProjectScope.title}`
+                : "No threads yet"}
+      </Text>
+      {showAddEnvironment ? (
+        <View className={Platform.OS === "android" ? "self-center" : "px-2"}>
+          <Button
+            tone="primary"
+            size="compact"
+            icon="plus"
+            label="Add environment"
+            onPress={props.onOpenEnvironmentSettings}
+          />
+        </View>
+      ) : null}
+    </View>
   );
 
   if (Platform.OS === "ios") {
@@ -592,7 +604,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
-                {...WORKSPACE_LIST_SCROLL_INSETS}
+                automaticallyAdjustsScrollIndicatorInsets
+                // The column lays the list under its bar, glass or solid; UIKit insets it past both.
+                contentInsetAdjustmentBehavior="automatic"
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
