@@ -42,7 +42,19 @@ const Connection = Schema.Struct({
   wsUrl: Schema.NonEmptyString,
   bearerToken: Schema.NonEmptyString,
 });
-const readFile = (path: string) => Effect.tryPromise(() => NodeFSP.readFile(path, "utf8"));
+class WatchReadFileError extends Schema.TaggedError<WatchReadFileError>()("WatchReadFileError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message() {
+    return `Could not read ${this.path}`;
+  }
+}
+const readFile = (path: string) =>
+  Effect.tryPromise({
+    try: () => NodeFSP.readFile(path, "utf8"),
+    catch: (cause) => new WatchReadFileError({ path, cause }),
+  });
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 class WatchUnregisteredDeviceError extends Schema.TaggedError<WatchUnregisteredDeviceError>()(
   "WatchUnregisteredDeviceError",

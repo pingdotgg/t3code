@@ -1,7 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone
-and publish repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Cursor
+Origin to clone and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
@@ -129,6 +129,20 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
+### Cursor Origin
+
+Install the [Origin CLI](https://cursor.com/docs/origin/cli) and sign in. Signing in also sets up Git
+credentials for `origin.cursor.com`:
+
+```bash
+curl -fsSL https://downloads.cursor.com/origin/install.sh | sh
+origin auth login
+```
+
+If cloning or pushing asks for a username, run `origin auth setup-git` to point Git at the CLI's
+credentials again. Origin repositories use HTTPS and are published privately. Repositories mirrored
+from GitHub keep their pull requests on GitHub; open those from the GitHub remote.
+
 ## Start, clone, or publish a project
 
 To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or
@@ -141,12 +155,21 @@ publish it. If Git has no name or email on that machine, the project is created 
 first commit.
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
-provider or paste a Git URL, then choose where to save it. The project opens right away while the
+provider or paste a Git URL, then choose where to save it. Only GitHub is listed at first. To list
+another provider here and in **Publish Repository**, turn on its switch under
+**Settings → Source control**. A branch or file page copied from GitHub,
+GitLab, GitCafe, Codeberg or Bitbucket also works: T3 Code clones that repository's default branch.
+On other hosts, paste the repository's clone URL. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
 toast or from the banner above the composer. When the host refuses the machine's SSH key, T3 Code
 clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
 HTTPS URL.
+
+To lay clones out like [ghq](https://github.com/x-motemen/ghq), turn on **Clone into host folders**
+under **Settings → Threads** (or **Source control** on mobile). Clones then default to
+`<host>/<owner>/<repo>` under **Add project starts in**, so set that to `~/ghq` to share ghq's
+folders. You can still change the destination before cloning.
 
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
@@ -162,14 +185,22 @@ An existing fork PR can appear beside the branch even if you pushed without sett
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
-Choose the writing style and model in **Settings → Source control**. **Repository conventions**
-uses the project's instructions and recent commit subjects.
+Choose how commit messages and pull request titles and descriptions are written in
+**Settings → Source control → Commits & pull requests**. **Repository conventions** uses the
+project's instructions and recent commit subjects. **Custom instructions** applies your own
+instructions to commits and pull requests.
 
 ## Review and merge
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
+Where you can edit a description, you can also tick its checkboxes from the Summary tab
+(the Overview tab on mobile).
 GitLab calls these merge requests.
+
+A link to part of a pull request opens that part: a comment or review is marked in the activity, a
+changed-line link opens the file at those lines, a checks link opens the checks, and a commit link
+opens that commit's changes. On web and desktop, hovering a comment or commit link previews it.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts
@@ -254,9 +285,9 @@ running count. A tick belongs to the pull request rather than to a commit, so sc
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
 
 On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
-in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the
-server you are connected to keeps them instead: they follow you across the apps connected to that
-server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
+in either direction. Forgejo, GitLab, Bitbucket, Azure DevOps, and Cursor Origin expose no record
+T3 Code can read, so the server you are connected to keeps them instead: they follow you across the
+apps connected to that server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
 
 On mobile, open a changed file and mark it viewed from its header. Viewed files collapse,
 and their marks follow the same rules as on web and desktop.
@@ -291,13 +322,14 @@ Linking and unlinking are available in the web and desktop clients.
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
 row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
 closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
-when requested. A settled thread's reviews stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
+when requested. Settling a thread refreshes its open and closed reviews once; after that they stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails, the required checks pass, someone else comments or reviews, or the branch starts to
-conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
+check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
+conflict. On github.com it also wakes the agent, with GitHub's reason, when the merge queue drops
+the pull request without merging it. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
@@ -308,9 +340,12 @@ watch already reported; unlinking the pull request clears that. Subagents cannot
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
-A watched thread counts as working between wakes, so it stays in the **Working** section and does
-not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
-returns to your inbox.
+A watched thread counts as working while the pull request still has checks running, so it stays in
+the **Working** section, including after the agent pushes a fix. Once every check has finished,
+including review bots that report as checks, the thread returns to your inbox: what happens next is
+up to a person. That includes a workflow waiting for a maintainer to approve it, which runs only
+once someone does. The watch stays on and still wakes the agent on new comments, failed checks or
+conflicts, and a watched thread never auto-settles.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
