@@ -734,6 +734,14 @@ function codexApprovalPermissionsPrompt(
   return [...lines].join("\n");
 }
 
+// Accepting hands Codex the grant for the whole turn, not one action, so the labels name the scope.
+const CODEX_PERMISSION_GRANT_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "cancel", label: "Cancel" },
+  { decision: "decline", label: "Decline" },
+  { decision: "acceptForSession", label: "Allow for this session" },
+  { decision: "accept", label: "Allow for this turn" },
+];
+
 function permissionsResponseFromDecision(input: {
   readonly decision: ProviderApprovalDecision;
   readonly permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"];
@@ -5972,6 +5980,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeRequestId: payload.itemId,
               requestKind,
               permissions,
+              options: CODEX_PERMISSION_GRANT_OPTIONS,
               ...(grants === undefined
                 ? { prompt: payload.reason ?? null }
                 : { prompt: grants, ...(reason ? { reason } : {}) }),

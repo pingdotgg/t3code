@@ -10627,17 +10627,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: prompt,
           }),
         );
-        return {
-          harness,
-          answerNext: Queue.take(pending).pipe(
+        const answerNextWith = (decision: ProviderApprovalDecision) =>
+          Queue.take(pending).pipe(
             Effect.tap((request) =>
-              harness.runtime.respondToRuntimeRequest({
-                requestId: request.id,
-                decision: "accept",
-              }),
+              harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision }),
             ),
-          ),
-        };
+          );
+        return { harness, answerNext: answerNextWith("accept"), answerNextWith };
       });
 
     const approvalItem = (
@@ -10777,6 +10773,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       itemId: string,
       permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
       reason?: string,
+      scope: "turn" | "session" = "turn",
     ): Array<CodexReplay.CodexAppServerReplayEntry> => [
       {
         type: "emit_inbound",
@@ -10798,7 +10795,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "expect_outbound",
         label: `permissions ${itemId}`,
-        frame: { id, result: { permissions, scope: "turn" } },
+        frame: { id, result: { permissions, scope } },
       },
     ];
 
@@ -10866,14 +10863,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ],
             },
           }) satisfies CodexSchema.PermissionsRequestApprovalParams["permissions"];
-        const { harness, answerNext } = yield* startApprovalTurn("permission-grants", [
-          ...permissionRequest(0, "shallow", grant(1), "  Need to check the docs "),
-          ...permissionRequest(1, "deep", grant(9)),
-          ...permissionRequest(2, "nothing", { network: { enabled: false } }, "Just asking"),
-          turnCompleted(nativeTurnId),
-        ]);
+        const { harness, answerNext, answerNextWith } = yield* startApprovalTurn(
+          "permission-grants",
+          [
+            ...permissionRequest(0, "shallow", grant(1), "  Need to check the docs "),
+            ...permissionRequest(1, "deep", grant(9), undefined, "session"),
+            ...permissionRequest(2, "nothing", { network: { enabled: false } }, "Just asking"),
+            turnCompleted(nativeTurnId),
+          ],
+        );
         const shallow = approvalItem(harness.events, yield* answerNext);
-        const deep = approvalItem(harness.events, yield* answerNext);
+        const deep = approvalItem(harness.events, yield* answerNextWith("acceptForSession"));
         const nothing = approvalItem(harness.events, yield* answerNext);
         yield* harness.firstTerminal;
 
@@ -10889,6 +10889,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ].join("\n"),
         );
         assert.equal(shallow?.reason, "Need to check the docs");
+        // The replay expects scope "turn" for accept and "session" for acceptForSession.
+        assert.deepEqual(
+          shallow?.options
+            ?.filter((option) => option.decision.startsWith("accept"))
+            .map((option) => [option.decision, option.label]),
+          [
+            ["acceptForSession", "Allow for this session"],
+            ["accept", "Allow for this turn"],
+          ],
+        );
         assert.isUndefined(deep?.reason);
         assert.deepEqual([nothing?.prompt, nothing?.reason], ["Just asking", undefined]);
 
