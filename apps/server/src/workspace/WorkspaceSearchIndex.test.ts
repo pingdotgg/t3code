@@ -11,9 +11,14 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:child_process", { spy: true });
+
+const testLayer = Layer.mergeAll(VcsProcess.layer, WorkspaceSearchIndex.layerWorker).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -94,7 +99,65 @@ it.effect("filters image searches before applying the result limit", () =>
       expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("fetches past a first page of Git-ignored results", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-ignored-" });
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+      yield* fs.writeFileString(path.join(cwd, ".git", "info", "exclude"), "hidden/\n");
+      yield* fs.makeDirectory(path.join(cwd, "hidden"));
+      yield* fs.writeFileString(path.join(cwd, "hidden", "a.ts"), "");
+
+      const items = [
+        fileItem("hidden/a.ts"),
+        fileItem("hidden/b.ts"),
+        fileItem("hidden/c.ts"),
+        fileItem("src/a.ts"),
+      ];
+      const fileSearch = vi.fn(async (_query: string, options?: { pageSize?: number }) => ({
+        ok: true as const,
+        value: {
+          items: items.slice(0, options?.pageSize),
+          scores: [],
+          totalMatched: items.length,
+          totalFiles: items.length,
+        },
+      }));
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd).pipe(withFinder({ fileSearch }));
+      const result = yield* searchIndex.search("a", 1, "file", false);
+
+      expect(result).toEqual({ entries: [{ kind: "file", path: "src/a.ts" }], truncated: false });
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+// A backslash is a file name character on Linux and macOS, so only Windows may treat it as a separator.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "keeps a backslash in a POSIX folder name as part of the search result path",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const items = [fileItem("dir\\one/report.txt")];
+        const fileSearch = vi.fn(async () => ({
+          ok: true as const,
+          value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
+        }));
+
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+          withFinder({ fileSearch }),
+        );
+        const result = yield* searchIndex.search("report", 50, "file");
+
+        expect(result.entries).toEqual([{ kind: "file", path: "dir\\one/report.txt" }]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("continues whole-word searches after a filtered grep page", () =>
@@ -166,7 +229,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       expect(grep).toHaveBeenCalledTimes(2);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("reads an incomplete scan from the finder that answers the search", () =>
@@ -221,7 +284,7 @@ it.effect("reads an incomplete scan from the finder that answers the search", ()
         truncated: true,
       });
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 it.live("rebuilds the index in a new search process after the worker exits", () =>
@@ -239,10 +302,7 @@ it.live("rebuilds the index in a new search process after the worker exits", () 
     expect(yield* searchNeedle(searchIndex)).toEqual(before);
     expect(before.matches.map((match) => match.path)).toEqual(["notes.ts"]);
     expect(spawnedWorkers()).toHaveLength(2);
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(Layer.merge(WorkspaceSearchIndex.layerWorker, NodeServices.layer)),
-  ),
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 it.live("ends the search process once its last index closes", () =>
@@ -255,10 +315,7 @@ it.live("ends the search process once its last index closes", () =>
       worker!.exitCode ??
       (yield* Effect.promise(() => NodeEvents.EventEmitter.once(worker!, "exit")))[0];
     expect(code).toBe(0);
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(Layer.merge(WorkspaceSearchIndex.layerWorker, NodeServices.layer)),
-  ),
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
@@ -289,5 +346,5 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
-    ).pipe(Effect.provide(Layer.merge(WorkspaceSearchIndex.layerWorker, NodeServices.layer))),
+    ).pipe(Effect.provide(testLayer)),
 );
