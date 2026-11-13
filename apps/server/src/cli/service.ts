@@ -54,8 +54,9 @@ export const upsertServiceEnv = (
     const match = SERVICE_ENV_KEY.exec(line);
     let end = index + 1;
     if (match !== null) {
-      // util.parseEnv lets a quoted value run to its closing quote across lines.
-      const rest = line.slice(match[0].length).trimStart();
+      // util.parseEnv lets a quoted value run to its closing quote across lines,
+      // skipping only spaces, tabs and CRs before the opening quote.
+      const rest = line.slice(match[0].length).replace(/^[ \t\r]+/u, "");
       const quote = rest[0];
       if ((quote === '"' || quote === "'" || quote === "`") && !rest.includes(quote, 1)) {
         const closing = contents.indexOf(quote, offset + line.length);
