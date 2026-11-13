@@ -2349,6 +2349,8 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
         fixture.setProjectRoots([scratchRoot]);
         fixture.setStoredWorktreePaths([]);
+        // Only this rule lets cleanup delete untracked files, which is all a scratch folder has.
+        fixture.setPolicy("tracked-changes");
         fixture.setThreads([
           shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
         ]);
@@ -2373,12 +2375,13 @@ describe("storage cleanup reports and local file policies", () => {
       repository: ".git",
       reason: "Contains a nested Git repository",
     },
+    { name: "files under the default keep rule", reason: "Has local files (notes.md)" },
     {
-      name: "files under Any local files",
-      policy: "any-local-files",
-      reason: "Has local files (notes.md)",
+      name: "a scheduled task",
+      policy: "tracked-changes",
+      scheduled: true,
+      reason: "Thread has a scheduled task",
     },
-    { name: "a scheduled task", scheduled: true, reason: "Thread has a scheduled task" },
   ] as const)(
     "keeps an idle No project thread's scratch folder with $name",
     ({

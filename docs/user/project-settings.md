@@ -254,8 +254,10 @@ The inactive and settled retention periods also apply to the folders of
 [threads without a project](./thread-sidebar.md#start-without-a-project). Those folders are not
 Git repositories, so their files are deleted with them and cannot be recovered; the thread stays,
 and its next turn starts in a new, empty folder. A folder is kept when it has a Git repository
-anywhere inside it, when its thread has an enabled scheduled task, or, under **Any local files**,
-when it holds anything other than `node_modules`. Folders that no thread uses are listed here too.
+anywhere inside it or when its thread has an enabled scheduled task. Every file in such a folder
+counts as untracked, so only **Edited tracked files** removes a folder that holds anything other
+than `node_modules`; the other two rules remove only empty folders. Folders that no thread uses
+are listed here too.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.

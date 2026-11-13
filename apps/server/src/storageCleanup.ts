@@ -1021,7 +1021,8 @@ const make = Effect.gen(function* () {
       const realParent = yield* fs.realPath(path.dirname(folder));
       if ((yield* fs.realPath(folder)) !== path.join(realParent, path.basename(folder)))
         return "folder is a symbolic link";
-      if (rules.worktreeKeepWhen === "any-local-files") {
+      // Every file here is untracked, and only "tracked-changes" lets cleanup delete those.
+      if (rules.worktreeKeepWhen !== "tracked-changes") {
         const file = (yield* fs.readDirectory(folder)).find((name) => name !== "node_modules");
         if (file !== undefined) return `has local files (${file})`;
       }
