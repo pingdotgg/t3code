@@ -549,7 +549,9 @@ const makeEventStore = Effect.gen(function* () {
           }
           const entityId = streamingTextEntityId(event);
           const snapshots = streamingSnapshots.get(event.threadId);
-          streamingSnapshots.delete(event.threadId);
+          // Thread record events, such as an open client's periodic thread.visited, carry no run
+          // content and leave a run of snapshots unbroken.
+          if (!event.type.startsWith("thread.")) streamingSnapshots.delete(event.threadId);
           if (entityId !== null && row !== undefined) {
             const previous = snapshots?.get(event.type);
             // Replay orders entities by first row, so only an unbroken run of one entity

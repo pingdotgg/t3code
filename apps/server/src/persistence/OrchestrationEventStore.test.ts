@@ -332,12 +332,46 @@ layer("OrchestrationEventStore", (it) => {
           }) satisfies OrchestrationV2DomainEvent;
         const storedTexts = sql<{ readonly text: string }>`
           SELECT json_extract(payload_json, '$.text') AS text FROM orchestration_events
-          WHERE stream_id = ${threadId} ORDER BY sequence ASC
+          WHERE stream_id = ${threadId} AND event_type = 'turn-item.updated'
+          ORDER BY sequence ASC
         `.pipe(Effect.map((rows) => rows.map((row) => row.text)));
+        const providerInstanceId = ProviderInstanceId.make("codex");
+        // An open client records a visit every few seconds while the item streams.
+        const visited = (index: number) =>
+          ({
+            id: EventId.make(`event:long-stream:visited:${index}`),
+            type: "thread.visited",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: threadId,
+              projectId: ProjectId.make("project:long-stream"),
+              title: "Thread",
+              providerInstanceId,
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+              forkedFrom: null,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: now,
+              deletedAt: null,
+            },
+          }) satisfies OrchestrationV2DomainEvent;
         const paragraph = `${"Checking the next case in detail. ".repeat(8)}\n\n`;
         let text = "";
         for (let index = 0; index < 300; index++) {
           text += paragraph;
+          if (index % 20 === 0) yield* store.appendAgentEvents({ events: [visited(index)] });
           const [stored] = yield* store.appendAgentEvents({ events: [reasoning(index, text)] });
           // Live clients and the projections still get every snapshot.
           assert.deepEqual(stored?.event, reasoning(index, text));
