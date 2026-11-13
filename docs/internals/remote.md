@@ -135,8 +135,10 @@ ordinary thread there, so the parent here records the task without a child
 thread of its own (`remoteChild` instead of `childThreadId`). The task is
 recorded before its launch is sent, with what the launch needs and no thread,
 and the launch's key is the task's own, so a restart or a lost answer sends the
-same launch again and the other side replays the thread it already made. A
-refusal fails the task; only a call that got no answer is retried. A follower in
+same launch again and the other side replays the thread it already made. The
+other side keys that replay to the link's session, so a launch is never sent
+again through a link made since: the task fails instead of making a second
+thread. A refusal fails the task; only a call that got no answer is retried. A follower in
 [`RemoteDelegation`](../../apps/server/src/peer/RemoteDelegation.ts) waits on
 that thread and completes the task with `delegated_task.remote.complete`. That
 internal command reuses the parent half of a local finalize, so the parent

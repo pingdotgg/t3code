@@ -380,6 +380,7 @@ const make = Effect.gen(function* () {
               modelSelection,
               ...(runtimeMode === undefined ? {} : { runtimeMode }),
               ...(interactionMode === undefined ? {} : { interactionMode }),
+              ...(link === undefined ? {} : { linkedAt: DateTime.formatIso(link.linkedAt) }),
             },
           },
           completionWake: input.mode === "wait" ? "settled_only" : "always",
@@ -803,6 +804,33 @@ const make = Effect.gen(function* () {
     });
 
   /**
+   * Why a launch already sent cannot be sent again: the other side keys it to the session
+   * of the link it came through, so through a link made since it would make a second thread
+   * and leave the first one untracked.
+   */
+  const relinkedSince = Effect.fn("RemoteDelegation.relinkedSince")(function* (
+    remote: OrchestrationV2RemoteTaskChild,
+  ) {
+    const sentUnder = remote.launch?.linkedAt;
+    if (sentUnder === undefined) return undefined;
+    const link = yield* links
+      .get(remote.environmentId)
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+        ),
+      );
+    // No link at all is the launch's own refusal.
+    return Option.isNone(link) || DateTime.formatIso(link.value.linkedAt) === sentUnder
+      ? undefined
+      : new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: `${remote.label} was linked again before the task's launch answered, so it may run there untracked. Check ${remote.label} for its thread before delegating it again.`,
+        });
+  });
+
+  /**
    * One wait on the task's thread there; true once the task here is done.
    * A task completed here first (cancelled, or its parent stopped) is
    * stopped there, and done once that stop is recorded here.
@@ -820,15 +848,17 @@ const make = Effect.gen(function* () {
       // Its launch never answered here, or this restarted first: send it again. A task
       // that ended here meanwhile is launched too, since only the answer names the thread
       // a stop is owed to. No answer is retried; a refusal means nothing runs there.
-      const refusal = yield* launchThere(parentThreadId, taskId).pipe(
-        Effect.as(undefined),
-        Effect.catchIf(
-          (error): error is OrchestratorMcpFailure =>
-            error._tag === "OrchestratorMcpFailure" &&
-            PeerMcpClient.unanswered(error) === undefined,
-          (error) => Effect.succeed(error),
-        ),
-      );
+      const refusal =
+        (yield* relinkedSince(task.remoteChild)) ??
+        (yield* launchThere(parentThreadId, taskId).pipe(
+          Effect.as(undefined),
+          Effect.catchIf(
+            (error): error is OrchestratorMcpFailure =>
+              error._tag === "OrchestratorMcpFailure" &&
+              PeerMcpClient.unanswered(error) === undefined,
+            (error) => Effect.succeed(error),
+          ),
+        ));
       if (refusal === undefined) return false;
       yield* complete(
         parentThreadId,

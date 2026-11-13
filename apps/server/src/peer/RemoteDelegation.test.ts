@@ -1410,40 +1410,54 @@ const taskWhen = (
       }),
     );
 
-it.effect("a launch whose answer never arrived is followed after the laptop restarts", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const thread = yield* makeBoxThread;
-      const b = yield* serveBox(thread);
-      const offers = yield* SubscriptionRef.make<
-        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-      >([]);
-      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const linking = yield* delegateAndLoseTheAnswer(thread, b, database, offers);
+it.effect.each([false, true])(
+  "a launch whose answer never arrived is followed after the laptop restarts (relinked: %s)",
+  (relinked) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const linking = yield* delegateAndLoseTheAnswer(thread, b, database, offers);
 
-      const after = yield* makeLaptop(database, offers, linking);
-      // The task was recorded before its launch left, with no thread yet.
-      const [pending] = (yield* after.orchestrator.getThreadProjection(parentThreadId)).subagents;
-      expect(pending).toMatchObject({ status: "running", result: null });
-      expect(pending?.remoteChild?.threadId).toBeUndefined();
+        const after = yield* makeLaptop(database, offers, linking);
+        // The task was recorded before its launch left, with no thread yet.
+        const [pending] = (yield* after.orchestrator.getThreadProjection(parentThreadId)).subagents;
+        expect(pending).toMatchObject({ status: "running", result: null });
+        expect(pending?.remoteChild?.threadId).toBeUndefined();
 
-      yield* after.remote.start();
-      const attached = yield* taskWhen(after, (task) => task.remoteChild?.threadId !== undefined);
-      // The launch sent again is the one the box already accepted, not a second thread.
-      const launches = yield* Ref.get(thread.launches);
-      expect(launches).toHaveLength(2);
-      expect(new Set(launches)).toEqual(new Set([attached.remoteChild?.threadId]));
-      expect(attached.remoteChild?.launch).toBeUndefined();
+        if (relinked) {
+          // The box keys a launch to the link's session, so a new link would make a second thread.
+          yield* TestClock.adjust("1 second");
+          yield* linkTo(after.links, b, "full-access");
+          yield* after.remote.start();
+          const abandoned = yield* taskResult(after, pending!.id);
+          expect(abandoned).toMatchObject({ status: "failed" });
+          expect(abandoned?.remoteChild?.threadId).toBeUndefined();
+          expect(yield* Ref.get(thread.launches)).toHaveLength(1);
+          return;
+        }
 
-      yield* Ref.set(thread.reply, "Finished after the restart.");
-      yield* Ref.set(thread.status, "completed");
-      yield* Deferred.succeed(thread.finished, undefined);
-      expect(yield* taskResult(after, attached.id)).toMatchObject({
-        status: "completed",
-        result: "Finished after the restart.",
-      });
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        yield* after.remote.start();
+        const attached = yield* taskWhen(after, (task) => task.remoteChild?.threadId !== undefined);
+        // The launch sent again is the one the box already accepted, not a second thread.
+        const launches = yield* Ref.get(thread.launches);
+        expect(launches).toHaveLength(2);
+        expect(new Set(launches)).toEqual(new Set([attached.remoteChild?.threadId]));
+        expect(attached.remoteChild?.launch).toBeUndefined();
+
+        yield* Ref.set(thread.reply, "Finished after the restart.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        expect(yield* taskResult(after, attached.id)).toMatchObject({
+          status: "completed",
+          result: "Finished after the restart.",
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task cancelled before its launch answered is stopped there once it has", () =>

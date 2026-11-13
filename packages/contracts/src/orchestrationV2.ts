@@ -911,6 +911,11 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
       modelSelection: ModelSelection,
       runtimeMode: Schema.optional(RuntimeMode),
       interactionMode: Schema.optional(ProviderInteractionMode),
+      /**
+       * The link the launch was sent under. The other side keys a launch to that link's
+       * session, so through a link made since it would make a second thread.
+       */
+      linkedAt: Schema.optional(IsoDateTime),
     }),
   ),
   /** The run there that carries the task; absent on tasks recorded before it was kept. */
