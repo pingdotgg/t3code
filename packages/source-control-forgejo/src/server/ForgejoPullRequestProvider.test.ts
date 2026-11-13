@@ -121,3 +121,106 @@ it.effect("filters listed pull requests by the requested state", () =>
     assert.deepStrictEqual(yield* numbers("open"), []);
   }),
 );
+
+const fastForwardOnly = {
+  cwd: "/forgejo",
+  repository: "maria/project",
+  host: "forge.example:3000",
+  number: 3,
+};
+const fastForwardOnlySettings = {
+  allow_merge_commits: false,
+  allow_squash_merge: false,
+  allow_rebase: false,
+  allow_rebase_explicit: false,
+  allow_fast_forward_only_merge: true,
+  default_merge_style: "fast-forward-only",
+};
+const fastForwardOnlyProvider = (
+  writes: Array<{ path: string; body: unknown }>,
+  mergeSettings: object = fastForwardOnlySettings,
+) =>
+  ForgejoPullRequestProvider.make.pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const [path] = input.path.split("?");
+          const reply = (value: unknown) =>
+            Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(value)));
+          if (input.method === "POST") {
+            writes.push({ path: input.path, body: input.body });
+            return reply("");
+          }
+          switch (path) {
+            case "user":
+              return reply({ login: "maria" });
+            case "repos/maria/project":
+              return reply({
+                full_name: "maria/project",
+                permissions: { push: true, admin: true },
+                ...mergeSettings,
+              });
+            case "repos/maria/project/pulls/3":
+              return reply({
+                number: 3,
+                title: "Fast-forward me",
+                body: "",
+                html_url: "https://forge.example:3000/maria/project/pulls/3",
+                user: { login: "maria" },
+                state: "open",
+                merged: false,
+                mergeable: true,
+                head: { ref: "feature", sha: "head-sha", repo: null },
+                base: { ref: "main", sha: "base-sha", repo: null },
+                merge_base: "base-sha",
+                created_at: "2026-10-12T00:00:00Z",
+                updated_at: "2026-10-12T00:00:00Z",
+                closed_at: null,
+                merged_at: null,
+                labels: [],
+              });
+            case "repos/maria/project/branches/main":
+              return reply({});
+            default:
+              return reply([]);
+          }
+        },
+      }),
+    ),
+  );
+
+it.effect("offers a fast-forward merge on a repository that only allows fast-forward", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([]);
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["fast-forward"]);
+  }),
+);
+
+it.effect("does not offer fast-forward when Forgejo omits the setting", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([], {});
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["merge", "squash", "rebase"]);
+  }),
+);
+
+it.effect("merges with Forgejo's fast-forward-only style", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; body: unknown }> = [];
+    const provider = yield* fastForwardOnlyProvider(writes);
+    yield* provider.runAction({ ...fastForwardOnly, action: "merge", mergeMethod: "fast-forward" });
+    assert.deepStrictEqual(writes, [
+      {
+        path: "repos/maria/project/pulls/3/merge",
+        body: { Do: "fast-forward-only", delete_branch_after_merge: false },
+      },
+    ]);
+  }),
+);

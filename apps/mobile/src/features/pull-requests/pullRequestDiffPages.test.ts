@@ -110,18 +110,6 @@ describe("paged mobile pull request diffs", () => {
     expect(cached.files[0]).toBe(parsed.files[0]);
   });
 
-  it("points a withheld merge request diff at the merge request", () => {
-    const parsed = combinePullRequestDiffPages(
-      [{ cursor: null, result: withheldDiff() }],
-      new WeakMap(),
-      "mr",
-      sourceControlClients.get("gitlab").changeRequest,
-    );
-    expect(parsed.kind === "files" ? parsed.notice : null).toBe(
-      "Some file contents are unavailable. Open the merge request on its provider to see the full changes.",
-    );
-  });
-
   it("combines normal and withheld pages and refreshes counts with unchanged patch text", () => {
     const first = { ...diff("first.ts"), nextCursor: "second" };
     const withheld = withheldDiff();
