@@ -5804,7 +5804,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       let windowReads = 0;
       let foldedGroups = 0;
 
-      for (let round = 0; round < 4; round += 1) {
+      for (let round = 0; round < 5; round += 1) {
         const threadId = ThreadId.make(`thread:window-equivalence:${round}`);
         const created = {
           id: EventId.make(`event:window-equivalence:${round}`),
@@ -5836,29 +5836,35 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         } satisfies Parameters<typeof projectionStore.apply>[0];
         yield* projectionStore.apply(created);
+        // The last thread puts three things below a window: a user turn under a hidden queued
+        // turn, the start of a long run that folds, and the start of the run before it, which
+        // has later rows among the first rows of the long run.
+        const windowEdges = round === 4;
         // One run of each kind in a random order, then an active run. Every other thread has
         // one user turn and then only wake turns.
-        // The last thread is a long run that a late notification wakes, then enough one-row
+        // The fourth thread is a long run that a late notification wakes, then enough one-row
         // runs that a page stops at the raw turn limit only if it counts that wake as a turn.
         const kinds =
           round === 3
             ? ["late wake", ...Array.from({ length: 148 }, () => "one row")]
-            : [
-                "rolled back",
-                "cancelled queued turn",
-                "held queued turn",
-                "replaced attempt",
-                "stopped",
-                "stopped",
-                "folds work",
-                "folds work",
-                "short",
-                "short",
-                "short",
-              ]
-                .map((kind) => ({ kind, order: random() }))
-                .toSorted((left, right) => left.order - right.order)
-                .map(({ kind }) => kind);
+            : windowEdges
+              ? ["short", "cancelled queued turn", "folds work", "long fold", "stopped"]
+              : [
+                  "rolled back",
+                  "cancelled queued turn",
+                  "held queued turn",
+                  "replaced attempt",
+                  "stopped",
+                  "stopped",
+                  "folds work",
+                  "folds work",
+                  "short",
+                  "short",
+                  "short",
+                ]
+                  .map((kind) => ({ kind, order: random() }))
+                  .toSorted((left, right) => left.order - right.order)
+                  .map(({ kind }) => kind);
         const agentDriven = round === 1;
         const runs: Array<unknown> = [];
         const attempts: Array<unknown> = [];
@@ -5958,7 +5964,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           const wakes =
             kind === "one row"
               ? run % 10 !== 0
-              : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
+              : windowEdges
+                ? ["folds work", "long fold", "stopped"].includes(kind)
+                : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
           if (wakes) notification();
           else
             userMessage(
@@ -5974,25 +5982,37 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 ? 320 + Math.floor(random() * 60)
                 : kind === "folds work"
                   ? 155 + Math.floor(random() * 60)
-                  : kind === "one row"
-                    ? 0
-                    : Math.floor(random() * 30);
+                  : kind === "long fold"
+                    ? 300
+                    : kind === "one row"
+                      ? 0
+                      : Math.floor(random() * 30);
           for (let row = 0; row < work; row += 1) {
-            if (chance(0.5)) add("command_execution", { input: "echo", output: "ok", exitCode: 0 });
-            else add("reasoning", { text: "", streaming: false });
+            // The first rows of a long fold belong to the run before it.
+            const owner =
+              kind === "long fold" && row < 140
+                ? {
+                    runId: `run:window-equivalence:${round}:${run - 1}`,
+                    nodeId: `node:window-equivalence:${round}:${run - 1}`,
+                  }
+                : {};
+            if (chance(0.5))
+              add("command_execution", { input: "echo", output: "ok", exitCode: 0, ...owner });
+            else add("reasoning", { text: "", streaming: false, ...owner });
             // A reply deep in a stopped run: a page that ends on it has enough work below it
             // to fold, and only the stop request above it says that it does not.
             const reply = kind === "stopped" && row === 200;
             if (reply)
               repliesInStoppedRuns.push(`turn-item:window-equivalence:${round}:${items.length}`);
-            if (reply || chance(0.02))
+            // With these replies, the part of a long fold in one window is too small to fold.
+            if (reply || (kind === "long fold" && row % 5 === 0) || chance(0.02))
               add("assistant_message", {
                 messageId: `message:window-equivalence:${round}:${items.length}`,
                 text: "Reply",
                 streaming: false,
               });
             if (chance(0.01)) notification();
-            if (chance(0.004) && !agentDriven) userMessage("steer");
+            if (chance(0.004) && !agentDriven && !windowEdges) userMessage("steer");
           }
           if (kind === "late wake") notification();
           if (kind === "stopped") add("run_interrupt_request", { message: "Stop" });
