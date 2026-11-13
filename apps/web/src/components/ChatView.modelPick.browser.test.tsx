@@ -65,24 +65,19 @@ it("a model picked for an existing thread reaches the server before any message 
   const modelSets = () =>
     dispatchedCommands().filter((command) => command.type === "thread.model-selection.set");
 
-  // With no options remembered in this browser, the thread's own model keeps its stored ones.
+  // Re-picking the model the composer shows saves nothing, so the thread keeps its stored options.
   await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
   await page.getByRole("option", { name: /GPT-5\.4/ }).click();
-  await vi.waitFor(() =>
-    expect(modelSets()).toEqual([
-      expect.objectContaining({ threadId: thread.id, modelSelection: stored }),
-    ]),
-  );
 
   // The picker stays open beside its effort column.
   await page.getByRole("option", { name: /GPT-5\.5/ }).click();
   await vi.waitFor(() =>
-    expect(modelSets().at(-1)).toEqual(
+    expect(modelSets()).toEqual([
       expect.objectContaining({
         threadId: thread.id,
         modelSelection: { instanceId: "codex", model: "gpt-5.5" },
       }),
-    ),
+    ]),
   );
 
   // A thread stored under an alias keeps its options when its canonical model is picked.
