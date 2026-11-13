@@ -183,11 +183,7 @@ impl Fixture {
             .unwrap()
             .build()
             .unwrap();
-        let client = Builder::address(address.trim())
-            .unwrap()
-            .method_timeout(DEADLINE)
-            .build()
-            .unwrap();
+        let client = connect(Builder::address(address.trim()).unwrap()).unwrap();
         Self {
             daemon,
             directory,
