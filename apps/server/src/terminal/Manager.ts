@@ -1187,22 +1187,19 @@ function stripStringTerminator(value: string): string {
   if (value.endsWith("\u001b\\")) {
     return value.slice(0, -2);
   }
-  if (value.endsWith("\u0007")) {
+  const lastCharacter = value.at(-1);
+  if (lastCharacter === "\u0007" || lastCharacter === "\u009c") {
     return value.slice(0, -1);
   }
   return value;
 }
 
-// BEL ends only OSC; inside DCS, PM and APC it is payload.
-function findStringTerminatorIndex(
-  input: string,
-  start: number,
-  belTerminates: boolean,
-): number | null {
+// BEL ends only OSC; inside DCS, PM and APC it is payload. A decoded U+009C is the
+// reverse: libghostty keeps it inside OSC but ends the other strings there.
+function findStringTerminatorIndex(input: string, start: number, isOsc: boolean): number | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
-    // libghostty reads a decoded U+009C as UTF-8 payload, not ST.
-    if ((belTerminates && codePoint === 0x07) || isControlSequenceCancel(codePoint)) {
+    if ((isOsc ? codePoint === 0x07 : codePoint === 0x9c) || isControlSequenceCancel(codePoint)) {
       return index + 1;
     }
     // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.

@@ -1499,9 +1499,11 @@ it.layer(
       const process = ptyAdapter.processes[0]!;
       // libghostty receives UTF-8 (c2 9c), which is OSC payload; only ESC \ ends this string.
       process.emitData("A\u001b]11;?\u009cHIDDEN\u001b\\B\n");
+      // A DCS string does end at U+009C there, so the text after it stays visible.
+      process.emitData("C\u001bP$qm\u009cSHOWN\u001b\\D\n");
       yield* manager.close({ threadId: "thread-1" });
 
-      expect((yield* manager.open(openInput())).history).toMatch(/^AB\n/);
+      expect((yield* manager.open(openInput())).history).toMatch(/^AB\nCSHOWN\u001b\\D\n/);
     }),
   );
 
