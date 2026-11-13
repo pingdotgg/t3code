@@ -32,7 +32,8 @@ const PATH_START = [
 ].join("|");
 // Where a path ends is unknowable (names hold spaces and `. `), so the rest of its line goes too.
 const PATH = new RegExp(String.raw`(?:${PATH_START})[^\n]*`, "gu");
-const LONG_RUN = /[A-Za-z0-9_+=-]{32,}/gu;
+// Runs last, so it counts an earlier redaction as part of the run it sits in.
+const LONG_RUN = /(?:[A-Za-z0-9_+=-]|\[redacted\])+/gu;
 
 const entropy = (value: string) => {
   const counts = new Map<string, number>();
@@ -53,9 +54,7 @@ const looksRandom = (value: string) =>
 const redactAll = (text: string, patterns: ReadonlyArray<RegExp>) => {
   const spans = patterns
     .flatMap((pattern) =>
-      Array.from(text.matchAll(pattern))
-        .filter((match) => pattern !== LONG_RUN || looksRandom(match[0]))
-        .map((match) => [match.index, match.index + match[0].length]),
+      Array.from(text.matchAll(pattern), (match) => [match.index, match.index + match[0].length]),
     )
     .sort(([a = 0], [b = 0]) => a - b);
   let result = "";
@@ -85,8 +84,11 @@ export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): s
     .filter((value) => value.length >= 3)
     .map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));
   // Secrets and known values on the original text, before either can break the other's match.
-  scrubbed = redactAll(scrubbed, [CREDENTIAL_URL, TOKEN_PREFIX, JWT, EMAIL, LONG_RUN, ...known])
+  scrubbed = redactAll(scrubbed, [CREDENTIAL_URL, TOKEN_PREFIX, JWT, EMAIL, ...known])
     .replaceAll(QUOTED_PATH, (quoted) => `${quoted[0]}${REDACTED}${quoted[0]}`)
-    .replaceAll(PATH, REDACTED);
+    .replaceAll(PATH, REDACTED)
+    .replaceAll(LONG_RUN, (run) =>
+      run.length >= 32 && looksRandom(run.replaceAll(REDACTED, "")) ? REDACTED : run,
+    );
   return Array.from(scrubbed).slice(0, FEEDBACK_TEXT_MAX_CHARS).join("");
 }
