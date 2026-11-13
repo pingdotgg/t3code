@@ -120,6 +120,7 @@ it.effect("follows a pull request across a refused app token, reconnects, and re
         "com.github.pull_request.head.changed.v1",
         "com.github.pull_request.state.changed.v1",
         "com.github.pull_request.merge_conflict.v1",
+        "com.github.pull_request.check_suite.status.changed.v1",
       ],
     });
     assert.deepEqual(deletes, ["event-subscriptions/1", "event-subscriptions/2"]);
