@@ -50,7 +50,15 @@ with a reason the client shows (`commands::refusal`).
 - **Retention.** `shell_changes` keeps 1,024 rows and `receipts` 4,096; an older shell cursor
   gets a fresh snapshot. Events and projections are the history and stay.
 - **Search.** `searchThreads` reads a trigram FTS5 index of final message texts
-  (`message_search`); SQLite's bundled build already has FTS5. Titles are the client's to match.
+  (`message_search`) with `MATCH` and quoted words, as `ThreadSearch.ts`; SQLite's bundled
+  build already has FTS5. Every word of three characters or more must match; shorter words
+  only narrow, and a query without a long word searches no messages (two CJK characters count
+  as long). Hidden threads drop out in SQL before the limit. Titles are the client's to match.
+- **Provider switch.** A `thread.model-selection.set` to another instance is a provider switch
+  (refused while a run is active). A run on another instance than the live session closes it
+  and opens one on its own instance; a provider thread of another instance is never resumed.
+- **Live command output.** `command_output.delta` (Codex) feeds a bounded hub in `output.rs`:
+  at most 8 running commands, a 64 KiB tail each, dropped when the command settles.
 
 ## Memory
 
