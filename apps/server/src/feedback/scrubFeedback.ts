@@ -19,21 +19,18 @@ const QUOTED_PATH = new RegExp(
     .join("|"),
   "gu",
 );
-// Multi-segment absolute, `~/`, `file://` and drive paths, and the tail of a redacted known
-// prefix; not URLs, `3/10`, `and/or` or one-segment `/compact`. Folder names can hold spaces,
-// so a match runs on to the last word in its clause that holds a separator.
-// Sentence punctuation before a space ends a segment, so `/a/b. Then` stops at `b`.
-const PATH_SEGMENT = String.raw`(?:[^\s/\\"'\x60<>(){},;:|.!?]|[.!?](?=\S))+`;
-const PATH = new RegExp(
-  `(?:${[
-    String.raw`\[redacted\](?:/${PATH_SEGMENT})+/?`,
-    String.raw`(?<![\w.:/~-])(?:/${PATH_SEGMENT}){2,}/?`,
-    String.raw`(?<![\w~-])~(?:/${PATH_SEGMENT})+/?`,
-    String.raw`\bfile://(?:/${PATH_SEGMENT})+/?`,
-    String.raw`\b[A-Za-z]:[\\/](?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]?)?`,
-  ].join("|")})${String.raw`(?:(?:[^\n.!?]|[.!?](?=\S))*[\\/](?:[^\s.!?]|[.!?](?=\S))*)?`}`,
-  "gu",
-);
+// Where an unquoted path starts: `/a/b`, `~/`, `file://`, a drive, or a redacted known prefix
+// followed by a separator. URLs, `3/10`, `and/or` and one-segment `/compact` do not start one.
+const PATH_START = [
+  String.raw`\[redacted\](?=[\\/])`,
+  String.raw`(?<![\w.:/~-])/[^\s/\\"'\x60<>(){},;:|]+/(?=\S)`,
+  String.raw`(?<![\w~-])~/`,
+  String.raw`\bfile://`,
+  String.raw`\b[A-Za-z]:[\\/]`,
+].join("|");
+// Folder names can hold spaces and `. `, so a path runs to the last word on its line that holds a
+// separator.
+const PATH = new RegExp(String.raw`(?:${PATH_START})(?:[^\n]*[\\/])?\S*`, "gu");
 const LONG_RUN = /[A-Za-z0-9_+=-]{32,}/gu;
 
 const entropy = (value: string) => {

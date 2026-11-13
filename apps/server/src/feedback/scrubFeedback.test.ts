@@ -41,15 +41,15 @@ describe("scrubFeedback", () => {
     ],
     [
       "whole absolute paths",
-      "/home/x/acme. /tmp/a/b.ts. ~/acme/app. file:///srv/acme/x.ts. C:\\Users\\x\\acme\\a.ts",
+      "/home/x/acme\n/tmp/a/b.ts\n~/acme/app\nfile:///srv/acme/x.ts\nC:\\Users\\x\\acme\\a.ts",
       [],
-      "[redacted]. [redacted]. [redacted]. [redacted]. [redacted]",
+      "[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]",
     ],
     [
       "the tail of a known path",
-      "Opened /home/alice/Develop/acme. Then /Users/al/My Project/src/a.ts",
+      "Opened /home/alice/Develop/acme\nThen /Users/al/My Project/src/a.ts",
       ["/home/alice", "/Users/al/My Project"],
-      "Opened [redacted]. Then [redacted]",
+      "Opened [redacted]\nThen [redacted]",
     ],
     [
       "nothing that only looks like a path",
@@ -76,10 +76,22 @@ describe("scrubFeedback", () => {
       'Read "[redacted]" and `[redacted]`',
     ],
     [
-      "unquoted folders of several words, to the end of the clause",
+      "unquoted folders of several words, to the last separator on the line",
       "Read /home/alice/My Secret Project/secret.txt and C:\\Users\\My Big Folder\\a.ts. Then and/or stays",
       [],
-      "Read [redacted]. Then and/or stays",
+      "Read [redacted] stays",
+    ],
+    [
+      "a folder name holding a sentence break",
+      "Read /home/alice/Secret. Project/secret.txt",
+      [],
+      "Read [redacted]",
+    ],
+    [
+      "only the lines that hold a path",
+      "Saw /home/a/b today\nand/or https://github.com/org/repo stays\nthen ~/x/y. Done",
+      [],
+      "Saw [redacted] today\nand/or https://github.com/org/repo stays\nthen [redacted] Done",
     ],
     ["a 1,200-character adversarial path", `/a/b${" x/".repeat(398)}`, [], "[redacted]"],
   ])("scrubs %s", (_, text, sensitive, expected) => {
