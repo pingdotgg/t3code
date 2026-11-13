@@ -172,6 +172,9 @@ export function evaluatePullRequestWatch(
   // Bots rewrite one status comment many times, so an edit of a remark the agent already saw
   // waits until a read finds it unchanged and then wakes once with its final text.
   const held = new Map((watch.pendingEdits ?? []).map((edit) => [edit.id, edit.editedAt]));
+  // Some bots keep rewriting one comment on the same head (a review countdown, a CI status
+  // table), so each remark's edit is reported once per head; after a push its edits are news again.
+  const editsTold = headMoved ? [] : (watch.remarkEditsTold ?? []);
   const added: Array<PullRequestComment> = [];
   const edits: Array<PullRequestComment> = [];
   const heldNow: Array<{ id: string; editedAt: string }> = [];
@@ -185,11 +188,12 @@ export function evaluatePullRequestWatch(
       }
     } else if (remark.editedAt == null || isNew(remark.createdAt, remark.id)) {
       added.push(remark);
-    } else {
+    } else if (!editsTold.includes(remark.id)) {
       heldNow.push({ id: remark.id, editedAt: remark.editedAt });
     }
   }
   const pendingEdits = remarks === null ? (watch.pendingEdits ?? []) : heldNow;
+  const remarkEditsTold = [...new Set([...editsTold, ...edits.map((remark) => remark.id)])];
   if (added.length > 0) changes.push({ kind: "remarks", remarks: added });
   if (edits.length > 0) changes.push({ kind: "remarks", remarks: edits, edited: true });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
@@ -226,6 +230,7 @@ export function evaluatePullRequestWatch(
       remarksThrough,
       remarkIds,
       ...(pendingEdits.length > 0 ? { pendingEdits } : {}),
+      ...(remarkEditsTold.length > 0 ? { remarkEditsTold } : {}),
       conflicting,
       wakes,
       checksAwaitedSince,

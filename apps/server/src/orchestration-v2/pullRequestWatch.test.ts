@@ -460,6 +460,42 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(ownHeld.next, detail(), [own]).changes, []);
   });
 
+  it("reports a remark's settled edit once per head, and again after a push", () => {
+    const summary = remark("coderabbitai[bot]", "2026-10-10T19:52:40.000Z");
+    const status = remark("ci-bot", "2026-10-10T19:52:40.000Z");
+    let next = watch({
+      headSha: "aaaaaaaaaa",
+      remarksThrough: summary.createdAt,
+      remarkIds: [summary.id, status.id],
+    });
+    // One read sees the edit and holds it; the next finds it unchanged and reports it.
+    const sweep = (headSha: string, edited: ReadonlyArray<PullRequestComment>) => {
+      const held = evaluatePullRequestWatch(next, detail({ headSha }), edited);
+      const settled = evaluatePullRequestWatch(held.next, detail({ headSha }), edited);
+      next = settled.next;
+      return [...held.changes, ...settled.changes].filter((change) => change.kind === "remarks");
+    };
+    const at = (minute: string) => ({ ...summary, editedAt: `2026-10-10T20:${minute}:00.000Z` });
+    // A rate-limited bot rewrites its countdown every few minutes on the same head.
+    assert.deepEqual(sweep("aaaaaaaaaa", [at("00")]), [
+      { kind: "remarks", remarks: [at("00")], edited: true },
+    ]);
+    for (const minute of ["05", "10", "15"]) {
+      assert.deepEqual(sweep("aaaaaaaaaa", [at(minute)]), []);
+    }
+    assert.isUndefined(next.pendingEdits);
+    // Another remark's first edit on this head is still news.
+    const statusEdit = { ...status, editedAt: "2026-10-10T20:16:00.000Z" };
+    assert.deepEqual(sweep("aaaaaaaaaa", [at("15"), statusEdit]), [
+      { kind: "remarks", remarks: [statusEdit], edited: true },
+    ]);
+    // A bot re-reviewing a push by editing its summary is reported again.
+    assert.deepEqual(sweep("bbbbbbbbbb", [at("20"), statusEdit]), [
+      { kind: "remarks", remarks: [at("20")], edited: true },
+    ]);
+    assert.deepEqual(sweep("bbbbbbbbbb", [at("25"), statusEdit]), []);
+  });
+
   it("reports a remark new to the watch at once even when it was already edited", () => {
     const posted = {
       ...remark("coderabbit[bot]", "2026-10-02T12:06:00Z"),
