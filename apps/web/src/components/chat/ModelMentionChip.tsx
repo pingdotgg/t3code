@@ -16,7 +16,7 @@ interface ModelMentionPresentation {
   readonly driverKind: ProviderDriverKind;
   readonly providerDisplayName: string;
   readonly acpRegistryAgentId: string | undefined;
-  readonly acpRegistryIconUrl: string | undefined;
+  readonly iconUrl: string | undefined;
 }
 
 function presentationsEqual(left: ModelMentionPresentation, right: ModelMentionPresentation) {
@@ -26,7 +26,7 @@ function presentationsEqual(left: ModelMentionPresentation, right: ModelMentionP
     left.driverKind === right.driverKind &&
     left.providerDisplayName === right.providerDisplayName &&
     left.acpRegistryAgentId === right.acpRegistryAgentId &&
-    left.acpRegistryIconUrl === right.acpRegistryIconUrl
+    left.iconUrl === right.iconUrl
   );
 }
 
@@ -50,7 +50,7 @@ const modelMentionPresentationAtom = Atom.family((key: string) =>
       driverKind: entry.driverKind,
       providerDisplayName: entry.displayName,
       acpRegistryAgentId: entry.acpRegistryAgentId,
-      acpRegistryIconUrl: entry.acpRegistryIconUrl,
+      iconUrl: entry.iconUrl,
     };
     const previous = Option.getOrNull(get.self<ModelMentionPresentation | null>());
     return previous && presentationsEqual(previous, next) ? previous : next;
@@ -106,7 +106,7 @@ export function ModelMentionChip(props: {
           driverKind={presentation.driverKind}
           displayName={presentation.providerDisplayName}
           acpRegistryAgentId={presentation.acpRegistryAgentId}
-          acpRegistryIconUrl={presentation.acpRegistryIconUrl}
+          iconUrl={presentation.iconUrl}
           className="z-auto"
           iconClassName="size-[1em]"
         />

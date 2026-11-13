@@ -27,6 +27,7 @@ export function resolveThreadProviderInstance(
   if (!snapshot) return null;
   const entry = {
     driverKind: snapshot.driver,
+    iconUrl: snapshot.iconUrl,
     displayName: resolveProviderInstanceDisplayName(snapshot),
     accentColor: normalizeProviderAccentColor(snapshot.accentColor),
   };
@@ -34,7 +35,11 @@ export function resolveThreadProviderInstance(
     ...entry,
     showBadge: shouldShowInstanceBadge(
       { ...entry, enabled: snapshot.enabled },
-      providers.map((provider) => ({ driverKind: provider.driver, enabled: provider.enabled })),
+      providers.map((provider) => ({
+        driverKind: provider.driver,
+        iconUrl: provider.iconUrl,
+        enabled: provider.enabled,
+      })),
     ),
   };
 }

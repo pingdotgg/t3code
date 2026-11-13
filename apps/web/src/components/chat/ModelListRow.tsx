@@ -21,7 +21,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   providerDisplayName: string;
   providerAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
-  acpRegistryIconUrl?: string | undefined;
+  iconUrl?: string | undefined;
   isFavorite: boolean;
   /** In Favorites every row is starred, so the star shows only on hover. */
   favoriteStarOnHover?: boolean;
@@ -59,7 +59,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         displayName={props.providerDisplayName}
         accentColor={props.providerAccentColor}
         acpRegistryAgentId={props.acpRegistryAgentId}
-        acpRegistryIconUrl={props.acpRegistryIconUrl}
+        iconUrl={props.iconUrl}
         showBadge={props.showInstanceBadge}
         className="size-4"
         iconClassName="size-4"

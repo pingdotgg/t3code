@@ -147,6 +147,7 @@ export const UsageLimitsReport = Schema.Struct({
       resetCreditInput: Schema.optional(ProviderConsumeResetCreditInput),
       displayName: Schema.optional(Schema.String),
       accentColor: Schema.optional(Schema.String),
+      iconUrl: Schema.optional(Schema.String),
       limits: ServerProviderUsageLimits,
     }),
   ),

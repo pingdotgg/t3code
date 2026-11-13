@@ -486,7 +486,11 @@ export const layer = Layer.effect(
       >
     >(new Map());
 
-    const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
+    type LiveSubscription = {
+      readonly instance: ProviderInstance;
+      readonly fiber: Fiber.Fiber<void>;
+    };
+    const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, LiveSubscription>>(
       new Map(),
     );
     const syncSemaphore = yield* Semaphore.make(1);
@@ -709,7 +713,7 @@ export const layer = Layer.effect(
             syncLiveSourcesAndContinue.pipe(
               Effect.andThen(Ref.get(liveSubsRef)),
               Effect.flatMap((instances) =>
-                Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
+                Effect.forEach(instances.values(), ({ instance }) => refreshOneSource(instance), {
                   concurrency: "unbounded",
                   discard: true,
                 }),
@@ -733,7 +737,9 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
-      const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
+      const instance = (yield* Ref.get(liveSubsRef)).get(
+        defaultInstanceIdForDriver(provider),
+      )?.instance;
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
@@ -744,7 +750,7 @@ export const layer = Layer.effect(
       instanceId: ProviderInstanceId,
     ) {
       yield* syncLiveSourcesAndContinue;
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId)?.instance;
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
@@ -881,11 +887,13 @@ export const layer = Layer.effect(
         }
         const previousSubs = yield* Ref.get(liveSubsRef);
 
-        const carriedOver = new Map<ProviderInstanceId, ProviderInstance>();
-        for (const [instanceId, previousInstance] of previousSubs) {
+        const carriedOver = new Map<ProviderInstanceId, LiveSubscription>();
+        for (const [instanceId, previous] of previousSubs) {
           const nextInstance = nextByInstance.get(instanceId);
-          if (nextInstance !== undefined && nextInstance === previousInstance) {
-            carriedOver.set(instanceId, previousInstance);
+          if (nextInstance !== undefined && nextInstance === previous.instance) {
+            carriedOver.set(instanceId, previous);
+          } else {
+            yield* Fiber.interrupt(previous.fiber);
           }
         }
 
@@ -920,11 +928,13 @@ export const layer = Layer.effect(
         }
 
         // Subscribe before reading so a probe completing mid-sync is observed by at least one path.
-        for (const [, instance] of newlyAdded) {
+        const nextSubs = new Map(carriedOver);
+        for (const [instanceId, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
-          yield* Stream.runForEach(source.streamChanges, (provider) =>
+          const fiber = yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          nextSubs.set(instanceId, { instance, fiber });
         }
         yield* Effect.yieldNow;
 
@@ -952,10 +962,6 @@ export const layer = Layer.effect(
           replace: true,
         });
 
-        const nextSubs = new Map(carriedOver);
-        for (const [instanceId, instance] of newlyAdded) {
-          nextSubs.set(instanceId, instance);
-        }
         yield* Ref.set(liveSubsRef, nextSubs);
 
         const [previousProviders, providers] = yield* Ref.modify(
