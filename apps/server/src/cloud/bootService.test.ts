@@ -29,6 +29,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
+  serviceUnitLogPathOf,
 } from "./serviceProtocol.ts";
 
 const leaseObserver = vi.hoisted(() => ({ contended: (_destination: string) => {} }));
@@ -55,7 +56,7 @@ const windowsTaskOptions = {
   conhostPath: "C:\\Windows\\System32\\conhost.exe",
 };
 
-it("reads the served T3 home back out of a rendered unit, plist, or task", () => {
+it("reads the served T3 home and log back out of a rendered unit, plist, or task", () => {
   const plan = (baseDir: string) => ({
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
@@ -71,6 +72,17 @@ it("reads the served T3 home back out of a rendered unit, plist, or task", () =>
       BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
     ),
   ).toBe("/home/theo/T3 Data/100%");
+  expect(
+    serviceUnitLogPathOf(BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%"))),
+  ).toBe("/home/theo/T3 Data/100%/userdata/logs/boot-service.log");
+  expect(
+    serviceUnitLogPathOf(
+      BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
+        homeDir: "/Users/theo",
+        environmentPath: "/usr/bin",
+      }),
+    ),
+  ).toBe("/Users/theo/a&b/userdata/logs/boot-service.log");
   expect(
     BootService.bootServiceBaseDirOf(
       BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
@@ -107,7 +119,7 @@ it("protects the server unit from agents under CPU and memory pressure", () => {
 });
 
 it.each([
-  ["a unit", '/home/theo/T3 "Data"/100%\\x', BootService.renderBootServiceUnit],
+  ["a unit", "/home/theo/T3 Data/100%$x", BootService.renderBootServiceUnit],
   [
     "a plist",
     "/Users/theo/a&b <c>",
@@ -127,6 +139,41 @@ it.each([
       render({ program: [program, "__service-launcher"], baseDir, logPath: "/log", unitPath: "" }),
     ),
   ).toBe(program);
+});
+
+// systemd rejects a unit whose executable has a control character, quote or backslash, even quoted.
+it.each([
+  ["a double quote", '/home/theo/T3 "Data"'],
+  ["a single quote", "/home/theo/Theo's T3"],
+  ["a backslash", "/home/theo/T3\\Data"],
+  ["a newline", "/home/theo/T3\nData"],
+])("renders a loadable unit, or refuses, for a T3 home with %s", (_, baseDir) => {
+  let unit: string;
+  try {
+    unit = BootService.renderBootServiceUnit({
+      program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
+      baseDir,
+      logPath: `${baseDir}/userdata/logs/boot-service.log`,
+      unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    });
+  } catch {
+    return;
+  }
+  for (const line of unit.split("\n")) {
+    expect(line === "" || line.startsWith("[") || line.includes("=")).toBe(true);
+  }
+  const execStart = unit.split("\n").find((line) => line.startsWith("ExecStart="));
+  const executable = execStart
+    ?.slice("ExecStart=".length)
+    .match(/^"((?:\\.|[^"\\])*)"|^(\S+)/)
+    ?.slice(1)
+    .find((group) => group !== undefined)
+    ?.replace(/\\(.)/g, "$1");
+  expect(executable).toBeDefined();
+  const unsafe = [...(executable ?? "")].filter(
+    (char) => char.charCodeAt(0) < 0x20 || `"'\\`.includes(char),
+  );
+  expect(unsafe).toEqual([]);
 });
 
 const macInstallerPath =
@@ -581,7 +628,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     "preserves the custom install bin directory in the installed service on %s",
     (platform) =>
       Effect.gen(function* () {
-        const installBinDir = '/custom/T3 & <100%>/"quoted"\\bin';
+        const installBinDir = '/custom/T3\t& <100%>/"quoted"\\bin';
         const { service, makeService, fs } = yield* makeHarness(
           platform,
           "",
@@ -593,8 +640,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const unit = yield* fs.readFileString(plan.unitPath);
         expect(unit).toContain(
           platform === "linux"
-            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3 & <100%%>/\\"quoted\\"\\\\bin"'
-            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3 &amp; &lt;100%&gt;/"quoted"\\bin</string>',
+            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3\t& <100%%>/\\"quoted\\"\\\\bin"'
+            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3\t&amp; &lt;100%&gt;/"quoted"\\bin</string>',
         );
         expect((yield* service.status).current).toBe(true);
 
@@ -1173,6 +1220,14 @@ process.disconnect();
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
+
+      const quoted = yield* makeService(undefined, "1.2.3", path.join(otherHome, 'T3 "Data"'));
+      commands.length = 0;
+      const unloadable = yield* quoted.install().pipe(Effect.flip);
+      expect(unloadable._tag).toBe("BootServiceBaseDirUnsupportedError");
+      expect(CliError.getUserMessage(unloadable)).toBe(unloadable.message);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
     }),
   );
 
