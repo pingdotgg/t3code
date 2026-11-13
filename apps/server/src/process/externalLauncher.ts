@@ -23,7 +23,6 @@ import {
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -67,13 +66,8 @@ interface TargetPathAndPosition {
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
-const POWERSHELL_ARGUMENTS_PREFIX = [
-  "-NoProfile",
-  "-NonInteractive",
-  "-ExecutionPolicy",
-  "Bypass",
-  "-EncodedCommand",
-] as const;
+// Behavior-based antivirus kills PowerShell started with -EncodedCommand or -ExecutionPolicy Bypass.
+const POWERSHELL_ARGUMENTS_PREFIX = ["-NoProfile", "-NonInteractive", "-Command"] as const;
 
 // Detached Windows PowerShell exits 0 without executing; only WSL interop keeps detached launches.
 const WINDOWS_POWERSHELL_DETACHED = false;
@@ -170,16 +164,6 @@ function resolveCommandEditorArgs(
   }
 }
 
-function encodeUtf16LeBase64(input: string): string {
-  const bytes = new Uint8Array(input.length * 2);
-  for (let index = 0; index < input.length; index += 1) {
-    const code = input.charCodeAt(index);
-    bytes[index * 2] = code & 0xff;
-    bytes[index * 2 + 1] = code >>> 8;
-  }
-  return Base64.encode(bytes);
-}
-
 function escapePowerShellStringLiteral(input: string): string {
   return `'${input.replaceAll("'", "''")}'`;
 }
@@ -213,12 +197,12 @@ function resolveWindowsBrowserLaunch(
   command: string,
   detached: boolean,
 ): ProcessLaunch {
-  const encodedCommand = encodeUtf16LeBase64(
-    `$ProgressPreference = 'SilentlyContinue'; Start ${escapePowerShellStringLiteral(target)}`,
-  );
   return {
     command,
-    args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
+    args: [
+      ...POWERSHELL_ARGUMENTS_PREFIX,
+      `$ProgressPreference = 'SilentlyContinue'; Start ${escapePowerShellStringLiteral(target)}`,
+    ],
     options: {
       detached,
       shell: false,
@@ -539,9 +523,10 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 // A replacement manager registers a default Directory shell verb; stock Windows
 // uses "none". Explorer needs its /select argument passed verbatim through
 // PowerShell because Node's argument quoting changes how Explorer parses it.
+// [char]34 keeps double quotes out of the plain -Command text for the same reason.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,' + [char]34 + ${literal} + [char]34) }`;
 }
 
 function powerShellFileManagerLaunch(
@@ -553,7 +538,7 @@ function powerShellFileManagerLaunch(
     editor: "file-manager",
     target,
     command: powershellCommand,
-    args: [...POWERSHELL_ARGUMENTS_PREFIX, encodeUtf16LeBase64(source)],
+    args: [...POWERSHELL_ARGUMENTS_PREFIX, source],
   };
 }
 
