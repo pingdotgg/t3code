@@ -2635,11 +2635,19 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             threadId: child.childThreadId,
             messageId: wakeMessageId,
             text: "Background activity updated",
-            notification: {
-              source: { kind: "command" },
-              outcome: "completed",
-              summary: 'Command "sleep 60" finished',
-            },
+            // A monitor that ends is finished work too; only its per-line updates are progress.
+            notification:
+              delivery === "live"
+                ? {
+                    source: { kind: "monitor" },
+                    outcome: "completed",
+                    summary: 'Monitor "sleep 60" finished',
+                  }
+                : {
+                    source: { kind: "command" },
+                    outcome: "completed",
+                    summary: 'Command "sleep 60" finished',
+                  },
             attachments: [],
             dispatchMode: { type: "queue_after_active" },
           });
