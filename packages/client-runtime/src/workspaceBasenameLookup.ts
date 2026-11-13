@@ -1,4 +1,8 @@
-import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import {
+  isAbsolutePath,
+  isWindowsAbsolutePath,
+  resolveWorkspaceFilePath,
+} from "@t3tools/shared/path";
 
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
 
@@ -112,4 +116,22 @@ function pickStrippedWorkspaceMatch(
   };
   const files = entries.filter((entry) => entry.kind === "file");
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
+}
+
+/**
+ * The absolute path of the one file a chat link names across other project roots, or null when
+ * no root or more than one has it. Agents cite paths relative to whichever repo they worked in.
+ */
+export function pickProjectLinkMatch(
+  relativePath: string,
+  searches: ReadonlyArray<{
+    readonly root: string;
+    readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
+  }>,
+): string | null {
+  const matches = searches.flatMap(({ root, entries }) => {
+    const match = pickWorkspaceLinkMatch(relativePath, root, entries);
+    return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
+  });
+  return matches.length === 1 ? (matches[0] ?? null) : null;
 }

@@ -470,7 +470,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
         Effect.provide(NodeFileSystem.layer),
       );
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("hands web and app links to the renderer and leaves other links alone", () =>
@@ -560,5 +560,5 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         Layer.mergeAll(NodeFileSystem.layer, Logger.layer([logger], { mergeWithExisting: false })),
       ),
     );
-  }).pipe(Effect.scoped),
+  }),
 );

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A loopback fake of Cursor's backend drives the real SDK.
+import * as NodeHttp from "node:http";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
@@ -13,15 +16,22 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import { vi } from "vite-plus/test";
 
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -36,8 +46,21 @@ import {
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { loadCursorSdk } from "./sdk.ts";
+import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 
-const { ConfigurationError } = loadCursorSdk();
+// The SDK reads CURSOR_BACKEND_URL once when it loads, before any test body runs.
+const cursorBackendUrl = await vi.hoisted(async () => {
+  const NodeNet = await import("node:net");
+  const probe = NodeNet.createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  const url = `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}`;
+  process.env.CURSOR_BACKEND_URL = url;
+  return url;
+});
+
+const { Agent, ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -175,6 +198,7 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
         });
+        assert.equal(providerThread.nativeMetadata?.cursorStoreCwd, workspace);
         const now = yield* DateTime.now;
         yield* runtime.startTurn({
           threadId,
@@ -1200,6 +1224,20 @@ describe("CursorAdapterV2", () => {
             result: { status: "error", error: "lint failed" },
           },
         },
+        ...["slow-shell", "fast-shell"].map((callId) => ({
+          type: "tool-call-started" as const,
+          modelCallId: "native-model-call",
+          callId,
+          toolCall: { type: "shell" as const, args: { command: callId } },
+        })),
+        {
+          type: "shell-output-delta",
+          event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "slow-shell" },
+        },
+        {
+          type: "shell-output-delta",
+          event: { case: "exit", value: { code: 0 }, toolCallId: "slow-shell" },
+        },
       ];
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
@@ -1313,6 +1351,21 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepEqual(item.input, { city: "Berlin" });
       }
+      const shellItemIds = new Map(
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.id, event.turnItem.input] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "command_output.delta"
+            ? [{ command: shellItemIds.get(event.itemId), chunk: event.chunk }]
+            : [],
+        ),
+        [{ command: "slow-shell", chunk: "tick 1\n" }],
+      );
       assert.deepEqual(toolOutputImages(mcpItems.at(-1)?.output), [
         { mimeType: "image/png", data: "iVBORw0KGgo=" },
       ]);
@@ -1748,6 +1801,56 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.live("honors the user's Cursor CLI attribution preferences", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-attribution-" });
+      yield* fileSystem.makeDirectory(path.join(home, ".cursor"));
+      yield* fileSystem.writeFileString(
+        path.join(home, ".cursor", "cli-config.json"),
+        JSON.stringify({
+          attribution: { attributeCommitsToAgent: false, attributePRsToAgent: false },
+        }),
+      );
+      const backend = yield* fakeCursorBackend;
+      // CURSOR_CONFIG_DIR outranks an ambient XDG_CONFIG_HOME; the home overrides keep the real ~/.cursor out.
+      yield* scopedProcessEnv({
+        HOME: home,
+        USERPROFILE: home,
+        CURSOR_CONFIG_DIR: path.join(home, ".cursor"),
+      });
+      const agent = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          Agent.create(
+            makeCursorAgentOptions({
+              apiKey: "synthetic-cursor-api-key",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+              runtimePolicy: {
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: home,
+              },
+              threadId: ThreadId.make("cursor-attribution-thread"),
+              mcpSession: undefined,
+              platform: "linux",
+            }),
+          ),
+        ),
+        (agent) => Effect.sync(() => agent.close()),
+      );
+      yield* Effect.promise(() => agent.send("Commit hello.txt."));
+
+      assert.deepEqual(yield* Deferred.await(backend.requestContext), {
+        commitAttributionMessage: undefined,
+        prAttributionMessage: undefined,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {
       interactionMode: "default" as const,
@@ -1936,6 +2039,236 @@ describe("CursorAdapterV2", () => {
     assert.notInclude(logged, "secret-cursor-mcp-token");
   });
 
+  it.effect.skipIf(!symlinksSupported)(
+    "starts mcp.json servers that use Cursor's workspace variables",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const scratch = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-mcp-" }),
+        );
+        const workspace = path.join(scratch, "workspace");
+        const home = path.join(scratch, "home");
+        const loadServers = () =>
+          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
+        // Cursor resolves the project root through symlinks, as git does.
+        yield* fileSystem.makeDirectory(path.join(workspace, "packages", "app"), {
+          recursive: true,
+        });
+        yield* fileSystem.symlink(workspace, path.join(scratch, "link"));
+        const cwd = path.join(scratch, "link", "packages", "app");
+        yield* spawnAndCollect("git", ChildProcess.make("git", ["init", workspace]));
+        // Git prints forward slashes on Windows, and the loader passes its spelling through.
+        const projectRoot = (yield* spawnAndCollect(
+          "git",
+          ChildProcess.make("git", ["rev-parse", "--show-toplevel"], { cwd }),
+        )).stdout.trim();
+        yield* fileSystem.makeDirectory(path.join(workspace, ".cursor"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(home, ".cursor"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".cursor", "mcp.json"),
+          `{
+          // Cursor's editor accepts comments here.
+          "mcpServers": {
+            "repro": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "startupTimeoutSec": 120 },
+            "plain": { "command": "node", "args": ["server.mjs"] },
+            "argument-only": { "command": "node", "args": ["server.mjs", "--workspace", "\${workspaceFolder}"] },
+            "env-only": { "command": "node", "args": ["server.mjs"], "env": { "PROJECT_ROOT": "\${workspaceFolder}" } },
+            "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
+            "unset-env": { "command": "node", "env": { "CONFIG": "\${env:T3_MCP_UNSET}" } },
+            "wrapped": { "command": "proto", "args": ["run", "node", "--", "\${workspaceFolder}/server.mjs"] },
+            "label": { "command": "node", "args": ["server.mjs", "--label", "\${workspaceFolder}/client"] },
+            "env-file": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "envFile": ".env.mcp" },
+            "tool-filter": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "enabledTools": ["read_file"] },
+            "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
+            "typed": { "type": "\${env:MCP_TYPE}", "command": "node", "args": ["server.mjs"] },
+            "plugin-docs-search": { "command": "node", "args": ["\${workspaceFolder}/search.mjs"] },
+          },
+        }`,
+        );
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "mcp.json"),
+          JSON.stringify({
+            mcpServers: {
+              repro: { command: "node", args: ["${userHome}/shadowed.mjs"] },
+              docs: {
+                url: "https://docs.example/${workspaceFolderBasename}",
+                headers: { Authorization: "Bearer ${env:DOCS_TOKEN}" },
+                tls: { caBundle: "${userHome}/ca.pem" },
+              },
+            },
+          }),
+        );
+        // Cursor keeps per-project state under a directory named after the project path.
+        const projectDirectory = workspace.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+        yield* fileSystem.makeDirectory(path.join(home, ".cursor", "projects", projectDirectory), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          JSON.stringify(["off"]),
+        );
+
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-mcp-thread");
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("cursor-mcp-environment"),
+          threadId,
+          providerSessionId: "cursor-mcp-session",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer synthetic-cursor-token",
+          browserToolsAvailable: false,
+        });
+        const t3Servers = cursorMcpServers(yield* mcpSessions.read(threadId));
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
+        const sentWith: Array<Record<string, unknown> | undefined> = [];
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: {
+            HOME: path.join(scratch, "override"),
+            CURSOR_DATA_DIR: path.join(scratch, "override"),
+            DOCS_TOKEN: "docs-token",
+            MCP_TYPE: "stdio",
+          },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: (input) =>
+              Effect.sync(() => {
+                openedWith = input.options;
+                return {
+                  agentId: "native-cursor-mcp",
+                  listMessages: Effect.succeed([]),
+                  close: Effect.void,
+                  send: (sendInput) => {
+                    sentWith.push(sendInput.options?.mcpServers);
+                    return Effect.die("sent");
+                  },
+                };
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-mcp-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime
+          .ensureThread({ threadId, modelSelection, runtimePolicy })
+          .pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
+        const now = yield* DateTime.now;
+        const sendTurn = (ordinal: number) =>
+          runtime
+            .startTurn({
+              threadId,
+              providerThread,
+              modelSelection,
+              runtimePolicy,
+              runId: RunId.make(`cursor-mcp-run-${ordinal}`),
+              runOrdinal: ordinal,
+              providerTurnOrdinal: ordinal,
+              attemptId: RunAttemptId.make(`cursor-mcp-attempt-${ordinal}`),
+              rootNodeId: NodeId.make(`cursor-mcp-root-${ordinal}`),
+              appThread: {
+                id: threadId,
+                projectId: ProjectId.make("cursor-mcp-project"),
+                createdBy: "user",
+                creationSource: "web",
+                title: "Cursor MCP",
+                providerInstanceId: instanceId,
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                activeProviderThreadId: providerThread.id,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: threadId,
+                },
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              },
+              message: {
+                messageId: MessageId.make(`cursor-mcp-message-${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: "Hello.",
+                attachments: [],
+              },
+            })
+            .pipe(
+              Effect.exit,
+              Effect.provideService(HostProcess.HomeDirectory, home),
+              Effect.provideService(HostProcess.Environment, {}),
+            );
+
+        const expectedServers = {
+          repro: {
+            command: "node",
+            args: [`${projectRoot}/server.mjs`],
+            startupTimeoutSec: 120,
+            cwd: projectRoot,
+          },
+          "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
+        };
+        // The agent is created with T3's server only; the resolved servers go with each turn.
+        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        yield* sendTurn(1);
+        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        // A server switched off between turns stays off on the next one.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          JSON.stringify(["off", "repro"]),
+        );
+        yield* sendTurn(2);
+        const { repro: _disabled, ...stillEnabled } = expectedServers;
+        assert.deepEqual(sentWith[1], { ...stillEnabled, ...t3Servers });
+        // Unreadable disabled state starts none of the overrides, and the turn still goes out.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          "[",
+        );
+        yield* sendTurn(3);
+        assert.deepEqual(sentWith[2], t3Servers);
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".cursor", "mcp.json"),
+          JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
+        );
+        yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
+        assert.deepEqual(yield* loadServers(), {});
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
+
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {
     assert.isTrue(CursorAgentSdk.isCursorCancellationError({ name: "AbortError" }));
     assert.isTrue(
@@ -1950,6 +2283,211 @@ describe("CursorAdapterV2", () => {
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(new Error("request failed")));
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(null));
   });
+
+  it.effect(
+    "rewrites skills on live steers and returns a decline without waiting for completion",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-steer-",
+        });
+        const path = yield* Path.Path;
+        const skill = path.join(workspace, ".cursor", "skills", "review");
+        yield* fileSystem.makeDirectory(skill, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skill, "SKILL.md"),
+          "# Review\nReview the code.",
+        );
+        const userOnlySkill = path.join(workspace, ".cursor", "skills", "grill-me");
+        yield* fileSystem.makeDirectory(userOnlySkill, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(userOnlySkill, "SKILL.md"),
+          "---\nname: grill-me\ndescription: Grill the plan.\ndisable-model-invocation: true\n---\nAsk one question at a time.",
+        );
+        const steered: string[] = [];
+        let cancelled = 0;
+        let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
+        const finished = yield* Deferred.make<{
+          readonly id: string;
+          readonly requestId: string;
+          readonly status: "finished" | "cancelled";
+          readonly model: { readonly id: string };
+          readonly durationMs: number;
+        }>();
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-steer-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-steer",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: () =>
+                  Effect.succeed({
+                    agentId: "native-cursor-steer",
+                    runId: "native-cursor-steer-run",
+                    wait: Deferred.await(finished),
+                    cancel: Effect.sync(() => {
+                      cancelled += 1;
+                    }).pipe(
+                      Effect.andThen(
+                        Deferred.succeed(finished, {
+                          id: "native-cursor-steer-run",
+                          requestId: "native-request",
+                          status: "cancelled" as const,
+                          model: { id: "composer-2.5" },
+                          durationMs: 1,
+                        }),
+                      ),
+                    ),
+                    steer: (text) =>
+                      Effect.sync(() => {
+                        steered.push(text);
+                        return outcome;
+                      }),
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-steer-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(
+          runtime.providerSession.capabilities.turns.activeSteeringAcceptsAttachments,
+          false,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const turn = {
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-steer-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-steer-attempt"),
+          rootNodeId: NodeId.make("cursor-steer-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-steer-project"),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            title: "Cursor steer",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-steer-message"),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            text: "Review the code.",
+            attachments: [],
+          },
+        };
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CursorAgentSdk.CURSOR_PROVIDER,
+          nativeTurnId: "native-cursor-steer-run",
+        });
+        yield* runtime.startTurn(turn);
+        yield* runtime.steerTurn({
+          threadId,
+          runId: turn.runId,
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("cursor-steer-follow-up"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "$review Look at the tests instead.",
+            attachments: [],
+          },
+        });
+        assert.deepEqual(steered, ["/review Look at the tests instead."]);
+        assert.equal(cancelled, 0);
+        yield* runtime.steerTurn({
+          threadId,
+          runId: turn.runId,
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("cursor-steer-user-only-skill"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "$grill-me My plan.",
+            attachments: [],
+          },
+        });
+        // Cursor hides `disable-model-invocation` skills from the model, so the SDK prompt must carry them.
+        assert.include(steered.at(-1), "Ask one question at a time.");
+
+        outcome = "revert_to_followup";
+        const declined = yield* runtime
+          .steerTurn({
+            threadId,
+            runId: turn.runId,
+            providerThread,
+            providerTurnId,
+            message: {
+              messageId: MessageId.make("cursor-steer-declined"),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Stop and do this.",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.exit);
+        if (!Exit.isFailure(declined)) return yield* Effect.die("Expected a declined steer");
+        assert.equal(steered.at(-1), "Stop and do this.");
+        assert.equal(cancelled, 0);
+        const declinedError = Cause.squash(declined.cause);
+        assert.instanceOf(declinedError, ProviderAdapter.ProviderAdapterSteerDeclinedError);
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId,
+        });
+        assert.equal(cancelled, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
     assert.deepEqual(
@@ -1974,3 +2512,134 @@ describe("CursorAdapterV2", () => {
     );
   });
 });
+
+const scopedProcessEnv = (values: Record<string, string>) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      for (const [key, value] of Object.entries(values)) vi.stubEnv(key, value);
+    }),
+    () => Effect.sync(() => vi.unstubAllEnvs()),
+  );
+
+// Loopback stand-in for Cursor's backend: it asks the local SDK runtime for its request
+// context over RunSSE and decodes the RequestContext the SDK appends back (agent.v1 protos).
+const fakeCursorBackend = Effect.gen(function* () {
+  const requestContext = yield* Deferred.make<{
+    readonly commitAttributionMessage: string | undefined;
+    readonly prAttributionMessage: string | undefined;
+  }>();
+  const requestContextExec = protoField(
+    2,
+    Buffer.concat([Buffer.from([0x08, 0x01]), protoField(15, Buffer.from("ctx")), protoField(10)]),
+  );
+  const runFrame = Buffer.alloc(5 + requestContextExec.length);
+  runFrame.writeUInt32BE(requestContextExec.length, 1);
+  requestContextExec.copy(runFrame, 5);
+  const server = NodeHttp.createServer((request, response) => {
+    const chunks: Array<Buffer> = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      switch (request.url) {
+        case "/auth/exchange_user_api_key":
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ accessToken: "synthetic-access-token" }));
+          return;
+        case "/v1/models":
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ items: [{ id: "composer-2" }] }));
+          return;
+        case "/agent.v1.AgentService/RunSSE":
+          response.writeHead(200, { "content-type": "application/connect+proto" });
+          response.write(runFrame);
+          return;
+        case "/aiserver.v1.BidiService/BidiAppend": {
+          const appended = protoGet(Buffer.concat(chunks), 1);
+          const clientMessage = Buffer.from(appended?.toString() ?? "", "hex");
+          const success = protoPath(clientMessage, [2, 10, 1]);
+          if (success !== undefined) {
+            const context = protoGet(success, 1);
+            Deferred.doneUnsafe(
+              requestContext,
+              context === undefined
+                ? Effect.die(new Error("RequestContextSuccess carried no RequestContext"))
+                : Effect.succeed({
+                    commitAttributionMessage: protoGet(context, 26)?.toString(),
+                    prAttributionMessage: protoGet(context, 27)?.toString(),
+                  }),
+            );
+          }
+          response.setHeader("content-type", "application/proto");
+          response.end();
+          return;
+        }
+        default:
+          response.statusCode = 404;
+          response.end();
+      }
+    });
+  });
+  yield* Effect.acquireRelease(
+    Effect.callback<void>((resume) => {
+      server.listen(Number(new URL(cursorBackendUrl).port), "127.0.0.1", () => resume(Effect.void));
+    }),
+    () =>
+      Effect.callback<void>((resume) => {
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
+  );
+  return { requestContext };
+});
+
+function protoVarint(value: number): Buffer {
+  const bytes: Array<number> = [];
+  while (value > 0x7f) {
+    bytes.push((value & 0x7f) | 0x80);
+    value >>>= 7;
+  }
+  bytes.push(value);
+  return Buffer.from(bytes);
+}
+
+function protoField(fieldNumber: number, value: Buffer = Buffer.alloc(0)): Buffer {
+  return Buffer.concat([protoVarint((fieldNumber << 3) | 2), protoVarint(value.length), value]);
+}
+
+function protoGet(message: Buffer, fieldNumber: number): Buffer | undefined {
+  let offset = 0;
+  const readVarint = () => {
+    let value = 0;
+    let shift = 0;
+    let byte: number;
+    do {
+      byte = message[offset++] ?? 0;
+      value += (byte & 0x7f) * 2 ** shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return value;
+  };
+  while (offset < message.length) {
+    const key = readVarint();
+    const wireType = key & 7;
+    if (wireType === 0) {
+      readVarint();
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      const length = readVarint();
+      if (Math.floor(key / 8) === fieldNumber) return message.subarray(offset, offset + length);
+      offset += length;
+    }
+  }
+  return undefined;
+}
+
+function protoPath(message: Buffer, fieldNumbers: ReadonlyArray<number>): Buffer | undefined {
+  let current: Buffer | undefined = message;
+  for (const fieldNumber of fieldNumbers) {
+    current = current === undefined ? undefined : protoGet(current, fieldNumber);
+  }
+  return current;
+}
