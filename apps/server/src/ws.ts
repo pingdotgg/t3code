@@ -191,7 +191,10 @@ import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecr
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
+import {
+  makePrepareTerminalLaunch,
+  makeWithUnsentCheckout,
+} from "./workspace/restoreMissingWorktree.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -1518,6 +1521,7 @@ export const layerWsRpc = (
       const prepareTerminalLaunch = yield* makePrepareTerminalLaunch(
         threadManagement.getThreadShell,
       );
+      const withUnsentCheckout = yield* makeWithUnsentCheckout;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -2902,7 +2906,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
-          workspaceEntries.search(input).pipe(
+          withUnsentCheckout(input.cwd, workspaceEntries.search(input)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProjectSearchEntriesError({
@@ -2915,7 +2919,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
-          workspaceEntries.searchContents(input).pipe(
+          withUnsentCheckout(input.cwd, workspaceEntries.searchContents(input)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProjectSearchContentsError({
@@ -2928,7 +2932,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
-          workspaceEntries.list(input).pipe(
+          withUnsentCheckout(input.cwd, workspaceEntries.list(input)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProjectListEntriesError({
@@ -2939,7 +2943,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
-          workspaceEntries.listIgnoredFiles(input).pipe(
+          withUnsentCheckout(input.cwd, workspaceEntries.listIgnoredFiles(input)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProjectListEntriesError({

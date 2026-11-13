@@ -12,6 +12,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { makeUnsentCheckouts } from "./unsentCheckout.ts";
+import { WorkspaceRootNotExistsError } from "./WorkspacePaths.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
@@ -50,7 +51,12 @@ interface WorktreeThread {
 // A draft's pull request checkout has no thread, so its record names the project.
 type RestoreTarget =
   | WorktreeThread
-  | (Omit<WorktreeThread, "projectId"> & { readonly projectRoot: string });
+  | {
+      readonly id?: ThreadId;
+      readonly worktreePath: string;
+      readonly branch: string;
+      readonly projectRoot: string;
+    };
 
 export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -227,7 +233,7 @@ export const makePrepareTerminalLaunch = Effect.fn(
     const checkout = draftPath === null ? null : yield* unsentCheckouts.read(draftPath);
     const thread: RestoreTarget | null =
       shell ??
-      (checkout === null
+      (draftPath === null || checkout === null
         ? null
         : { id: ThreadId.make(input.threadId), worktreePath: draftPath, ...checkout });
     const worktreePath = thread?.worktreePath ?? null;
@@ -255,4 +261,43 @@ export const makePrepareTerminalLaunch = Effect.fn(
     // The lease must cover the worktree root, even when the terminal opens in a subdirectory.
     return { input: { ...input, worktreePath }, recover };
   });
+});
+
+const isWorkspaceRootNotExistsError = Schema.is(WorkspaceRootNotExistsError);
+
+// Storage cleanup cannot tell a kept draft from a discarded one, so the folder it removed
+// comes back when the draft next reads its workspace.
+export const makeWithUnsentCheckout = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
+  const unsentCheckouts = yield* makeUnsentCheckouts;
+  const restore = Effect.fn("restoreMissingWorktree.restoreUnsentCheckout")(
+    function* (worktreePath: string) {
+      const checkout = yield* unsentCheckouts.read(worktreePath);
+      if (checkout === null) return false;
+      yield* withWorkspaceLease(
+        worktreePath,
+        restoreMissingWorktree({ worktreePath, ...checkout }),
+      );
+      // Using the checkout again restarts storage cleanup's wait.
+      yield* unsentCheckouts.record(worktreePath, checkout);
+      return true;
+    },
+    (effect, worktreePath) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to recreate missing worktree", { worktreePath, cause }).pipe(
+            Effect.as(false),
+          ),
+        ),
+      ),
+  );
+  return <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchIf(isWorkspaceRootNotExistsError, (error) =>
+        restore(path.resolve(cwd)).pipe(
+          Effect.flatMap((restored) => (restored ? effect : Effect.fail(error))),
+        ),
+      ),
+    );
 });
