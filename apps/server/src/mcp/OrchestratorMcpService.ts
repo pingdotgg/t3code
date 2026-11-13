@@ -146,7 +146,8 @@ const DEFAULT_THREAD_LIST_LIMIT = 10;
 const DEFAULT_THREAD_READ_LIMIT = 10;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 500;
-/** Claude Code rejects MCP results over 25k tokens; CJK text runs near one token per char. */
+// Claude Code saves MCP results over ~25k tokens to a file instead of showing them. Bytes, not
+// chars: CJK text runs near one token per char, which a char budget lets through at 30k tokens.
 const THREAD_READ_RESULT_MAX_BYTES = 30_000;
 
 interface ResolvedTarget {
@@ -1132,11 +1133,15 @@ function timelineItemWithin(
   return longestText(cutTitle(Math.max(titleChars, 0)));
 }
 
-/** Leading items whose result fits THREAD_READ_RESULT_MAX_BYTES; never empty for a non-empty page. */
+/**
+ * The items, read from the end the caller pages toward, whose result fits
+ * THREAD_READ_RESULT_MAX_BYTES; `start` is the first kept index. Never empty for a non-empty page.
+ */
 function timelineItemsWithinBudget(
   envelope: Omit<OrchestratorMcpThreadReadResult, "items">,
   inputs: ReadonlyArray<Parameters<typeof timelineItem>[0]>,
-): Array<OrchestratorMcpThreadTimelineItem> {
+  newestFirst: boolean,
+): { readonly items: Array<OrchestratorMcpThreadTimelineItem>; readonly start: number } {
   // An oversized envelope (say, a huge thread title) must not starve items to one char per read.
   const budget = Math.max(
     THREAD_READ_RESULT_MAX_BYTES - jsonBytes({ ...envelope, items: [] }),
@@ -1144,7 +1149,7 @@ function timelineItemsWithinBudget(
   );
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
   let bytes = 0;
-  for (const input of inputs) {
+  for (const input of newestFirst ? inputs.toReversed() : inputs) {
     const item = timelineItem(input);
     bytes += jsonBytes(item) + (items.length === 0 ? 0 : 1);
     if (bytes <= budget) {
@@ -1154,7 +1159,9 @@ function timelineItemsWithinBudget(
     if (items.length === 0) items.push(timelineItemWithin(input, budget));
     break;
   }
-  return items;
+  return newestFirst
+    ? { items: items.toReversed(), start: inputs.length - items.length }
+    : { items, start: 0 };
 }
 
 const make = Effect.gen(function* () {
@@ -3120,20 +3127,25 @@ const make = Effect.gen(function* () {
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
       const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
       const view = input.view ?? "messages";
-      const afterPosition = input.afterPosition ?? -1;
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
+      // Client callers (the CLI, older linked environments) page forward from a cursorless read.
+      const newestFirst =
+        input.beforePosition !== undefined ||
+        (input.afterPosition === undefined && scope.thread !== undefined);
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
-          afterPosition,
+          ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
+          ...(newestFirst
+            ? { beforePosition: input.beforePosition ?? Number.POSITIVE_INFINITY }
+            : {}),
           limit,
           view,
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
-      const page = timeline.items;
       const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
-      for (const row of page) {
+      for (const row of timeline.items) {
         if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
         const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
         ids.push(row.item.messageId);
@@ -3149,29 +3161,33 @@ const make = Effect.gen(function* () {
         { concurrency: 1 },
       );
       const messagesByThreadId = new Map(sourceMessages);
-      const returnedRunIds = new Set(
-        page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
-      );
       const thread = threadDetail(
         scope,
         target,
         timeline.totalItems,
         shell,
         yield* Clock.currentTimeMillis,
-        input.afterPosition === undefined && input.itemId === undefined,
+        input.afterPosition === undefined &&
+          input.beforePosition === undefined &&
+          input.itemId === undefined,
       );
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
         .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
         .map((run) => threadRun(target, run));
-      const items = timelineItemsWithinBudget(
-        { thread, recentRuns, nextPosition: page.at(-1)?.position ?? null, hasMore: false },
-        page.map((row) => ({
+      const { items, start } = timelineItemsWithinBudget(
+        { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
+        timeline.items.map((row) => ({
           row,
           maxChars,
           messagesByThreadId,
           ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
         })),
+        newestFirst,
+      );
+      const page = timeline.items.slice(start, start + items.length);
+      const returnedRunIds = new Set(
+        page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
       const tasks =
         parent === undefined
@@ -3225,7 +3241,8 @@ const make = Effect.gen(function* () {
         recentRuns,
         items,
         nextPosition: items.at(-1)?.position ?? null,
-        hasMore: timeline.hasMore || items.length < page.length,
+        hasMore: timeline.hasMore || (!newestFirst && items.length < timeline.items.length),
+        earlierPosition: timeline.hasEarlier || start > 0 ? (items[0]?.position ?? null) : null,
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
