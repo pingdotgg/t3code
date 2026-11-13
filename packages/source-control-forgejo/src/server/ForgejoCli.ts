@@ -184,7 +184,7 @@ export function matchForgejoLogin(
   requestedHost?: string,
   hostOnly = false,
 ) {
-  const matches = [
+  let matches = [
     ...new Map(
       logins
         .filter((login) => {
@@ -204,6 +204,13 @@ export function matchForgejoLogin(
         .map((login) => [login.name, login]),
     ).values(),
   ];
+  if (!remote.ssh && remote.path) {
+    // A root login matches every path on its host; the instance mounted deepest owns the remote.
+    const depth = (login: (typeof matches)[number]) =>
+      parseForgejoRemote(login.url)?.path.length ?? 0;
+    const deepest = Math.max(...matches.map(depth));
+    matches = matches.filter((login) => depth(login) === deepest);
+  }
   return matches.length === 1
     ? matches[0]
     : new Set(matches.map((login) => login.url)).size === 1
