@@ -9109,6 +9109,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       environment: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "300000" },
       threshold: 267_000,
     },
+    {
+      autoCompactWindow: "",
+      model: "claude-opus-5-5",
+      userSettings: '{"autoCompactWindow":400000,"autoCompactEnabled":false}',
+      threshold: undefined,
+    },
+    {
+      autoCompactWindow: "400000",
+      model: "claude-opus-5-5",
+      environment: { DISABLE_AUTO_COMPACT: "1" },
+      threshold: undefined,
+    },
   ])(
     "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
     ({
