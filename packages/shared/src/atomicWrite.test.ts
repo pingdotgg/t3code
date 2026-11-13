@@ -60,6 +60,39 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 
+  it.effect("applies the requested mode before the rename", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const filePath = path.join(root, "credentials.json");
+
+      yield* writeFileStringAtomically({ filePath, contents: "secret", mode: 0o600 });
+
+      const mode = (yield* fs.stat(filePath)).mode & 0o777;
+      assert.strictEqual(mode, 0o600);
+    }),
+  );
+
+  it.effect("applies the requested mode to streamed contents too", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const filePath = path.join(root, "credentials.json");
+
+      yield* writeFileStringAtomically({
+        filePath,
+        contents: ["sec", "ret"].values(),
+        mode: 0o600,
+      });
+
+      const mode = (yield* fs.stat(filePath)).mode & 0o777;
+      assert.strictEqual(mode, 0o600);
+      assert.strictEqual(yield* fs.readFileString(filePath), "secret");
+    }),
+  );
+
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -359,10 +359,12 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
     accessToken = token.access_token;
     const expiresAt = token.expires_at ?? Math.floor(nowMs / 1000) + (token.expires_in ?? 900);
     // Atomic like the config writer: a truncated credential file would sign the
-    // CLI itself out. The CLI re-refreshes fine either way.
+    // CLI itself out. The CLI re-refreshes fine either way. Secrets stay
+    // owner-only, like the CLI writes them.
     yield* writeFileStringAtomically({
       filePath: credentialsPath,
       contents: serializeStoredCredential(stored, token, expiresAt),
+      mode: 0o600,
     }).pipe(Effect.catchTags({ PlatformError: () => Effect.void }));
   }
 

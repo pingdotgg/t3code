@@ -334,6 +334,14 @@ describe("readKimiUsageLimits", () => {
             access_token: "rotated-access",
             refresh_token: "rotated-refresh",
           });
+          // Refreshed tokens must not leak through a wider file mode.
+          const credentialPath = kimi.path.join(
+            kimi.homeDirectory,
+            "credentials",
+            "kimi-code.json",
+          );
+          const mode = (yield* kimi.fileSystem.stat(credentialPath)).mode & 0o777;
+          expect(mode).toBe(0o600);
         }),
       );
 
