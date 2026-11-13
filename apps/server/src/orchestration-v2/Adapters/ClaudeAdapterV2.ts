@@ -5629,6 +5629,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           new Map<string, PendingClaudeRuntimeRequest>(),
         );
         const mcpElicitationSessionGrants = yield* Ref.make(new Set<string>());
+        // Plan asks for a tool without a read-only annotation even when a session rule allows it.
+        const planSessionToolGrants = yield* Ref.make(new Set<string>());
         // Background local_bash tasks can trigger wake turns on the query stream with no active provider turn.
         const lastTurnRouteByNativeThread = yield* Ref.make(
           new Map<
@@ -11677,6 +11679,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          // The SDK passes decisionReasonType but leaves it out of its types. Only the mode's own
+          // ask is answered from a grant: a hook, an ask rule or a safety check still asks.
+          if (
+            "decisionReasonType" in callbackOptions &&
+            callbackOptions.decisionReasonType === "mode" &&
+            callbackOptions.matchedAskRule === undefined &&
+            callbackOptions.suppressAlwaysAllowRule !== true &&
+            (yield* Ref.get(planSessionToolGrants)).has(toolName)
+          ) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           const requestKind = providerRequestKindFromClaudeTool(toolName);
           // The user approves the command itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
@@ -11743,7 +11761,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           if (!(yield* Deferred.isDone(decision))) yield* cancelWithdrawnRequest(artifacts);
 
-          return permissionResultFromDecision({
+          const result = permissionResultFromDecision({
             toolName,
             ...resolvedDecision,
             toolInput,
@@ -11753,6 +11771,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { suggestions: callbackOptions.suggestions }),
           });
+          if (
+            result.behavior === "allow" &&
+            result.updatedPermissions?.some(
+              (update) =>
+                update.type === "addRules" &&
+                update.behavior === "allow" &&
+                update.rules.some(
+                  (rule) => rule.toolName === toolName && rule.ruleContent === undefined,
+                ),
+            ) === true
+          ) {
+            yield* Ref.update(planSessionToolGrants, (current) => new Set(current).add(toolName));
+          }
+          return result;
         });
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
