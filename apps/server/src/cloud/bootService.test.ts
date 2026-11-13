@@ -119,7 +119,7 @@ it("protects the server unit from agents under CPU and memory pressure", () => {
 });
 
 it.each([
-  ["a unit", '/home/theo/T3 "Data"/100%\\x', BootService.renderBootServiceUnit],
+  ["a unit", "/home/theo/T3 Data/100%$x", BootService.renderBootServiceUnit],
   [
     "a plist",
     "/Users/theo/a&b <c>",
@@ -1220,6 +1220,14 @@ process.disconnect();
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
+
+      const quoted = yield* makeService(undefined, "1.2.3", path.join(otherHome, 'T3 "Data"'));
+      commands.length = 0;
+      const unloadable = yield* quoted.install().pipe(Effect.flip);
+      expect(unloadable._tag).toBe("BootServiceBaseDirUnsupportedError");
+      expect(CliError.getUserMessage(unloadable)).toBe(unloadable.message);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
     }),
   );
 
