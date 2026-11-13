@@ -4,9 +4,10 @@ A Rust server for Conn clients. It speaks the same client contract as `apps/serv
 smaller memory footprint. This is a spike: we reproduce behaviour at three boundaries only (the
 client contract, `/mcp`, the provider CLI protocols). We do not translate the TypeScript.
 
-**Pinned contract commit:** `828a9a48551139d26e28a4834bba157ddeeb8f86` (Conn `origin/main`,
-2026-11-13). Every track works against this commit. `crates/conn-contract/methods.json`
-records it.
+**Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13).
+**Contract:** `packages/contracts` last changed in `415dd488bac9dee7f7d2a869595f3c8f1da26863`
+(the 2026-11-13 upstream sync). `crates/conn-contract/methods.json` records it, and every track
+works against it.
 
 ## Build and test
 
@@ -99,6 +100,8 @@ pub enum EngineError<E> { Rejected(E), Internal(String) }   // → Fail exit / D
 pub trait Engine: Send + Sync {
     fn dispatch(&self, command: Command)
         -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>>;
+    fn launch_thread(&self, input: ThreadLaunchInput)
+        -> BoxFuture<'_, Result<ThreadLaunchResult, EngineError<ThreadLaunchError>>>;
     fn subscribe_shell(&self, input: SubscribeShellInput)
         -> BoxFuture<'_, Result<Subscription<ShellStreamItem, GetShellSnapshotError>, EngineError<GetShellSnapshotError>>>;
     fn subscribe_thread(&self, input: SubscribeThreadInput)
@@ -106,8 +109,10 @@ pub trait Engine: Send + Sync {
 }
 ```
 
-These back `orchestration.dispatchCommand`, `orchestration.subscribeShell` and
-`orchestration.subscribeThread`. An `Err` item ends a stream with a typed failure; a closed
+These back `orchestration.dispatchCommand`, `orchestration.launchThread`,
+`orchestration.subscribeShell` and `orchestration.subscribeThread`. Clients start every new
+thread from the composer with `launchThread` (thread plus first message), and send later
+messages with `dispatchCommand` `message.dispatch`. An `Err` item ends a stream with a typed failure; a closed
 channel ends it successfully; dropping the receiver unsubscribes.
 
 ### 3. Method table (`crates/conn-server/src/table.rs`)
@@ -168,8 +173,7 @@ T3 adds on top (`apps/server/src/ws.ts`): the `/ws` URL must carry `orchestratio
 - **serde / serde_json** for all wire and contract values.
 - Release profile as in `native/resource-monitor`: thin LTO, one codegen unit, `panic = "abort"`,
   stripped. The release stub is 1.1 MB; on macOS arm64 its RSS was 2.6 MB idle and 3.2 MB
-  after two calls. That is
-  total RSS on a Mac, not the container measure the spike must prove.
+  after two calls. That is total RSS on a Mac, not the container measure the spike must prove.
 - Track (d) will add `rusqlite` with the `bundled` feature. Track (c) uses `tokio::process`.
 - No `async-trait`, no `futures`: traits return `BoxFuture`, streams are `tokio::sync::mpsc`.
 
@@ -183,10 +187,9 @@ the folders it owns. Every track keeps `cargo test` and `cargo clippy --all-targ
 - **Owns:** `crates/conn-wire`, `crates/conn-server` except `methods/orchestration.rs` and
   `methods/provider.rs`.
 - **Implements:** the `/ws` session (replace the stub in `src/session.rs`): ack window,
-  `Interrupt`, `Eof`, notifications, `discard`, frame parts, the `orchestrationProtocol` check;
-  pairing and auth HTTP routes (`/.well-known/t3/environment`, `/api/auth/*`, `/oauth/token`,
-  see `packages/contracts/src/environmentHttp.ts` and `auth.ts`); `server.*` methods Conn needs
-  at connect, in `methods/server.rs`.
+  `Interrupt`, `Eof`, notifications, `discard`, frame parts, the `orchestrationProtocol` check,
+  per-method scopes; the pairing flow and connect methods listed under
+  [What clients need](#what-clients-need-read-from-the-code), in `methods/server.rs`.
 - **Tests alone:** frame tests in `conn-wire`; session tests against `MethodTable` with fake
   handlers; `tools/effect-client.mjs` with the real Effect client; then Conn desktop.
 - **Must not touch:** `conn-engine`, `conn-provider*`, `conn-contract`, the two files above.
@@ -216,8 +219,9 @@ the folders it owns. Every track keeps `cargo test` and `cargo clippy --all-targ
 ### (d) Engine
 
 - **Owns:** `crates/conn-engine`, `crates/conn-server/src/methods/orchestration.rs`.
-- **Implements:** `Engine`: event store on SQLite, shell and thread projections, the three
-  streams, driving `Provider` sessions from commands (`thread.create`, turn start).
+- **Implements:** `Engine`: event store on SQLite, shell and thread projections, the streams,
+  `launchThread`, and driving `Provider` sessions from `message.dispatch` and `launchThread`.
+  The stream rules are in the trait docs and below.
 - **Tests alone:** dispatch commands into an in-memory or temp-file store; assert stream items;
   a fake `Provider` (see the test in `conn-provider`) stands in for Claude.
 - **Must not touch:** `conn-provider` (the trait), `conn-provider-claude`, the wire.
@@ -234,20 +238,91 @@ the folders it owns. Every track keeps `cargo test` and `cargo clippy --all-targ
   for `out`).
 - **Must not touch:** any crate.
 
-## Not settled
+## What clients need (read from the code)
 
-- **What Conn calls at connect.** The client may call several `server.*` methods and streams
-  before it shows threads. If one returns `ConnServerNotSupported`, the UI may break. The (e)
-  recording answers which ones must be real; (a) owns them.
-- **Auth.** Pairing, session tokens, DPoP and WebSocket tickets are (a)'s. The stub has none.
-- **HTTP snapshots.** Clients also read `/api/orchestration/shell` and
-  `/api/orchestration/threads/:id/*` over HTTP. Proposed: (d) provides the data through new
-  `Engine` methods agreed with the integrator; (a) adds the routes.
-- **Client opt-ins.** `subscribeThread` takes `acceptCompactIds`, `acceptDedupedBodies`,
-  bounded snapshots and more; the shell takes `omitIdleSubagents` and similar. The engine may
-  ignore them only where the server does not advertise the capability. Which ones Conn sends
-  unconditionally is open.
+Read from `packages/client-runtime` and `apps/web` at the pinned commit. References are to
+`packages/client-runtime/src` unless noted.
+
+### Pairing and connect (track a)
+
+No DPoP: it is only used on the T3 Connect relay path (`authorization/service.ts`
+`authorizeDpop`). Direct pairing is bearer token + WebSocket ticket.
+
+1. **Pairing URL** `<origin>/pair#token=<code>`, printed at startup (`apps/server/src/startupAccess.ts`).
+   Code: 12 chars from `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`, case-insensitive, single use, 5 min
+   TTL, scopes `AuthStandardClientScopes` (`packages/contracts/src/auth.ts`). The desktop reads
+   the token from the URL; it never loads `/pair`.
+2. **`GET /.well-known/t3/environment`**, no auth → `ExecutionEnvironmentDescriptor`
+   (`contracts/src/environment.ts`). Must carry `orchestrationProtocolVersion: 2` (else the
+   client blocks, `connection/compatibility.ts`) and a stable `environmentId` (persist it).
+3. **`POST /oauth/token`**, form-encoded token exchange:
+   `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token=<code>`,
+   `subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap` → `{access_token,
+   issued_token_type, token_type:"Bearer", expires_in, scope}` with `cache-control: no-store`.
+   No refresh token. Errors: 400 `invalid_request`, 401 `auth_invalid`
+   (`contracts/src/environmentHttp.ts`).
+4. **`POST /api/auth/websocket-ticket/rpc`**, `Authorization: Bearer` → `{ticket, expiresAt}`,
+   5 min.
+5. **`GET /ws?wsTicket=…&orchestrationProtocol=2&clientCapabilities=…&frameParts=1&client…`**.
+   426 with `{code:"orchestration_protocol_incompatible", …}` unless `orchestrationProtocol=2`;
+   then the ticket authenticates. `client*` params are analytics only.
+
+The token format is ours to choose; the client treats it as opaque. To stay paired across
+restarts, persist the environment id, the signing key and the sessions (with scopes and
+revocation). Not needed for the spike: browser cookie sessions, `/api/auth/session` (SSH only),
+access-management endpoints, MCP OAuth, relay, DPoP.
+
+### Calls a client makes, and what a failure does
+
+| Method                          | When                                                               | If it fails                                                                                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `subscribeServerConfig`         | first, on every connect (`rpc/session.ts`)                         | **Never connects.** Its first item must be `{version:1, type:"snapshot", config}` with `config.environment.environmentId` equal to the descriptor's. If the stream ends, the session closes. |
+| `orchestration.subscribeShell`  | after connect (`state/shell.ts`)                                   | **No sidebar.** A defect ends it with no retry.                                                                                                                                              |
+| `subscribeServerLifecycle`      | at boot (`apps/web/src/routes/__root.tsx`, `FirstRunGate.tsx`)     | A client that never finished onboarding waits on the `welcome` event. Send `{version:1, sequence:0, type:"welcome", payload:{environment, cwd, projectName, bootstrapStatus:"complete"}}`.   |
+| `orchestration.subscribeThread` | when a thread opens (`state/threads.ts`)                           | Thread shows "Could not synchronize"; retries.                                                                                                                                               |
+| `orchestration.launchThread`    | new thread with first message (`operations/commands.ts`)           | Send fails.                                                                                                                                                                                  |
+| `orchestration.dispatchCommand` | `message.dispatch`, `thread.create`, …                             | Send fails.                                                                                                                                                                                  |
+| `server.probe`                  | on wake, network change, long silence (`connection/supervisor.ts`) | **Tears the session down and reconnects.** Implemented.                                                                                                                                      |
+| `panels.requests` (fork)        | at boot in web (`apps/web/src/panels/agentPanelRequests.ts`)       | Re-subscribes after a delay; nothing visible.                                                                                                                                                |
+| everything else                 | from a specific view or user action                                | That feature shows an error.                                                                                                                                                                 |
+
+`server.getConfig` is never called by clients. Of the fork methods, only `panels.requests` runs
+without a user action; the rest belong to the credentials, test-login and annotation views.
+
+`ServerConfig` (`contracts/src/server.ts`) needs `environment`, `auth`, `cwd`,
+`keybindingsConfigPath`, `keybindings`, `issues`, `providers`, `availableEditors`,
+`observability` and `settings`. Advertise only capabilities the server really serves: an
+absent capability hides its feature, and `shellThreadFamilies` or `shellOlderSettled` make the
+client send `omit*` shell flags and call methods we would then need.
+
+### Streams (track d)
+
+- **Shell:** full `snapshot`, then `synchronized`, then `project.*`/`thread.*` items with an
+  increasing `sequence` above `snapshotSequence`. Clients always send
+  `requestCompletionMarker: true`; without `synchronized` the sidebar stays "synchronizing". A
+  full snapshot is a valid answer to any `afterSequence`, `httpSnapshotFallback` or
+  `knownProjectIdentities`.
+- **Thread:** `snapshot {snapshotSequence, projection}`, then `synchronized`, then
+  `event {sequence, event}` with a per-thread sequence. Clients always send
+  `requestCompletionMarker` and `acceptDedupedBodies`, and send `acceptBoundedSnapshot`,
+  `acceptDeferredWork`, `acceptCompactTurnItems`, `acceptCompactIds` whenever they have an HTTP
+  client, whatever the server advertises. All of these may be ignored: full bodies, plain ids,
+  no `idTable`, no history cursor. Without a history cursor the client never calls `/history`.
+- **Also emit `thread.updated` on the shell** as a turn runs, so the sidebar status moves.
+
+### HTTP orchestration routes: none needed
+
+- **`GET /api/orchestration/shell`:** a failure falls back to the socket snapshot
+  (`state/shellSnapshotHttp.ts`).
+- **`GET /api/orchestration/threads/:id/bounded`:** tried on a cold thread open. Any failure
+  except a structured `EnvironmentResourceNotFoundError` falls back to the socket
+  (`state/boundedThreadSnapshotHttp.ts`). That structured error marks the thread deleted, so
+  never send it for an unimplemented route. Axum's plain 404 is safe.
+- **`/history`, `/transcript`:** feature routes only.
+- **Advertising `threadSnapshotPagination: true`** in `ServerConfig` skips the bounded attempt
+  entirely.
+
+## Still open
+
 - **Placeholder switch.** Code that reads placeholder internals (`.0["field"]`) breaks when (b)
-  lands. Build and read contract values through `from_json` / `to_json` to stay safe.
-- **Fork methods.** `methods.json` lists all 13 Conn fork methods the client knows; the TS
-  server mounts only the three `annotations.*` ones.
+  lands. Build and read contract values through `from_json` / `to_json`.

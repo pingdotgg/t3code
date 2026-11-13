@@ -3,6 +3,7 @@
 //! | RPC method                        | Engine call             |
 //! |-----------------------------------|-------------------------|
 //! | `orchestration.dispatchCommand`   | [`Engine::dispatch`]     |
+//! | `orchestration.launchThread`      | [`Engine::launch_thread`] |
 //! | `orchestration.subscribeShell`    | [`Engine::subscribe_shell`]  |
 //! | `orchestration.subscribeThread`   | [`Engine::subscribe_thread`] |
 //!
@@ -18,7 +19,7 @@ use std::{future::Future, pin::Pin};
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,
     GetThreadProjectionError, ShellStreamItem, SubscribeShellInput, SubscribeThreadInput,
-    ThreadStreamItem,
+    ThreadLaunchError, ThreadLaunchInput, ThreadLaunchResult, ThreadStreamItem,
 };
 use tokio::sync::mpsc;
 
@@ -48,8 +49,18 @@ pub trait Engine: Send + Sync {
         command: Command,
     ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>>;
 
-    /// The shell stream: projects and thread summaries. Starts with a `snapshot` item (or
-    /// replays from `afterSequence`), then `synchronized`, then live updates.
+    /// Creates a thread (or reuses one with `reuseExistingThread`) and dispatches its first
+    /// message. Clients call this, not `dispatch`, when they start a thread from the composer.
+    fn launch_thread(
+        &self,
+        input: ThreadLaunchInput,
+    ) -> BoxFuture<'_, Result<ThreadLaunchResult, EngineError<ThreadLaunchError>>>;
+
+    /// The shell stream: projects and thread summaries. Send a full `snapshot` (its
+    /// `snapshotSequence` is the client's cursor), then `synchronized` (clients always set
+    /// `requestCompletionMarker`; without it the sidebar stays "synchronizing"), then live
+    /// `project.*`/`thread.*` items with increasing `sequence`. Ignoring `afterSequence` and
+    /// always sending a full snapshot is valid. Never end the stream on its own.
     fn subscribe_shell(
         &self,
         input: SubscribeShellInput,
@@ -61,8 +72,10 @@ pub trait Engine: Send + Sync {
         >,
     >;
 
-    /// One thread's stream: a `snapshot` of its projection (or a replay from
-    /// `afterSequence`), then `synchronized`, then live `event` items.
+    /// One thread's stream: a `snapshot` with `snapshotSequence` and the full `projection`, then
+    /// `synchronized`, then `event` items with a per-thread `sequence` above it. Clients always
+    /// set `requestCompletionMarker` and `acceptDedupedBodies`, and often the bounded/compact
+    /// flags; all may be ignored (send full bodies, plain ids, no `idTable`, no history cursor).
     fn subscribe_thread(
         &self,
         input: SubscribeThreadInput,
@@ -111,6 +124,13 @@ mod tests {
                 let _ = self.live.send(from_json(item).unwrap());
                 Ok(from_json(json!({ "sequence": sequence })).unwrap())
             })
+        }
+
+        fn launch_thread(
+            &self,
+            _input: ThreadLaunchInput,
+        ) -> BoxFuture<'_, Result<ThreadLaunchResult, EngineError<ThreadLaunchError>>> {
+            Box::pin(async { Err(EngineError::Internal("not in the toy engine".into())) })
         }
 
         fn subscribe_shell(

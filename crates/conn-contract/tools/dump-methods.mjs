@@ -12,9 +12,12 @@ const RpcSchema = await import(NodeURL.pathToFileURL(resolve("effect/rpc/RpcSche
 const { OfficialWsRpcGroup, ForkWsRpcGroup } = await import(new URL("src/rpc.ts", contracts).href);
 
 const out = NodeURL.fileURLToPath(new URL("../methods.json", import.meta.url));
-const commit = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
-  encoding: "utf8",
-}).trim();
+// The last commit that changed the contract, not this branch's own commits.
+const commit = NodeChildProcess.execFileSync(
+  "git",
+  ["log", "-1", "--format=%H", "origin/main", "--", "packages/contracts"],
+  { encoding: "utf8" },
+).trim();
 
 const entries = (group, origin) =>
   [...group.requests.values()].map((rpc) => ({

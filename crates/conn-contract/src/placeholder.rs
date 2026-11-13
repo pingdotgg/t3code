@@ -24,6 +24,13 @@ opaque!(
     GetShellSnapshotError,
     /// `OrchestrationV2GetThreadProjectionError`, the `subscribeThread` typed error.
     GetThreadProjectionError,
+    /// `OrchestrationV2ThreadLaunchInput`, the `launchThread` payload: a new thread and its first
+    /// message in one call. Clients use it for every new thread they start from the composer.
+    ThreadLaunchInput,
+    /// `OrchestrationV2ThreadLaunchResult`: `{ threadId, projection, resumed, sequence? }`.
+    ThreadLaunchResult,
+    /// `OrchestrationV2ThreadLaunchError`, the `launchThread` typed error.
+    ThreadLaunchError,
     /// `OrchestrationV2SubscribeShellInput`.
     SubscribeShellInput,
     /// `OrchestrationV2ShellStreamItem`: `synchronized`, `snapshot`, `project.updated`, ...
