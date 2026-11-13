@@ -22,7 +22,7 @@ const git = Effect.fn("worktreeContainerTest.git")(function* (
 it.layer(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "isWorktreeContainer",
   (it) => {
-    it.effect("is true only for a work tree that holds worktrees and none of HEAD's files", () =>
+    it.effect("is true only for a folder of worktrees around metadata that is no checkout", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -60,13 +60,9 @@ it.layer(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
         yield* fileSystem.symlink(container, linked);
         assert.isTrue(yield* isWorktreeContainer(linked), "container through a symlink");
 
-        const indexed = yield* makeContainer("indexed", false);
-        yield* git(indexed, "read-tree", "HEAD");
-        assert.isTrue(yield* isWorktreeContainer(indexed), "container that gained an index");
-
-        // Git reports no work tree here, so the folder is a plain one, as before.
+        // The issue's steps leave core.bare set; Initialize Git would clear it later.
         const bare = yield* makeContainer("bare", true);
-        assert.isFalse(yield* isWorktreeContainer(bare), "core.bare container");
+        assert.isTrue(yield* isWorktreeContainer(bare), "core.bare container");
 
         // Git allows an orphan worktree before the first commit: no index, yet a valid checkout.
         const fresh = yield* makeSeparateGitDirCheckout("fresh");

@@ -16,10 +16,10 @@ const parseGitfileTarget = (contents: string): string | undefined => {
 const splitNul = (stdout: string) => stdout.split("\0").filter((entry) => entry !== "");
 
 /**
- * Whether a folder only holds a repository's metadata and its worktrees, with nothing checked out
- * in the folder itself, while Git still reports it as a work tree. The index is no evidence either
- * way (a fresh checkout has none, a container can gain one), so this compares HEAD with the folder.
- * Anything it cannot establish answers false.
+ * Whether a folder only holds a repository's metadata and worktrees: its `.git` file points at
+ * metadata inside it, a linked worktree lives inside it, and either the repository is bare or it
+ * has commits but no index. A checkout whose tracked files are all deleted keeps its index, and a
+ * fresh one has no commit. Anything this cannot establish answers false.
  */
 export const makeIsWorktreeContainer = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -67,20 +67,16 @@ export const makeIsWorktreeContainer = Effect.gen(function* () {
           Effect.orElseSucceed(() => null),
         );
 
-    // With core.bare set Git sees no work tree here and the folder is added as a plain one.
-    const insideWorkTree = yield* git(["rev-parse", "--is-inside-work-tree"]);
-    if (insideWorkTree?.trim() !== "true") return false;
-
-    // Fails for an unborn HEAD, where a fresh checkout and a container look the same.
-    const tracked = yield* git(["ls-tree", "-z", "--name-only", "HEAD"]);
-    if (tracked === null) return false;
-    const trackedNames = splitNul(tracked);
-    if (trackedNames.length === 0) return false;
-    for (const name of trackedNames) {
-      const checkedOut = yield* fileSystem
-        .exists(path.join(workspaceRoot, name))
+    // Initializing Git in a bare container clears core.bare, so it is refused while still bare.
+    const isBare = yield* git(["rev-parse", "--is-bare-repository"]);
+    if (isBare === null) return false;
+    if (isBare.trim() !== "true") {
+      const hasCommit = yield* git(["rev-parse", "--quiet", "--verify", "HEAD^{commit}"]);
+      if (hasCommit === null) return false;
+      const hasIndex = yield* fileSystem
+        .exists(path.join(gitDir.value, "index"))
         .pipe(Effect.orElseSucceed(() => true));
-      if (checkedOut) return false;
+      if (hasIndex) return false;
     }
 
     const worktrees = yield* git(["worktree", "list", "--porcelain", "-z"]);
