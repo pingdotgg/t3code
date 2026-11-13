@@ -23,7 +23,7 @@ const responseFor = (path: string, comments: ReadonlyArray<unknown>) => {
 const fakeCli = (comments: ReadonlyArray<unknown>) =>
   OriginCli.of({
     api: (input, schema) =>
-      Schema.decodeUnknownEffect(schema)(responseFor(input.path, comments)).pipe(Effect.orDie),
+      Schema.decodeEffect(schema)(responseFor(input.path, comments)).pipe(Effect.orDie),
     execute: () => Effect.succeed("{}"),
     viewer: () => Effect.succeed("viewer"),
     personalNamespace: () => Effect.succeed("viewer"),
@@ -37,6 +37,7 @@ describe("getChangeRequestActivity", () => {
       const activity = yield* provider.getChangeRequestActivity({
         cwd: "/repo",
         repository: "acme/repo",
+        host: "origin.cursor.com",
         number: 1,
       });
       const lines = Object.fromEntries(
