@@ -139,6 +139,8 @@ export function HostedBrowserWebview(props: {
 
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
+  // A guest with no painted page is transparent; a crash remount starts over under a new generation.
+  const [paintedGeneration, setPaintedGeneration] = useState<number | null>(null);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
@@ -191,17 +193,17 @@ export function HostedBrowserWebview(props: {
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
-    const guestPointerDown = (event: Event) => {
-      // Mirrors POINTER_DOWN_HOST_CHANNEL in apps/desktop/src/preview/GuestProtocol.ts.
-      if ((event as Event & { channel?: string }).channel === "preview:pointer-down") {
-        dismissHostPopups();
-      }
+    const onGuestMessage = (event: Event) => {
+      // Mirrors the host channels in apps/desktop/src/preview/GuestProtocol.ts.
+      const channel = (event as Event & { channel?: string }).channel;
+      if (channel === "preview:pointer-down") dismissHostPopups();
+      else if (channel === "preview:guest-painted") setPaintedGeneration(webviewGeneration);
     };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
     webview.addEventListener("focus", dismissHostPopups);
-    webview.addEventListener("ipc-message", guestPointerDown);
+    webview.addEventListener("ipc-message", onGuestMessage);
     register();
     return () => {
       disposed = true;
@@ -210,15 +212,9 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
       webview.removeEventListener("focus", dismissHostPopups);
-      webview.removeEventListener("ipc-message", guestPointerDown);
+      webview.removeEventListener("ipc-message", onGuestMessage);
     };
-  }, [
-    clientSettingsHydrated,
-    config,
-    runtimeTabId,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
-    webviewGeneration,
-  ]);
+  }, [clientSettingsHydrated, config, runtimeTabId, webviewGeneration]);
 
   const lastRect = presentation.rect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
@@ -383,7 +379,9 @@ export function HostedBrowserWebview(props: {
           }
           aria-hidden={active ? undefined : true}
           className={cn(
-            "absolute flex overflow-hidden bg-white",
+            "absolute flex overflow-hidden",
+            // White backs pages that paint no background of their own; before one paints, the theme shows.
+            paintedGeneration === webviewGeneration ? "bg-white" : "bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
           )}
           style={{

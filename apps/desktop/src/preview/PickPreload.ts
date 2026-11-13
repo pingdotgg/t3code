@@ -38,6 +38,7 @@ import {
   ANNOTATION_VOICE_STATE_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
+  GUEST_PAINTED_HOST_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   POINTER_DOWN_HOST_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
@@ -1835,3 +1836,12 @@ ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotatio
   activeSession?.applyTheme(theme);
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));
+
+// Blink runs no frame until the body exists and render-blocking stylesheets have loaded, so the
+// second callback runs right after the frame that first paints this document, whatever a deferred
+// script or onload still holds up. A blank guest never counts as a page.
+if (location.href !== "about:blank") {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => ipcRenderer.sendToHost(GUEST_PAINTED_HOST_CHANNEL)),
+  );
+}
