@@ -516,11 +516,25 @@ fn subagent_compaction_and_retry_frames_decode_without_failing() {
     assert_eq!(
         kinds,
         [
-            json!("skip:assistant (subagent)"),
-            json!("turn_item.updated"),
-            json!("skip:system/api_retry"),
-            json!("skip:brand_new_kind"),
+            // task_started opens the row and replays the child reply it held.
+            "app_thread.created",
+            "node.updated",
+            "subagent.updated",
+            "node.updated",
+            "message.updated",
+            "turn_item.updated",
+            "turn_item.updated",
+            "message.updated",
+            "turn_item.updated",
+            // compacting, then the boundary with its token count.
+            "turn_item.updated",
+            "provider_turn.updated",
+            "turn_item.updated",
+            // api_retry row.
+            "turn_item.updated",
+            "skip:brand_new_kind",
         ]
+        .map(|k| json!(k))
     );
     assert!(mapper.turn_active());
 }

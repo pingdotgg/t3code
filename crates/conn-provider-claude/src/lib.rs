@@ -10,6 +10,7 @@
 //! Reference behaviour: `ClaudeAdapterV2.ts` in `apps/server/src/orchestration-v2/Adapters`.
 //! See `README.md` in this crate for the event mapping and its known differences.
 
+pub mod attachments;
 pub mod ids;
 pub mod launch;
 pub mod mapper;
