@@ -475,6 +475,10 @@ export function createDeviceStreamClient(
   // frame has to be checked, because a new encoder can describe the stream
   // with a different parameter set.
   let checkSpsOnKeyframe = false;
+  // The frames the decoder still holds when the encoder restarts belong to the
+  // old session, so they must not report the new session as live.
+  let queuedFrames = 0;
+  let staleFrames = 0;
   let mjpeg = false;
   let generation = 0;
   let decoderEpoch = 0;
@@ -643,6 +647,8 @@ export function createDeviceStreamClient(
     // The frames that were kept for the decoder that just went away do not
     // belong to the next one.
     pendingSequence = [];
+    queuedFrames = 0;
+    staleFrames = 0;
   };
 
   /**
@@ -695,8 +701,16 @@ export function createDeviceStreamClient(
     const decoder = new VideoDecoder({
       output: (frame) => {
         try {
+          if (queuedFrames > 0) queuedFrames -= 1;
           if (videoDecoder === decoder && (!avcc || feedGeneration === videoGeneration)) {
             decodedVideoGeneration = feedGeneration;
+            // A frame the old session left in the decoder must not report the
+            // new session as streaming: the panel would wait for a frame that
+            // never comes.
+            if (staleFrames > 0) {
+              staleFrames -= 1;
+              return;
+            }
             paint(frame, frame.displayWidth, frame.displayHeight);
           }
         } finally {
@@ -780,6 +794,7 @@ export function createDeviceStreamClient(
           data,
         }),
       );
+      queuedFrames += 1;
       timestamp += FRAME_DURATION_US;
       return true;
     } catch {
@@ -1321,6 +1336,9 @@ export function createDeviceStreamClient(
             closeDecoder();
           } else {
             checkSpsOnKeyframe = true;
+            // The frames the old session left in the decoder arrive before the
+            // new session's first frame, so they belong to the old one.
+            staleFrames = queuedFrames;
           }
           awaitingKeyframe = true;
           connecting();

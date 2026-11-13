@@ -89,7 +89,14 @@ it.effect("keeps a client text frame as text for the upstream hub", () =>
         return;
       }
       // The control frame comes back in whatever form the proxy forwarded it,
-      // so the wait ends on any frame and its type is asserted below.
+      // so the wait ends on its payload and its type is asserted below.
+      const payload =
+        typeof data === "string"
+          ? data
+          : data instanceof ArrayBuffer
+            ? new TextDecoder().decode(data)
+            : "";
+      if (!payload.includes("reset-video")) return;
       echoed.resolve();
     });
     yield* Effect.promise(() => echoed.promise);

@@ -674,6 +674,41 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("does not let a frame from the old session report the new one as streaming", async () => {
+    const { client, sockets, sps, decoders, decodedFrame, events } = recoveryFixture("android");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    // The hub announces the video session.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: "video-session", size: { width: 400, height: 800 } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // The key frame is submitted, and the decoder still holds it.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(1);
+    events.onStatus.mockClear();
+    // The hub restarts the encoder at the same size, so the decoder stays.
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({ type: "video-session", size: { width: 400, height: 800 } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders).toHaveLength(1);
+    // The frame the old session left in the decoder arrives now.
+    decodedFrame();
+    await vi.advanceTimersByTimeAsync(0);
+    // It does not report the new session as streaming.
+    expect(events.onStatus).not.toHaveBeenCalledWith("streaming", undefined);
+    // The first frame timeout still guards the new session.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(events.onStatus).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("No video received"),
+    );
+    client.stop();
+  });
+
   it("rebuilds the decoder when the encoder restarts at another size", async () => {
     const { client, sockets, sps, decoders, decodedFrame } = recoveryFixture("android");
     client.start();
