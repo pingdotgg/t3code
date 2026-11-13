@@ -43,15 +43,17 @@ const SKIPPED_DIRECTORIES = new Set([
 const isGitFolder = (segment: string) => segment.toLowerCase() === ".git";
 
 /**
- * Names Windows may resolve to another one, `.git` among them: a trailing dot
- * or space, an NTFS stream after a colon, or the 8.3 name `GIT~1`. Refused on
- * every platform, as git's `is_ntfs_dotgit` does, since the sender's is unknown.
+ * Names Windows resolves to `.git`: trailing dots or spaces, an NTFS stream after
+ * a colon, or the 8.3 name `GIT~1`. Refused on every platform, as git's
+ * `is_ntfs_dotgit` does, since the receiver's platform is unknown to the sender.
  */
-const isWindowsAlias = (segment: string) =>
-  segment.endsWith(".") ||
-  segment.endsWith(" ") ||
-  segment.includes(":") ||
-  /^git~\d$/i.test(segment);
+const isWindowsGitAlias = (segment: string) => {
+  const name = segment
+    .toLowerCase()
+    .split(":")[0]!
+    .replace(/[. ]+$/, "");
+  return name === ".git" || /^git~\d$/.test(name);
+};
 
 export class WorkFilesError extends Schema.TaggedError<WorkFilesError>()("WorkFilesError", {
   reason: Schema.Literals(["over_limit", "head_mismatch", "conflict", "invalid_archive", "failed"]),
@@ -321,7 +323,7 @@ export const isSafeRelativePath = (path: string) =>
   !path.includes("\0") &&
   path
     .split("/")
-    .every((segment) => segment !== ".." && !isGitFolder(segment) && !isWindowsAlias(segment));
+    .every((segment) => segment !== ".." && !isGitFolder(segment) && !isWindowsGitAlias(segment));
 
 interface ArchiveEntry {
   readonly path: string;
@@ -758,7 +760,7 @@ export const applyWorkFiles = Effect.fn("WorkFiles.apply")(function* (input: App
   // A half-applied copy cannot be left behind: once the lock is held, the apply
   // and any rollback run to the end before an interruption lands, and only
   // then are the lock and the caller's staging released.
-  return yield* Semaphore.withPermit(lock, Effect.uninterruptible(applyLocked(input, files)));
+  return yield* Semaphore.withPermit(lock, applyLocked(input, files));
 });
 
 const applyLocked = Effect.fn("WorkFiles.applyLocked")(function* (
@@ -827,6 +829,7 @@ const applyLocked = Effect.fn("WorkFiles.applyLocked")(function* (
     });
   }
   const stamp = DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-");
+  // The caller removes staging when this ends, so a started copy runs to its end or rollback.
   const deleted = yield* Effect.tryPromise({
     try: () =>
       copyIn({
@@ -839,6 +842,6 @@ const applyLocked = Effect.fn("WorkFiles.applyLocked")(function* (
         deletions: input.deletions,
       }),
     catch: (error) => (isWorkFilesError(error) ? error : failed("Could not apply the work files.")),
-  });
+  }).pipe(Effect.withSpan("WorkFiles.copyIn"), Effect.uninterruptible);
   return { files: files.length, deletions: deleted };
 });

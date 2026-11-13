@@ -199,11 +199,23 @@ it("keeps archive and deletion paths inside the checkout on every platform", () 
     ".git::$INDEX_ALLOCATION/hooks/post-checkout",
     "GIT~1/config",
     "sub/git~2/hooks/pre-commit",
-    "a/b:stream",
+    ".Git. ./config",
   ]) {
     expect(isSafeRelativePath(path), path).toBe(false);
   }
-  for (const path of ["a", "a/b.txt", ".github/x.yml", "a..b", ".gitignore", "x.git/y"]) {
+  for (const path of [
+    "a",
+    "a/b.txt",
+    ".github/x.yml",
+    "a..b",
+    ".gitignore",
+    "x.git/y",
+    // Ordinary names that only look odd on Windows still travel.
+    "log-10:30.txt",
+    "draft.",
+    "notes ",
+    "a/b:stream",
+  ]) {
     expect(isSafeRelativePath(path), path).toBe(true);
   }
 });
@@ -446,7 +458,7 @@ it.live("a rollback that cannot put a file back keeps its backup and names where
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("an apply interrupted after it takes the lock finishes before it ends", () =>
+it.live("an apply interrupted while it copies finishes the copy before it ends", () =>
   Effect.gen(function* () {
     const { source, target, archivePath, stagingDir } = yield* pair({ "a.ts": "a" });
     const paths = Array.from({ length: 200 }, (_, index) => `many/${index}.ts`);
@@ -456,7 +468,7 @@ it.live("an apply interrupted after it takes the lock finishes before it ends", 
     const lockTaken = new Promise<void>((resolve) => (locked = resolve));
     const tracer = Tracer.make({
       span(options) {
-        if (options.name === "WorkFiles.applyLocked") locked();
+        if (options.name === "WorkFiles.copyIn") locked();
         return new Tracer.NativeSpan(options);
       },
     });
