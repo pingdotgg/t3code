@@ -1389,6 +1389,19 @@ it.layer(
     }),
   );
 
+  it.effect("keeps text after a CSI that libghostty aborts on a non-ASCII character", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // libghostty abandons the CSI at 界 and prints "�nB", so the n is text, not a DSR final byte.
+      process.emitData("A\u001b[界nB");
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect((yield* manager.open(openInput())).history).toBe("A\u001b[界nB");
+    }),
+  );
+
   it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
