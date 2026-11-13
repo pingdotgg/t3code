@@ -128,11 +128,37 @@ describe("auto-settle days field", () => {
     expect(commitAutoSettleDaysField(type(rejectedWhileCleared, "30")).submit).toBe(30);
   });
 
+  it("retyping a value that saved on only some environments sends it again", () => {
+    const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const partlySaved = failAutoSettleDaysField(
+      syncAutoSettleDaysField(submitted, 30),
+      submitted.revision,
+    );
+    expect(commitAutoSettleDaysField(partlySaved).submit).toBeNull();
+    expect(commitAutoSettleDaysField(type(partlySaved, "3", "30")).submit).toBe(30);
+  });
+
   it("returning to the saved value while another save is in flight saves it again", () => {
     const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
     const back = commitAutoSettleDaysField(type(submitted, "14"));
     expect(back.submit).toBe(14);
     expect(failAutoSettleDaysField(back.field, submitted.revision)).toBe(back.field);
+
+    const settled = syncAutoSettleDaysField(back.field, 14);
+    expect(settled.pending).toBeNull();
+    expect(syncAutoSettleDaysField(settled, 14)).toBe(settled);
+    expect(syncAutoSettleDaysField(settled, 20).draft).toBe("20");
+  });
+
+  it("keeps a later save in flight when an earlier one is confirmed", () => {
+    const first = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const second = commitAutoSettleDaysField(type(first, "60")).field;
+    const firstConfirmed = syncAutoSettleDaysField(second, 30);
+    expect(firstConfirmed).toMatchObject({ saved: 30, draft: "60", pending: 60 });
+    expect(failAutoSettleDaysField(firstConfirmed, second.revision)).toMatchObject({
+      draft: "30",
+      pending: null,
+    });
   });
 
   it("a cancelled edit restores the saved value and saves nothing", () => {
