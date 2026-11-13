@@ -8,6 +8,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  OrchestratorMcpFailure,
   type OrchestrationV2Run,
   ProjectId,
   ProviderDriverKind,
@@ -68,6 +69,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import * as WorkFilesTransfer from "./WorkFilesTransfer.ts";
 
 // The laptop's agent delegates a task to the box through a link. The box is
 // its real /mcp behind real OAuth, with one thread the test finishes; the
@@ -644,6 +646,10 @@ const makeLaptop = (
   >,
   /** The laptop's links from before a restart, which keep their sessions there. */
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
+  /** Sending work files; by default any send fails the test, as `workFiles: "skip"` sends none. */
+  workFiles: Partial<WorkFilesTransfer.WorkFilesTransfer["Service"]> = {
+    send: () => Effect.die("no work files are sent unless a task asks"),
+  },
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -696,6 +702,7 @@ const makeLaptop = (
         ),
       ),
       Layer.provide(Layer.succeedContext(linking)),
+      Layer.provide(Layer.mock(WorkFilesTransfer.WorkFilesTransfer)(workFiles)),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
@@ -1280,6 +1287,88 @@ it.effect("refuses worktree isolation for a task there before launching anything
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("isolation");
       expect(yield* Ref.get(thread.launched)).toBeNull();
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("sends the work files before launching there, and launches nothing when they fail", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const sent: Array<{ cwd: string; projectId: string; launchedFirst: boolean }> = [];
+      let fail = true;
+      const a = yield* makeLaptop(database, offers, undefined, {
+        send: (input) =>
+          Effect.gen(function* () {
+            sent.push({
+              cwd: input.cwd,
+              projectId: input.projectId,
+              launchedFirst: (yield* Ref.get(thread.launched)) !== null,
+            });
+            if (fail) {
+              return yield* new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: "The checkout there is at abc, but the files apply to def.",
+              });
+            }
+            return { files: 3, deletions: 0 };
+          }),
+      });
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegate = a.call("delegate_task", {
+        task: "Run the suite on the box with my edits.",
+        target: { environmentId: box.environmentId },
+        workFiles: "transfer",
+        clientRequestId: "suite-with-edits",
+      });
+
+      const refused = yield* delegate;
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain(
+        "Nothing was launched, because the work files could not be transferred: The checkout there is at abc",
+      );
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(0);
+
+      fail = false;
+      const accepted = yield* delegate;
+      expect(accepted.isError, JSON.stringify(accepted.content)).toBe(false);
+      expect(yield* Ref.get(thread.launched)).not.toBeNull();
+      // From this thread's checkout, into the project there with this repository, before the launch.
+      expect(sent).toEqual([
+        { cwd: "/home/me/app", projectId: boxProject, launchedFirst: false },
+        { cwd: "/home/me/app", projectId: boxProject, launchedFirst: false },
+      ]);
+      // A retry of the launched task finds it and sends nothing again.
+      const retried = yield* delegate;
+      expect(retried.isError, JSON.stringify(retried.content)).toBe(false);
+      expect(retried.structuredContent).toEqual(accepted.structuredContent);
+      expect(sent).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("refuses to transfer work files to a task on this machine", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* seedParent(a);
+      const result = yield* a.call("delegate_task", {
+        task: "Run the suite here.",
+        workFiles: "transfer",
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("needs target.environmentId");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

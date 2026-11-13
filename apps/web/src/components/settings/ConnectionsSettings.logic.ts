@@ -467,3 +467,17 @@ export function resolveAccessEnvironmentId(input: {
       ?.environmentId ?? null
   );
 }
+
+/**
+ * The origin a `connect` link names, or null. Only the origin is kept, so a link can never
+ * carry a pairing token into the address bar or history.
+ */
+export function connectLinkOrigin(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}

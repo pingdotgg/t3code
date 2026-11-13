@@ -27,6 +27,13 @@ import {
   PeerLinkSummary,
 } from "./peerLink.ts";
 import {
+  ThreadContinueOnEnvironmentInput,
+  ThreadContinueOnEnvironmentResult,
+  ThreadWorkFilesSummaryInput,
+  WorkFilesSummary,
+  WorkFilesTransferError,
+} from "./workFiles.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -523,6 +530,8 @@ export const WS_METHODS = {
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  threadsWorkFilesSummary: "threads.workFilesSummary",
+  threadsContinueOnEnvironment: "threads.continueOnEnvironment",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverCheckSecretSource: "server.checkSecretSource",
@@ -862,6 +871,18 @@ const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
   payload: PeerLinkRequestAnswerInput,
   error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadsWorkFilesSummaryRpc = Rpc.make(WS_METHODS.threadsWorkFilesSummary, {
+  payload: ThreadWorkFilesSummaryInput,
+  success: WorkFilesSummary,
+  error: Schema.Union([WorkFilesTransferError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadsContinueOnEnvironmentRpc = Rpc.make(WS_METHODS.threadsContinueOnEnvironment, {
+  payload: ThreadContinueOnEnvironmentInput,
+  success: ThreadContinueOnEnvironmentResult,
+  error: Schema.Union([WorkFilesTransferError, EnvironmentAuthorizationError]),
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -2138,6 +2159,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
+  WsThreadsWorkFilesSummaryRpc,
+  WsThreadsContinueOnEnvironmentRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,

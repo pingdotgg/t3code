@@ -64,9 +64,11 @@ export const descriptorOf = (
  * socket. The descriptor can be swapped, as when its address comes to answer
  * as another environment, and every bearer it receives is recorded.
  */
-export const servePeer = <E, R>(
+export const servePeer = <E, R, E2 = never, R2 = never>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
+  /** More routes it serves beside `/mcp`, such as an upload a tool there issues. */
+  routes: Layer.Layer<never, E2, R2> = Layer.empty as Layer.Layer<never, E2, R2>,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -140,6 +142,7 @@ export const servePeer = <E, R>(
         ),
         Layer.provide(McpOAuth.layerMcpClientAuthenticator),
       ),
+      routes,
     ).pipe(
       Layer.provide(layerRecordBearers),
       Layer.provide(layerEnvironment),

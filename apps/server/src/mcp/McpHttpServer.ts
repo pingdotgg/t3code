@@ -72,6 +72,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import * as WorkFilesHandlers from "./toolkits/workFiles/handlers.ts";
+import { WorkFilesToolkit } from "./toolkits/workFiles/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
@@ -1332,7 +1334,14 @@ const layerToolExposure = Layer.effect(
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools
+          // Agents never search for tools only a linked environment calls.
+          .filter(
+            ({ annotations }) =>
+              Context.getOrUndefined(annotations, McpSchema.EnabledWhen) !==
+              McpInvocationContext.onlyForLinkedEnvironments,
+          )
+          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
@@ -1366,4 +1375,9 @@ export const layerToolSearch = Layer.mergeAll(
   layerDeferredListing,
 ).pipe(Layer.provide(layerToolExposure));
 
-export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolSearch));
+/** Outside layerTools: only linked environments list it, never an agent. */
+export const layerWorkFilesToolkit = toolkitRegistration(WorkFilesToolkit, WorkFilesHandlers.layer);
+
+export const layer = layerMcpTransport(
+  Layer.mergeAll(layerTools, layerToolSearch, layerWorkFilesToolkit),
+);

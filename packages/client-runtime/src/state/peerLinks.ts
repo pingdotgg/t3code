@@ -30,6 +30,20 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
+    /** What a thread's working directory would carry to another machine. */
+    workFilesSummary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:work-files-summary",
+      tag: WS_METHODS.threadsWorkFilesSummary,
+    }),
+    /** A new thread on a linked machine that picks up this one's work. One per thread at a time. */
+    continueThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:continue-thread",
+      tag: WS_METHODS.threadsContinueOnEnvironment,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+      },
+    }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:answer-request",

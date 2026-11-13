@@ -450,6 +450,19 @@ const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefin
     ],
 };
 
+const DELEGATE_WITH_WORK_FILES = tool(
+  ["Delegate", "Delegating", "Delegated", "a child task with work files"],
+  "delegate",
+);
+
+/** Calls whose input changes what they do enough to need their own labels. */
+const INPUT_VARIANTS: Readonly<
+  Record<string, (input: SummaryInput) => T3McpToolDefinition | undefined>
+> = {
+  delegate_task: ({ workFiles }) =>
+    workFiles === "transfer" ? DELEGATE_WITH_WORK_FILES : undefined,
+};
+
 /** Pass the call's input so an action tool resolves to the labels and summary of its action. */
 export function resolveT3McpToolDefinition(
   toolName: string | null | undefined,
@@ -457,7 +470,10 @@ export function resolveT3McpToolDefinition(
 ): T3McpToolDefinition | null {
   const name = toolName == null ? null : resolveT3McpToolName(toolName);
   if (name === null || !Object.hasOwn(T3_MCP_TOOLS, name)) return null;
-  const action = asSummaryInput(input)?.action;
+  const fields = asSummaryInput(input);
+  const variant = fields === undefined ? undefined : INPUT_VARIANTS[name]?.(fields);
+  if (variant !== undefined) return variant;
+  const action = fields?.action;
   const actionTool = typeof action === "string" ? ACTION_TOOLS[name]?.(action) : undefined;
   return actionTool !== undefined && Object.hasOwn(T3_MCP_TOOLS, actionTool)
     ? T3_MCP_TOOLS[actionTool]!
