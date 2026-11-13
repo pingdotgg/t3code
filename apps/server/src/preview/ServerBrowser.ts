@@ -1040,7 +1040,7 @@ const make = Effect.gen(function* () {
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
-        url: ServerBrowserPage.withoutDataPayload(request.url()),
+        url: ServerBrowserPage.networkEntryUrl(request.url()),
         method: request.method(),
         status: null,
         failed: true,
@@ -1075,7 +1075,7 @@ const make = Effect.gen(function* () {
     });
     page.on("response", (response) => {
       pushBounded(tab.networkEntries, {
-        url: ServerBrowserPage.withoutDataPayload(response.url()),
+        url: ServerBrowserPage.networkEntryUrl(response.url()),
         method: response.request().method(),
         status: response.status(),
         failed: false,

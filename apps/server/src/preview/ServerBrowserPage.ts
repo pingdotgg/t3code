@@ -19,6 +19,7 @@ import {
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
+import * as UrlParams from "effect/http/UrlParams";
 import * as Schema from "effect/Schema";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
@@ -197,6 +198,28 @@ export const withoutDataPayload = (url: string) => {
   const mediaType = /^[\w.+-]{1,64}\/[\w.+-]{1,64}$/.test(type) ? type : "";
   return `data:${mediaType},…`;
 };
+
+const CREDENTIAL_PARAM_NAMES = [
+  ...UrlParams.CurrentRedactedNames.defaultValue(),
+  "sid",
+  "session",
+  "otp",
+  "code",
+  "token",
+  "access_token",
+  "id_token",
+  "refresh_token",
+  "password",
+  "secret",
+  "key",
+];
+
+/**
+ * Network entries reach the agent, so session ids, OAuth codes and tokens in a query stay out.
+ * Cut first: redacting costs time per parameter, and a page picks its request URLs.
+ */
+export const networkEntryUrl = (url: string) =>
+  UrlParams.redactUrl(withoutDataPayload(url).slice(0, 2048), CREDENTIAL_PARAM_NAMES);
 
 /**
  * Chromium's own console messages, which carry no arguments, quote `data:` URLs whole, as in a

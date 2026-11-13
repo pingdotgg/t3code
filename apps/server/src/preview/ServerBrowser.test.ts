@@ -1959,6 +1959,65 @@ it.effect("a tab showing a data: page reports its URL without the content", () =
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a snapshot's network entries keep request paths but not their credentials", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const subresource = (url: string) => ({
+        url: () => url,
+        method: () => "GET",
+        isNavigationRequest: () => false,
+        frame: () => page,
+      });
+      for (const url of [
+        "http://127.0.0.1:18457/secur/contentDoor?startURL=%2Fhome&sid=SYNTHETICSESSIONID&skipRedirect=1",
+        "http://127.0.0.1:18457/api/magic?otp=987654&next=/",
+        "http://127.0.0.1:18457/api/data?access_token=SYNTHETICACCESSTOKEN&q=ok",
+        "http://127.0.0.1:18457/callback?code=SYNTHETICAUTHCODE",
+        "http://admin:SYNTHETICPASSWORD@127.0.0.1:18457/private",
+      ]) {
+        page.emit("response", {
+          url: () => url,
+          status: () => 200,
+          request: () => subresource(url),
+        });
+      }
+      page.emit("requestfailed", {
+        ...subresource("http://127.0.0.1:1/beacon?token=FAILEDREQTOKEN"),
+        failure: () => ({ errorText: "net::ERR_UNSAFE_PORT" }),
+      });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      const urls = snapshot.networkEntries.map((entry) => entry.url);
+      expect(urls).toEqual([
+        expect.stringContaining("http://127.0.0.1:18457/secur/contentDoor?startURL=%2Fhome"),
+        expect.stringContaining("http://127.0.0.1:18457/api/magic?"),
+        expect.stringContaining("http://127.0.0.1:18457/api/data?"),
+        expect.stringContaining("http://127.0.0.1:18457/callback?"),
+        expect.stringContaining("@127.0.0.1:18457/private"),
+        expect.stringContaining("http://127.0.0.1:1/beacon?"),
+      ]);
+      expect(urls[1]).toContain("next=/");
+      expect(urls[2]).toContain("q=ok");
+      for (const secret of [
+        "SYNTHETICSESSIONID",
+        "987654",
+        "SYNTHETICACCESSTOKEN",
+        "SYNTHETICAUTHCODE",
+        "SYNTHETICPASSWORD",
+        "FAILEDREQTOKEN",
+      ]) {
+        expect(JSON.stringify(snapshot.networkEntries)).not.toContain(secret);
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each(["save failed", "oversized"])(
   "a rejected download releases the original and keeps no saved copy (%s)",
   (outcome) =>
