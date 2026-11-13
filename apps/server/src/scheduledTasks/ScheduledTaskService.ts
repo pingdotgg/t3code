@@ -308,6 +308,8 @@ function iso(value: DateTime.DateTime): string {
 }
 
 const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
+/** Scheduled dispatches that may fail in a row before the task is paused. */
+const MAX_CONSECUTIVE_DISPATCH_FAILURES = 5;
 const UNSUCCESSFUL_RUN_ERRORS = {
   failed: "The run failed.",
   interrupted: "The run was stopped.",
@@ -363,6 +365,10 @@ function errorMessage(error: unknown): string {
   const failure = Cause.isCause(error) ? Cause.squash(error) : error;
   return failure instanceof Error ? failure.message : String(failure);
 }
+
+const isThreadArchivedError = Schema.is(
+  ThreadManagementService.ThreadManagementThreadArchivedError,
+);
 
 function webhookPath(taskId: string, token: string): string {
   return `${WEBHOOK_ROUTE_PREFIX}/${encodeURIComponent(taskId)}/${token}`;
@@ -630,6 +636,8 @@ export const layer = Layer.effect(
         readonly secret: string | null;
         readonly secretChanged: boolean;
       },
+      /** A new destination or a re-enabled task starts with a full retry allowance. */
+      resetFailures: boolean,
     ) =>
       sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
@@ -716,6 +724,10 @@ export const layer = Layer.effect(
             THEN scheduled_tasks.next_run_at
             ELSE excluded.next_run_at
           END,
+          consecutive_failures = CASE
+            WHEN ${resetFailures ? 1 : 0} = 1 THEN 0
+            ELSE scheduled_tasks.consecutive_failures
+          END,
           -- Only rotate changes a live token, so a save racing a rotation
           -- cannot bring the old URL back.
           webhook_token = CASE
@@ -777,6 +789,8 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly paused: boolean;
+      readonly consecutiveFailures: number;
     }) =>
       sql`
         UPDATE scheduled_tasks
@@ -784,6 +798,8 @@ export const layer = Layer.effect(
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
+            enabled = CASE WHEN ${input.paused ? 1 : 0} = 1 THEN 0 ELSE enabled END,
+            consecutive_failures = ${input.consecutiveFailures},
             run_count = run_count + 1
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
@@ -1098,7 +1114,9 @@ export const layer = Layer.effect(
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+        const dispatchError = runSucceeded ? null : errorMessage(result.cause);
+        const destinationArchived =
+          !runSucceeded && isThreadArchivedError(Cause.squash<unknown>(result.cause));
         const threadId = runSucceeded ? result.value : null;
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
@@ -1108,13 +1126,37 @@ export const layer = Layer.effect(
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
+          // An edit that moved the task while this dispatch was pending owes nothing to the
+          // old destination's failure: the new one has not been tried yet.
+          const sameDestination =
+            current !== null &&
+            current.threadId === active.threadId &&
+            (active.threadId !== null || current.projectId === active.projectId);
+          const [stored] = yield* sql<{ readonly consecutive_failures: number }>`
+            SELECT consecutive_failures FROM scheduled_tasks WHERE task_id = ${task.id}
+          `;
+          // Only the schedule retries on its own; manual runs and webhook deliveries do not.
+          const failedAttempt = !runSucceeded && sameDestination && trigger === "scheduled";
+          const consecutiveFailures = runSucceeded
+            ? 0
+            : (stored?.consecutive_failures ?? 0) + (failedAttempt ? 1 : 0);
+          const exhausted =
+            failedAttempt && consecutiveFailures >= MAX_CONSECUTIVE_DISPATCH_FAILURES;
+          // An archived thread refuses every message until someone unarchives it.
+          const paused = (sameDestination && destinationArchived) || exhausted;
+          const enabled = scheduleSource.enabled && !paused;
+          const lastRunError =
+            exhausted && !destinationArchived
+              ? `Paused after ${MAX_CONSECUTIVE_DISPATCH_FAILURES} failed runs in a row. Last error: ${dispatchError}`
+              : dispatchError;
           const completed: ScheduledTask = {
             ...scheduleSource,
+            enabled,
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
             nextRunAt: nextRunAt(
-              scheduleSource,
+              { enabled, schedule: scheduleSource.schedule },
               scheduleSource.schedule.type === "once" ? startedAt : completedAt,
             ),
             lastRunStatus,
@@ -1132,6 +1174,8 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            paused,
+            consecutiveFailures,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;
@@ -1552,6 +1596,10 @@ export const layer = Layer.effect(
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
+        existingTask !== null &&
+          (!existingTask.enabled ||
+            existingTask.threadId !== threadId ||
+            existingTask.projectId !== input.projectId),
       );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
@@ -1589,6 +1637,7 @@ export const layer = Layer.effect(
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
+              consecutive_failures = 0,
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
           RETURNING task_id
