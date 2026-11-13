@@ -692,6 +692,7 @@ function useChatMarkdownState({
   // Subscribe so hydrated settings apply before the anchor synchronously decides whether to intercept _blank.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled);
+  const fileLinkFullPaths = useClientSettings((settings) => settings.fileLinkFullPaths);
   // Keyed by the file links found, not the text, so streamed text that adds none keeps the
   // renderer context, and every block reading it, unchanged.
   // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
@@ -895,12 +896,15 @@ function useChatMarkdownState({
         line={fileLinkMeta.line}
         label={fileLinkLabel(
           {
-            path: fileLinkMeta.filePath,
+            path: fileLinkFullPaths
+              ? (fileLinkMeta.workspaceRelativePath ?? fileLinkMeta.filePath)
+              : fileLinkMeta.filePath,
             ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
             ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
             ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
           },
           fileLinkParentSuffixByPath,
+          { fullPath: fileLinkFullPaths },
         )}
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}

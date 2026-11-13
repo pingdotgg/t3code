@@ -348,6 +348,29 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("file-link-full-paths")}
+          description="Show the workspace-relative path in file link chips instead of just the file name."
+          resetAction={
+            settings.fileLinkFullPaths !== DEFAULT_UNIFIED_SETTINGS.fileLinkFullPaths ? (
+              <SettingResetButton
+                label="full paths in file links"
+                onClick={() =>
+                  updateSettings({
+                    fileLinkFullPaths: DEFAULT_UNIFIED_SETTINGS.fileLinkFullPaths,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.fileLinkFullPaths}
+              onCheckedChange={(checked) => updateSettings({ fileLinkFullPaths: Boolean(checked) })}
+              aria-label="Full paths in file links"
+            />
+          }
+        />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,
