@@ -17,7 +17,7 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 }));
 
 import { act, fakeTimers, render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
@@ -80,9 +80,10 @@ interface ProbeProps {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
+  draftTarget?: DraftId;
 }
 
-function useProbeRequests({ environmentId, projection, loading = false }: ProbeProps) {
+function useProbeRequests({ environmentId, projection, loading = false, draftTarget }: ProbeProps) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
   return usePendingThreadRequests({
@@ -90,7 +91,7 @@ function useProbeRequests({ environmentId, projection, loading = false }: ProbeP
     activeThreadId: projection.thread.id,
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
-    composerDraftTarget: { environmentId, threadId: projection.thread.id },
+    composerDraftTarget: draftTarget ?? { environmentId, threadId: projection.thread.id },
     setComposerDraftPrompt: (target, prompt) =>
       useComposerDraftStore.getState().setPrompt(target, prompt),
     promptRef,
@@ -150,12 +151,10 @@ it("tells the user when an option click moves their typed answer into the hidden
   const draftTarget = { environmentId, threadId: threadRef.threadId };
   const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt;
   using toast = vi.spyOn(toastManager, "add");
-  await using _screen = await render(
-    <PendingRequestsProbe
-      environmentId={environmentId}
-      projection={questionProjection(threadRef.threadId)}
-    />,
+  const probe = (threadId: ThreadId) => (
+    <PendingRequestsProbe environmentId={environmentId} projection={questionProjection(threadId)} />
   );
+  await using screen = await render(probe(threadRef.threadId));
 
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   expect(toast).not.toHaveBeenCalled();
@@ -179,6 +178,31 @@ it("tells the user when an option click moves their typed answer into the hidden
     customAnswer: "second try",
   });
   expect(toast).toHaveBeenCalledTimes(1);
+
+  // The hook outlives a thread switch; text set aside in another thread is in another draft.
+  await screen.rerender(probe(ThreadId.make("other-thread")));
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "elsewhere"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  await screen.rerender(probe(threadRef.threadId));
+
+  // regression: #35205 undo puts the set-aside text back, so the draft must not keep a copy to resend
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));
+  expect(draftPrompt() ?? "").toBe("");
+
+  // Text set aside into a queued-message edit draft never withdraws from the thread draft.
+  await screen.rerender(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={questionProjection(threadRef.threadId)}
+      draftTarget={DraftId.make("queued-edit")}
+    />,
+  );
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "foo"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  await screen.rerender(probe(threadRef.threadId));
+  useComposerDraftStore.getState().setPrompt(draftTarget, "foo");
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "foo"));
+  expect(draftPrompt()).toBe("foo");
 });
 
 function QuestionPositionProbe(props: ProbeProps) {
@@ -255,7 +279,10 @@ it("isolates drafts by environment, thread and request and discards only resolve
     makeThreadRequestsResolvedAnnouncer(
       environmentId,
       threadRef.threadId,
-    )([RuntimeRequestId.make("second")]),
+    )([
+      { id: RuntimeRequestId.make("first"), status: "resolved" },
+      { id: RuntimeRequestId.make("second"), status: "pending" },
+    ]),
   );
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
