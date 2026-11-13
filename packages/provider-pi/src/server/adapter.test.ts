@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -54,7 +55,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
-import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_T3_RUN_ADMISSION_TITLE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -2168,6 +2169,114 @@ describe("PiAdapterV2", () => {
         yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
         assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { name: "completes a switch whose hook finishes", hookSeconds: 2, completes: true },
+    { name: "times out a switch whose hook stalls", hookSeconds: 60, completes: false },
+  ])("$name after a dialog answered late", ({ hookSeconds, completes }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const switching = yield* runtime
+        .resumeThread({ providerThread })
+        .pipe(Effect.exit, Effect.forkScoped);
+      const request = yield* fake.takeRequest("switch_session");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "resume-goal",
+        method: "confirm",
+        title: "Resume paused goal?",
+      });
+      const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      assert(dialog.type === "runtime_request.updated");
+      // One second short of two whole lifecycle windows: the answer lands just before a deadline check.
+      yield* TestClock.adjust("119 seconds");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: dialog.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      yield* TestClock.adjust(`${hookSeconds} seconds`);
+      if (completes)
+        yield* fake.emit({
+          type: "response",
+          id: request["id"],
+          command: "switch_session",
+          success: true,
+          data: { cancelled: false },
+        });
+      const exit = yield* Fiber.join(switching);
+      assert.equal(Exit.isSuccess(exit), completes);
+      if (!completes)
+        assert.include(
+          Cause.pretty((exit as Exit.Failure<never, unknown>).cause),
+          "timed out after 60000ms",
+        );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("holds a resumed session's first run until a turn owns the session", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const switching = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkScoped);
+      const request = yield* fake.takeRequest("switch_session");
+      const askAdmission = (id: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "confirm",
+          title: PI_T3_RUN_ADMISSION_TITLE,
+          message: "",
+        });
+      yield* askAdmission("restored-run");
+      // The status update is an observable milestone after the admission request.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setStatus",
+        statusKey: "goal",
+        statusText: "Resuming",
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" &&
+          event.providerSession.extensionStatuses?.[0]?.key === "goal",
+      );
+      yield* fake.emit({
+        type: "response",
+        id: request["id"],
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      const resumed = yield* Fiber.join(switching);
+      assert.isFalse(fake.allRequests().some((sent) => sent["type"] === "extension_ui_response"));
+
+      yield* startTurn(runtime, resumed);
+      const admitted = yield* fake.takeRequest("extension_ui_response");
+      assert.deepEqual(
+        { id: admitted["id"], confirmed: admitted["confirmed"] },
+        { id: "restored-run", confirmed: true },
+      );
+      // Requests are taken in the order Pi read them: the turn's prompt follows the admission.
+      assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");
+
+      yield* askAdmission("owned-run");
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["id"], "owned-run");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("retires an interrupted switch before accepting further requests", () =>

@@ -8,6 +8,8 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+// Not shown to anyone: the adapter answers a confirm with this title itself.
+export const PI_T3_RUN_ADMISSION_TITLE = "t3-code:admit-resumed-run";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -25,6 +27,7 @@ const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
+const RUN_ADMISSION_TITLE = ${JSON.stringify(PI_T3_RUN_ADMISSION_TITLE)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -251,6 +254,19 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // Another extension's session_start hook can start a run while T3 restores a session, before
+  // any T3 turn owns it. Hold a resumed session's first run before its first model request until
+  // T3 answers, which it does once a turn owns the session and has applied its model.
+  let awaitingAdmission = false;
+  pi.on("session_start", (event) => {
+    if (event.reason === "resume") awaitingAdmission = true;
+  });
+  pi.on("before_agent_start", async (_event, ctx) => {
+    if (!awaitingAdmission) return;
+    await ctx.ui.confirm(RUN_ADMISSION_TITLE, "");
+    awaitingAdmission = false;
+  });
+
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
   // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
   // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.

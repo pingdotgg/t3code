@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_RUN_ADMISSION_TITLE,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -32,6 +36,7 @@ async function loadHooks(
   argv: ReadonlyArray<string> = [],
 ) {
   const handlers = new Map<string, unknown>();
+  const firstHandlers = new Map<string, unknown>();
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -44,12 +49,15 @@ async function loadHooks(
     NodePath,
     stripFrontmatter: (content: string) => content,
     pi: {
-      on: (name: string, handler: unknown) => handlers.set(name, handler),
+      on: (name: string, handler: unknown) => {
+        handlers.set(name, handler);
+        if (!firstHandlers.has(name)) firstHandlers.set(name, handler);
+      },
       registerCommand: () => {},
       getCommands: () => commands,
     },
   });
-  return handlers;
+  return Object.assign(handlers, { first: firstHandlers });
 }
 
 describe("Pi orchestration prompt section", () => {
@@ -80,6 +88,44 @@ describe("Pi orchestration prompt section", () => {
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
+  });
+});
+
+describe("Pi run admission", () => {
+  it("holds a resumed session's first run until T3 answers", async () => {
+    const hooks = await loadHooks();
+    const sessionStart = hooks.first.get("session_start") as (event: unknown) => void;
+    const gate = hooks.first.get("before_agent_start") as (
+      event: unknown,
+      ctx: unknown,
+    ) => Promise<void>;
+    const asked: Array<{ title: string; answer: () => void }> = [];
+    const ctx = {
+      ui: {
+        confirm: (title: string) =>
+          new Promise<boolean>((resolve) => asked.push({ title, answer: () => resolve(true) })),
+      },
+    };
+
+    sessionStart({ type: "session_start", reason: "startup" });
+    await gate({}, ctx);
+    assert.lengthOf(asked, 0);
+
+    // Pi 1.4 emits resume twice for one switch_session.
+    sessionStart({ type: "session_start", reason: "resume" });
+    sessionStart({ type: "session_start", reason: "resume" });
+    let started = false;
+    const run = gate({}, ctx).then(() => (started = true));
+    await Promise.resolve();
+    assert.deepEqual(
+      asked.map(({ title }) => title),
+      [PI_T3_RUN_ADMISSION_TITLE],
+    );
+    assert.isFalse(started);
+    asked[0]!.answer();
+    await run;
+    await gate({}, ctx);
+    assert.lengthOf(asked, 1);
   });
 });
 
