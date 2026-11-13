@@ -12,7 +12,6 @@ import * as DateTime from "effect/DateTime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Etag from "effect/http/Etag";
@@ -196,27 +195,14 @@ it.effect.each(["DPoP", "dpop"])("challenges a refused %s request with DPoP", (s
 );
 
 // The web handler runs on its own runtime, so proofs need wall-clock time.
-it.live("records a token-endpoint DPoP proof only once the subject token is accepted", () =>
+it.live("checks token-endpoint DPoP proofs without writing replay state", () =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
-    const written = new Set<string>();
+    const written: Array<string> = [];
     const recordingSecretStore = ServerSecretStore.ServerSecretStore.of({
       get: () => Effect.succeedNone,
       set: () => Effect.void,
-      create: (name) =>
-        written.has(name)
-          ? Effect.fail(
-              new ServerSecretStore.SecretStorePersistError({
-                resource: name,
-                cause: PlatformError.systemError({
-                  _tag: "AlreadyExists",
-                  module: "FileSystem",
-                  method: "open",
-                  pathOrDescriptor: name,
-                }),
-              }),
-            )
-          : Effect.sync(() => void written.add(name)),
+      create: (name) => Effect.sync(() => void written.push(name)),
       getOrCreateRandom: () => Effect.die("Not used by these routes."),
       remove: () => Effect.void,
     });
@@ -247,23 +233,21 @@ it.live("records a token-endpoint DPoP proof only once the subject token is acce
           );
           expect(unknownToken.status).toBe(401);
           expect(await unknownToken.json()).not.toHaveProperty("dpopFailureReason");
-          expect(written.size).toBe(0);
 
-          const proof = key.sign({ method: "POST", url, token: "", iat });
           const accepted = await environment.handler(
-            tokenRequest(DEV_TOKEN, proof),
+            tokenRequest(DEV_TOKEN, key.sign({ method: "POST", url, token: "", iat })),
             requestContext,
           );
           expect(accepted.status).toBe(200);
-          expect(written.size).toBe(1);
+          expect(await accepted.json()).toMatchObject({ token_type: "DPoP" });
 
-          const replayed = await environment.handler(
-            tokenRequest(DEV_TOKEN, proof),
+          const badProof = await environment.handler(
+            tokenRequest(DEV_TOKEN, "not-a-proof"),
             requestContext,
           );
-          expect(replayed.status).toBe(401);
-          expect(replayed.headers.get("www-authenticate")).toBe("DPoP");
-          expect(await replayed.json()).toMatchObject({ dpopFailureReason: "replay" });
+          expect(badProof.status).toBe(401);
+          expect(badProof.headers.get("www-authenticate")).toBe("DPoP");
+          expect(written).toEqual([]);
         }),
       (environment) => Effect.promise(() => environment.dispose()),
     );

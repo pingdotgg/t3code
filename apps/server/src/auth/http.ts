@@ -364,7 +364,8 @@ export const layer = HttpApiBuilder.group(
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
-            // Anyone can send a proof here, so it is recorded only once the subject token checks out.
+            // Not recorded: a replayer also holds the subject token and could sign its own proof.
+            // Recording would let anyone write replay state to disk.
             const proof = args.headers.dpop
               ? yield* checkRequestDpopProof({ request }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
@@ -396,19 +397,7 @@ export const layer = HttpApiBuilder.group(
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
                 },
               }),
-              proof
-                ? {
-                    proofKeyThumbprint: proof.thumbprint,
-                    consumeProof: proof.consume.pipe(
-                      Effect.tapError((error) =>
-                        EnvironmentAuth.isServerAuthCredentialError(error)
-                          ? appendDpopChallengeHeader
-                          : Effect.void,
-                      ),
-                      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
-                    ),
-                  }
-                : undefined,
+              proof ? { proofKeyThumbprint: proof.thumbprint } : undefined,
             );
           },
           traceRelayRequest,

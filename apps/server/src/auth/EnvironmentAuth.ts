@@ -477,11 +477,6 @@ export class EnvironmentAuth extends Context.Service<
       requestMetadata: AuthClientMetadata,
       input?: {
         readonly proofKeyThumbprint?: string;
-        /** Records the DPoP proof, run only after the credential is accepted. */
-        readonly consumeProof?: Effect.Effect<
-          void,
-          ServerAuthInvalidCredentialError | ServerAuthInternalError
-        >;
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
@@ -968,12 +963,11 @@ export const make = Effect.gen(function* () {
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
-        ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
+        ...input,
         ...(requestedScopes !== undefined ? { requestedScopes } : {}),
       }).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
-            if (input?.consumeProof) yield* input.consumeProof;
             const grantedScopes =
               requestedScopes === undefined
                 ? grant.scopes

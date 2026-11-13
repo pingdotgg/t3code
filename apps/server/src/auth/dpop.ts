@@ -53,11 +53,7 @@ export const mapDpopReplayStoreError = (
         cause: error,
       });
 
-/**
- * Checks a proof without recording it. `consume` records the proof's jti so it cannot be
- * replayed; run it only once the request is otherwise known to be valid, so that requests
- * anyone can send do not write replay state.
- */
+/** Checks a proof without recording it; `consume` records its jti so it cannot be replayed. */
 export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(function* (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   /** Overrides the `DPoP` header for requests that cannot carry one, such as a WebSocket upgrade. */
