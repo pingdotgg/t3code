@@ -173,6 +173,7 @@ import { projectEnvironment } from "../state/projects";
 import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
+  findAgentDirectoryMatch,
   needsWorkspaceBasenameLookup,
   pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
@@ -842,7 +843,11 @@ function useChatMarkdownState({
     );
     const metadata = await getFilesystemMetadata({ environmentId, input: { paths: agentPaths } });
     if (metadata._tag !== "Success") return null;
-    return agentPaths.find((_, index) => metadata.value.entries[index]?.kind === "file") ?? null;
+    const literal = agentPaths.find((_, index) => metadata.value.entries[index]?.kind === "file");
+    if (literal !== undefined || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      return literal ?? null;
+    }
+    return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;

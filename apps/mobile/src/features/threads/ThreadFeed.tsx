@@ -236,6 +236,7 @@ import { readEnvironmentScope, usePreparedConnection } from "../../state/session
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
   agentWorkingDirectories,
+  findAgentDirectoryMatch,
   needsWorkspaceBasenameLookup,
   pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
@@ -2934,16 +2935,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }
       if (match === null && reply !== undefined && !signal.aborted) {
         // No project has the file, so it opens where the agent last worked, as written.
-        const agentPaths = agentWorkingDirectories(
+        const agentRoots = agentWorkingDirectories(
           appAtomRegistry.get(
             environmentThreadDetails.quietThreadAtom(
               scopeThreadRef(props.environmentId, props.threadId),
             ),
           )?.projection.visibleTurnItems ?? [],
           reply,
-        ).flatMap((root) =>
-          root === workspaceRoot ? [] : [resolveWorkspaceFilePath(root, relativePath)],
-        );
+        ).filter((root) => root !== workspaceRoot);
+        const agentPaths = agentRoots.map((root) => resolveWorkspaceFilePath(root, relativePath));
         if (agentPaths.length === 0) return relativePath;
         const [original, ...found] = await Promise.all(
           [originalPath, ...agentPaths].map(metadataOf),
@@ -2952,7 +2952,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         const index = found.findIndex(
           (result) => result._tag === "Success" && result.value?.kind === "file",
         );
-        return agentPaths[index] ?? relativePath;
+        const literal = agentPaths[index];
+        if (literal !== undefined || !needsWorkspaceBasenameLookup(relativePath)) {
+          return literal ?? relativePath;
+        }
+        return (
+          (await findAgentDirectoryMatch(relativePath, agentRoots, searchRoot)) ?? relativePath
+        );
       }
       if (!match || match === relativePath || signal.aborted) return relativePath;
       const metadata = await metadataOf(originalPath);

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   agentWorkingDirectories,
   claimWorkspaceBasenameLookup,
+  findAgentDirectoryMatch,
   pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
   pickWorkspaceLinkMatch,
@@ -149,6 +150,37 @@ describe("agentWorkingDirectories", () => {
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
+  });
+});
+
+// regression: #35337 a bare file name the agent cited from a subfolder of an unregistered checkout
+describe("findAgentDirectoryMatch", () => {
+  const search = (found: Record<string, ReadonlyArray<string>>) => (root: string) =>
+    Promise.resolve({
+      root,
+      entries: (found[root] ?? []).map((path) => ({ path, kind: "file" as const })),
+    });
+
+  it("opens the one file of that name in the latest folder the agent worked in", async () => {
+    expect(
+      await findAgentDirectoryMatch(
+        "config.test.yaml",
+        ["/work/repo-b/server", "/work/repo-b", "/work/repo-c"],
+        search({
+          "/work/repo-b/server": ["config.test.yaml"],
+          "/work/repo-b": ["server/config.test.yaml"],
+          "/work/repo-c": ["config.test.yaml"],
+        }),
+      ),
+    ).toBe("/work/repo-b/server/config.test.yaml");
+  });
+
+  it("passes over a folder without the file, and opens nothing when none has it", async () => {
+    const found = search({ "/work/repo-c": ["etc/config.test.yaml"] });
+    expect(
+      await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b", "/work/repo-c"], found),
+    ).toBe("/work/repo-c/etc/config.test.yaml");
+    expect(await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b"], found)).toBeNull();
   });
 });
 

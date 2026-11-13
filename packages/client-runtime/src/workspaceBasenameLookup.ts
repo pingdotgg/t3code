@@ -137,6 +137,27 @@ export function pickProjectLinkMatch(
   return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
+const AGENT_DIRECTORY_SEARCH_LIMIT = 4;
+
+/**
+ * The file a bare name cites in the latest folder the agent worked in that has one of that name.
+ * Folders are searched one at a time: the latest usually has it, and each search walks a tree.
+ */
+export async function findAgentDirectoryMatch(
+  relativePath: string,
+  directories: ReadonlyArray<string>,
+  searchRoot: (root: string) => Promise<{
+    readonly root: string;
+    readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
+  }>,
+): Promise<string | null> {
+  for (const directory of directories.slice(0, AGENT_DIRECTORY_SEARCH_LIMIT)) {
+    const match = pickProjectLinkMatch(relativePath, [await searchRoot(directory)]);
+    if (match !== null) return match;
+  }
+  return null;
+}
+
 // A quoted string or a comment is one token, so `cd` inside either is not read as a command.
 const SHELL_TOKEN = /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
 const SHELL_NAME = /(?:^|\/)(?:ba|z|da)?sh$/;
