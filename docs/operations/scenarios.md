@@ -41,8 +41,10 @@ adds one fixture for what e2e cannot know about T3 Code:
 
 - `t3.project(title, files)` creates a git repository and adds it as a project.
 - `t3.thread({ project, title, messages })` starts a thread and plays one replayed turn per
-  message before returning, so the thread has real history. `model` picks the recording.
-- `t3.open(path)` opens the app, already signed in.
+  message before returning, so the thread has real history. `model` picks the recording. It
+  returns the thread, which `t3.open` takes.
+- `t3.open(path)` opens the app, already signed in, at a path. `t3.open(thread)` opens it on a
+  thread.
 
 State is created through the app's own CLI, so it is real events and works on a base commit
 whose schema differs. New threads default to the replay agent's `showcase` recording: type a
@@ -60,6 +62,30 @@ could not run.
 
 Keep `agent.act` and `agent.assert` out of scenarios: they call a model, and no model is
 configured.
+
+### Getting to the screen
+
+Most scenarios that could not run stopped on the way to the screen the bug is on, not on the
+bug. Three rules avoid that:
+
+- **Open by link, not by sidebar.** `await t3.open(thread)` lands on the thread
+  ([`thread-opens-by-link.e2e.ts`](../../scripts/scenarios/thread-opens-by-link.e2e.ts)), and
+  `await t3.open("/settings/general")` on a settings page. A sidebar row is a button that covers
+  its own title, so a tap on `getByText("Earlier work")` is intercepted. When the sidebar is what
+  the scenario is about, target the row's button: `screen.getByRole("button", "Earlier work")`.
+- **Let `t3.open` do the navigating.** It waits until the pairing page has signed in before it
+  goes anywhere. A second `app.open` straight after the pairing link cancels the sign-in and
+  shows the pairing page again.
+- **Seed before opening.** Create projects and threads first, then call `t3.open`. With no
+  project the app opens its first-run page instead of the one the scenario expects.
+
+The app starts with only `PATH`, `HOME` and the temp directory in its environment, whatever the
+shell that ran the scenario has set. Name what it needs in `T3_SCENARIO_INHERIT_ENV`: exact
+names or prefixes ending in `*`, separated by commas.
+
+```sh
+T3_SCENARIO_INHERIT_ENV='SHELL,MY_FIXTURE_*' vp run scenarios:prove scripts/scenarios/name.e2e.ts --base main
+```
 
 ## Run
 
@@ -102,12 +128,27 @@ commits and compares the two reports. It prints, and writes to `scripts/.e2e/pro
 its commit, ready for a pull request description. `--upload-command` names a command that takes
 the capture paths and prints one URL per line. `--head` defaults to `HEAD`.
 
-It exits 0 only when the scenario fails on base and passes on head, 1 when it ran and did not
-prove the fix, and 2 when it could not run. A scenario that passes on base does not reproduce the
-bug, and the verdict says so.
+It exits 0 only when the scenario fails on base and passes on head, and 1 when it ran and did not
+prove the fix. A scenario that passes on base does not reproduce the bug, and the verdict says so.
+
+Two more codes mean there is no verdict on the behavior, and `couldNotRun` in the proof says
+which:
+
+- **3, `scenario`:** the app ran and the scenario stopped before its assertion, usually on a
+  control it did not find. Read that side's `message` and `steps`, fix the scenario, and run it
+  again.
+- **2, `app`:** the app did not start or no test ran: a bad revision, a failed install, a port in
+  use. `scripts/.e2e/app.log` has the app's output.
+
+Each side's result is also written as it ends, to `scripts/.e2e/prove/base.json` and
+`head.json`, so a run that is cut short keeps the side it finished.
+
+It runs the scenario on one target: iOS when the file imports `t3-mobile.ts`, web otherwise.
+`--target web` or `--target ios` overrides that.
 
 The scenario and e2e always come from your checkout. Only the app comes from the commit under
-test: a temporary worktree beside your checkout, installed with `vp i` and removed afterwards. A
+test: a temporary worktree beside your checkout, installed with `vp i` and removed afterwards (one
+left by a run that was killed is replaced). A
 commit that is your clean `HEAD` runs in place. So a new scenario can prove a fix against a base
 that predates it.
 
