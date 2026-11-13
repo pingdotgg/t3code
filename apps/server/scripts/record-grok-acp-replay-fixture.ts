@@ -35,6 +35,7 @@ import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/Provider
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import * as Result from "effect/Result";
 
 const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -554,12 +555,9 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Grok ACP replay entries to ${outputPath}`);
 
-  const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
-    Effect.flip,
-    Effect.option,
-  );
-  if (liveFailure._tag === "Some") {
-    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.value);
+  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
+  if (Result.isFailure(liveFailure)) {
+    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.failure);
   }
 });
 
