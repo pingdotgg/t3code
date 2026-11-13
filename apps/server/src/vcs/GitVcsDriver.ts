@@ -1705,8 +1705,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         ],
         { concurrency: "unbounded" },
       );
+      // Unreadable reflogs only cost the import filter, never the authored paths themselves.
       const fetchedCommits =
-        recentCommits.length === 0 ? new Set<string>() : yield* listFetchedCommits();
+        recentCommits.length === 0
+          ? new Set<string>()
+          : yield* listFetchedCommits().pipe(Effect.orElseSucceed(() => new Set<string>()));
       const ownCommits = recentCommits.filter((commit) => !fetchedCommits.has(commit));
       const ownCommitPaths =
         ownCommits.length === 0

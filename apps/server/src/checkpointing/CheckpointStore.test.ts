@@ -663,6 +663,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set());
       }),
     );
+
     it.effect("keeps paths from signed commits under log.showSignature", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
