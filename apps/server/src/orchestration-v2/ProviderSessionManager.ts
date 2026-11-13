@@ -3187,7 +3187,7 @@ export const layerWithOptions = (
                 return [
                   Option.none<{
                     readonly entry: LiveSessionEntry;
-                    readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
+                    readonly held: IdleThreadUnload | undefined;
                   }>(),
                   current,
                 ] as const;
@@ -3223,13 +3223,13 @@ export const layerWithOptions = (
               return [
                 Option.some({
                   entry: updatedEntry,
-                  idleUnloadFiber: entry.idleThreadUnloads.get(input.threadId)?.fiber ?? null,
+                  held: entry.idleThreadUnloads.get(input.threadId),
                 }),
                 updated,
               ] as const;
             });
             if (Option.isSome(detachResult)) {
-              yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
+              yield* cancelIdleFiber(detachResult.value.held?.fiber ?? null);
             }
             const detached = Option.map(detachResult, (result) => result.entry);
             // Plain detaches preserve credentials held by live shared providers across workspace handoffs.
@@ -3253,6 +3253,15 @@ export const layerWithOptions = (
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
+              // An instance switch moves the row to the new session before this detach runs,
+              // so the projection no longer lists the thread this session still holds.
+              const held = Option.getOrUndefined(detachResult)?.held?.providerThread;
+              if (
+                held !== undefined &&
+                !detachedProviderThreads.some((thread) => thread.id === held.id)
+              ) {
+                detachedProviderThreads = [...detachedProviderThreads, held];
+              }
               // The projection includes native children owned by other app threads;
               // lock each owner so an attached child stays loaded and later attaches wait.
               for (const providerThread of detachedProviderThreads) {
@@ -3271,7 +3280,8 @@ export const layerWithOptions = (
                     ) {
                       return;
                     }
-                    yield* unloadThread({ providerThread }).pipe(
+                    // The session taking over may run in another provider process.
+                    yield* unloadThread({ providerThread, awaitClosed: true }).pipe(
                       Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                       Effect.catchCause((cause) =>
                         Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {

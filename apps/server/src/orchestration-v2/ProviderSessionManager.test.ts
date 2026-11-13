@@ -4693,7 +4693,10 @@ it.effect.each([
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, ++resumeCount);
 
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread",
+          "native-thread",
+        ]);
 
         const reloadCases = [
           {
@@ -4733,6 +4736,7 @@ it.effect.each([
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread",
           "native-thread",
           "native-thread",
         ]);
@@ -5220,6 +5224,69 @@ it.effect.each([
           }),
         ),
       );
+    }),
+);
+
+// regression: #30630 the old Codex account kept the thread's writer lock after an account switch
+it.effect(
+  "ProviderSessionManagerV2 detach unloads a thread whose row already moved to another instance",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("cross-instance-switch");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        const writeProviderThread = Effect.fn(function* (payload: OrchestrationV2ProviderThread) {
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload,
+              },
+            ],
+          });
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* writeProviderThread(providerThread);
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.resumeThread({ providerThread, threadId, modelSelection, runtimePolicy });
+
+        // The switch commits the row under the new instance's session, then detaches the old one.
+        yield* writeProviderThread({
+          ...providerThread,
+          providerInstanceId: otherInstanceId,
+          providerSessionId: idAllocator.derive.providerSession({
+            providerInstanceId: otherInstanceId,
+          }),
+        });
+        yield* manager.detach({ providerSessionId, threadId });
+
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })), Effect.scoped);
     }),
 );
 

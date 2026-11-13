@@ -1000,6 +1000,8 @@ function describeCodexGoal(goal: OrchestrationV2ProviderGoal): string {
 
 // Codex starts the next goal turn milliseconds after the last one completes.
 const CODEX_GOAL_CONTINUATION_GRACE = "5 seconds";
+// With thread_unload_delay_secs=0 Codex closes an unsubscribed thread within milliseconds.
+const CODEX_THREAD_CLOSED_TIMEOUT = "2 seconds";
 
 const providerTurnsForThread = (
   providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
@@ -2055,6 +2057,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         /** Completed by thread/closed after this connection unsubscribes from the native thread. */
         const threadClosings = new Map<string, Deferred.Deferred<void>>();
+        // A launch-arg override or an older Codex keeps an unsubscribed thread loaded; the
+        // first unload that waits in vain is the last one on this app-server to wait.
+        let closesOnUnsubscribe = true;
         /** Codex acceptForSession covers only the exact command or patch, not future commands. */
         const sessionApprovals = new Map<
           string,
@@ -7899,10 +7904,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return;
               }
               // A resume may already wait on the pending entry; replacing it would strand that wait.
-              if (!threadClosings.has(nativeThreadId)) {
-                threadClosings.set(nativeThreadId, yield* Deferred.make<void>());
+              let closing = threadClosings.get(nativeThreadId);
+              if (closing === undefined) {
+                closing = yield* Deferred.make<void>();
+                threadClosings.set(nativeThreadId, closing);
               }
-              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              const { status } = yield* client.request("thread/unsubscribe", {
+                threadId: nativeThreadId,
+              });
+              if (!unloadInput.awaitClosed || status !== "unsubscribed" || !closesOnUnsubscribe) {
+                return;
+              }
+              // Codex replies first and frees the thread's writer lock when it emits thread/closed.
+              const closed = yield* Deferred.await(closing).pipe(
+                Effect.timeoutOption(CODEX_THREAD_CLOSED_TIMEOUT),
+              );
+              if (Option.isNone(closed)) closesOnUnsubscribe = false;
             },
             (effect, unloadInput) =>
               effect.pipe(
