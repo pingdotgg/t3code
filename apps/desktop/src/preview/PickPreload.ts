@@ -266,6 +266,7 @@ ipcRenderer.on(
     }
     if (inFrame) return;
     replayedThumbPress = { x, y };
+    ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
     ipcRenderer.send(HUMAN_INPUT_CHANNEL, { kind: "pointer", x, y, button });
     recordingCursor?.press({ x, y }, "down");
   },
