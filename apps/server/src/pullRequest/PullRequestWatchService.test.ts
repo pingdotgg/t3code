@@ -200,7 +200,9 @@ describe("PullRequestWatchService", () => {
       const harness = yield* makeHarness({ readFailure: missing });
       const target = { url: "https://gitlab.example.com/team/project/-/merge_requests/42" };
       const error = yield* harness.setWatching(true, target).pipe(Effect.flip);
-      expect(error).toEqual(missing);
+      expect(error.message).toBe(
+        "T3 Code cannot watch this pull request: Install glab on the T3 server's PATH. Wait for its checks with the project's own tools instead; sleeping, loops and background monitors are fine for this wait.",
+      );
       expect(yield* Ref.get(harness.commands)).toEqual([]);
 
       yield* harness.setWatching(false, target);
