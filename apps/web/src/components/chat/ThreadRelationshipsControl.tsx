@@ -689,9 +689,16 @@ export function ThreadRelationshipsPanel(props: {
   ) => {
     if (stoppingId !== null) return;
     setStoppingId(childThreadId);
+    // The row shows the child's live work, which an earlier task than its latest one can own.
+    const owner =
+      projected.findLast(
+        (subagent) =>
+          subagent.childThreadId === childThreadId &&
+          (subagent.status === "running" || subagent.status === "waiting"),
+      ) ?? agent;
     const result = await interruptTurn({
       environmentId: props.environmentId,
-      input: { threadId: agent.threadId, subagentId: agent.id },
+      input: { threadId: owner.threadId, subagentId: owner.id },
     });
     setStoppingId(null);
     if (result._tag === "Failure") {

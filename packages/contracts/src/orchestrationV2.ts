@@ -3060,6 +3060,11 @@ export const OrchestrationV2Command = Schema.Union([
      * do under their caller's dispatch limit. Otherwise Stop also stops every task under the thread.
      */
     stopDelegatedTasks: Schema.optional(Schema.Boolean),
+    /**
+     * The delegated task this Stop is for. While the thread's live turn belongs to another task,
+     * Stop only cancels this task's queued turns and leaves the thread running.
+     */
+    delegatedTaskId: Schema.optional(NodeId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),

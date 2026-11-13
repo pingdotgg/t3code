@@ -867,6 +867,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
   input: InterruptThreadTurnInput,
 ) {
   let threadId = input.threadId;
+  let delegatedTaskId: NodeId | undefined;
   if (input.subagentId !== undefined) {
     const projection = yield* getProjection(input.threadId);
     const subagent = projection.subagents.find((agent) => agent.id === input.subagentId);
@@ -883,6 +884,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
         }).pipe(Effect.ignore);
       }
       threadId = subagent.childThreadId;
+      delegatedTaskId = subagent.id;
     } else {
       if (subagent?.runId == null) return { sequence: 0 };
       return yield* dispatch({
@@ -905,6 +907,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
         type: "thread.stop",
         commandId: yield* allocateCommandId(input),
         threadId,
+        ...(delegatedTaskId === undefined ? {} : { delegatedTaskId }),
       });
     }
   }

@@ -782,6 +782,20 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
+/** A task whose child thread is running another task's turn owns only its own queued turns. */
+function delegatedTaskYieldsLiveRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  taskId: NodeId | undefined,
+): boolean {
+  return (
+    taskId !== undefined &&
+    runs.some(
+      (run) =>
+        isLiveRun(run) && run.delegatedTaskId !== undefined && run.delegatedTaskId !== taskId,
+    )
+  );
+}
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -13393,6 +13407,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     if (projection.thread.deletedAt !== null) return undefined;
+    if (delegatedTaskYieldsLiveRun(projection.runs, command.delegatedTaskId)) {
+      for (const run of projection.runs) {
+        if (run.status !== "queued" || run.delegatedTaskId !== command.delegatedTaskId) continue;
+        yield* dispatchQueuedRunCancel(
+          {
+            type: "queued-run.cancel",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            runId: run.id,
+          },
+          events,
+        );
+      }
+      return undefined;
+    }
     // Queued after the interrupt, since a thread's effects run in order.
     const stopDelegatedTasks =
       command.stopDelegatedTasks === false ||
@@ -15749,12 +15778,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch.withLock(
           command.threadId,
           Effect.gen(function* () {
-            // Hold intake closed until descendants stop and this thread's Stop commits.
-            yield* input.stopDescendants((command) =>
-              commandThreadId(command) === input.command.threadId
-                ? dispatchWithReceiptEffect(command)
-                : dispatchWithReceipt(command),
-            );
+            const { runs } = yield* projectionStore
+              .getThreadRecords(command.threadId, ["runs"])
+              .pipe(mapDispatchError(command));
+            // The tasks under the thread belong to the live turn of the task this one yields to.
+            if (!delegatedTaskYieldsLiveRun(runs, command.delegatedTaskId)) {
+              // Hold intake closed until descendants stop and this thread's Stop commits.
+              yield* input.stopDescendants((command) =>
+                commandThreadId(command) === input.command.threadId
+                  ? dispatchWithReceiptEffect(command)
+                  : dispatchWithReceipt(command),
+              );
+            }
             const child = yield* projectionStore
               .getThreadRecords(
                 command.threadId,

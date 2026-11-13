@@ -510,6 +510,65 @@ it.effect.each([
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([
+  ["another task's queued turn", "node:stop-queued-task", ["running", "cancelled"], false],
+  ["the live turn's task", "node:stop-live-task", ["interrupted", "queued:held"], true],
+] as const)(
+  "cancelling %s leaves the other task's turn and the tasks under it alone",
+  ([_name, stoppedTaskId, runs, stopsDescendants]) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make(`thread:task-stop-parent:${stoppedTaskId}`);
+      yield* createWatchingThread(parentThreadId, 1);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, `task stop ${stoppedTaskId}`);
+      yield* send(childThreadId, "follow-up", "queue_after_active");
+      const now = yield* DateTime.now;
+      const [live, queued] = (yield* orchestrator.getThreadProjection(childThreadId)).runs;
+      yield* projections.apply({
+        id: EventId.make(`event:task-stop:live:${stoppedTaskId}`),
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: live!.id,
+        occurredAt: now,
+        payload: {
+          ...live!,
+          status: "running",
+          delegatedTaskId: NodeId.make("node:stop-live-task"),
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`event:task-stop:queued:${stoppedTaskId}`),
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: queued!.id,
+        occurredAt: now,
+        payload: { ...queued!, delegatedTaskId: NodeId.make("node:stop-queued-task") },
+      });
+
+      let stoppedDescendants = false;
+      yield* orchestrator.cancelDelegatedTask({
+        parentThreadId,
+        taskId: NodeId.make(stoppedTaskId),
+        command: {
+          type: "thread.stop",
+          commandId: CommandId.make(`task-stop:${stoppedTaskId}`),
+          threadId: childThreadId,
+          stopDelegatedTasks: false,
+          delegatedTaskId: NodeId.make(stoppedTaskId),
+        },
+        stopDescendants: () =>
+          Effect.sync(() => {
+            stoppedDescendants = true;
+          }),
+      });
+
+      assert.deepEqual((yield* threadState(childThreadId)).runs, [...runs]);
+      assert.equal(stoppedDescendants, stopsDescendants);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("Stop still stops the thread when a delegated child cannot be read", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

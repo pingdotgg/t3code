@@ -2781,6 +2781,7 @@ const make = Effect.gen(function* () {
           commandId,
           threadId: childThreadId,
           stopDelegatedTasks: false,
+          delegatedTaskId: input.taskId,
           reason,
         };
         yield* threadManagement

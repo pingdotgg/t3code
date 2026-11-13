@@ -334,7 +334,9 @@ queued turns, and ends pull request watches. The task's own queued turn is cance
 even if Stop already held it, so a task that is only queued can be cancelled; other
 queued turns in the child stay held for Resume. A nonterminal task is rejected when
 it has no interruptible run, no queued turn of its own, and its finished turn no
-longer waits on background work or delegated tasks. Once a cancelled task's turn
+longer waits on background work or delegated tasks. While the child's running turn
+belongs to another task, as after a follow-up send, cancelling leaves that turn and
+the tasks under the child running and only cancels this task's queued turns. Once a cancelled task's turn
 ends, a completed result settles as `interrupted` and a failed one stays `failed`. A
 terminal task returns its existing status, and its child thread still stops,
 including later runs and watch wakes. In both cases, a follow-up that lost its child
