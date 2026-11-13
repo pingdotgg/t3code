@@ -147,6 +147,23 @@ export type PointerReporter = (
 ) => Promise<void>;
 const noPointer: PointerReporter = async () => {};
 
+// Locator.scrollIntoViewIfNeeded resolves its node once and fails when the page replaces it; the
+// input actions after it re-resolve, so the scroll does too, within the same timeout.
+const DETACHED = /^locator\.scrollIntoViewIfNeeded: Element is not attached to the DOM(?:\n|$)/;
+
+const scrollIntoView = async (locator: Locator, timeout: number) => {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    try {
+      return await locator.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) });
+    } catch (cause) {
+      if (!(cause instanceof Error && DETACHED.test(cause.message)) || Date.now() >= deadline) {
+        throw cause;
+      }
+    }
+  }
+};
+
 const targetPoint = async (
   page: Page,
   locator: Locator | null,
@@ -154,7 +171,7 @@ const targetPoint = async (
   timeout: number,
 ) => {
   if (locator === null) return { x: input.x ?? 0, y: input.y ?? 0 };
-  await locator.scrollIntoViewIfNeeded({ timeout });
+  await scrollIntoView(locator, timeout);
   const box = await locator.boundingBox({ timeout });
   if (box) return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   const viewport = page.viewportSize();
@@ -888,7 +905,8 @@ export const drag = async (
   const target = targetLocator(page, { locator: input.target })!;
   await pointer(await targetPoint(page, source, {}, timeout), "move");
   // Observe drag rejection immediately; an unhandled rejection during cursor movement exits the server.
-  const dragFailure = source.dragTo(target, { timeout }).then(
+  // Chromium delivers a single move before dragstart; steps give the page mousemoves during the drag.
+  const dragFailure = source.dragTo(target, { timeout, steps: 5 }).then(
     () => null,
     (error: unknown) => ({ error }),
   );
@@ -1102,7 +1120,8 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
   window.__t3Recorder = {
     async frame(base64, cssWidth) {
       if (tooLarge) return false;
-      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      // A per-character atob copy costs ~30 ms on a 3200x1800 frame and throttles recordings.
+      const bytes = Uint8Array.fromBase64(base64);
       const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
       if (tooLarge) { bitmap.close(); return false; }
       if (!recorder) {
