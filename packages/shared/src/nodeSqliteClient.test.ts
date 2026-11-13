@@ -214,6 +214,22 @@ it.effect.each([false, true])("batches worker results without losing rows (reade
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("reuses a worker query after an iterator constraint failure", () =>
+  Effect.gen(function* () {
+    const { filename } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE unique_entries(name TEXT UNIQUE)`;
+      const insert = (name: string) =>
+        sql<{ name: string }>`INSERT INTO unique_entries VALUES (${name}) RETURNING name`;
+      yield* insert("first");
+      const error = yield* insert("first").pipe(Effect.flip);
+      assert.equal(error.reason._tag, "UniqueViolation");
+      assert.deepEqual(yield* insert("second"), [{ name: "second" }]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;

@@ -277,6 +277,8 @@ parentPort.on("message", (request) => {
       parentPort.postMessage({ id, rows: raw ? result : [] });
     }
   } catch (error) {
+    // A failed iterator can report its previous SQLite error when the statement is reused.
+    statements.delete(sql);
     parentPort.postMessage({ id, error: { operation, ...describe(error) } });
   }
 });
