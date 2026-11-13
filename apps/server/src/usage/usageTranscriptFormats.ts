@@ -7,7 +7,7 @@ import { museUsageFormat } from "@t3tools/provider-muse/server/usage";
 import { claudeUsageFormat } from "../provider/Drivers/claudeUsage.ts";
 import { codexUsageFormat } from "../provider/Drivers/codexUsage.ts";
 
-export const TEST_FORMATS: Record<
+export const TRANSCRIPT_FORMATS: Record<
   "claude" | "codex" | "grok" | "pi" | "muse",
   TranscriptUsageFormat<unknown>
 > = {
@@ -18,6 +18,6 @@ export const TEST_FORMATS: Record<
   muse: museUsageFormat,
 };
 
-export const TEST_FORMAT_MAP = new Map<UsageProviderKind, TranscriptUsageFormat<unknown>>(
-  Object.entries(TEST_FORMATS) as Array<[UsageProviderKind, TranscriptUsageFormat<unknown>]>,
+export const TRANSCRIPT_FORMAT_MAP = new Map<UsageProviderKind, TranscriptUsageFormat<unknown>>(
+  Object.entries(TRANSCRIPT_FORMATS) as Array<[UsageProviderKind, TranscriptUsageFormat<unknown>]>,
 );

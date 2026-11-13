@@ -10,7 +10,7 @@ import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 import { totalTokens, type TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
 import * as Schema from "effect/Schema";
 
-import { TEST_FORMATS } from "./usageTestFormats.ts";
+import { TRANSCRIPT_FORMATS } from "./usageTranscriptFormats.ts";
 import {
   listTranscriptFiles,
   readTranscriptRecords,
@@ -147,10 +147,15 @@ describe("compressed transcripts", () => {
 
       const options =
         streamingThresholdBytes === undefined ? undefined : { streamingThresholdBytes };
-      const expected = await readTranscriptRecords(plain, TEST_FORMATS.codex, undefined, options);
+      const expected = await readTranscriptRecords(
+        plain,
+        TRANSCRIPT_FORMATS.codex,
+        undefined,
+        options,
+      );
       const actual = await readTranscriptRecords(
         compressed,
-        TEST_FORMATS.codex,
+        TRANSCRIPT_FORMATS.codex,
         undefined,
         options,
       );
@@ -172,19 +177,27 @@ describe("compressed transcripts", () => {
     const plain = NodePath.join(dir, "rollout.jsonl");
     const content = codexMetaLine() + codexModelLine("gpt-6-astra") + codexUsageLine(9, 5);
     await NodeFSP.writeFile(plain, content);
-    const first = await readTranscriptRecords(plain, TEST_FORMATS.codex);
+    const first = await readTranscriptRecords(plain, TRANSCRIPT_FORMATS.codex);
     assert.isNotNull(first);
 
     const compressed = plain + ".zst";
     await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content + codexUsageLine(21, 8)));
-    const actual = await readTranscriptRecords(compressed, TEST_FORMATS.codex, first.position);
+    const actual = await readTranscriptRecords(
+      compressed,
+      TRANSCRIPT_FORMATS.codex,
+      first.position,
+    );
     assert.isNotNull(actual);
     assert.isFalse(actual.resumed);
     assert.deepStrictEqual(
       actual.records.map((record) => record.totals.outputTokens),
       [9, 21],
     );
-    const repeated = await readTranscriptRecords(compressed, TEST_FORMATS.codex, actual.position);
+    const repeated = await readTranscriptRecords(
+      compressed,
+      TRANSCRIPT_FORMATS.codex,
+      actual.position,
+    );
     assert.isNotNull(repeated);
     assert.isFalse(repeated.resumed);
     assert.deepStrictEqual(repeated.records, actual.records);
@@ -193,7 +206,7 @@ describe("compressed transcripts", () => {
   it("returns null for zstd decoder errors rather than caching an empty parse", async () => {
     const path = NodePath.join(dir, "corrupt.jsonl.zst");
     await NodeFSP.writeFile(path, "not a zstd frame");
-    assert.isNull(await readTranscriptRecords(path, TEST_FORMATS.claude));
+    assert.isNull(await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude));
   });
 });
 
@@ -203,8 +216,8 @@ describe("readTranscriptRecords resume", () => {
     { mode: "streaming", streamingThresholdBytes: 0 },
   ])("counts malformed tails once across $mode reads and resume", async (options) => {
     const format: TranscriptUsageFormat<{ errors: number }> = {
-      ...TEST_FORMATS.claude,
-      selectFields: { ...TEST_FORMATS.claude.selectFields, usage: true },
+      ...TRANSCRIPT_FORMATS.claude,
+      selectFields: { ...TRANSCRIPT_FORMATS.claude.selectFields, usage: true },
       state: {
         initial: () => ({ errors: 0 }),
         schema: Schema.Struct({ errors: Schema.Number }),
@@ -222,7 +235,7 @@ describe("readTranscriptRecords resume", () => {
           state.errors += 1;
           return [];
         }
-        return TEST_FORMATS.claude.parseProjected(value, undefined);
+        return TRANSCRIPT_FORMATS.claude.parseProjected(value, undefined);
       },
       readMalformedRecords: (state: { errors: number }) => state.errors,
     };
@@ -266,20 +279,20 @@ describe("readTranscriptRecords resume", () => {
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
-    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 2);
     assert.isFalse(first.resumed);
     assert.strictEqual(first.malformedRecords, 0);
 
     await NodeFSP.appendFile(path, claudeLine(3, 11));
-    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
+    const second = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
     assert.strictEqual(second.records[0]?.totals.outputTokens, 11);
 
-    const full = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    const full = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude);
     assert.isNotNull(full);
     assert.deepStrictEqual([...first.records, ...second.records], [...full.records]);
   });
@@ -290,12 +303,12 @@ describe("readTranscriptRecords resume", () => {
       path,
       codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexTierLine("ultrafast"),
     );
-    const first = await readTranscriptRecords(path, TEST_FORMATS.codex);
+    const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 0);
 
     await NodeFSP.appendFile(path, codexUsageLine(9, 5));
-    const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
+    const second = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
@@ -310,13 +323,13 @@ describe("readTranscriptRecords resume", () => {
       path,
       codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexUsageLine(9, 5),
     );
-    const first = await readTranscriptRecords(path, TEST_FORMATS.codex);
+    const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
 
     // Codex duplicates token_count at stream boundaries, including after resume points.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5) + codexUsageLine(21, 8));
-    const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
+    const second = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.deepStrictEqual(
@@ -329,14 +342,14 @@ describe("readTranscriptRecords resume", () => {
     const path = NodePath.join(dir, "claude.jsonl");
     const unterminated = claudeLine(2, 7).trimEnd();
     await NodeFSP.writeFile(path, claudeLine(1, 5) + unterminated);
-    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
     assert.strictEqual(first.tailRecords.length, 1);
     assert.strictEqual(first.tailRecords[0]?.totals.outputTokens, 7);
 
     await NodeFSP.appendFile(path, `\n${claudeLine(3, 11)}`);
-    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
+    const second = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.deepStrictEqual(
@@ -371,7 +384,7 @@ describe("readTranscriptRecords resume", () => {
         path,
         codexMetaLine() + codexModelLine("gpt-6-astra") + codexTierLine("ultrafast") + firstLine,
       );
-      const first = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex, undefined, options);
       assert.isNotNull(first);
       assert.strictEqual(first.records.length, 0);
       assert.deepStrictEqual(
@@ -383,11 +396,11 @@ describe("readTranscriptRecords resume", () => {
       await NodeFSP.appendFile(path, `\n${firstLine}\n${event(usage(10, 2), usage(510, 62))}\n`);
       const resumed = await readTranscriptRecords(
         path,
-        TEST_FORMATS.codex,
+        TRANSCRIPT_FORMATS.codex,
         JSON.parse(JSON.stringify(first.position)),
         options,
       );
-      const full = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      const full = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex, undefined, options);
       assert.isNotNull(resumed);
       assert.isNotNull(full);
       assert.isTrue(resumed.resumed);
@@ -465,7 +478,12 @@ describe("readTranscriptRecords resume", () => {
         lines.map((line) => `${JSON.stringify({ padding, ...line })}\n`).join(""),
       );
 
-      const result = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      const result = await readTranscriptRecords(
+        path,
+        TRANSCRIPT_FORMATS.codex,
+        undefined,
+        options,
+      );
       assert.isNotNull(result);
       const requests = [...result.records, ...result.tailRecords]
         .map((record) => totalTokens(record.totals))
@@ -484,11 +502,11 @@ describe("readTranscriptRecords resume", () => {
   it("re-parses from the start when the guard bytes no longer match", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5));
-    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude);
     assert.isNotNull(first);
 
     await NodeFSP.writeFile(path, claudeLine(4, 13) + claudeLine(5, 17));
-    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
+    const second = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isFalse(second.resumed);
     assert.deepStrictEqual(
@@ -500,11 +518,11 @@ describe("readTranscriptRecords resume", () => {
   it("re-parses from the start when the file shrank below the resume point", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
-    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    const first = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude);
     assert.isNotNull(first);
 
     await NodeFSP.writeFile(path, claudeLine(3, 11));
-    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
+    const second = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isFalse(second.resumed);
     assert.deepStrictEqual(
@@ -529,7 +547,7 @@ describe("readTranscriptRecords resume", () => {
     })}\n`;
     await NodeFSP.writeFile(path, bigLine + claudeLine(2, 7));
 
-    const parsed = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    const parsed = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.claude);
     assert.isNotNull(parsed);
     assert.deepStrictEqual(
       parsed.records.map((record) => record.totals.outputTokens),
@@ -550,7 +568,7 @@ describe("readTranscriptRecords resume", () => {
     const content = head + filler + modelLine + crlf(codexUsageLine(40, 2));
     await NodeFSP.writeFile(path, content);
 
-    const result = await readTranscriptRecords(path, TEST_FORMATS.codex);
+    const result = await readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex);
     assert.isNotNull(result);
     assert.strictEqual(result.records.length, 1);
     assert.strictEqual(result.records[0]?.model, "gpt-5.2-codex");

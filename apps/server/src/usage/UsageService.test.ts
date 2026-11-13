@@ -2809,10 +2809,15 @@ describe("UsageService", () => {
           tier("priority"),
           bad,
         ].join("\n");
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(dir, { recursive: true });
-          await NodeFSP.writeFile(transcript, content);
-        });
+        // A fixed whole-second mtime, so rewriting the file restores its exact cache identity.
+        const writtenAt = new Date("2026-08-01T10:00:00Z");
+        const writeKeepingMtime = (contents: string) =>
+          Effect.promise(async () => {
+            await NodeFSP.writeFile(transcript, contents);
+            await NodeFSP.utimes(transcript, writtenAt, writtenAt);
+          });
+        yield* Effect.promise(() => NodeFSP.mkdir(dir, { recursive: true }));
+        yield* writeKeepingMtime(content);
         yield* Effect.gen(function* () {
           const verify = (
             summary: UsageSummary,
@@ -2833,20 +2838,17 @@ describe("UsageService", () => {
             if (malformed > 0) assert.match(source?.message ?? "", /1 malformed or inconsistent/);
             else assert.notMatch(source?.message ?? "", /malformed|inconsistent/);
           };
-          const open = vi.spyOn(NodeFSP, "open");
-          open.mockClear();
-          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockRestore()));
           const first = yield* UsageService.make;
-          const cold = yield* first.readSummary(WINDOW);
-          assert.isTrue(open.mock.calls.some(([path]) => path === transcript));
-          verify(cold, 20, 20, 1);
+          verify(yield* first.readSummary(WINDOW), 20, 20, 1);
           yield* first.awaitPersisted;
+          // Same size and mtime with other totals: only a reparse would report 29.
+          const unread = content.replace(counted(100, 20, 100, 20), counted(100, 29, 100, 29));
+          assert.strictEqual(Buffer.byteLength(unread), Buffer.byteLength(content));
+          yield* writeKeepingMtime(unread);
           const restarted = yield* UsageService.make;
-          open.mockClear();
           verify(yield* first.readSummary(WINDOW), 20, 20, 1);
           verify(yield* restarted.readSummary(WINDOW), 20, 20, 1);
-          assert.isFalse(open.mock.calls.some(([path]) => path === transcript));
-          open.mockRestore();
+          yield* writeKeepingMtime(content);
 
           const append = "\n" + counted(10, 2, 140, 30) + "\n";
           content += append;

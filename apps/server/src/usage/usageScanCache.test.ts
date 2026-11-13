@@ -8,7 +8,7 @@ import {
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
-import { TEST_FORMAT_MAP } from "./usageTestFormats.ts";
+import { TRANSCRIPT_FORMAT_MAP } from "./usageTranscriptFormats.ts";
 import { initialCodexScanState, parseCodexLine } from "../provider/Drivers/codexUsage.ts";
 
 const parse = (parts: Iterable<string>) => JSON.parse([...parts].join(""));
@@ -162,7 +162,10 @@ describe("scan cache round trip", () => {
         record({ model: "<synthetic>", dedupeKey: "msg_tail:" }),
       ],
     });
-    const restored = decodeScanCache(parse(makeScanCacheWriter()(cached, {})), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(
+      parse(makeScanCacheWriter()(cached, {})),
+      TRANSCRIPT_FORMAT_MAP,
+    );
 
     expect(restored.size).toBe(4);
     expect(restored).toEqual(original);
@@ -224,7 +227,7 @@ describe("scan cache round trip", () => {
         },
       };
 
-      const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
+      const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TRANSCRIPT_FORMAT_MAP);
       expect(restored.get("/gone.jsonl")).toEqual(
         version >= 13
           ? original.get("/gone.jsonl")
@@ -274,7 +277,7 @@ describe("scan cache round trip", () => {
     ]);
     const v14 = { ...parse(makeScanCacheWriter()(original, {})), version: 14 };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v14)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v14)), TRANSCRIPT_FORMAT_MAP);
     expect(restored.get("/skipped-codex.jsonl")).toEqual({
       ...codex(1),
       size: -1,
@@ -291,7 +294,7 @@ describe("scan cache round trip", () => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
     const v12 = { ...parse(makeScanCacheWriter()(original, {})), version: 12 };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v12)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v12)), TRANSCRIPT_FORMAT_MAP);
     expect(restored.get("/claude.jsonl")).toEqual({
       ...original.get("/claude.jsonl"),
       size: -1,
@@ -307,7 +310,7 @@ describe("scan cache round trip", () => {
     ]);
     cache.set("/b.jsonl", { ...cache.get("/b.jsonl")!, malformedRecords: 2 });
     const sources = { "claude\u0000/projects": { dir: "/projects", volumeId: "1:2" } };
-    expect(decodeScanCache(parse(write(cache, { sources })), TEST_FORMAT_MAP)).toEqual(cache);
+    expect(decodeScanCache(parse(write(cache, { sources })), TRANSCRIPT_FORMAT_MAP)).toEqual(cache);
 
     cache.set("/b.jsonl", {
       ...cache.get("/b.jsonl")!,
@@ -316,15 +319,16 @@ describe("scan cache round trip", () => {
       records: [record({ sessionId: "session-c", model: "claude-opus-5-5", dedupeKey: "msg_3:" })],
     });
     const document = parse(write(cache, { sources }));
-    expect(decodeScanCache(document, TEST_FORMAT_MAP)).toEqual(cache);
+    expect(decodeScanCache(document, TRANSCRIPT_FORMAT_MAP)).toEqual(cache);
     expect(document.sources).toEqual(sources);
   });
 
   it("treats a corrupt or foreign document as an empty cache", () => {
-    expect(decodeScanCache(null, TEST_FORMAT_MAP).size).toBe(0);
-    expect(decodeScanCache("nonsense", TEST_FORMAT_MAP).size).toBe(0);
+    expect(decodeScanCache(null, TRANSCRIPT_FORMAT_MAP).size).toBe(0);
+    expect(decodeScanCache("nonsense", TRANSCRIPT_FORMAT_MAP).size).toBe(0);
     expect(
-      decodeScanCache({ version: 999, models: [], sessions: [], files: {} }, TEST_FORMAT_MAP).size,
+      decodeScanCache({ version: 999, models: [], sessions: [], files: {} }, TRANSCRIPT_FORMAT_MAP)
+        .size,
     ).toBe(0);
   });
 
@@ -335,7 +339,7 @@ describe("scan cache round trip", () => {
       files: { ...encoded.files, "/bad.jsonl": { s: "nope", m: 1, p: "claude", r: [] } },
     };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(withJunk)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(withJunk)), TRANSCRIPT_FORMAT_MAP);
     expect([...restored.keys()]).toEqual(["/good.jsonl"]);
   });
 
@@ -357,7 +361,7 @@ describe("scan cache round trip", () => {
       },
     };
 
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)), TEST_FORMAT_MAP);
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)), TRANSCRIPT_FORMAT_MAP);
     expect(restored.has("/a.jsonl")).toBe(false);
   });
 });

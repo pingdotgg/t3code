@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
-import { TEST_FORMATS } from "./usageTestFormats.ts";
+import { TRANSCRIPT_FORMATS } from "./usageTranscriptFormats.ts";
 import {
   readTranscriptRecords as readWithDefaultThreshold,
   type TranscriptParsePosition,
@@ -13,10 +13,10 @@ import {
 
 const readTranscriptRecords = (
   path: string,
-  provider: keyof typeof TEST_FORMATS,
+  provider: keyof typeof TRANSCRIPT_FORMATS,
   position?: TranscriptParsePosition,
 ) =>
-  readWithDefaultThreshold(path, TEST_FORMATS[provider], position, {
+  readWithDefaultThreshold(path, TRANSCRIPT_FORMATS[provider], position, {
     streamingThresholdBytes: 256 * 1024,
   });
 
@@ -97,7 +97,7 @@ const grok = {
 
 async function scan(
   lines: readonly unknown[],
-  provider: keyof typeof TEST_FORMATS,
+  provider: keyof typeof TRANSCRIPT_FORMATS,
   name = "history",
 ) {
   const path = NodePath.join(dir, `${name}.jsonl`);

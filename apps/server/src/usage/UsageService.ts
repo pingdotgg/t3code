@@ -41,11 +41,8 @@ import type {
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
-import {
-  listTranscriptFiles,
-  readDirectoryVolumeId,
-  readTranscriptRecords,
-} from "./usageTranscriptReader.ts";
+import { makeTranscriptParser } from "./usageTranscriptParser.ts";
+import { listTranscriptFiles, readDirectoryVolumeId } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -160,6 +157,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const hostname = yield* HostProcess.Hostname;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
+  const transcriptParser = yield* makeTranscriptParser;
 
   const fileCache: ScanCache = new Map();
   // Reads from concurrent windows can still hold the original record after it is corrected.
@@ -543,7 +541,13 @@ export const make = Effect.gen(function* () {
         ? cached.position
         : undefined;
 
-    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
+    const parsed = yield* transcriptParser.read({
+      path: filePath,
+      size,
+      provider,
+      format,
+      resumeFrom,
+    });
     // A read failure is not an empty transcript: caching it under this
     // (size, mtime) would silently drop the file's usage until it changes.
     if (parsed === null)
