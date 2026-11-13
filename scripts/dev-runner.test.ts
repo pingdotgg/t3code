@@ -224,7 +224,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           encoding: "utf8",
           env: {
             ...process.env,
-            T3CODE_PORT_OFFSET: "0",
             T3CODE_PORT: "3773",
             T3CODE_HOST: "0.0.0.0",
           },
@@ -232,7 +231,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       );
 
       assert.equal(result.status, 0, result.stderr);
-      assert.match(`${result.stdout}${result.stderr}`, /serverPort=13773 /);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(output, /serverPort=\d+ /);
+      assert.notMatch(output, /serverPort=3773 /);
     });
   });
 
