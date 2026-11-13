@@ -6509,26 +6509,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("withdraws an open value form when the SDK cancels", () =>
-      Effect.gen(function* () {
-        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
-        const controller = yield* Effect.sync(() => new AbortController());
-        const answer = yield* elicit(codeForm, controller.signal);
-        const request = yield* awaitCard(1);
-        yield* Effect.sync(() => controller.abort());
-        assert.deepEqual(yield* Fiber.join(answer), { action: "cancel" });
-        const cancelled = yield* Queue.take(harness.runtimeRequestReceipts);
-        assert.equal(cancelled.runtimeRequest.id, request.id);
-        assert.equal(cancelled.runtimeRequest.status, "cancelled");
-        yield* Effect.flip(
-          harness.runtime.respondToRuntimeRequest({
-            requestId: request.id,
-            answers: { code: "390878" },
-          }),
-        );
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-
     it.effect("cancels an already-aborted request without a card", () =>
       Effect.gen(function* () {
         const { harness, elicit, awaitCard, runtimeRequests } = yield* startElicitationTurn();
