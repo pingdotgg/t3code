@@ -1,10 +1,6 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  resolveThreadWorkingStartedAt,
-  threadRuntimeIsActive,
-  type ThreadStructureRuntime,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -587,13 +583,6 @@ export async function deleteSelectedThreadEntries<
 
 export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return !isListedThreadLineage(thread.lineage);
-}
-
-// Unread only surfaces as a completion pill, which an active run hides.
-export function canMarkThreadUnread(thread: {
-  readonly runtime: ThreadStructureRuntime | null | undefined;
-}): boolean {
-  return !threadRuntimeIsActive(thread.runtime);
 }
 
 export function buildBulkMarkUnreadContextMenuItem(input: {

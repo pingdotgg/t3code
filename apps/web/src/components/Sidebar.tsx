@@ -182,7 +182,6 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkMarkUnreadContextMenuItem,
   buildBulkUnpinContextMenuItem,
-  canMarkThreadUnread,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
@@ -2345,7 +2344,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
-      const markUnreadThreads = selectedThreads.filter(canMarkThreadUnread);
+      const markUnreadThreads = selectedThreads.filter(
+        (thread) => !threadRuntimeIsActive(thread.runtime),
+      );
       const markUnreadMenuItem = buildBulkMarkUnreadContextMenuItem({
         eligibleCount: markUnreadThreads.length,
       });

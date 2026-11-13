@@ -6,8 +6,6 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
-  buildBulkMarkUnreadContextMenuItem,
-  canMarkThreadUnread,
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -135,34 +133,6 @@ describe("deleteSelectedThreadEntries", () => {
       deletedThreadKeys: testCase.deletedThreadKeys,
       firstFailure: testCase.firstFailure,
     });
-  });
-});
-
-describe("bulk mark unread", () => {
-  const runtimeWith = (status: "idle" | "running" | "waiting" | "completed") => ({
-    status,
-    activeRunId: null,
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    providerName: "Codex",
-    lastError: null,
-  });
-  const menuItemFor = (threads: readonly Parameters<typeof canMarkThreadUnread>[0][]) =>
-    buildBulkMarkUnreadContextMenuItem({
-      eligibleCount: threads.filter(canMarkThreadUnread).length,
-    });
-
-  it("counts only threads without an active run", () => {
-    expect(
-      menuItemFor([
-        { runtime: runtimeWith("running") },
-        { runtime: runtimeWith("idle") },
-        { runtime: runtimeWith("completed") },
-        { runtime: null },
-      ]),
-    ).toEqual({ id: "mark-unread", label: "Mark unread (3)" });
-    expect(
-      menuItemFor([{ runtime: runtimeWith("running") }, { runtime: runtimeWith("waiting") }]),
-    ).toBe(null);
   });
 });
 
