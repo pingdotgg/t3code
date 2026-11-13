@@ -350,7 +350,9 @@ export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROV
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
-const CLAUDE_BOOT_TIMEOUT = "5 minutes";
+// Boot includes SessionStart hooks, which Claude Code runs to its 10 minute hook
+// timeout before it answers initialize.
+const CLAUDE_BOOT_TIMEOUT = "11 minutes";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
