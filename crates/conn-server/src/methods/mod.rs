@@ -23,6 +23,8 @@ pub struct Deps {
     pub providers: Vec<Arc<dyn Provider>>,
     /// Set by `main.rs`; without it the server config streams are not registered.
     pub environment: Option<Arc<Environment>>,
+    /// Files, assets and attachments; without it those methods and routes are not served.
+    pub files: Option<Arc<conn_files::Files>>,
 }
 
 pub fn register_all(table: &mut MethodTable, deps: &Deps) {
