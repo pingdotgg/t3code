@@ -13,6 +13,7 @@ import {
   connectionRouteId,
   connectionRouteKind,
   connectionRouteLabel,
+  connectionRoutes,
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
@@ -214,6 +215,27 @@ describe("learned routes", () => {
       `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773`,
       "relay",
       `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`,
+    ]);
+  });
+
+  it("puts a learned route back where the user moved it when the server reports it again", () => {
+    const serve = { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" };
+    const first = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [serve],
+      allowInsecure: true,
+    })!;
+    const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
+    const report = (entry: ConnectionCatalogEntry, reported: ReadonlyArray<typeof serve>) => {
+      const next = mergeLearnedRoutes({ entry, activeRoute: RELAY, reported, allowInsecure: true });
+      return next === null ? entry : entryWithRoutes(entry, next);
+    };
+    // A restarted server reports no Serve URL until it validates; so does one probe timeout.
+    const returned = connectionRoutes(report(report(reordered, []), [serve]));
+    expect(ids(returned)).toEqual([
+      "relay",
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
     ]);
   });
 
