@@ -210,6 +210,7 @@ export interface PiAdapterV2Options {
 }
 
 const MAX_STRUCTURED_TOOL_OUTPUT_BYTES = 64 * 1024;
+const PI_SUBAGENT_LAUNCH_ORDINALS = 16;
 
 function isBoundedStructuredToolValue(value: unknown): boolean {
   let bytes = MAX_STRUCTURED_TOOL_OUTPUT_BYTES;
@@ -355,6 +356,8 @@ interface PiTurnEmissionOwner {
   readonly providerTurn: Pick<OrchestrationV2ProviderTurn, "id">;
   readonly itemOrder: { readonly ordinals: Map<string, number>; next: number };
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  /** Ordinals reserved beside each background `subagent` launch, keyed by its tool call. */
+  readonly launchOrdinals: Map<string, { next: number; readonly end: number }>;
 }
 
 interface ActivePiTurn extends PiTurnEmissionOwner {
@@ -1300,6 +1303,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           },
         });
         if (toolName === "subagent") {
+          // Background children first appear after the turn's later items; keep their rows beside the launch.
+          if (
+            completed &&
+            !isError &&
+            recordString(recordField(resultRecord, "details"), "asyncId") !== undefined
+          ) {
+            const next = turn.itemOrder.next;
+            turn.launchOrdinals.set(toolCallId, { next, end: next + PI_SUBAGENT_LAUNCH_ORDINALS });
+            turn.itemOrder.next += PI_SUBAGENT_LAUNCH_ORDINALS;
+          }
           yield* emitSubagentMembers(
             subagents.observeTool({
               owner: turn.emissionOwner,
@@ -1344,6 +1357,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           turn.toolStartedAt.set(nativeTaskId, startedAt);
           const completedAt = isPiSubagentSettled(status) ? emittedAt : null;
           const progress = member.progress === undefined ? {} : { progress: member.progress };
+          const launch = turn.launchOrdinals.get(member.toolCallId);
+          if (
+            launch !== undefined &&
+            launch.next < launch.end &&
+            !turn.itemOrder.ordinals.has(nativeTaskId)
+          ) {
+            turn.itemOrder.ordinals.set(nativeTaskId, launch.next++);
+          }
+          // The row sits in the launching turn's work, so a late child must not stretch that turn's time.
+          const rowStartedAt =
+            launch === undefined
+              ? startedAt
+              : (turn.toolStartedAt.get(member.toolCallId) ?? startedAt);
           yield* emitItemNode(
             turn,
             nativeTaskId,
@@ -1386,7 +1412,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             type: "turn_item.updated",
             driver: PI_PROVIDER,
             turnItem: {
-              ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
+              ...baseItemFields(turn, nativeTaskId, rowStartedAt, emittedAt),
               status,
               title: member.title,
               completedAt,
@@ -2947,6 +2973,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               providerTurn: { id: providerTurn.id },
               itemOrder: { ordinals: new Map(), next: turnInput.providerTurnOrdinal * 100 + 1 },
               toolStartedAt: new Map(),
+              launchOrdinals: new Map(),
             };
             const activeTurn: ActivePiTurn = {
               ...emissionOwner,

@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -4182,6 +4183,85 @@ describe("PiAdapterV2", () => {
           [["scout", "map the repo", "completed", "call_fg:subagent:alpha"]],
         );
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a late background child beside its launch in the launching turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_wf",
+        toolName: "subagent",
+        args: { workflow: true, async: true },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_wf",
+        toolName: "subagent",
+        isError: false,
+        result: { content: [], details: { mode: "workflow", asyncId: "wf-1", results: [] } },
+      });
+      const launch = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.status === "completed",
+      );
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "Workflow launched." },
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Workflow launched." }],
+          stopReason: "stop",
+        },
+      });
+      const reply = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.streaming === false,
+      );
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // A sequential workflow starts its second child only after the turn has ended.
+      yield* TestClock.adjust("20 seconds");
+      yield* fake.emit(
+        asyncStatusWidget(1, [
+          {
+            id: "wf-1",
+            kind: "workflow",
+            state: "running",
+            children: [{ id: "beta", kind: "step", state: "running", agent: "scout" }],
+          },
+        ]),
+      );
+      const beta = yield* takeEvent(isSubagentTurnItem);
+      if (
+        launch.type !== "turn_item.updated" ||
+        reply.type !== "turn_item.updated" ||
+        !isSubagentTurnItem(beta)
+      ) {
+        return assert.fail("expected turn items");
+      }
+      assert.isAbove(beta.turnItem.ordinal, launch.turnItem.ordinal);
+      assert.isBelow(beta.turnItem.ordinal, reply.turnItem.ordinal);
+      assert.deepEqual(beta.turnItem.startedAt, launch.turnItem.startedAt);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("stops a settled turn's background subagents through pi-subagents on Stop", () =>
