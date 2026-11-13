@@ -49,6 +49,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { isStalePullRequestReply } from "../pullRequestReply.ts";
 import { parsePullRequestQuery } from "../pullRequestQuery.ts";
 import { reuseUnchanged } from "./serverConfigProjection.ts";
+import { createEnvironmentSessionAtoms } from "./session.ts";
 
 export {
   type PullRequestDiffLoadError,
@@ -433,6 +434,25 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   onAnswer: PullRequestAnswerHandlers = {},
 ) {
   const refreshes = createPullRequestRefreshAtomFamily(runtime);
+  const sessions = createEnvironmentSessionAtoms(runtime);
+  const linkedThreadSignals = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:pull-requests:linked-thread-refreshes",
+    tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  });
+  // Servers without `linkedThreadRefreshes` never signal link changes, so poll them instead.
+  const linkedThreadsRefreshes = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): unknown => {
+      const signal = get(refreshes({ environmentId, input: {} }));
+      const config = get(sessions.initialConfigValueAtom(environmentId));
+      if (config?.environment.capabilities.linkedThreadRefreshes === true) {
+        return [signal, get(linkedThreadSignals({ environmentId, input: {} }))];
+      }
+      // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
+      const handle = setTimeout(() => get.refreshSelf(), 10_000);
+      get.addFinalizer(() => clearTimeout(handle));
+      return {};
+    }),
+  );
   const commandScheduler = createAtomCommandScheduler();
   const routedRequest = createPullRequestRouter();
   const serialPerEnvironment = {
@@ -611,6 +631,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  // Asked only when the menu's first page is not everybody, so a query cannot be answered from it.
+  const reviewerSearch = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:reviewer-search",
+    tag: WS_METHODS.pullRequestsReviewerCandidates,
+    execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewerCandidates, input),
+    staleTimeMs: 60_000,
+  });
   const loadDiff = Effect.fn("PullRequests.loadDiff")(function* (input: PullRequestDiffInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
@@ -702,8 +729,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       persistence: persistQuery(PullRequestLinkedThreadsResult),
       tag: WS_METHODS.pullRequestsLinkedThreads,
       staleTimeMs: 0,
-      refreshIntervalMs: 10_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId }) => linkedThreadsRefreshes(environmentId),
     }),
     // For callers that open a thread from the answer: a persisted one reads as final before
     // the connection is known, and a kept one can predate the thread.
@@ -914,6 +940,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
     }),
     reviewerCandidates,
+    /** The host's search for reviewers past the first page, keyed by what was typed. */
+    reviewerSearch,
     requestReviewers: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:request-reviewers",
       tag: WS_METHODS.pullRequestsRequestReviewers,
@@ -932,12 +960,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               ),
             ) ?? [];
           const missingIdentities = selected.length < reviewers.length;
-          updateCached(registry, candidatesAtom, (value) => ({
-            ...value,
-            candidates: value.candidates.map((candidate) =>
-              selected.includes(candidate) ? { ...candidate, isRequested: requested } : candidate,
-            ),
-          }));
+          // Somebody found only by the host's search is not in the loaded list yet; the host
+          // puts requested reviewers first, so reading it again brings them in.
+          updateCached(
+            registry,
+            candidatesAtom,
+            (value) => ({
+              ...value,
+              candidates: value.candidates.map((candidate) =>
+                selected.includes(candidate) ? { ...candidate, isRequested: requested } : candidate,
+              ),
+            }),
+            missingIdentities,
+          );
           const selectedLogins = new Set(
             selected.map((candidate) => candidate.login.toLowerCase()),
           );
