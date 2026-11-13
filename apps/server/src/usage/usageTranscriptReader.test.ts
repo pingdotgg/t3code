@@ -537,6 +537,22 @@ describe("readTranscriptRecords resume", () => {
     );
   });
 
+  it("parses a line whose usage nests deeper than the main thread can deserialize", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    const deep = `${"[".repeat(6000)}0${"]".repeat(6000)}`;
+    const nested = claudeLine(2, 6).replace(
+      '"output_tokens":6',
+      `"output_tokens":6,"ignored":${deep}`,
+    );
+    await NodeFSP.writeFile(path, claudeLine(1, 5) + nested + claudeLine(3, 7));
+
+    const parsed = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    assert.deepStrictEqual(
+      parsed?.records.map((record) => record.totals.outputTokens),
+      [5, 6, 7],
+    );
+  });
+
   it("keeps a CRLF Codex reducer line whose marker straddles a stream chunk", async () => {
     const path = NodePath.join(dir, "rollout.jsonl");
     const crlf = (line: string) => line.replace("\n", "\r\n");

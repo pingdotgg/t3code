@@ -171,6 +171,8 @@ const LINE = 0;
 const PIECE = 1;
 const LINE_END = 2;
 const TAIL = 3;
+// Set on a LINE or TAIL whose value is the line's text for format.parseLine.
+const RAW = 4;
 // Parallel parsing beyond UsageService's four concurrent reads would only queue.
 const SCAN_WORKERS = 4;
 const SCAN_WORKER_IDLE_MS = 10_000;
@@ -187,7 +189,8 @@ interface ScanJob {
 
 /**
  * Parts arrive in file order. A LINE or TAIL takes the next entry of `values`, a gated line
- * parsed and projected to the format's selected fields; each PIECE ends at `ends[i]` in `bytes`.
+ * parsed and projected to the format's selected fields (its text when flagged RAW); each PIECE
+ * ends at `ends[i]` in `bytes`.
  */
 interface ScanBatch {
   readonly kinds: readonly number[];
@@ -211,7 +214,9 @@ const NodeZlib = require("node:zlib");
 const NEWLINE = 0x0a;
 const READ_CHUNK_BYTES = ${READ_CHUNK_BYTES};
 const BATCH_BYTES = 1024 * 1024;
-const [LINE, PIECE, LINE_END, TAIL] = [${LINE}, ${PIECE}, ${LINE_END}, ${TAIL}];
+const [LINE, PIECE, LINE_END, TAIL, RAW] = [${LINE}, ${PIECE}, ${LINE_END}, ${TAIL}, ${RAW}];
+// Deserializing a deeply nested value overflows the main thread's stack; such lines go as text.
+const MAX_CLONE_DEPTH = 64;
 const EMPTY = Buffer.alloc(0);
 const CARRIAGE_RETURN = 0x0d;
 
@@ -224,6 +229,13 @@ const project = (value, fields) => {
     if (Object.hasOwn(fields, key)) projected[key] = project(value[key], fields[key]);
   }
   return projected;
+};
+
+const deeperThan = (value, depth) => {
+  if (typeof value !== "object" || value === null) return false;
+  if (depth === 0) return true;
+  for (const child of Object.values(value)) if (deeperThan(child, depth - 1)) return true;
+  return false;
 };
 
 const read = (fd, buffer, position) =>
@@ -277,14 +289,17 @@ async function* scan(job) {
   const pushLine = (kind, line) => {
     const content =
       line.length > 0 && line[line.length - 1] === CARRIAGE_RETURN ? line.subarray(0, -1) : line;
+    const text = content.toString("utf8");
     let parsed;
     try {
-      parsed = JSON.parse(content.toString("utf8"));
+      parsed = JSON.parse(text);
     } catch {
       return;
     }
-    kinds.push(kind);
-    values.push(project(parsed, job.selectFields));
+    const projected = project(parsed, job.selectFields);
+    const raw = deeperThan(projected, MAX_CLONE_DEPTH);
+    kinds.push(raw ? kind | RAW : kind);
+    values.push(raw ? text : projected);
     parts.push(EMPTY);
   };
   let resumeOffset = job.start;
@@ -418,6 +433,7 @@ function spawnScanWorker(): ScanWorker {
     settle({ error });
   };
   worker.thread.on("error", fail);
+  worker.thread.on("messageerror", fail);
   worker.thread.on("exit", () => fail(new Error("Transcript scan worker exited.")));
   return worker;
 }
@@ -522,10 +538,15 @@ export async function readTranscriptRecords<State>(
     const parseProjected = (projected: unknown, lineState: State, out: UsageRecord[]): void => {
       for (const record of format.parseProjected(projected, lineState)) out.push(record);
     };
+    const parseValue = (kind: number, value: unknown, lineState: State, out: UsageRecord[]) => {
+      if (kind & RAW)
+        for (const record of format.parseLine(value as string, lineState)) out.push(record);
+      else parseProjected(value, lineState, out);
+    };
 
     const records: UsageRecord[] = [];
     let resumeOffset = start;
-    let tail: { readonly value: unknown } | undefined;
+    let tail: { readonly kind: number; readonly value: unknown } | undefined;
     let tailStreaming = false;
     let streaming:
       | {
@@ -568,12 +589,12 @@ export async function readTranscriptRecords<State>(
       for (const [index, kind] of batch.kinds.entries()) {
         const part = bytes.subarray(partStart, batch.ends[index]);
         partStart = batch.ends[index]!;
-        if (kind === LINE) parseProjected(batch.values[valueIndex++], state, records);
+        if ((kind & ~RAW) === LINE) parseValue(kind, batch.values[valueIndex++], state, records);
         else if (kind === PIECE) {
           streaming ??= startStreaming();
           streaming.reader.write(streaming.decoder.write(part));
         } else if (kind === LINE_END) finishStreaming(state, records);
-        else tail = { value: batch.values[valueIndex++] };
+        else tail = { kind, value: batch.values[valueIndex++] };
       }
       resumeOffset = batch.resumeOffset;
       tailStreaming = batch.done && batch.streaming;
@@ -585,7 +606,7 @@ export async function readTranscriptRecords<State>(
     const tailState =
       decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
     if (tailStreaming) finishStreaming(tailState, tailRecords);
-    else if (tail !== undefined) parseProjected(tail.value, tailState, tailRecords);
+    else if (tail !== undefined) parseValue(tail.kind, tail.value, tailState, tailRecords);
 
     const guardLength = compressed ? 0 : Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;
