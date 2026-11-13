@@ -1,0 +1,73 @@
+# BeautifulRust drop-in lints
+#
+# Paste this into your Cargo.toml (or replace [lints] with [workspace.lints] in a
+# workspace root and add `[lints] workspace = true` to each member). It makes clippy
+# enforce the rules from the rust-best-practices skill that a machine can check.
+# Everything is "warn"; make CI strict with:
+#
+#     cargo clippy --all-targets --all-features -- -D warnings
+#
+# Silence a lint locally with a reason, which the config below requires:
+#
+#     #[expect(clippy::unwrap_used, reason = "the regex is a literal and always compiles")]
+#
+# Lints marked [lib] fit libraries; applications can drop them.
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"          # each unsafe op needs its own unsafe block
+missing_debug_implementations = "warn"   # every public type implements Debug
+missing_docs = "warn"                    # [lib] document every public item
+unreachable_pub = "warn"                 # pub items that aren't actually exported
+rust_2018_idioms = { level = "warn", priority = -1 } # 2018-edition idioms, e.g. Formatter<'_>
+
+[lints.clippy]
+# Groups first, at lower priority so the individual settings below win.
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Panics: return errors, and give every intentional panic a reason.
+unwrap_used = "warn"                     # use ?, or expect("why this cannot fail")
+expect_used = "allow"                    # expect with a reason is the sanctioned form
+panic_in_result_fn = "warn"              # a fn returning Result shouldn't also panic
+missing_panics_doc = "warn"              # [lib] document reachable panics under # Panics
+missing_errors_doc = "warn"              # [lib] document failures under # Errors
+missing_assert_message = "warn"          # assert! says what went wrong (quiet inside #[test])
+
+# Suppressions must explain themselves and expire when no longer needed.
+allow_attributes = "warn"                # prefer #[expect] over #[allow] (needs rust-version 1.81+)
+allow_attributes_without_reason = "warn" # every suppression says why (needs rust-version 1.81+)
+
+# Unsafe must be justified.
+undocumented_unsafe_blocks = "warn"      # // SAFETY: comment on every unsafe block
+multiple_unsafe_ops_per_block = "warn"   # one unsafe operation per block
+
+# API shape.
+fn_params_excessive_bools = "warn"       # bool parameters: use an enum or two methods
+struct_excessive_bools = "warn"          # many bool fields: use an enum or bitflags
+clone_on_ref_ptr = "warn"                # write Rc::clone(&x) so cheap clones are visible
+redundant_clone = "warn"                 # a clone whose original is never used again
+rc_buffer = "warn"                       # Rc<String> / Rc<Vec<T>>: use Rc<str> / Rc<[T]>
+
+# Evolution.
+exhaustive_enums = "warn"                # [lib] exported enums are #[non_exhaustive] (quiet in binaries)
+
+# Idioms.
+string_add = "warn"                      # build strings with format! or push_str, not +
+wildcard_imports = "warn"                # no glob imports (use super::* in tests is allowed)
+
+# Output and debugging leftovers.
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"                    # [lib] libraries log, they don't print
+print_stderr = "warn"                    # [lib] libraries log, they don't print
+
+# Casts that silently lose information.
+as_conversions = "warn"                  # prefer From / TryFrom
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+
+# Pedantic lints that are mostly noise in practice, or that the skill disagrees with.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+module_inception = "allow"               # a leaf module named after its main item is fine
+enum_glob_use = "allow"                  # use Enum::* inside a function that matches on it
