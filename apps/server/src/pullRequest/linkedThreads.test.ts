@@ -265,5 +265,13 @@ it("signals linked-thread changes only when a linked answer could change", () =>
       }),
       event("thread.deleted", { pullRequests: [], deletedAt: now }),
     ].map(changed),
-  ).toEqual([false, true, false, false, false, true, true, true, false]);
+  ).toEqual([true, true, false, false, false, true, true, true, false]);
+
+  const afterRestart = makeLinkedThreadsChangeDetector();
+  expect(afterRestart(event("thread.created", { title: "New" }))).toBe(false);
+  expect(
+    makeLinkedThreadsChangeDetector()(
+      event("thread.deleted", { pullRequests: [], deletedAt: now }),
+    ),
+  ).toBe(true);
 });

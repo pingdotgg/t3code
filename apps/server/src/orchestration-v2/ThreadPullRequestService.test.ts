@@ -130,7 +130,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 return null;
               }),
           }),
-          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+          }),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
@@ -266,7 +268,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 return null;
               }),
           }),
-          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+          }),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
@@ -388,7 +392,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                   return null;
                 }),
             }),
-            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(PullRequestService.PullRequestService)({
+              notifyLinkedThreadsChanged: Effect.void,
+            }),
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
               resolve: () =>
                 Effect.succeed({
@@ -499,7 +505,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 return null;
               }),
           }),
-          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+          }),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
@@ -901,7 +909,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 };
               }),
           }),
-          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+          }),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
@@ -1025,7 +1035,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             branchPullRequest: (_input, options) =>
               Effect.succeed(options?.freshGitState === true ? fresh : mergedPullRequest43),
           }),
-          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+          }),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
