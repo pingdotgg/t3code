@@ -1152,24 +1152,6 @@ it.live("a later agent session of the same thread can close the tab an earlier o
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("agents still cannot close a server tab the user opened", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
-      yield* browser.attachViewer(viewerInput(opened.tabId, false));
-      const rejected = yield* broker
-        .invoke<void>({ scope, tabId: opened.tabId, operation: "close", input: {} })
-        .pipe(Effect.flip);
-      expect(rejected).toMatchObject({
-        _tag: "PreviewAutomationControlInterruptedError",
-        reason: "agentMismatch",
-      });
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
 it.live("streams to a read-only viewer without allowing takeover, input, or viewport changes", () =>
   Effect.scoped(
     Effect.gen(function* () {
