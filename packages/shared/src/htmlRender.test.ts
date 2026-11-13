@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  HTML_RENDER_COMPOSE_MAX_LENGTH,
+  BALLOT_PICKS_MAX_LENGTH,
   injectHtmlRenderBootstrap,
-  readHtmlRenderComposeRequest,
+  readBallotPicksRequest,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
@@ -65,20 +65,18 @@ describe("injectHtmlRenderBootstrap", () => {
   });
 });
 
-describe("readHtmlRenderComposeRequest", () => {
-  const compose = (text: unknown) => ({ jsonrpc: "2.0", method: "t3/compose", params: { text } });
+describe("readBallotPicksRequest", () => {
+  const picks = (text: unknown) => ({ jsonrpc: "2.0", method: "t3/compose", params: { text } });
 
   it("accepts trimmed, non-empty text within the limit", () => {
-    expect(readHtmlRenderComposeRequest(compose("  Apply R1, park I2  "))).toEqual({
+    expect(readBallotPicksRequest(picks("  Apply R1, park I2  "))).toEqual({
       text: "Apply R1, park I2",
     });
-    expect(readHtmlRenderComposeRequest(compose("   "))).toBeUndefined();
-    expect(readHtmlRenderComposeRequest(compose(42))).toBeUndefined();
+    expect(readBallotPicksRequest(picks("   "))).toBeUndefined();
+    expect(readBallotPicksRequest(picks(42))).toBeUndefined();
+    expect(readBallotPicksRequest(picks("x".repeat(BALLOT_PICKS_MAX_LENGTH + 1)))).toBeUndefined();
     expect(
-      readHtmlRenderComposeRequest(compose("x".repeat(HTML_RENDER_COMPOSE_MAX_LENGTH + 1))),
-    ).toBeUndefined();
-    expect(
-      readHtmlRenderComposeRequest({
+      readBallotPicksRequest({
         jsonrpc: "2.0",
         method: "ui/open-link",
         params: { text: "a" },
@@ -86,7 +84,7 @@ describe("readHtmlRenderComposeRequest", () => {
     ).toBeUndefined();
   });
 
-  it("gives framed pages a t3Compose helper", () => {
+  it("gives ballots a t3Compose helper", () => {
     const injected = injectHtmlRenderBootstrap("<html><head></head><body></body></html>");
     expect(injected).toContain("window.t3Compose=function(t)");
     expect(injected).toContain('method:"t3/compose"');

@@ -131,11 +131,7 @@ import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import { getComposerDraftSnapshot, setFreshSessionPending } from "../../state/use-composer-drafts";
-import {
-  appendHtmlRenderComposeText,
-  onHtmlRenderCompose,
-  type HtmlRenderComposeRequest,
-} from "./htmlRenderCompose";
+import { appendBallotPicks, onBallotPicks, type BallotPicksRequest } from "./ballot";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import {
   ANDROID_READING_MAX_WIDTH,
@@ -1390,18 +1386,18 @@ function ThreadDetailBody(
     });
   };
 
-  // Custom build: a page's own button (t3Compose) appends to this thread's message box. It doesn't
-  // focus the box: the keyboard would cover a page with several pick buttons after the first.
-  const appendHtmlRenderText = useEffectEvent((request: HtmlRenderComposeRequest) => {
+  // Custom build: a ballot's Done button (t3Compose) appends its picks to this thread's message
+  // box. It doesn't focus the box: the keyboard would cover a ballot with several pick buttons.
+  const appendBallotPicksToDraft = useEffectEvent((request: BallotPicksRequest) => {
     if (props.draftMode || request.threadKey !== selectedThreadKey) return false;
     const draftKey = props.composerDraftKey ?? selectedThreadKey;
     props.onChangeDraftMessage(
-      appendHtmlRenderComposeText(getComposerDraftSnapshot(draftKey).text, request.text),
+      appendBallotPicks(getComposerDraftSnapshot(draftKey).text, request.text),
     );
     return true;
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to inline pages in this thread handing text to the message box
-  useEffect(() => onHtmlRenderCompose((request) => appendHtmlRenderText(request)), []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to ballots in this thread handing picks to the message box
+  useEffect(() => onBallotPicks((request) => appendBallotPicksToDraft(request)), []);
 
   const handleScrollToEnd = () => {
     void Haptics.selectionAsync();
@@ -1483,57 +1479,57 @@ function ThreadDetailBody(
             <WorkspaceMutationIdProvider threadRef={props.selectedThreadDetailRef}>
               {/* Custom build: leaving the thread stops a reply from it being read aloud. */}
               <ReadAloudOwner ownerKey={selectedThreadKey}>
-              <ColumnWidth width={columnWidth}>
-                <ThreadFeed
-                  toolCallVisibility={toolCallVisibility}
-                  environmentId={props.environmentId}
-                  threadId={props.selectedThread.id}
-                  detailRef={props.selectedThreadDetailRef}
-                  workspaceRoot={props.threadCwd}
-                  feed={props.selectedThreadFeed}
-                  pendingHandoff={props.pendingHandoff}
-                  worktreeSetup={props.worktreeSetup}
-                  setupWorkingStartedAt={props.setupWorkingStartedAt}
-                  queuedMessages={props.queuedMessages}
-                  dispatchingMessageId={props.dispatchingMessageId}
-                  // A native subagent has no composer to edit a pending message in;
-                  // Cancel on the edit banner would discard it.
-                  onEditPendingMessage={
-                    isProviderSubagent || pendingMessageEditBlocked
-                      ? null
-                      : handleEditPendingMessage
-                  }
-                  contentPresentation={props.contentPresentation}
-                  threadTitle={props.selectedThread.title}
-                  latestRun={props.activityRun}
-                  activeWorkStartedAt={props.activeWorkStartedAt}
-                  runlessWorkActive={props.runlessWorkActive ?? false}
-                  listRef={listRef}
-                  freeze={freeze}
-                  anchorMessageId={anchorMessageId}
-                  jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
-                  onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
-                  contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
-                  keyboardOffset={composerKeyboardOffset}
-                  sendingWithKeyboard={sendingWithKeyboard}
-                  fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
-                  contentBottomInset={
-                    questionInFlow
-                      ? 0
-                      : estimatedOverlayHeight +
-                        (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
-                  }
-                  contentMaxWidth={contentMaxWidth}
-                  historyControls={props.historyControls}
-                  contentSideInsets={nativeMetrics?.safeArea}
-                  layoutVariant={layoutVariant}
-                  usesAutomaticContentInsets={props.usesAutomaticContentInsets}
-                  onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-                  onIsAtEndChange={setIsAtEnd}
-                  skills={selectedProviderSkills}
-                  onUseArtifactTemplate={handleUseArtifactTemplate}
-                />
-              </ColumnWidth>
+                <ColumnWidth width={columnWidth}>
+                  <ThreadFeed
+                    toolCallVisibility={toolCallVisibility}
+                    environmentId={props.environmentId}
+                    threadId={props.selectedThread.id}
+                    detailRef={props.selectedThreadDetailRef}
+                    workspaceRoot={props.threadCwd}
+                    feed={props.selectedThreadFeed}
+                    pendingHandoff={props.pendingHandoff}
+                    worktreeSetup={props.worktreeSetup}
+                    setupWorkingStartedAt={props.setupWorkingStartedAt}
+                    queuedMessages={props.queuedMessages}
+                    dispatchingMessageId={props.dispatchingMessageId}
+                    // A native subagent has no composer to edit a pending message in;
+                    // Cancel on the edit banner would discard it.
+                    onEditPendingMessage={
+                      isProviderSubagent || pendingMessageEditBlocked
+                        ? null
+                        : handleEditPendingMessage
+                    }
+                    contentPresentation={props.contentPresentation}
+                    threadTitle={props.selectedThread.title}
+                    latestRun={props.activityRun}
+                    activeWorkStartedAt={props.activeWorkStartedAt}
+                    runlessWorkActive={props.runlessWorkActive ?? false}
+                    listRef={listRef}
+                    freeze={freeze}
+                    anchorMessageId={anchorMessageId}
+                    jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
+                    onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+                    contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+                    keyboardOffset={composerKeyboardOffset}
+                    sendingWithKeyboard={sendingWithKeyboard}
+                    fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
+                    contentBottomInset={
+                      questionInFlow
+                        ? 0
+                        : estimatedOverlayHeight +
+                          (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+                    }
+                    contentMaxWidth={contentMaxWidth}
+                    historyControls={props.historyControls}
+                    contentSideInsets={nativeMetrics?.safeArea}
+                    layoutVariant={layoutVariant}
+                    usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+                    onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+                    onIsAtEndChange={setIsAtEnd}
+                    skills={selectedProviderSkills}
+                    onUseArtifactTemplate={handleUseArtifactTemplate}
+                  />
+                </ColumnWidth>
               </ReadAloudOwner>
             </WorkspaceMutationIdProvider>
           </RenderErrorBoundary>

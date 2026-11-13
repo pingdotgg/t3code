@@ -24,10 +24,7 @@ import { useEnvironmentServerConfig } from "../../state/entities";
 import { useRefreshAssetUrl } from "../../state/assets";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import {
-  appendHtmlRenderComposeText,
-  requestHtmlRenderCompose,
-} from "../threads/htmlRenderCompose";
+import { appendBallotPicks, requestBallotPicks } from "../threads/ballot";
 import { isZipFile, ZipArchiveView } from "./ZipArchiveView";
 import { AttachmentDocumentBody, nativeViewerKind } from "./AttachmentDocumentBody";
 
@@ -109,24 +106,23 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     }
     handleBack();
   };
-  // Custom build: a full-screen html_render page's own button (t3Compose) appends to the draft of
-  // the thread the page belongs to, then goes back to that thread, as the desktop's expanded view
-  // composes too. The thread screen underneath takes it when it shows that thread.
+  // Custom build: a full-screen ballot's Done button (t3Compose) appends its picks to the draft of
+  // the thread it belongs to, then goes back to that thread, as the desktop's expanded view does. The thread screen underneath takes it when it shows that thread.
   const htmlRenderThreadKey =
     params.htmlRender === "1" && environmentId && params.threadId
       ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
       : null;
-  const leftForHtmlRenderCompose = useRef(false);
-  const handleHtmlRenderCompose = (threadKey: string, text: string) => {
-    if (!requestHtmlRenderCompose({ threadKey, text })) {
+  const leftForBallot = useRef(false);
+  const handleBallotPicks = (threadKey: string, text: string) => {
+    if (!requestBallotPicks({ threadKey, text })) {
       setComposerDraftText(
         threadKey,
-        appendHtmlRenderComposeText(getComposerDraftSnapshot(threadKey).text, text),
+        appendBallotPicks(getComposerDraftSnapshot(threadKey).text, text),
       );
     }
     // One button may hand over several pieces of text; go back only once.
-    if (leftForHtmlRenderCompose.current) return;
-    leftForHtmlRenderCompose.current = true;
+    if (leftForBallot.current) return;
+    leftForBallot.current = true;
     handleBack();
   };
   const removeFromDraft = () => {
@@ -279,8 +275,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         htmlRender={params.htmlRender === "1"}
         {...(htmlRenderThreadKey
           ? {
-              onHtmlRenderCompose: (text: string) =>
-                handleHtmlRenderCompose(htmlRenderThreadKey, text),
+              onBallotPicks: (text: string) => handleBallotPicks(htmlRenderThreadKey, text),
             }
           : {})}
         nativeViewer={nativeViewer}

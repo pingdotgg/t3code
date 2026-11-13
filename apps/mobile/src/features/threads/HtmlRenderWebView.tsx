@@ -25,12 +25,12 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
-  createHtmlRenderComposeToken,
-  createHtmlRenderTapGate,
-  htmlRenderComposeScript,
-  readHtmlRenderComposeMessage,
-  requestHtmlRenderCompose,
-} from "./htmlRenderCompose";
+  createBallotToken,
+  createBallotTapGate,
+  ballotScript,
+  readBallotMessage,
+  requestBallotPicks,
+} from "./ballot";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
@@ -92,23 +92,23 @@ export function HtmlRenderWebView(props: {
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
-  /** Custom build: text the page's `t3Compose(text)` hands to the message box after a tap. */
-  readonly onCompose?: (text: string) => void;
+  /** Custom build: picks a ballot's `t3Compose(text)` hands to the message box after a tap. */
+  readonly onBallotPicks?: (text: string) => void;
 }) {
   const theme = useHtmlRenderTheme();
-  // Only a view that composes needs a token; whether it composes is fixed by its call site.
-  const [composeToken] = useState(() =>
-    props.onCompose === undefined ? null : createHtmlRenderComposeToken(),
+  // Only a ballot view needs a token; whether it is one is fixed by its call site.
+  const [ballotToken] = useState(() =>
+    props.onBallotPicks === undefined ? null : createBallotToken(),
   );
-  const [tapGate] = useState(createHtmlRenderTapGate);
-  const composes = composeToken !== null && props.onCompose !== undefined;
+  const [tapGate] = useState(createBallotTapGate);
+  const isBallot = ballotToken !== null && props.onBallotPicks !== undefined;
   const touchPoint = (event: GestureResponderEvent) => ({
     x: event.nativeEvent.pageX,
     y: event.nativeEvent.pageY,
     at: Date.now(),
   });
-  const compose = (texts: readonly string[]) => {
-    for (const text of texts) props.onCompose?.(text);
+  const handOverPicks = (texts: readonly string[]) => {
+    for (const text of texts) props.onBallotPicks?.(text);
   };
   const [initialTheme] = useState(theme);
   const [generation, setGeneration] = useState(0);
@@ -141,9 +141,11 @@ export function HtmlRenderWebView(props: {
       // Raw touches reach this wrapper even when the web view handles them. A page may only fill
       // the message box just after a tap (a touch that barely moved), not on load, on its own
       // timer or during a scroll.
-      onTouchStart={composes ? (event) => tapGate.touchStart(touchPoint(event)) : undefined}
-      onTouchEnd={composes ? (event) => compose(tapGate.touchEnd(touchPoint(event))) : undefined}
-      onTouchCancel={composes ? () => tapGate.touchCancel() : undefined}
+      onTouchStart={isBallot ? (event) => tapGate.touchStart(touchPoint(event)) : undefined}
+      onTouchEnd={
+        isBallot ? (event) => handOverPicks(tapGate.touchEnd(touchPoint(event))) : undefined
+      }
+      onTouchCancel={isBallot ? () => tapGate.touchCancel() : undefined}
       style={
         props.nested
           ? { flex: 1 }
@@ -188,10 +190,8 @@ export function HtmlRenderWebView(props: {
         onContentProcessDidTerminate={restart}
         onRenderProcessGone={restart}
         {...(props.nested ? { injectedJavaScript: OVERFLOW_SCRIPT } : {})}
-        {...(composes
-          ? { injectedJavaScriptBeforeContentLoaded: htmlRenderComposeScript(composeToken) }
-          : {})}
-        {...(props.nested || composes
+        {...(isBallot ? { injectedJavaScriptBeforeContentLoaded: ballotScript(ballotToken) } : {})}
+        {...(props.nested || isBallot
           ? {
               onMessage: (event: WebViewMessageEvent) => {
                 const next = props.nested ? readOverflowMessage(event.nativeEvent.data) : null;
@@ -199,10 +199,10 @@ export function HtmlRenderWebView(props: {
                   setOverflow(next);
                   return;
                 }
-                const request = composes
-                  ? readHtmlRenderComposeMessage(event.nativeEvent.data, composeToken)
+                const request = isBallot
+                  ? readBallotMessage(event.nativeEvent.data, ballotToken)
                   : undefined;
-                if (request !== undefined) compose(tapGate.request(request.text, Date.now()));
+                if (request !== undefined) handOverPicks(tapGate.request(request.text, Date.now()));
               },
             }
           : {})}
@@ -265,8 +265,8 @@ export function ThreadHtmlRender(props: {
             title={title}
             nested
             onLoadError={handleLoadError}
-            onCompose={(text) =>
-              requestHtmlRenderCompose({
+            onBallotPicks={(text) =>
+              requestBallotPicks({
                 threadKey: scopedThreadKey(props.environmentId, props.threadId),
                 text,
               })
