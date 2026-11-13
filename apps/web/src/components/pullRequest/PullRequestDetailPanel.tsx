@@ -1291,6 +1291,11 @@ export function PullRequestDetailPanel({
         canEnableAutoMerge: !stackOwnsMerge && can("enable-auto-merge"),
       })
     : null;
+  const primaryMergeBlockedReason =
+    mergeBlockedReason ??
+    (primaryAction === "merge" && detail?.mergeBlocked === true
+      ? "The repository's rules block merging until their requirements are met."
+      : null);
   const showsDraftToggle =
     detail?.state === "open" &&
     can(detail.isDraft ? "ready" : "draft") &&
@@ -1470,7 +1475,7 @@ export function PullRequestDetailPanel({
                 />
               ) : null}
               <PullRequestPrimaryAction
-                mergeBlockedReason={mergeBlockedReason}
+                mergeBlockedReason={primaryMergeBlockedReason}
                 pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
                 autoMergeArmed={autoMergeArmed}

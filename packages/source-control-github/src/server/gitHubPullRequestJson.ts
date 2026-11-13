@@ -1119,7 +1119,9 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
     // BLOCKED is also the state while required checks or reviews are pending; whoever may bypass
     // branch rules can still merge now, and Merge on a merge-queue branch enqueues instead.
     mergeBlocked:
-      pr.mergeStateStatus === "BLOCKED" && !pr.viewerCanMergeAsAdmin && !pr.isMergeQueueEnabled,
+      pr.mergeStateStatus === "BLOCKED" &&
+      pr.viewerCanMergeAsAdmin === false &&
+      pr.isMergeQueueEnabled === false,
   };
 }
 

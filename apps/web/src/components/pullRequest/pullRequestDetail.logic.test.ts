@@ -204,15 +204,10 @@ describe("pull request primary control", () => {
     ).toBe("merge");
   });
 
-  it("offers auto-merge for a blocked merge, and otherwise says it is blocked", () => {
-    const blocked = { ...open, mergeBlocked: true };
-    expect(resolvePullRequestPrimaryControl(blocked)).toBe("enable-auto-merge");
-    expect(resolvePullRequestPrimaryControl({ ...blocked, canEnableAutoMerge: false })).toBe(
-      "blocked",
+  it("offers auto-merge for a merge the host's branch rules block", () => {
+    expect(resolvePullRequestPrimaryControl({ ...open, mergeBlocked: true })).toBe(
+      "enable-auto-merge",
     );
-    expect(
-      resolvePullRequestPrimaryControl({ ...blocked, canEnableAutoMerge: false, canMerge: false }),
-    ).toBeNull();
   });
 });
 

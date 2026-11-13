@@ -85,7 +85,6 @@ type PullRequestPrimaryControl =
   | "resolve"
   | "ready"
   | "merge"
-  | "blocked"
   | "enable-auto-merge"
   | "auto-merge-armed"
   | "merged"
@@ -118,8 +117,7 @@ export function resolvePullRequestPrimaryControl(input: {
   ) {
     return "enable-auto-merge";
   }
-  if (!input.canMerge) return null;
-  return input.mergeBlocked ? "blocked" : "merge";
+  return input.canMerge ? "merge" : null;
 }
 
 export function pullRequestCheckoutCommand(

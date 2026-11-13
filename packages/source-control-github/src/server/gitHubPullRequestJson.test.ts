@@ -564,6 +564,10 @@ describe("pull request detail decoding", () => {
     expect(detailOf(passing, { viewerCanMergeAsAdmin: true }).mergeBlocked).toBe(false);
     expect(detailOf(passing, { mergeStateStatus: "CLEAN" }).mergeBlocked).toBe(false);
     expect(detailOf(passing, { isMergeQueueEnabled: true }).mergeBlocked).toBe(false);
+    expect(
+      detailOf(passing, { viewerCanMergeAsAdmin: undefined, isMergeQueueEnabled: undefined })
+        .mergeBlocked,
+    ).toBe(false);
   });
 
   it("reads an auto-merge request and strategy, and its null as off", () => {
