@@ -223,6 +223,17 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       assert.deepEqual(item?.type === "subagent" ? item.remoteChild : undefined, remoteChild);
       // No thread was created here for the child.
       assert.equal(yield* orchestrator.getThreadShell(remoteChild.threadId), null);
+      const other = yield* seedLiveParent("records-no-task");
+      const index = yield* (yield* ProjectionStore.ProjectionStoreV2).listActiveShellIndex();
+      assert.isTrue(index.find((entry) => entry.id === parent.threadId)?.hasRemoteTasks);
+      assert.isFalse(index.find((entry) => entry.id === other.threadId)?.hasRemoteTasks);
+      // Nothing here can cancel the task there, so it must not block archiving.
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("command:archive:records"),
+        threadId: parent.threadId,
+      });
+      assert.isNotNull((yield* orchestrator.getThreadShell(parent.threadId))?.archivedAt);
     }),
   );
 

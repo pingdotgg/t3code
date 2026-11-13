@@ -1,3 +1,5 @@
+import { retainedTerminalHistory } from "@t3tools/contracts";
+
 export interface TerminalOutputChunk {
   readonly startOffset: number;
   readonly data: string;
@@ -88,28 +90,6 @@ function splitStringByUtf8Bytes(data: string, maxBytes: number): ReadonlyArray<U
   }
 
   return chunks;
-}
-
-function trimBufferToBytes(buffer: string, maxBufferBytes: number): string {
-  if (maxBufferBytes <= 0) {
-    return "";
-  }
-
-  const encoded = textEncoder.encode(buffer);
-  if (encoded.byteLength <= maxBufferBytes) {
-    return buffer;
-  }
-
-  let start = encoded.byteLength - maxBufferBytes;
-  while (start < encoded.length) {
-    const byte = encoded[start];
-    if (byte === undefined || (byte & 0b1100_0000) !== 0b1000_0000) {
-      break;
-    }
-    start += 1;
-  }
-
-  return textDecoder.decode(encoded.subarray(start));
 }
 
 function splitOutputChunks(
@@ -249,7 +229,7 @@ function resetOutput(
   data: string,
   maxBufferBytes: number,
 ): TerminalOutputState {
-  const retained = trimBufferToBytes(data, maxBufferBytes);
+  const retained = retainedTerminalHistory(data, maxBufferBytes);
   const reset = splitOutputChunks(
     retained,
     0,
