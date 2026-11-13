@@ -3007,7 +3007,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 state.activeTurn = activeTurn;
                 activeTurn.adoptedWake = wake !== null && !continuation;
                 // The selection is applied and this turn owns the session, so the held run may start.
-                if (heldRunAdmission !== null && !continuation) {
+                // This turn's prompt follows that run: a steer would join its first model request.
+                const admittedRun = heldRunAdmission !== null && !continuation;
+                if (heldRunAdmission !== null && admittedRun) {
                   yield* answerRunAdmission(heldRunAdmission, true);
                   heldRunAdmission = null;
                 }
@@ -3024,7 +3026,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     record: {
                       type: "prompt",
                       message: payload.message,
-                      streamingBehavior: "steer",
+                      streamingBehavior: admittedRun ? "followUp" : "steer",
                       ...(payload.images.length === 0 ? {} : { images: payload.images }),
                     },
                   });

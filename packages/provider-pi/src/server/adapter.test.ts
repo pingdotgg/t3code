@@ -2295,8 +2295,13 @@ describe("PiAdapterV2", () => {
         { id: admitted["id"], confirmed: admitted["confirmed"] },
         { id: "restored-again", confirmed: true },
       );
-      // Requests are taken in the order Pi read them: the turn's prompt follows the admission.
-      assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");
+      // Requests are taken in the order Pi read them: the turn's prompt follows the admission,
+      // queued behind the admitted run so it does not join that run's first model request.
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.deepEqual(
+        { message: prompt["message"], streamingBehavior: prompt["streamingBehavior"] },
+        { message: "Hello pi", streamingBehavior: "followUp" },
+      );
 
       yield* askAdmission("owned-run");
       assert.equal((yield* fake.takeRequest("extension_ui_response"))["id"], "owned-run");

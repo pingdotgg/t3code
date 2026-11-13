@@ -37,6 +37,7 @@ async function loadHooks(
 ) {
   const handlers = new Map<string, unknown>();
   const firstHandlers = new Map<string, unknown>();
+  const sent: Array<{ content: unknown; deliverAs: string | undefined }> = [];
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -54,10 +55,13 @@ async function loadHooks(
         if (!firstHandlers.has(name)) firstHandlers.set(name, handler);
       },
       registerCommand: () => {},
+      sendUserMessage: async (content: unknown, options?: { deliverAs?: string }) => {
+        sent.push({ content, deliverAs: options?.deliverAs });
+      },
       getCommands: () => commands,
     },
   });
-  return Object.assign(handlers, { first: firstHandlers });
+  return Object.assign(handlers, { first: firstHandlers, sent });
 }
 
 describe("Pi orchestration prompt section", () => {
@@ -100,6 +104,7 @@ describe("Pi run admission", () => {
       ctx: unknown,
     ) => Promise<void>;
     const compactGate = hooks.first.get("session_before_compact") as typeof gate;
+    const input = hooks.first.get("input") as (event: unknown) => unknown;
     const asked: Array<{ title: string; answer: (admitted: boolean) => void }> = [];
     let aborts = 0;
     const ctx = {
@@ -120,6 +125,12 @@ describe("Pi run admission", () => {
     let started = false;
     const run = gate({}, ctx).then(() => (started = true));
     await Promise.resolve();
+    // The held run keeps Pi busy: another extension's plain send is queued, not rejected.
+    const send = { type: "input", text: "continue", source: "extension" };
+    assert.deepEqual(input(send), { action: "handled" });
+    assert.isUndefined(input({ ...send, streamingBehavior: "followUp" }));
+    assert.isUndefined(input({ ...send, source: "rpc" }));
+    assert.deepEqual(hooks.sent, [{ content: "continue", deliverAs: "followUp" }]);
     assert.deepEqual(
       asked.map(({ title }) => title),
       [PI_T3_RUN_ADMISSION_TITLE],
@@ -127,6 +138,7 @@ describe("Pi run admission", () => {
     assert.isFalse(started);
     asked[0]!.answer(true);
     await run;
+    assert.isUndefined(input(send));
     await gate({}, ctx);
     assert.lengthOf(asked, 1);
     assert.equal(aborts, 0);

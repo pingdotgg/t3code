@@ -258,19 +258,31 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // any T3 turn owns it. Hold a resumed session's first run before its first model request until
   // T3 answers, which it does once a turn owns the session and has applied its model.
   let awaitingAdmission = false;
+  let holdingRun = false;
   pi.on("session_start", (event) => {
     if (event.reason === "resume") awaitingAdmission = true;
   });
   // T3 declines when it has to replace the session: Pi waits for a held run, so abort it.
   const awaitAdmission = async (_event: unknown, ctx: ExtensionContext) => {
     if (!awaitingAdmission) return;
+    holdingRun = true;
     const admitted = await ctx.ui.confirm(RUN_ADMISSION_TITLE, "");
+    holdingRun = false;
     awaitingAdmission = false;
     if (!admitted) ctx.abort();
   };
   // A run compacts restored history, a model request of its own, before before_agent_start.
   pi.on("session_before_compact", awaitAdmission);
   pi.on("before_agent_start", awaitAdmission);
+  // The held run keeps the session busy, where Pi rejects an extension's plain send. Queue it instead.
+  pi.on("input", (event) => {
+    if (!holdingRun || event.source !== "extension" || event.streamingBehavior !== undefined) return;
+    void pi.sendUserMessage(
+      event.images?.length ? [{ type: "text", text: event.text }, ...event.images] : event.text,
+      { deliverAs: "followUp" },
+    );
+    return { action: "handled" };
+  });
 
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
   // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
