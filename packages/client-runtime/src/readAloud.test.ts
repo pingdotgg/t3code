@@ -128,3 +128,31 @@ it("keeps a pause across chunk boundaries", async () => {
   controller.stop();
   await run;
 });
+
+it("does not treat chunk disposal as a pause", async () => {
+  const started = deferred<void>();
+  const finished = deferred<void>();
+  const nextPrepared = deferred<void>();
+  let controller: ReturnType<typeof createReadAloudController>;
+  const prepare = vi.fn(async () => {
+    if (prepare.mock.calls.length > 1) nextPrepared.resolve();
+    return {
+      play: async () => started.resolve(),
+      pause: () => {},
+      stop: () => controller.pause(),
+      finished: finished.promise,
+    };
+  });
+  controller = createReadAloudController(prepare);
+  const run = controller.start("1", "word ".repeat(1000), {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await started.promise;
+  finished.resolve();
+  await nextPrepared.promise;
+  expect(controller.getSnapshot().status).toBe("loading");
+  controller.stop();
+  await run;
+  expect(controller.getSnapshot().status).toBe("idle");
+});

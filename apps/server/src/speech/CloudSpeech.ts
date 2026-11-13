@@ -377,11 +377,11 @@ export const layer = Layer.effect(
             ? (yield* openRouterSpeechModels).models.find((model) => model.id === request.model)
                 ?.voices[0]
             : undefined);
-        // MiniMax and Voxtral reject PCM on OpenRouter.
+        // Gemini and HeyGen only support PCM; use self-describing MP3 elsewhere.
         const format =
-          request.model.startsWith("minimax/") || request.model.startsWith("mistralai/voxtral-")
-            ? "mp3"
-            : "pcm";
+          request.model.startsWith("google/gemini-") || request.model.startsWith("heygen/")
+            ? "pcm"
+            : "mp3";
         const body =
           provider === "chatgpt"
             ? { text: request.text }
@@ -447,7 +447,7 @@ export const layer = Layer.effect(
         if (!bytes.length || bytes.length > MAX_SYNTHESIS_BYTES) return yield* unavailable();
         if (format === "pcm" && provider === "openrouter") {
           const contentType = response.headers["content-type"] ?? "";
-          const rate = Number(/\brate=(\d+)/.exec(contentType)?.[1]);
+          const rate = Number(/\brate=([^;\s]+)/.exec(contentType)?.[1] ?? "24000");
           const channels = Number(/\bchannels=(\d+)/.exec(contentType)?.[1] ?? "1");
           return yield* Effect.try({
             try: () => speechWave(bytes, rate, channels),

@@ -23,7 +23,7 @@ it.effect.each(["xai", "openrouter"] as const)(
           : String(url).includes("/models")
             ? Response.json({
                 data: [
-                  { id: "example/speech", name: "Speech", supported_voices: ["reader"] },
+                  { id: "google/gemini-test-tts", name: "Speech", supported_voices: ["reader"] },
                   { id: "minimax/speech-test:free", supported_voices: null },
                 ],
               })
@@ -40,7 +40,7 @@ it.effect.each(["xai", "openrouter"] as const)(
         yield* service.setKey("openai", Redacted.make("must-not-be-forwarded"));
         const request = {
           text: "Read this reply.",
-          model: "example/speech",
+          model: "google/gemini-test-tts",
           voice: "reader",
           speed: 1.25,
           language: "en",
@@ -92,7 +92,7 @@ it.effect.each(["xai", "openrouter"] as const)(
             ? { text: request.text, voice_id: "reader", language: "en", speed: 1.25 }
             : {
                 input: request.text,
-                model: "example/speech",
+                model: "google/gemini-test-tts",
                 voice: "reader",
                 response_format: "pcm",
               },
@@ -102,7 +102,7 @@ it.effect.each(["xai", "openrouter"] as const)(
             provider === "xai"
               ? [{ id: "grok-tts", name: "Grok TTS", voices: ["reader"] }]
               : [
-                  { id: "example/speech", name: "Speech", voices: ["reader"] },
+                  { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
                   { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
                 ],
         });
@@ -114,6 +114,17 @@ it.effect.each(["xai", "openrouter"] as const)(
         if (provider === "openrouter") {
           yield* service.synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
+          upstream.mockResolvedValueOnce(
+            new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
+          );
+          const plainPcm = yield* service.synthesize(provider, {
+            ...request,
+            model: "google/gemini-tts",
+            voice: "reader",
+          });
+          expect(new DataView(plainPcm.buffer, plainPcm.byteOffset).getUint32(24, true)).toBe(
+            24000,
+          );
           for (const model of ["minimax/speech-test:free", "mistralai/voxtral-mini-tts-2603"]) {
             upstream.mockResolvedValueOnce(new Response(new Uint8Array([73, 68, 51, 1])));
             expect([

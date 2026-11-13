@@ -94,7 +94,14 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
 }
 
 export const readAloudController = createReadAloudController(async (text, settings, signal) => {
-  if (settings.provider === "system") return systemPlayback(text, settings);
+  if (settings.provider === "system") {
+    const voices = settings.voice ? await Speech.getAvailableVoicesAsync() : [];
+    signal.throwIfAborted();
+    return systemPlayback(text, {
+      ...settings,
+      voice: voices.some((voice) => voice.identifier === settings.voice) ? settings.voice : "",
+    });
+  }
   if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
   const prepared = settings.environmentId
     ? Option.getOrNull(
@@ -133,7 +140,10 @@ export const readAloudController = createReadAloudController(async (text, settin
     player,
     false,
     (requested) => {
-      if (!requested) readAloudController.pause();
+      if (!requested) {
+        player.setActiveForLockScreen(false);
+        readAloudController.pause();
+      }
     },
     settings.backgroundPlayback,
   );
