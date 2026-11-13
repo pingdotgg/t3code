@@ -48,9 +48,11 @@ import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { ProviderDriverError } from "./Errors.ts";
+import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 
@@ -125,8 +127,12 @@ const makeTildeProviderFixtures = Effect.fn(
     directory: homePath,
     prefix: ".t3-provider-path-test-",
   });
+  yield* fileSystem.writeFileString(
+    path.join(fixtureDir, "package.json"),
+    JSON.stringify({ type: "commonjs" }),
+  );
   const codexPath = path.join(fixtureDir, "codex");
-  const claudePath = path.join(fixtureDir, "claude");
+  const claudePath = path.join(fixtureDir, "claude.mjs");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
   const codexScriptPath = path.join(fixtureDir, "codex-script.json");
   const codexFixtureDir = path.join(import.meta.dirname, "testFixtures");
@@ -200,12 +206,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     ),
     Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(McpProviderSessions.layer),
+    Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provide(PortScanner.layerTest),
+    Layer.provide(Layer.merge(PortScanner.layerTest, SqlitePersistence.layerMemory)),
     Layer.provideMerge(layerBase),
   );
 
@@ -339,7 +346,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
+  it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");
       const configMap: ProviderInstanceConfigMap = {
@@ -363,7 +370,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("lists a blocked driver's instances as unavailable without running them", () =>
+  it.effect("lists a blocked driver's instances as unavailable without running them", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
       const reason = "Example Corp's policy does not allow the Codex provider.";
@@ -855,7 +862,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     );
   }
 
-  it.live(
+  it.effect(
     "shadows instances whose driver is not registered in this build without failing boot",
     () =>
       Effect.gen(function* () {
@@ -983,7 +990,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
         ],
       ]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   // An empty secret must not let a driver fall back to a credential the server inherited.
@@ -1006,7 +1013,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* mutator.reconcile({ ...fixture.configMap });
       expect(fixture.reads).toHaveLength(readsAtStartup);
       expect(yield* registry.listUnavailable).toHaveLength(1);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("does not read the secrets of an instance its config decodes as disabled", () => {
@@ -1018,7 +1025,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(fixture.reads).toEqual([]);
       expect(fixture.invalidated).toEqual([]);
       expect(fixture.created).toHaveLength(1);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("re-reads secrets on reload and rebuilds only when they changed", () => {
@@ -1041,7 +1048,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
         "sk-live",
         "sk-rotated",
       ]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("reads a config field typed SettingsSecretValue and rebuilds when it rotates", () => {
@@ -1061,7 +1068,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
         { apiKey: "gw-live", model: "m" },
         { apiKey: "gw-rotated", model: "m" },
       ]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect.each([
@@ -1077,7 +1084,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     return Effect.gen(function* () {
       yield* fixture.make;
       expect(fixture.configs).toEqual([expect.objectContaining({ [field]: "provider-live" })]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("keeps a working instance live when a reload cannot read its secret", () => {
@@ -1091,7 +1098,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(instanceId)).toBeDefined();
       expect(yield* registry.listUnavailable).toEqual([]);
       expect(fixture.created).toHaveLength(1);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("starts without waiting for secrets to be read", () => {
@@ -1108,6 +1115,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       expect(yield* registry.getInstance(instanceId)).toBeDefined();
       expect(yield* registry.listUnavailable).toEqual([]);
-    }).pipe(Effect.scoped);
+    });
   });
 });

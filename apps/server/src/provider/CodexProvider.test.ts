@@ -15,7 +15,7 @@ it("counts the Codex discovery budget from initialize, capped by the probe timeo
     [50_000, 59_750],
   ] as const;
   for (const [initializedAtMs, expected] of cases) {
-    assert.strictEqual(codexDiscoveryDeadlineMs(0, initializedAtMs), expected);
+    assert.strictEqual(codexDiscoveryDeadlineMs(0, initializedAtMs, 60_000), expected);
   }
 });
 
@@ -29,6 +29,7 @@ it("maps current Codex model capability fields", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
     defaultServiceTier: "flex",
     serviceTiers: [
       {
@@ -77,6 +78,16 @@ it("maps current Codex model capability fields", () => {
         },
       ],
       currentValue: "flex",
+    },
+    {
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        { id: "standard", label: "Standard", isDefault: true },
+        { id: "daybreakBlue", label: "Daybreak Blue" },
+      ],
+      currentValue: "standard",
     },
   ]);
 });
