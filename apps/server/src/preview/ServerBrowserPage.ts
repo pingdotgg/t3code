@@ -159,6 +159,23 @@ export type PointerReporter = (
 ) => Promise<void>;
 const noPointer: PointerReporter = async () => {};
 
+// Locator.scrollIntoViewIfNeeded resolves its node once and fails when the page replaces it; the
+// input actions after it re-resolve, so the scroll does too, within the same timeout.
+const DETACHED = /^locator\.scrollIntoViewIfNeeded: Element is not attached to the DOM(?:\n|$)/;
+
+const scrollIntoView = async (locator: Locator, timeout: number) => {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    try {
+      return await locator.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) });
+    } catch (cause) {
+      if (!(cause instanceof Error && DETACHED.test(cause.message)) || Date.now() >= deadline) {
+        throw cause;
+      }
+    }
+  }
+};
+
 const targetPoint = async (
   page: Page,
   locator: Locator | null,
@@ -166,7 +183,7 @@ const targetPoint = async (
   timeout: () => number,
 ) => {
   if (locator === null) return { x: input.x ?? 0, y: input.y ?? 0 };
-  await locator.scrollIntoViewIfNeeded({ timeout: timeout() });
+  await scrollIntoView(locator, timeout());
   const box = await locator.boundingBox({ timeout: timeout() });
   if (box) return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   const viewport = page.viewportSize();
