@@ -78,6 +78,7 @@ import {
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
+  applyThreadTag,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -502,6 +503,10 @@ export interface OrchestratorV2Shape {
     OrchestratorV2Error
   >;
   readonly countThreads: () => Effect.Effect<number, OrchestratorV2Error>;
+  readonly listTaggedThreads: () => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly tags: ReadonlyArray<string> }>,
+    OrchestratorV2Error
+  >;
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
     OrchestratorV2Error
@@ -4672,15 +4677,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.tag.set": {
-          const current = thread.tags ?? [];
-          return {
-            ...thread,
-            tags: command.tagged
-              ? current.includes(command.tag)
-                ? current
-                : [...current, command.tag]
-              : current.filter((tag) => tag !== command.tag),
-          };
+          const tags = thread.tags ?? [];
+          const kept =
+            command.replaces === undefined ? tags : applyThreadTag(tags, command.replaces, false);
+          // A rename whose tag is already gone (a concurrent rename won) changes nothing.
+          if (command.replaces !== undefined && kept === tags) return thread;
+          return { ...thread, tags: applyThreadTag(kept, command.tag, command.tagged) };
         }
         case "thread.mark-unread": {
           // Retire the wake before rewinding the visit, preserving its settlement timer.
@@ -16114,6 +16116,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     countThreads: Effect.fn("OrchestratorV2.countThreads")(function () {
       return projectionStore.countThreads().pipe(Effect.mapError(shellProjectionError));
+    }),
+    listTaggedThreads: Effect.fn("OrchestratorV2.listTaggedThreads")(function () {
+      return projectionStore.listTaggedThreads().pipe(Effect.mapError(shellProjectionError));
     }),
     listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
       return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));

@@ -160,6 +160,35 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+## Tag threads
+
+Tags group threads that belong together across projects and states, such as `review`,
+`auth`, or `later`. A thread can carry several tags, and forks keep them.
+
+Open a thread's menu and choose **Tags…**. Check or uncheck as many tags as you like, or
+type to search and create a new one; press Esc or click away when done. On web and
+desktop, clicking a thread's tags in its header and **Edit tags** in the command palette
+open the same list. Tags ignore case, so `bug` and `Bug` are one tag, and a tag keeps the
+spelling it was first created with. Tags are up to 64 characters.
+
+To rename or delete a tag everywhere, open **Settings → Threads → Tags** on web and desktop, or
+**Settings → Tags** on mobile. Both change every thread on that machine, archived ones too, and
+renaming onto an existing tag merges the two.
+
+To show only tagged threads, pick a tag from the tag control in the sidebar header or
+from **Filter sidebar by tag** in the command palette. On web and desktop, each click in
+the sidebar's tag list checks or unchecks a tag and the list stays open; the sidebar
+shows threads with any of the checked tags. Clear the
+filter with its **×** button, **All tags**, or **Clear tag filter**. On mobile, use the
+**Tag** option in the thread list's filter menu, and choose **All tags** to clear it.
+Each device remembers its own filter.
+
+Agents can tag their own thread or another one with `t3_thread_organize`, so you can
+ask an agent to "tag this thread `review`".
+
+Tags need a server version with tag support. On older servers, the tag controls are
+hidden.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

@@ -134,6 +134,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadPinning: Schema.optionalKey(Schema.Boolean),
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `thread.tag.set` and serves `orchestration.listThreadTags`, `renameThreadTag` and `deleteThreadTag`. */
+  threadTags: Schema.optionalKey(Schema.Boolean),
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),

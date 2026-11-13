@@ -200,6 +200,11 @@ export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> 
   return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);
 }
 
+/** Visible shells that skip streaming ticks, for pickers that only read tags and structure. */
+export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+}
+
 export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
 }

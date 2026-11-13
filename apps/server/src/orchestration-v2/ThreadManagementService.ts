@@ -31,6 +31,11 @@ import {
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
+  type OrchestrationV2DeleteThreadTagInput,
+  type OrchestrationV2RenameThreadTagInput,
+  OrchestrationV2ThreadTagChangeError,
+  type OrchestrationV2ThreadTagChangeResult,
+  type OrchestrationV2ThreadTagUsage,
   type OrchestrationV2TurnItem,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -39,7 +44,9 @@ import {
   resolveProjectProviderInstanceEnabled,
   RunId,
   type ScheduledTaskId,
+  applyThreadTag,
   ThreadId,
+  threadTagKey,
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
@@ -53,6 +60,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -104,12 +112,12 @@ function existingThreadIdsForCommand(
   switch (command.type) {
     case "thread.create":
       return [];
-    // Read-state commands only rewrite the thread payload's visited/unread
-    // watermark and open stats; they never touch messages, so they do not need the imported
-    // v1 transcript hydrated first. Visits fire on every thread-activity bump
-    // while a thread is open, so keeping them off the import path matters.
+    // Read-state and tag commands only rewrite the thread payload; they never touch messages,
+    // so they do not need the imported v1 transcript first. Visits fire on every activity bump
+    // while a thread is open, and a bulk tag rename must not stop at one unimported thread.
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.tag.set":
       return [];
     case "thread.fork":
       return [command.sourceThreadId];
@@ -435,6 +443,19 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: Orchestrator.OrchestratorV2["Service"]["listActiveSubagentThreadIds"];
   readonly countThreads: Orchestrator.OrchestratorV2["Service"]["countThreads"];
+  /** Every tag on this environment's threads, archived ones included, deduplicated ignoring case. */
+  readonly listThreadTags: () => Effect.Effect<
+    ReadonlyArray<OrchestrationV2ThreadTagUsage>,
+    Orchestrator.OrchestratorV2Error
+  >;
+  /** Renames a tag on every thread, archived ones included; onto an existing tag it merges. */
+  readonly renameThreadTag: (
+    input: OrchestrationV2RenameThreadTagInput,
+  ) => Effect.Effect<OrchestrationV2ThreadTagChangeResult, OrchestrationV2ThreadTagChangeError>;
+  /** Removes a tag from every thread, archived ones included. */
+  readonly deleteThreadTag: (
+    input: OrchestrationV2DeleteThreadTagInput,
+  ) => Effect.Effect<OrchestrationV2ThreadTagChangeResult, OrchestrationV2ThreadTagChangeError>;
   readonly listActiveShellIndex: Orchestrator.OrchestratorV2["Service"]["listActiveShellIndex"];
   readonly listOlderSettledThreads: Orchestrator.OrchestratorV2["Service"]["listOlderSettledThreads"];
   readonly readShellSnapshot: (
@@ -1655,6 +1676,56 @@ const make = Effect.gen(function* () {
     if (failures[0] !== undefined) return yield* failures[0];
   });
 
+  const listThreadTags = Effect.fn("ThreadManagementService.listThreadTags")(function* () {
+    const usage = new Map<string, { tag: string; threadCount: number }>();
+    for (const { tags } of yield* orchestrator.listTaggedThreads()) {
+      const counted = new Set<string>();
+      for (const tag of tags) {
+        const key = threadTagKey(tag);
+        if (counted.has(key)) continue;
+        counted.add(key);
+        const entry = usage.get(key);
+        usage.set(key, { tag: entry?.tag ?? tag, threadCount: (entry?.threadCount ?? 0) + 1 });
+      }
+    }
+    return [...usage.values()].sort((left, right) => left.tag.localeCompare(right.tag));
+  });
+
+  // Untraced: renameThreadTag and deleteThreadTag carry the span. Each thread goes through
+  // `thread.tag.set`, so events, projections and clients stay in step.
+  const replaceThreadTag = Effect.fnUntraced(function* (
+    tag: OrchestrationV2DeleteThreadTagInput["tag"],
+    to: OrchestrationV2RenameThreadTagInput["to"] | null,
+  ) {
+    const batch = `server:thread-tag:${yield* Clock.currentTimeMillis}:${yield* Random.nextInt}`;
+    let threadCount = 0;
+    // Reads threadCount when it fails, so the error says how many threads already changed.
+    const reportProgress = <A, E>(effect: Effect.Effect<A, E>) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationV2ThreadTagChangeError({ cause, threadsChanged: threadCount }),
+        ),
+      );
+    for (const { threadId, tags } of yield* reportProgress(orchestrator.listTaggedThreads())) {
+      const untagged = applyThreadTag(tags, tag, false);
+      if (untagged === tags) continue;
+      const next = to === null ? untagged : applyThreadTag(untagged, to, true);
+      // A case-only rename leaves a thread already spelled that way alone.
+      if (next.length === tags.length && next.every((each) => tags.includes(each))) continue;
+      yield* reportProgress(
+        dispatch({
+          type: "thread.tag.set",
+          commandId: CommandId.make(`${batch}:${threadId}`),
+          threadId,
+          ...(to === null ? { tag, tagged: false } : { tag: to, tagged: true, replaces: tag }),
+        }),
+      );
+      threadCount += 1;
+    }
+    return { threadCount };
+  });
+
   return ThreadManagementService.of({
     ensureLegacyTranscript,
     searchThreadStream: (input) =>
@@ -1726,6 +1797,13 @@ const make = Effect.gen(function* () {
     getShellSnapshot: orchestrator.getShellSnapshot,
     listActiveSubagentThreadIds: orchestrator.listActiveSubagentThreadIds,
     countThreads: orchestrator.countThreads,
+    listThreadTags,
+    renameThreadTag: Effect.fn("ThreadManagementService.renameThreadTag")(function (input) {
+      return replaceThreadTag(input.tag, input.to);
+    }),
+    deleteThreadTag: Effect.fn("ThreadManagementService.deleteThreadTag")(function (input) {
+      return replaceThreadTag(input.tag, null);
+    }),
     listActiveShellIndex: orchestrator.listActiveShellIndex,
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
     readShellSnapshot: orchestrator.readShellSnapshot,

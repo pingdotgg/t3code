@@ -466,6 +466,8 @@ export interface ActiveShellIndexEntry extends Pick<
   readonly mayBeLive: boolean;
   /** Whether it delegated a task to a linked environment, whose clients nest that task under it. */
   readonly hasRemoteTasks: boolean;
+  /** Tagged threads stay in shells, so a client's tag filter sees every match. */
+  readonly tagged: boolean;
 }
 
 /** What thread listings filter and order an active thread by, without building its shell. */
@@ -576,6 +578,11 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** Tagged threads that are not deleted, archived ones included, oldest first. */
+  readonly listTaggedThreads: () => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly tags: ReadonlyArray<string> }>,
+    ProjectionStoreV2Error
+  >;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
@@ -8742,6 +8749,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
+    const listTaggedThreads = Effect.fn("ProjectionStore.listTaggedThreads")(function* () {
+      const rows = yield* sql<{ readonly thread_id: string; readonly tag: string }>`
+        SELECT t.thread_id, tag.value AS tag
+        FROM orchestration_v2_projection_threads t, json_each(t.payload_json, '$.tags') tag
+        WHERE t.deleted_at IS NULL AND tag.type = 'text'
+        ORDER BY t.created_at ASC, t.thread_id ASC, tag.key ASC
+      `;
+      const byThread = new Map<string, Array<string>>();
+      for (const row of rows) {
+        const tags = byThread.get(row.thread_id);
+        if (tags === undefined) byThread.set(row.thread_id, [row.tag]);
+        else tags.push(row.tag);
+      }
+      return [...byThread].map(([threadId, tags]) => ({ threadId: ThreadId.make(threadId), tags }));
+    }, Effect.mapError(shellSnapshotReadError));
+
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
       const rows = yield* sql<{
         readonly thread_id: string;
@@ -8756,6 +8779,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly snoozed_until: string | null;
         readonly may_be_live: number;
         readonly has_remote_tasks: number;
+        readonly tagged: number;
       }>`
         SELECT
           t.thread_id,
@@ -8809,7 +8833,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE subagent.origin = 'app_owned'
               AND subagent.child_thread_id IS NULL
               AND json_type(subagent.payload_json, '$.remoteChild') = 'object'
-          ) AS has_remote_tasks
+          ) AS has_remote_tasks,
+          COALESCE(json_array_length(t.payload_json, '$.tags'), 0) > 0 AS tagged
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND t.archived_at IS NULL
@@ -8828,6 +8853,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         mayBeLive: row.may_be_live === 1,
         hasRemoteTasks: row.has_remote_tasks === 1,
+        tagged: row.tagged === 1,
       }));
     }, Effect.mapError(shellSnapshotReadError));
 
@@ -9068,6 +9094,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
+      listTaggedThreads: readOnReader(listTaggedThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       listActiveThreads: readOnReader(listActiveThreads),
       readShellSnapshot: readOnReader(readShellSnapshot),

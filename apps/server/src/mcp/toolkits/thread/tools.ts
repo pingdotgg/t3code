@@ -16,6 +16,7 @@ import {
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
+  ThreadTag,
   RunId,
   NonNegativeInt,
   ProjectId,
@@ -31,7 +32,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, settle, archive, tag, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`; `tag` and `untag` need `tag`, a short label such as `review` that the user can filter the sidebar by. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -45,8 +46,11 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "archive",
       "unarchive",
       "mark_unread",
+      "tag",
+      "untag",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    tag: Schema.optional(ThreadTag),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,

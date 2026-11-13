@@ -37,7 +37,7 @@ export function Chip(props: {
       ) : null}
       <AppText
         textRole={small ? "caption" : "footnote"}
-        numberOfLines={small ? undefined : 1}
+        numberOfLines={1}
         className={cn(
           "shrink",
           !small && "max-w-[180px]",

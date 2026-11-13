@@ -3165,12 +3165,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         shell.threads.find((thread) => thread.id === threadId)!;
       const untaggedShell = shellOf(yield* orchestrator.getShellSnapshot());
       yield* TestClock.adjust("1 minute");
-      for (const [step, tag, tagged, expected] of [
-        ["add", "demo", true, ["demo"]],
-        ["retry", "demo", true, ["demo"]],
-        ["add-other", "private", true, ["demo", "private"]],
-        ["remove", "demo", false, ["private"]],
-        ["remove-last", "private", false, []],
+      for (const [step, tag, tagged, replaces, expected] of [
+        ["add", "demo", true, null, ["demo"]],
+        ["retry", "demo", true, null, ["demo"]],
+        ["add-other-case", "Demo", true, null, ["demo"]],
+        ["add-other", "private", true, null, ["demo", "private"]],
+        ["remove", "DEMO", false, null, ["private"]],
+        ["rename", "public", true, "PRIVATE", ["public"]],
+        // A second rename of the same tag lost the race, so it must not add its own.
+        ["rename-stale", "secret", true, "private", ["public"]],
+        ["remove-last", "public", false, null, []],
       ] as const) {
         yield* orchestrator.dispatch({
           type: "thread.tag.set",
@@ -3178,6 +3182,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           tag,
           tagged,
+          ...(replaces === null ? {} : { replaces }),
         });
         assert.deepEqual(
           shellOf(yield* orchestrator.getShellSnapshot()).tags ?? [],
@@ -3343,6 +3348,86 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
+    }),
+  );
+
+  it.effect("renames and deletes a tag on every thread, archived ones included", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const threadIds = ["a", "b", "c"].map((name) =>
+        ThreadId.make(`runtime-layer-tag-manage-${name}`),
+      );
+      const [first, second, archived] = threadIds as [ThreadId, ThreadId, ThreadId];
+      for (const [threadId, tags] of [
+        [first, ["Triage", "ui-polish"]],
+        [second, ["triage"]],
+        [archived, ["ui-polish"]],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId: ProjectId.make("runtime-layer-tag-manage-project"),
+          title: "Tagged thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        for (const tag of tags) {
+          yield* orchestrator.dispatch({
+            type: "thread.tag.set",
+            commandId: CommandId.make(`${threadId}-tag-${tag}`),
+            threadId,
+            tag,
+            tagged: true,
+          });
+        }
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-tag-manage-archive"),
+        threadId: archived,
+      });
+      const tagsOf = Effect.fn(function* () {
+        const tags: Array<ReadonlyArray<string>> = [];
+        for (const threadId of threadIds) {
+          tags.push((yield* orchestrator.getThreadProjection(threadId)).thread.tags ?? []);
+        }
+        return tags;
+      });
+      const usage = Effect.map(threadManagement.listThreadTags(), (all) =>
+        all.filter((entry) => ["triage", "ui-polish"].includes(entry.tag.toLowerCase())),
+      );
+
+      // The first thread's spelling names the tag; the archived thread counts.
+      assert.deepEqual(yield* usage, [
+        { tag: "Triage", threadCount: 2 },
+        { tag: "ui-polish", threadCount: 2 },
+      ]);
+      // A case-only rename respells only the threads spelled otherwise.
+      assert.deepEqual(yield* threadManagement.renameThreadTag({ tag: "triage", to: "Triage" }), {
+        threadCount: 1,
+      });
+      assert.deepEqual(yield* tagsOf(), [["Triage", "ui-polish"], ["Triage"], ["ui-polish"]]);
+      // Renaming onto an existing tag merges, keeping the spelling a thread already has.
+      assert.deepEqual(
+        yield* threadManagement.renameThreadTag({ tag: "UI-polish", to: "triage" }),
+        {
+          threadCount: 2,
+        },
+      );
+      assert.deepEqual(yield* tagsOf(), [["Triage"], ["Triage"], ["triage"]]);
+      assert.deepEqual(yield* usage, [{ tag: "Triage", threadCount: 3 }]);
+      assert.deepEqual(yield* threadManagement.deleteThreadTag({ tag: "TRIAGE" }), {
+        threadCount: 3,
+      });
+      assert.deepEqual(yield* tagsOf(), [[], [], []]);
+      assert.deepEqual(yield* usage, []);
     }),
   );
 
