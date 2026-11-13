@@ -20,6 +20,9 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// The runtime stores a failed context-summarization step and replays it on every later
+// prompt to that session, whatever first made it fail.
+const FAILED_CHECKPOINT = /\bcontext summarization: checkpoint step \d+ failed\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -141,6 +144,39 @@ function turnFailure(
   });
 }
 
+function turnOutcome(
+  stopReason: EffectAcpSchema.StopReason,
+  step: LastStep | undefined,
+  now: DateTime.Utc,
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | undefined {
+  const failure = turnFailure(stopReason, step, now);
+  if (failure === undefined) return undefined;
+  const text =
+    step?.type === ERROR_STEP_TYPE
+      ? new TextDecoder().decode(step.payload ?? new Uint8Array())
+      : "";
+  if (!FAILED_CHECKPOINT.test(text)) return { failure, threadDisposition: "reusable" };
+  return {
+    // A quota failure keeps its reset time so usage-limit recovery can resume the thread.
+    failure:
+      failure.class === "usage_limit"
+        ? failure
+        : makeProviderFailure({
+            class: "provider_error",
+            message:
+              "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
+            code: "CHECKPOINT_FAILED",
+            retryable: true,
+          }),
+    threadDisposition: "broken",
+  };
+}
+
 const conversationSegments = ["antigravity-acp", "conversations"];
 
 /**
@@ -154,7 +190,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   sessionId: string,
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
-    DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
+    DateTime.now.pipe(Effect.map((now) => turnOutcome(result.stopReason, undefined, now)));
   if (!NATIVE_SESSION_ID.test(sessionId)) return typedOnly;
   const segments = [...conversationSegments, `${sessionId}.db`];
   const before = yield* Effect.tryPromise({
@@ -211,6 +247,6 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    return turnOutcome(result.stopReason, step, yield* DateTime.now);
   });
 });
