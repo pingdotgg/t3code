@@ -1641,6 +1641,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         row.kind === "message" || row.kind === "assistant-meta" ? row.message.id : undefined
       }
       data-message-role={row.kind === "message" ? row.message.role : undefined}
+      data-image-gallery-for={row.kind === "work" ? row.imageGalleryId : undefined}
     >
       {isWorkLogRow ? (
         <WorkLogBlock

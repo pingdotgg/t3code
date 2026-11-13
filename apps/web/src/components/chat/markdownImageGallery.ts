@@ -10,7 +10,12 @@ export function markdownImageGallery(
   element: Element,
   selected: ExpandedImageItem,
 ): ExpandedImagePreview {
-  const scope = element.closest("[data-image-gallery]") ?? element.closest(".chat-markdown");
+  const scope =
+    element.closest("[data-image-gallery]") ??
+    element.closest(".chat-markdown") ??
+    linkedGallery(element);
+  // An image shown outside its linked gallery is found there by its source and name.
+  const linked = markdownImageItems.has(element) && !scope?.contains(element);
   const images: ExpandedImageItem[] = [];
   let index = -1;
   for (const image of scope?.querySelectorAll("img") ?? []) {
@@ -37,7 +42,9 @@ export function markdownImageGallery(
       : registered;
     if (
       image === element ||
-      (!markdownImageItems.has(element) && index < 0 && item.src === selected.src)
+      (index < 0 &&
+        item.src === selected.src &&
+        (linked ? item.name === selected.name : !markdownImageItems.has(element)))
     ) {
       index = images.length;
       images.push(selected);
@@ -46,4 +53,11 @@ export function markdownImageGallery(
     }
   }
   return index < 0 ? { images: [selected], index: 0 } : { images, index };
+}
+
+function linkedGallery(element: Element): Element | null {
+  const id = element.closest("[data-image-gallery-for]")?.getAttribute("data-image-gallery-for");
+  return id
+    ? element.ownerDocument.querySelector(`[data-image-gallery="${CSS.escape(id)}"]`)
+    : null;
 }

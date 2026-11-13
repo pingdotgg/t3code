@@ -507,6 +507,8 @@ type MessagesTimelineRowContent =
       groupedEntries: WorkLogEntry[];
       isExpandedToolGroup: boolean;
       displayLabel?: string;
+      /** Row id of the group's viewed-images strip, whose images this row's images page through. */
+      imageGalleryId?: string;
     }
   | {
       kind: "work-live";
@@ -664,7 +666,12 @@ function expandedWorkGroupRow(
     createdAt,
     groupedEntries,
     isExpandedToolGroup: true,
+    imageGalleryId: viewedImagesRowId(groupId),
   };
+}
+
+function viewedImagesRowId(groupId: string): string {
+  return `${groupId}:viewed-images`;
 }
 
 function viewedImagesRows(
@@ -675,7 +682,7 @@ function viewedImagesRows(
   const paths = workEntriesViewedImagePaths(groupedEntries);
   return paths.length === 0
     ? []
-    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
+    : [{ kind: "viewed-images", id: viewedImagesRowId(groupId), createdAt, paths }];
 }
 
 export function resolveAssistantMessageCopyState({
