@@ -180,12 +180,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    {
-      id: "mark-unread",
-      label: "Mark unread",
-      icon: "mail-open",
-      disabled: state.isRunning || state.isWorking,
-    },
+    ...(state.isRunning || state.isWorking
+      ? []
+      : [{ id: "mark-unread" as const, label: "Mark unread", icon: "mail-open" }]),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),

@@ -79,7 +79,7 @@ describe("buildThreadActionMenuItems", () => {
   it("offers Mark unread only to threads that are neither running nor Working", () => {
     const offersMarkUnread = (isRunning: boolean, isWorking = false) =>
       buildThreadActionMenuItems({ ...baseState, isRunning, isWorking }).some(
-        (item) => item.id === "mark-unread" && !item.disabled,
+        (item) => item.id === "mark-unread",
       );
     expect(offersMarkUnread(false)).toBe(true);
     expect(offersMarkUnread(true)).toBe(false);
