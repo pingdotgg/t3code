@@ -29,6 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -461,7 +462,13 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
   }),
 );
 
-it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
+it.effect.each([
+  "live",
+  "no-match",
+  "no-match-clear",
+  "no-session",
+  "unsupported-runtime",
+] as const)(
   "marks background work awaited on the thread's active provider thread with state %s",
   (state) =>
     Effect.gen(function* () {
@@ -537,7 +544,11 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
       const result = yield* Effect.gen(function* () {
         const service = yield* ThreadManagementService.ThreadManagementService;
         return yield* service
-          .awaitBackgroundTasks({ threadId, taskIds: ["tests", "finished"], awaited: true })
+          .awaitBackgroundTasks({
+            threadId,
+            taskIds: state.startsWith("no-match") ? ["finished"] : ["tests", "finished"],
+            awaited: state !== "no-match-clear",
+          })
           .pipe(Effect.result);
       }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
 
@@ -546,6 +557,14 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
           success: { matched: ["tests"], unmatched: ["finished"] },
         });
         expect(calls).toEqual([{ providerThreadId, awaited: true }]);
+      } else if (state === "no-match") {
+        expect(result).toMatchObject({
+          failure: { _tag: "ThreadManagementBackgroundWaitError", reason: "unmatched" },
+        });
+        expect(calls).toEqual([{ providerThreadId, awaited: true }]);
+      } else if (state === "no-match-clear") {
+        expect(result).toMatchObject({ success: { matched: [], unmatched: ["finished"] } });
+        expect(calls).toEqual([{ providerThreadId, awaited: false }]);
       } else {
         expect(result).toMatchObject({
           failure: {
@@ -872,4 +891,78 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     expect(error.reason).toBe("superseded");
     expect(killed).toBe(false);
   }),
+);
+
+it.effect(
+  "admits two transcript exports at a time and frees a slot on failure or interruption",
+  () =>
+    Effect.gen(function* () {
+      const started = yield* Queue.unbounded<string>();
+      const gates = new Map(
+        ["a", "b", "c", "d", "e", "f"].map((id) => [
+          id,
+          Deferred.makeUnsafe<void, Orchestrator.OrchestratorV2Error>(),
+        ]),
+      );
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getTranscriptByteFloor: () => Effect.succeed(0),
+            getThreadSnapshot: (threadId) =>
+              Queue.offer(started, threadId).pipe(
+                Effect.andThen(Deferred.await(gates.get(threadId)!)),
+                Effect.as({
+                  schemaVersion: 1,
+                  snapshotSequence: 1,
+                  projection: {
+                    thread: { id: threadId, title: threadId },
+                    updatedAt: DateTime.makeUnsafe(0),
+                    visibleTurnItems: [],
+                  } as unknown as OrchestrationV2ThreadProjection,
+                }),
+              ),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const exportThread = (id: string) =>
+          threads.getThreadTranscript(ThreadId.make(id)).pipe(
+            Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:export")),
+            }),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        const a = yield* exportThread("a");
+        const b = yield* exportThread("b");
+        const c = yield* exportThread("c");
+        const d = yield* exportThread("d");
+        const e = yield* exportThread("e");
+        const f = yield* exportThread("f");
+        expect(yield* Queue.takeAll(started)).toEqual(["a", "b"]);
+
+        yield* Fiber.interrupt(c);
+        yield* Deferred.fail(
+          gates.get("a")!,
+          new Orchestrator.OrchestratorProjectionError({ threadId: ThreadId.make("a"), cause: "" }),
+        );
+        expect(yield* Queue.take(started)).toBe("d");
+        yield* Fiber.interrupt(b);
+        expect(yield* Queue.take(started)).toBe("e");
+        yield* Deferred.succeed(gates.get("d")!, undefined);
+        expect(yield* Queue.take(started)).toBe("f");
+        yield* Deferred.succeed(gates.get("e")!, undefined);
+        yield* Deferred.succeed(gates.get("f")!, undefined);
+
+        expect((yield* Fiber.await(a))._tag).toBe("Failure");
+        expect((yield* Fiber.join(d)).threadId).toBe("d");
+        expect((yield* Fiber.join(e)).threadId).toBe("e");
+        expect((yield* Fiber.join(f)).threadId).toBe("f");
+        expect(yield* Queue.size(started)).toBe(0);
+      }).pipe(Effect.provide(layerTest));
+    }),
 );
