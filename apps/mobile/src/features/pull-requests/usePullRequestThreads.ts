@@ -115,7 +115,8 @@ export function usePullRequestThreads(
         ? scopedThreadKey(target.environmentId, ThreadId.make(thread.id))
         : createNewTaskDraft({
             environmentId: target.environmentId,
-            projectId: target.input.projectId,
+            // The detail names the checkout of this repository, which can be another project.
+            projectId: pr.projectId,
           });
       if (!thread)
         updateComposerDraftSettings(draftKey, {

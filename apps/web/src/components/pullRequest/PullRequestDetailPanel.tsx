@@ -959,7 +959,11 @@ export function PullRequestDetailPanel({
       return;
     }
     if (checkoutRoot === null) return;
-    const unavailable = detail === null ? null : checkoutUnavailableDescription(detail);
+    // Only the loaded detail says which project is a checkout of this repository.
+    const unavailable =
+      detail === null
+        ? `This ${terminology.singular} is still loading. Try again in a moment.`
+        : checkoutUnavailableDescription(detail);
     if (unavailable !== null) {
       toastManager.add({
         type: "error",
