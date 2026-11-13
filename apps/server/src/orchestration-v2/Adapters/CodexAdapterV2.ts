@@ -4307,6 +4307,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // Only reads and storage are cancellable; remove partial writes. Once stored, attach the app or delete it if the item settled.
           Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
+              // Before any write, so stopping the turn here leaves no snapshot behind.
+              const statusRead = mcpServerStatusReads.get(item.server);
+              if (statusRead !== undefined) yield* restore(Deferred.await(statusRead));
               const reference =
                 resourceUri !== undefined && item.result != null && item.error == null
                   ? yield* restore(
@@ -4343,8 +4346,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ),
                     )
                   : undefined;
-              const statusRead = mcpServerStatusReads.get(item.server);
-              if (statusRead !== undefined) yield* restore(Deferred.await(statusRead));
               const artifacts = yield* buildDynamicToolArtifacts(context, item);
               // Clear before emitting; ingestion rechecks pending work after each event.
               if (!(yield* takePendingMcpAppCapture(nativeTurnId, item.id))) {

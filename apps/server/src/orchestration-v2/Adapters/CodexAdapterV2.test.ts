@@ -7694,6 +7694,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  const pendingStatusEntries = mcpAppTranscript.entries.slice(
+    0,
+    mcpAppTranscript.entries.findIndex(
+      (entry) => entry.type === "emit_inbound" && entry.label === "mcpServerStatus/list",
+    ),
+  );
+  const pendingStatusTranscript = makeCodexReplayTranscript({
+    scenario: "codex-mcp-app-stopped-during-status-read",
+    entries: [
+      ...pendingStatusEntries,
+      ...mcpAppTranscript.entries.filter(
+        (entry) => entry.type === "emit_inbound" && entry.label === "item/completed/app-tool",
+      ),
+      {
+        type: "expect_outbound",
+        label: "turn/interrupt",
+        frame: {
+          id: 5,
+          method: "turn/interrupt",
+          params: { threadId: MCP_APP_NATIVE_THREAD, turnId: MCP_APP_NATIVE_TURN },
+        },
+      },
+      { type: "emit_inbound", label: "turn/interrupt", frame: { id: 5, result: {} } },
+      {
+        type: "emit_inbound",
+        label: "turn/completed",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: MCP_APP_NATIVE_THREAD,
+            turn: makeCodexReplayTurn({ id: MCP_APP_NATIVE_TURN, status: "interrupted" }),
+          },
+        },
+      },
+    ],
+  });
+
+  it.effect("writes no app snapshot when the turn stops during its server status read", () =>
+    Effect.gen(function* () {
+      const toolStarted = yield* Deferred.make<void>();
+      const requests: Array<string> = [];
+      const harness = yield* makeCodexReplayHarness(
+        pendingStatusTranscript,
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+            ? Deferred.succeed(toolStarted, undefined)
+            : Effect.void,
+        (method) => Effect.sync(() => void requests.push(method)),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-mcp-app-stopped"),
+          text: MCP_APP_PROMPT,
+        }),
+      );
+      yield* Deferred.await(toolStarted);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          nativeTurnId: MCP_APP_NATIVE_TURN,
+        }),
+      });
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      assert.notInclude(requests, "mcpServer/resource/read");
+      const stored = yield* (yield* FileSystem.FileSystem)
+        .readDirectory(harness.serverConfig.attachmentsDir)
+        .pipe(Effect.orElseSucceed(() => []));
+      assert.deepEqual(stored, []);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const ORPHAN_WAIT_SCENARIO = "codex-orphaned-dynamic-tool";
   const ORPHAN_WAIT_NATIVE_THREAD = "native-codex-orphan-wait-thread";
   const ORPHAN_WAIT_NATIVE_TURN = "native-codex-orphan-wait-turn";
