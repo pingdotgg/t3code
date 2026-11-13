@@ -135,6 +135,8 @@ const TranscriptRecord = Schema.Struct({
       type: Schema.optional(Schema.String),
       role: Schema.optional(Schema.String),
       message: Schema.optional(Schema.String),
+      images: Schema.optional(Schema.Unknown),
+      local_images: Schema.optional(Schema.Unknown),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
       history_base: Schema.optional(Schema.Unknown),
@@ -359,7 +361,7 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
 // Codex records setup context as user text ahead of the real request. Skip
 // these leading blocks when deriving a title; imported messages keep them.
 const CODEX_TITLE_PREAMBLE =
-  /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*))+/;
+  /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*|## My request for Codex:))+/;
 
 // Codex prompts that open with generated context end it at the request line.
 // When that line appears more than once, either side may quote it, so keep the text.
@@ -403,12 +405,28 @@ function codexUserText(text: string): string {
     .join("\n\n");
 }
 
+// Codex shows a prompt's images as these placeholders; an image-only prompt is only them.
+function codexImagePlaceholders(text: string, imageCount: number): string {
+  if (text.trim().length > 0) return text;
+  return Array.from({ length: imageCount }, (_, index) => `[Image #${index + 1}]`).join(" ");
+}
+
 // Legacy rollouts record user_message events; paginated ones record completed UserMessage items.
 function codexUserEventText(record: DecodedTranscriptRecord): string | null {
   if (record.type !== "event_msg") return null;
-  if (record.payload?.type === "user_message") return record.payload.message ?? "";
-  if (record.payload?.type === "item_completed" && record.payload.item?.type === "UserMessage") {
-    return extractText(record.payload.item.content);
+  const payload = record.payload;
+  if (payload?.type === "user_message") {
+    const imageCount =
+      (Array.isArray(payload.images) ? payload.images.length : 0) +
+      (Array.isArray(payload.local_images) ? payload.local_images.length : 0);
+    return codexImagePlaceholders(payload.message ?? "", imageCount);
+  }
+  if (payload?.type === "item_completed" && payload.item?.type === "UserMessage") {
+    const content = payload.item.content ?? [];
+    const imageCount = content.filter(
+      (block) => block.type === "image" || block.type === "local_image",
+    ).length;
+    return codexImagePlaceholders(extractText(content), imageCount);
   }
   return null;
 }
@@ -562,6 +580,7 @@ function parseAgentSessionRecords(
   // response copies add injected context. Rollouts without them only have responses.
   const hasCodexUserEvents =
     input.source === "codex" && records.some((record) => codexUserEventText(record) !== null);
+  let codexTurnUserEvents: Array<{ readonly type: string | undefined; readonly text: string }> = [];
 
   let conversationMessageCount = 0;
   const retainMessage = (
@@ -610,11 +629,22 @@ function parseAgentSessionRecords(
     }
     const userEventText = codexUserEventText(record);
     if (userEventText !== null) {
+      const eventType = record.payload?.type;
+      // A rollout that records a prompt in both event forms shows it once.
+      const copy = codexTurnUserEvents.findIndex(
+        (event) => event.type !== eventType && event.text === userEventText,
+      );
+      if (copy !== -1) {
+        codexTurnUserEvents.splice(copy, 1);
+        continue;
+      }
+      codexTurnUserEvents.push({ type: eventType, text: userEventText });
       retainMessage("user", codexUserText(userEventText), record.timestamp);
       continue;
     }
     if (record.type !== "response_item" || record.payload?.type !== "message") continue;
     if (record.payload.role === "assistant") {
+      codexTurnUserEvents = [];
       retainMessage("assistant", extractText(record.payload.content), record.timestamp);
     } else if (record.payload.role === "user" && !hasCodexUserEvents) {
       retainMessage("user", codexUserText(extractText(record.payload.content)), record.timestamp);

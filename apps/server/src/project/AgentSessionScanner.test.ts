@@ -3267,6 +3267,7 @@ describe("parseAgentSessionTranscript", () => {
       "<recommended_plugins>\nGitHub\n</recommended_plugins>",
       "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
       '<in-app-browser-context source="ambient-ui-state">\nTab\n</in-app-browser-context>',
+      "## My request for Codex:",
       "Fix the import titles",
     ].join("\n");
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -3313,6 +3314,23 @@ describe("parseAgentSessionTranscript", () => {
           '<send_user_message_question_reply>\n[{"answer":"Use PostgreSQL","question":"Which database?","questionItemId":"q-1"}]\n</send_user_message_question_reply>',
         ),
         assistant("PostgreSQL it is."),
+        responseUser("<image name=[Image #1]>\n</image>"),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "", local_images: ["/tmp/shot.png"] },
+        }),
+        assistant("Nice screenshot."),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Ship it" },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: {
+            type: "item_completed",
+            item: { type: "UserMessage", content: [{ type: "text", text: "Ship it" }] },
+          },
+        }),
       ].join("\n"),
       source: "codex",
       providerInstanceId: ProviderInstanceId.make("codex"),
@@ -3324,6 +3342,9 @@ describe("parseAgentSessionTranscript", () => {
       "Which database should we use?",
       "Pick one?",
       "PostgreSQL it is.",
+      "[Image #1]",
+      "Nice screenshot.",
+      "Ship it",
     ]);
   });
 
