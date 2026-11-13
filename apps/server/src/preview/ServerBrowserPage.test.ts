@@ -173,8 +173,20 @@ describe("server browser element refs", () => {
     const hidden = await failure("button");
     expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
     expect(hidden.message).toBe(
-      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout. Playwright last saw: element is not visible.',
     );
+  });
+
+  it("gives a late target only the click's remaining time, not a fresh timeout", async () => {
+    await page.setContent(`<script>
+      setTimeout(() => document.body.insertAdjacentHTML("beforeend",
+        '<button id="save" disabled onclick="document.body.dataset.clicked = 1">Save</button>'), 1000);
+      setTimeout(() => document.querySelector("#save").disabled = false, 2500);
+    </script>`);
+    await expect(
+      ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 2_000 }),
+    ).rejects.toThrow();
+    expect(await page.locator("body").getAttribute("data-clicked")).toBeNull();
   });
 
   it("does not retarget a removed ref to a replacement node", async () => {
@@ -610,57 +622,64 @@ describe("server browser drag", () => {
   });
 });
 
-describe("server browser action timeout", () => {
-  type StepOptions = { readonly timeout?: number };
-  it.each([
-    {
-      action: "click",
-      act: (page: Page) => ServerBrowserPage.click(page, { selector: "#a", timeoutMs: 9_000 }),
-      last: ["#a.click 1"],
-    },
-    {
-      action: "hover",
-      act: (page: Page) => ServerBrowserPage.hover(page, { selector: "#a", timeoutMs: 9_000 }),
-      last: ["#a.hover 1"],
-    },
-    {
-      action: "drag",
-      act: (page: Page) =>
-        ServerBrowserPage.drag(page, { source: "#a", target: "#b", timeoutMs: 9_000 }),
-      last: ["#a.dragTo 1", "#b.boundingBox 1"],
-    },
-  ])("gives the $action's steps one shared timeout", async ({ act, last }) => {
-    let now = 0;
-    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
-    const steps: Array<string> = [];
-    const box = { x: 0, y: 0, width: 20, height: 20 };
+describe("server browser click", () => {
+  it("clicks a target the page replaced while it was being scrolled into view", async () => {
+    let scrolls = 0;
+    const clicks: Array<unknown> = [];
     const page = {
+      locator: () => ({
+        // Playwright resolves the node once; a page re-rendering it detaches that node.
+        scrollIntoViewIfNeeded: async () => {
+          if (scrolls++ === 0) {
+            throw new Error("locator.scrollIntoViewIfNeeded: Element is not attached to the DOM");
+          }
+        },
+        boundingBox: async () => ({ x: 0, y: 0, width: 20, height: 20 }),
+        click: async (options: unknown) => {
+          clicks.push(options);
+        },
+        count: async () => 1,
+      }),
       once: () => {},
       off: () => {},
-      locator: (selector: string) => {
-        const record = (step: string, options: StepOptions) =>
-          steps.push(`${selector}.${step} ${options.timeout}`);
-        return {
-          // Each step that finds the target takes 5 of the 9 seconds.
-          scrollIntoViewIfNeeded: async (options: StepOptions) => {
-            record("scrollIntoViewIfNeeded", options);
-            now += 5_000;
-          },
-          boundingBox: async (options: StepOptions) => {
-            record("boundingBox", options);
-            now += 5_000;
-            return box;
-          },
-          click: async (options: StepOptions) => record("click", options),
-          hover: async (options: StepOptions) => record("hover", options),
-          dragTo: async (_target: unknown, options: StepOptions) => record("dragTo", options),
-        };
-      },
     } as unknown as Page;
 
-    await act(page);
+    await expect(ServerBrowserPage.click(page, { selector: "#save" })).resolves.toEqual({
+      x: 10,
+      y: 10,
+    });
+    expect(clicks).toHaveLength(1);
+  });
 
-    expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
+  it("retries a replaced target only within the action's timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const timeouts: Array<number | undefined> = [];
+      const clicks: Array<unknown> = [];
+      const detached = new Error(
+        "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
+      );
+      const page = {
+        locator: () => ({
+          scrollIntoViewIfNeeded: async (options?: { timeout?: number }) => {
+            timeouts.push(options?.timeout);
+            vi.advanceTimersByTime(60);
+            throw detached;
+          },
+          click: async (options: unknown) => {
+            clicks.push(options);
+          },
+        }),
+      } as unknown as Page;
+
+      await expect(
+        ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 }),
+      ).rejects.toBe(detached);
+      expect(timeouts).toEqual([100, 40]);
+      expect(clicks).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
