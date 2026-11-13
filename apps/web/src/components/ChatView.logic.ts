@@ -1363,15 +1363,16 @@ export function withMessageContext(input: {
   /** The composer text that `formatOutgoingPrompt` turned into `text`. */
   readonly typedText: string;
   readonly context: OrchestrationMessageContext | undefined;
-}): { readonly text: string; readonly context?: OrchestrationMessageContext } {
-  const { text, context } = input;
+}): { readonly text: string; readonly context: OrchestrationMessageContext } {
+  const { text } = input;
+  // Sent even when empty: recall and the timeline read a message without one as a legacy send
+  // whose context blocks are part of its text.
+  const context = input.context ?? { version: 1, records: [] };
   // A typed "Ultrathink:" is never prefixed again, so this holds only for a prefix the send added.
   const effortPrefix =
     text.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX) &&
     !input.typedText.trim().startsWith("Ultrathink:");
-  if (effortPrefix) return { text, context: { version: 1, records: [], ...context, effortPrefix } };
-  if (context === undefined) return { text };
-  return { text, context };
+  return { text, context: effortPrefix ? { ...context, effortPrefix } : context };
 }
 
 /** The attachments the optimistic user row shows before the server echoes the message. */

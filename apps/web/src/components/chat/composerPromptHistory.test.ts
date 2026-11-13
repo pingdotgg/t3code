@@ -53,7 +53,7 @@ describe("recallableComposerPrompt", () => {
     const sent =
       "Investigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";
     expect(recallableComposerPrompt(sent)).toBe("Investigate this");
-    // A message with context records never carried context as text, so the same blocks were typed.
+    // A message with a context envelope never carried context as text, so the blocks were typed.
     expect(recallableComposerPrompt(sent, {})).toBe(sent);
   });
 
@@ -61,6 +61,7 @@ describe("recallableComposerPrompt", () => {
     const sent = "Ultrathink:\nInvestigate this";
     expect(recallableComposerPrompt(sent, { effortPrefix: true })).toBe("Investigate this");
     expect(recallableComposerPrompt(sent, {})).toBe(sent);
+    expect(recallableComposerPrompt(sent)).toBe(sent);
     expect(recallableComposerPrompt(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`)).toBe("");
   });
 
@@ -87,14 +88,6 @@ describe("recallableComposerPrompt", () => {
     const midPrompt = "Before\n\n" + block + "\n\nAfter";
     expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
     expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
-  });
-
-  // The same text can be typed by the user or appended at send time; only the latter goes.
-  it.each([
-    "Ultrathink:\nKeep this prefix in my example",
-    'Example of a review block:\n\n<review_comment filePath="src/app.ts">Literal.</review_comment>',
-  ])("keeps user-typed text that resembles send-time context: %j", (typed) => {
-    expect(recallableComposerPrompt(typed)).toBe(typed);
   });
 
   it("removes canonical references without restoring dangling chips", () => {

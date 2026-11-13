@@ -1,6 +1,5 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { OrchestrationMessageContext } from "@t3tools/contracts";
-import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -48,8 +47,6 @@ function stripTrailingReviewComments(prompt: string): string {
   for (const match of [...prompt.matchAll(REVIEW_COMMENT_BLOCK_PATTERN)].toReversed()) {
     const blockEnd = match.index + match[0].length;
     if (prompt.slice(blockEnd, cut).trim().length > 0) break;
-    // Only a block the timeline shows as an attached comment was appended; any other is typed text.
-    if (upgradeLegacyContextMessage(match[0]).records.length === 0) break;
     cut = match.index;
   }
   return cut === prompt.length ? prompt : prompt.slice(0, cut).trimEnd();
@@ -84,7 +81,7 @@ export function recallableComposerPrompt(messageText: string, context?: RecallCo
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PROMPT_PREFIX.length);
   }
 
-  // Context went into the text only for messages without records; with them, a tag was typed.
+  // Only a send without a context envelope carried context as text; with one, a tag was typed.
   while (context === undefined && prompt.length > 0) {
     const withoutReviewComments = stripTrailingReviewComments(prompt);
     if (withoutReviewComments !== prompt) {

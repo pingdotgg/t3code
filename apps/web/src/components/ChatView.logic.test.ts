@@ -18,10 +18,12 @@ import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import {
+  buildMessageContext,
   responseContextRecord,
   responseContextReference,
   terminalContextReference,
 } from "../lib/composerContextRecords";
+import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 import {
   CommandId,
   EnvironmentId,
@@ -1226,10 +1228,20 @@ describe("withMessageContext", () => {
     });
   });
 
-  it("sends the text alone without context", () => {
-    expect(withMessageContext({ text: "hi", typedText: "hi", context: undefined })).toEqual({
-      text: "hi",
+  it("sends an empty context with a plain send, so recall keeps context-like text", () => {
+    const typed =
+      'Example:\n\n<review_comment sectionId="s1" filePath="src/app.ts" startIndex="1" endIndex="2">Literal.</review_comment>';
+    const sent = withMessageContext({
+      text: typed,
+      typedText: typed,
+      context: buildMessageContext({
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+      }),
     });
+    expect(sent).toEqual({ text: typed, context: { version: 1, records: [] } });
+    expect(recallableComposerPrompt(sent.text, sent.context)).toBe(typed);
   });
 
   it("records the effort prefix only when the send added it", () => {
@@ -1238,7 +1250,10 @@ describe("withMessageContext", () => {
       text,
       context: { version: 1, records: [], effortPrefix: true },
     });
-    expect(withMessageContext({ text, typedText: text, context: undefined })).toEqual({ text });
+    expect(withMessageContext({ text, typedText: text, context: undefined }).context).toEqual({
+      version: 1,
+      records: [],
+    });
   });
 });
 
