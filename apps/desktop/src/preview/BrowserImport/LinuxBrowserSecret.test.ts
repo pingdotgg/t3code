@@ -64,6 +64,6 @@ it.layer(NodeServices.layer)("Linux browser secret path", (it) => {
       assert.isUndefined(yield* resolve(false, "win32"));
       yield* fileSystem.remove(staged);
       assert.isUndefined(yield* resolve(false));
-    }).pipe(Effect.scoped),
+    }),
   );
 });
