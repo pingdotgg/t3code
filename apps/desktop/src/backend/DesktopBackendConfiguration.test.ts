@@ -750,6 +750,10 @@ describe("DesktopBackendConfiguration", () => {
           config.env.WSLENV,
           "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
         );
+        assert.deepEqual(
+          Object.keys(config.env).filter((key) => key.toUpperCase() === "T3CODE_HOME"),
+          [],
+        );
       }).pipe(
         Effect.provide(
           layerBackendConfiguration().pipe(
@@ -772,6 +776,8 @@ describe("DesktopBackendConfiguration", () => {
           ANTHROPIC_API_KEY: "anthropic-key",
           T3CODE_OTLP_HEADERS: 'authorization="Bearer%20my-token"',
           T3CODE_OTLP_PROTOCOL: "http/protobuf",
+          // Windows env names are case-insensitive, so this is the host's T3 home too.
+          t3code_home: "C:\\t3-state",
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
