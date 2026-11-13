@@ -63,6 +63,7 @@ import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { ReviewFileNavigator } from "./ReviewFileNavigator.tsx";
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
@@ -228,14 +229,14 @@ function ReviewSelectionActionBar(props: {
   );
 }
 
-interface ReviewNavigatorFile {
+export interface ReviewNavigatorFile {
   readonly id: string;
   readonly path: string;
   readonly additions: number;
   readonly deletions: number;
 }
 
-const ReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
+export const ReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
   readonly file: ReviewNavigatorFile;
   readonly selected: boolean;
   readonly onSelectFile: (fileId: string | null) => void;
@@ -287,135 +288,12 @@ interface ReviewFileNavigatorHandle {
   readonly setVisibleFile: (fileId: string | null) => void;
 }
 
-interface ReviewFileNavigatorProps {
+export interface ReviewFileNavigatorProps {
   readonly files: ReadonlyArray<ReviewNavigatorFile>;
   readonly headerInset: number;
   readonly sectionId: string | null;
   readonly onSelectFile: (fileId: string | null) => void;
   readonly ref?: Ref<ReviewFileNavigatorHandle>;
-}
-
-function ReviewFileNavigator({
-  files,
-  headerInset,
-  sectionId,
-  onSelectFile,
-  ref,
-}: ReviewFileNavigatorProps) {
-  const theme = useUniwindTheme();
-  const sheetColor = theme["--color-sheet"];
-  const foregroundColor = theme["--color-foreground"];
-  const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-  const [fileSelection, setFileSelection] = useState<{
-    readonly sectionId: string | null;
-    readonly fileId: string | null;
-  }>({ sectionId: null, fileId: null });
-  const availableFileIds = files.map((file) => file.id);
-  const selectedFileId = resolveSelectedReviewFileId({
-    selection: fileSelection,
-    sectionId,
-    availableFileIds,
-  });
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      setVisibleFile: (fileId) => {
-        if (fileId !== null && !availableFileIds.includes(fileId)) {
-          return;
-        }
-        setFileSelection((current) => {
-          if (current.sectionId === sectionId && current.fileId === fileId) {
-            return current;
-          }
-          return { sectionId, fileId };
-        });
-      },
-    }),
-    [availableFileIds, sectionId],
-  );
-
-  const handleSelectFile = (fileId: string | null) => {
-    setFileSelection({ sectionId, fileId });
-    onSelectFile(fileId);
-  };
-
-  const renderFile = ({ item }: { readonly item: ReviewNavigatorFile }) => (
-    <ReviewFileNavigatorRow
-      file={item}
-      selected={selectedFileId === item.id}
-      onSelectFile={handleSelectFile}
-    />
-  );
-
-  const fileList = (
-    <FlatList
-      data={files}
-      extraData={selectedFileId}
-      keyExtractor={(file) => file.id}
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-      contentContainerStyle={{ paddingHorizontal: 8, paddingVertical: 8 }}
-      renderItem={renderFile}
-    />
-  );
-
-  if (Platform.OS === "ios") {
-    return (
-      <View className="flex-1 border-l border-border bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <Screen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="review-file-navigator-native"
-            scrollEdgeEffects={headerScrollEdgeEffects}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
-          >
-            <NativeInspectorContent>{fileList}</NativeInspectorContent>
-            <ScreenStackHeaderConfig
-              backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
-              title="Changed files"
-              titleColor={foregroundColor}
-              titleFontSize={17}
-              titleFontWeight="700"
-              translucent
-            />
-          </Screen>
-        </ScreenStack>
-      </View>
-    );
-  }
-
-  return (
-    <View
-      className={
-        Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 border-l border-border bg-sheet"
-      }
-    >
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Changed files"
-          subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
-          hideBottomBorder
-        />
-      ) : (
-        <View className="border-b border-border" style={{ paddingTop: headerInset }}>
-          <View className="px-4 py-3">
-            <Text className="text-sm font-t3-bold text-foreground">Changed files</Text>
-            <Text className="text-xs text-foreground-muted">
-              {files.length} {files.length === 1 ? "file" : "files"}
-            </Text>
-          </View>
-        </View>
-      )}
-      <ScreenContent insetHorizontal>{fileList}</ScreenContent>
-    </View>
-  );
 }
 
 type ReviewSheetProps = StaticScreenProps<{
