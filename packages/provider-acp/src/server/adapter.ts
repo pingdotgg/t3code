@@ -7410,9 +7410,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* startAcpRuntime(input.threadId);
             });
         yield* Ref.set(activeSessionId, initialSetup.sessionId);
-        const started = yield* setActiveSessionSetup(initialSetup);
-        rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
+        const installedSetup = yield* setActiveSessionSetup(initialSetup);
+        rememberTerminalEnvironment(
+          installedSetup.sessionId,
+          yield* readMcpContext(input.threadId),
+        );
         yield* runtime.drainEvents;
+        // The drain can deliver a late session/load response, which replaces the active setup.
+        const started = (yield* Ref.get(activeSessionSetup)) ?? installedSetup;
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
