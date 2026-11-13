@@ -600,6 +600,22 @@ describe("Markdown markers around styled text", () => {
       marks: { bold: ["bo", "ld"] },
     },
     {
+      name: "a line break after typed inline code leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "`Test`{Shift>}{Enter}{/Shift}f",
+      expected: "`Test`\nf",
+      marks: { code: ["Test"] },
+    },
+    {
+      name: "a line break after typed bold leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "**Test**{Shift>}{Enter}{/Shift}f",
+      expected: "**Test**\nf",
+      marks: { bold: ["Test"] },
+    },
+    {
       name: "splitting a list item inside bold keeps both halves bold",
       value: "- **bold** after",
       caret: 5,
