@@ -12,7 +12,7 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, type ConnectionTarget, RelayConnectionTarget } from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -217,9 +217,13 @@ export function connectionRouteAddress(route: ConnectionRoute): string | null {
   return routeHttpBaseUrl(route);
 }
 
+/** The first address paired on this device. Learned routes have no credential of their own. */
+export const savedBearerRoute = (entry: ConnectionCatalogEntry) =>
+  connectionRoutes(entry).find((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");
+
 /** Learned routes alone must not make relay environments manually retryable. */
 export const hasSavedBearerRoute = (entry: ConnectionCatalogEntry) =>
-  connectionRoutes(entry).some((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");
+  savedBearerRoute(entry) !== undefined;
 
 export function hasRelayRoute(
   entry: Pick<ConnectionCatalogEntry, "target" | "alternateRoutes">,
@@ -411,6 +415,43 @@ export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<Conne
 export interface ReportedEndpoint {
   readonly httpBaseUrl: string;
   readonly kind?: string;
+}
+
+/**
+ * An environment saved only through T3 Connect shows the name its host reports.
+ * A paired address keeps the label saved on this device. Null when nothing changes.
+ */
+export function routesWithHostLabel(
+  routes: ReadonlyArray<ConnectionRoute>,
+  label: string,
+): ReadonlyArray<ConnectionRoute> | null {
+  return routes.some((route) => route.target._tag !== "RelayConnectionTarget" && !isLearned(route))
+    ? null
+    : routesWithCopiedLabel(routes, label);
+}
+
+/**
+ * T3 Connect and learned routes hold a copy of the environment's label, so a
+ * renamed or newly paired address renames them too. Null when nothing changes.
+ */
+export function routesWithCopiedLabel(
+  routes: ReadonlyArray<ConnectionRoute>,
+  label: string,
+): ReadonlyArray<ConnectionRoute> | null {
+  if (label.trim() === "") return null;
+  let changed = false;
+  const next = routes.map((route) => {
+    const { target } = route;
+    if (target.label === label) return route;
+    if (target._tag === "RelayConnectionTarget") {
+      changed = true;
+      return { ...route, target: new RelayConnectionTarget({ ...target, label }) };
+    }
+    if (target._tag !== "BearerConnectionTarget" || !isLearned(route)) return route;
+    changed = true;
+    return { ...route, target: new BearerConnectionTarget({ ...target, label }) };
+  });
+  return changed ? next : null;
 }
 
 function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRoute {
