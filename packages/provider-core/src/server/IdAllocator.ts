@@ -21,6 +21,9 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- derive ids are synchronous, so the hash must be too.
+import * as NodeCrypto from "node:crypto";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -140,6 +143,11 @@ export interface IdAllocatorV2Derive {
     readonly nativeThreadId: string;
     readonly providerInstanceId?: ProviderInstanceId;
   }) => ThreadId;
+  readonly subagentThread: (input: {
+    readonly driver: ProviderDriverKind;
+    readonly nativeThreadId: string;
+    readonly providerInstanceId?: ProviderInstanceId;
+  }) => ThreadId;
   readonly run: (input: { readonly threadId: ThreadId; readonly ordinal: number }) => RunId;
   readonly runAttempt: (input: {
     readonly runId: RunId;
@@ -212,6 +220,18 @@ export function deriveThreadFromProviderThread(input: {
   );
 }
 
+// Agents quote subagent thread ids back to thread tools, and the native id often
+// nests the parent's encoded ids, so hash it to a short stable id instead. Adapters
+// re-derive child ids on resume, so a child stored under its legacy id keeps it.
+const makeDeriveSubagentThread =
+  (legacyThreadIds: ReadonlySet<string>): IdAllocatorV2Derive["subagentThread"] =>
+  (input) => {
+    const legacy = deriveThreadFromProviderThread(input);
+    if (legacyThreadIds.has(legacy)) return legacy;
+    const digest = NodeCrypto.createHash("sha256").update(legacy).digest("hex").slice(0, 16);
+    return ThreadId.make(`thread:subagent:${digest}`);
+  };
+
 export function deriveProviderThread(input: {
   readonly driver: ProviderDriverKind;
   readonly providerInstanceId?: ProviderInstanceId;
@@ -266,6 +286,7 @@ export const derive: IdAllocatorV2Derive = {
   createdThreadTurnItem: (input) =>
     TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
   threadFromProviderThread: deriveThreadFromProviderThread,
+  subagentThread: makeDeriveSubagentThread(new Set()),
   run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
   runAttempt: (input) =>
     RunAttemptId.make(joinId("run-attempt", "run", input.runId, "attempt", input.attemptOrdinal)),
@@ -430,3 +451,18 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
     derive,
   }),
 );
+
+/** For adapters: subagent threads already stored under a legacy derived id keep that id. */
+export const layerWithLegacySubagentThreads = (
+  legacyThreadIds: ReadonlySet<string>,
+): Layer.Layer<IdAllocatorV2> =>
+  Layer.effect(
+    IdAllocatorV2,
+    Effect.gen(function* () {
+      const base = yield* IdAllocatorV2;
+      return IdAllocatorV2.of({
+        allocate: base.allocate,
+        derive: { ...base.derive, subagentThread: makeDeriveSubagentThread(legacyThreadIds) },
+      });
+    }),
+  ).pipe(Layer.provide(layer));
