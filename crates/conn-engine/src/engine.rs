@@ -43,6 +43,8 @@ pub struct EngineConfig {
     pub idle_session: Option<Duration>,
     /// Generates thread titles. Without one, a new thread keeps the title the client sent.
     pub title_generator: Option<Arc<dyn crate::TitleGenerator>>,
+    /// Sees every turn start and end (checkpoints). None by default.
+    pub turn_observer: Option<Arc<dyn crate::TurnObserver>>,
 }
 
 impl EngineConfig {
@@ -55,6 +57,7 @@ impl EngineConfig {
             stream_flush: Duration::from_millis(100),
             idle_session: Some(Duration::from_secs(600)),
             title_generator: None,
+            turn_observer: None,
         }
     }
 }
@@ -73,6 +76,7 @@ pub(crate) struct Inner {
     pub(crate) stream_flush: Duration,
     pub(crate) home: PathBuf,
     pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
+    pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -125,6 +129,7 @@ impl SqliteEngine {
                 stream_flush: config.stream_flush,
                 home,
                 titles: config.title_generator.clone(),
+                observer: config.turn_observer.clone(),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.

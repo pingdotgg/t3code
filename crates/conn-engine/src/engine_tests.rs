@@ -1967,3 +1967,73 @@ async fn titles_come_from_the_generator_and_failures_keep_the_seed() {
         }
     }
 }
+
+#[derive(Default)]
+struct RecordingObserver(std::sync::Mutex<Vec<String>>, tokio::sync::Notify);
+
+impl crate::TurnObserver for RecordingObserver {
+    fn turn_started(&self, point: crate::TurnPoint) -> crate::BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(format!(
+                "start {} {} {:?}",
+                point.run_id, point.run_ordinal, point.cwd
+            ));
+        })
+    }
+    fn turn_ended(&self, point: crate::TurnPoint, status: String) -> crate::BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("end {} {status}", point.run_id));
+            self.1.notify_one();
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_turn_observer_sees_each_turn_start_and_end() {
+    let db = TempDb::new("observer");
+    let observer = Arc::new(RecordingObserver::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.turn_observer = Some(observer.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "one")).await;
+    until_run_ends(&mut thread).await;
+    observer.1.notified().await;
+    dispatch(&engine, message("t1", "c3", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    // A queued message never started, so the observer never hears of it.
+    dispatch(&engine, message("t1", "c4", "later")).await;
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.cancel", "commandId": "c5", "threadId": "t1", "runId": "run:t1:3"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c6", "threadId": "t1", "runId": "run:t1:2"}),
+    )
+    .await;
+    observer.1.notified().await;
+    assert_eq!(
+        *observer.0.lock().unwrap(),
+        [
+            format!("start run:t1:1 1 Some(\"{ROOT}\")"),
+            "end run:t1:1 completed".to_owned(),
+            format!("start run:t1:2 2 Some(\"{ROOT}\")"),
+            "end run:t1:2 interrupted".to_owned(),
+        ]
+    );
+}

@@ -134,6 +134,7 @@ impl Inner {
         status: &'static str,
         failure: Option<Value>,
     ) {
+        let (thread, run) = (thread_id.to_owned(), run_id.to_owned());
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
         let held_on_failure = failure
             .as_ref()
@@ -153,6 +154,9 @@ impl Inner {
         match next {
             Ok(effects) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
             Err(e) => eprintln!("conn-engine: could not end run: {e}"),
+        }
+        if let Some(observer) = &self.observer {
+            self.observe_end(observer.clone(), thread, run).await;
         }
     }
 
@@ -373,6 +377,17 @@ impl Inner {
         if !still_live {
             live.take_active();
             return Err(StartError::Abandoned);
+        }
+        if let Some(observer) = &self.observer {
+            observer
+                .turn_started(crate::TurnPoint {
+                    thread_id: thread_id.to_owned(),
+                    run_id: run_id.to_owned(),
+                    run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1),
+                    root_node_id: root.clone(),
+                    cwd: context.cwd.clone(),
+                })
+                .await;
         }
 
         live.session
@@ -704,6 +719,54 @@ impl Inner {
                 })
                 .await;
         }
+    }
+
+    /// Tells the observer a run ended, when it started (an attempt exists) and is now final.
+    async fn observe_end(
+        &self,
+        observer: Arc<dyn crate::TurnObserver>,
+        thread_id: String,
+        run_id: String,
+    ) {
+        let (tid, rid) = (thread_id.clone(), run_id.clone());
+        let read = self
+            .db(
+                move |store| -> Result<Option<(Value, Option<String>)>, String> {
+                    let tx = store.tx()?;
+                    let found = (|| {
+                        let Some(run) = tx.entity(&tid, "runs", &rid)? else {
+                            return Ok(None);
+                        };
+                        let thread = tx.thread(&tid)?;
+                        let project = match &thread {
+                            Some(t) => tx.project(t["projectId"].as_str().unwrap_or_default())?,
+                            None => None,
+                        };
+                        let cwd = thread
+                            .as_ref()
+                            .and_then(|t| t["worktreePath"].as_str())
+                            .or_else(|| project.as_ref().and_then(|p| p["workspaceRoot"].as_str()))
+                            .map(str::to_owned);
+                        Ok(Some((run, cwd)))
+                    })();
+                    tx.rollback();
+                    found
+                },
+            )
+            .await;
+        let Ok(Some((run, cwd))) = read else { return };
+        if run["activeAttemptId"].is_null() || crate::commands::is_live(&run) {
+            return;
+        }
+        let point = crate::TurnPoint {
+            thread_id,
+            run_id,
+            run_ordinal: run["ordinal"].as_u64().unwrap_or(1),
+            root_node_id: run["rootNodeId"].as_str().unwrap_or_default().to_owned(),
+            cwd,
+        };
+        let status = run["status"].as_str().unwrap_or("failed").to_owned();
+        tokio::spawn(async move { observer.turn_ended(point, status).await });
     }
 
     /// Closes provider sessions idle for `idle`, so an idle thread does not keep a provider

@@ -63,6 +63,32 @@ pub enum TitleKind {
     },
 }
 
+/// Where a turn starts or ends, for a [`TurnObserver`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TurnPoint {
+    pub thread_id: String,
+    pub run_id: String,
+    /// 1 for the thread's first run; checkpoint `n` is the workspace after run `n`.
+    pub run_ordinal: u64,
+    pub root_node_id: String,
+    /// The folder the turn works in: the thread's worktree, else its project root.
+    pub cwd: Option<String>,
+}
+
+/// Watches turns start and end; the hook for per-turn git checkpoints (`getTurnDiff`,
+/// `getFullThreadDiff`, restore).
+///
+/// [`TurnObserver::turn_started`] runs after the run is `running` and before the provider
+/// gets the message, and the turn waits for it: a baseline taken there holds no change of this
+/// turn. [`TurnObserver::turn_ended`] runs after the run's final status is committed, once per
+/// run that started (`completed`, `interrupted`, `failed` or `cancelled`), off the turn's path.
+/// A failing observer must log and return; it cannot fail the turn. Wire one with
+/// [`EngineConfig::turn_observer`].
+pub trait TurnObserver: Send + Sync {
+    fn turn_started(&self, point: TurnPoint) -> BoxFuture<'_, ()>;
+    fn turn_ended(&self, point: TurnPoint, status: String) -> BoxFuture<'_, ()>;
+}
+
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
 /// keeps the seed title when this fails. Wire one with [`EngineConfig::title_generator`].
 pub trait TitleGenerator: Send + Sync {
