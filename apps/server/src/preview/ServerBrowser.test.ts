@@ -1719,6 +1719,63 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a viewer's stop settles the navigation it cancels", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      // Holds the download grace timer, so only the stop itself can settle the aborted navigation.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const page = contexts[0]!.page;
+      const navigation = (url: string) => ({
+        url: () => url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      });
+      const settled = Effect.fn(function* (type: "failed" | "navigated", url: string) {
+        while (true) {
+          const event = yield* PubSub.take(events);
+          if (event.type === "failed" && type === "failed" && event.url === url) return;
+          if (
+            event.type === "navigated" &&
+            type === "navigated" &&
+            event.snapshot.navStatus._tag === "Success" &&
+            event.snapshot.navStatus.url === url
+          ) {
+            return;
+          }
+        }
+      });
+
+      // A first navigation has no document to keep; its abort must not wait out the download grace.
+      const first = navigation("https://example.com/first");
+      page.emit("request", first);
+      yield* viewer.input({ type: "stop" });
+      expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Page.stopLoading");
+      page.emit("requestfailed", first);
+      yield* settled("failed", "https://example.com/first");
+
+      // Stopping a committed document fires neither `load` nor `requestfailed`.
+      yield* Effect.promise(() => page.goto("https://example.com/slow"));
+      page.emit("request", navigation("https://example.com/slow"));
+      // A busy renderer's title read must not hold later viewer input behind the stop.
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* viewer.input({ type: "stop" });
+      yield* viewer.input({ type: "navigate", url: "https://example.com/next" });
+      expect(page.goto).toHaveBeenLastCalledWith("https://example.com/next", expect.anything());
+      heldTitle.resolve("slow");
+      yield* settled("navigated", "https://example.com/next");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
   Effect.scoped(
     Effect.gen(function* () {

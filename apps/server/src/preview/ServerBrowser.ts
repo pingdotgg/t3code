@@ -381,6 +381,7 @@ interface ServerTab {
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
+  stoppedNavigation: number | null;
 
   abortedNavigation: {
     readonly url: string;
@@ -1012,6 +1013,7 @@ const make = Effect.gen(function* () {
       recordingStart: null,
       initialNavigation: null,
       navigationGeneration: 0,
+      stoppedNavigation: null,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -1093,6 +1095,10 @@ const make = Effect.gen(function* () {
         const url = request.url();
         const navigationGeneration = tab.navigationGeneration;
         clearAbortedNavigation(tab);
+        if (tab.stoppedNavigation === navigationGeneration) {
+          settleAbortedNavigation(tab, navigationGeneration, url, undefined);
+          return;
+        }
         tab.abortedNavigation = {
           url,
           generation: navigationGeneration,
@@ -2851,6 +2857,17 @@ const make = Effect.gen(function* () {
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
+      case "stop": {
+        const generation = tab.navigationGeneration;
+        // The stop's ERR_ABORTED is not a download, so it settles without the download wait.
+        tab.stoppedNavigation = generation;
+        await session.send("Page.stopLoading");
+        // Stopping a committed document fires neither `load` nor `requestfailed`.
+        if (tab.navigationGeneration !== generation || !tab.loading) return;
+        tab.loading = false;
+        void reportLoaded(tab);
+        return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);

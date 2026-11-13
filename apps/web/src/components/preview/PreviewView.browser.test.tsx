@@ -7,7 +7,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { type ComponentProps } from "react";
+import { type ComponentProps, type Ref, useEffect, useImperativeHandle } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -18,6 +18,11 @@ import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
+  refresh: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  stop: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  serverReload: vi.fn(),
+  serverControl: false,
+  serverStop: vi.fn(),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   readEnvironmentScope: vi.fn((_environmentId?: unknown, _scope?: unknown) => true),
@@ -59,7 +64,8 @@ vi.mock(import("./previewBridge"), async (original) => ({
     annotationVoice: { onEvent: () => () => {}, update: async () => {} },
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
-    refresh: vi.fn(async () => undefined),
+    refresh: mocks.refresh,
+    stop: mocks.stop,
     goBack: vi.fn(async () => undefined),
     goForward: vi.fn(async () => undefined),
     hardReload: vi.fn(async () => undefined),
@@ -171,9 +177,18 @@ vi.mock(import("~/browser/browserViewportActions"), { spy: true });
 // The real surface opens a preview stream to the server; only its box matters here.
 vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => ({
   ...(await original()),
-  ServerBrowserSurface: ((props: { className?: string }) => (
-    <div data-testid="server-browser-surface" className={props.className} />
-  )) as never,
+  ServerBrowserSurface: ((props: {
+    className?: string;
+    ref?: Ref<unknown>;
+    onControl?: (control: { controller: "you" }) => void;
+  }) => {
+    useImperativeHandle(props.ref, () => ({ reload: mocks.serverReload, stop: mocks.serverStop }));
+    const { onControl } = props;
+    useEffect(() => {
+      if (mocks.serverControl) onControl?.({ controller: "you" });
+    }, [onControl]);
+    return <div data-testid="server-browser-surface" className={props.className} />;
+  }) as never,
 }));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -231,6 +246,7 @@ function setup() {
   mocks.loading = false;
   mocks.nativeServerTab = false;
   mocks.streamedServerTab = false;
+  mocks.serverControl = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -260,6 +276,29 @@ describe("PreviewView", () => {
       await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
+
+  it("stops instead of reloading when Stop is clicked while the page loads", async () => {
+    setup();
+    mocks.loading = true;
+    await using _screen = await render(view());
+
+    await userEvent.click(page.getByRole("button", { name: "Stop" }));
+
+    expect(mocks.stop).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it("reloads a loaded streamed tab whose first frame has not painted", async () => {
+    setup();
+    mocks.streamedServerTab = true;
+    mocks.serverControl = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+
+    await userEvent.click(page.getByRole("button", { name: "Stop" }));
+
+    expect(mocks.serverReload).toHaveBeenCalledTimes(1);
+    expect(mocks.serverStop).not.toHaveBeenCalled();
+  });
 
   it("keeps the address in the bar when Enter commits an IME composition", async () => {
     setup();

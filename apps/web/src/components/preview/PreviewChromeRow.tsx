@@ -32,6 +32,8 @@ interface Props {
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
+  /** Present only while a navigation is in flight, not while a stream waits for its first frame. */
+  onStop?: (() => void) | undefined;
   onSubmit: (url: string) => void;
   onOpenInBrowser?: (() => void) | undefined;
   onCapture?: ((record: boolean) => void) | undefined;
@@ -61,6 +63,7 @@ export function PreviewChromeRow({
   onBack,
   onForward,
   onRefresh,
+  onStop,
   onSubmit,
   onOpenInBrowser,
   onCapture,
@@ -135,7 +138,7 @@ export function PreviewChromeRow({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  onClick={refreshDisabled ? NOOP : onRefresh}
+                  onClick={refreshDisabled ? NOOP : (onStop ?? onRefresh)}
                   disabled={refreshDisabled}
                   aria-label={loading ? "Stop" : "Refresh"}
                   type="button"
