@@ -106,6 +106,7 @@ it("treats only reflog entries that create local commits as local", () => {
   const local = [
     "commit: own",
     "commit (amend): own",
+    "am: own",
     "pull: Merge made by the 'ort' strategy.",
     "pull origin main: Merge made by the 'ort' strategy.",
     "pull (pick): own",
