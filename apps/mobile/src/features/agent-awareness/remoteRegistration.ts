@@ -96,6 +96,7 @@ const registeredActivityPushTokens = new Map<string, number>();
 let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let lastNativePushToken: string | null = null;
+let nativePushTokenRotations = 0;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
 
@@ -293,12 +294,14 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
         : true);
     if (observedPushToken) {
       lastNativePushToken = observedPushToken;
+      nativePushTokenRotations++;
       return {
         notificationsEnabled: alertsEnabled,
         pushToken: observedPushToken,
         notificationPermissionGranted: permissions.granted,
       };
     }
+    const rotationsBeforeLookup = nativePushTokenRotations;
     const token = yield* Effect.tryPromise({
       try: () => Notifications.getDevicePushTokenAsync(),
       catch: (cause) =>
@@ -314,11 +317,15 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
       ),
       Effect.orElseSucceed(() => null),
     );
-    const pushToken =
+    const lookedUpPushToken =
       token?.type === Platform.OS && typeof token.data === "string" && token.data.trim().length > 0
         ? token.data.trim()
-        : lastNativePushToken;
-    lastNativePushToken = pushToken;
+        : null;
+    // A rotation observed while this lookup ran is newer than what the lookup returned.
+    if (lookedUpPushToken && rotationsBeforeLookup === nativePushTokenRotations) {
+      lastNativePushToken = lookedUpPushToken;
+    }
+    const pushToken = lastNativePushToken;
     // A missing token must not disable notifications the relay accepted.
     return {
       notificationsEnabled: alertsEnabled,
@@ -868,6 +875,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   registrationStatus = "unknown";
   androidDeviceReplayedAt = null;
   lastNativePushToken = null;
+  nativePushTokenRotations = 0;
   registrationStatusListeners.clear();
   registeredActivityPushTokens.clear();
   activityPushTokenLocks.clear();

@@ -775,6 +775,32 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
       expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+      // A lookup that started before a rotation must not replace the rotated token.
+      let resolveStaleLookup: (token: { type: "android"; data: string }) => void = () => {};
+      let markLookupStarted: () => void = () => {};
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+        markLookupStarted();
+        return new Promise((resolve) => {
+          resolveStaleLookup = resolve;
+        });
+      });
+      const staleRefresh = yield* Effect.forkChild(refreshAgentAwarenessRegistration());
+      yield* Effect.promise(() => lookupStarted);
+      const listener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)![0];
+      listener({ type: "android", data: "rotated-fcm-token" } as never);
+      yield* runBackgroundOperations();
+      resolveStaleLookup({ type: "android", data: "fcm-token" });
+      yield* Fiber.join(staleRefresh);
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValueOnce(
+        new Error("SERVICE_NOT_AVAILABLE"),
+      );
+      yield* refreshAgentAwarenessRegistration();
+
+      expect(registrations.at(-1)).toMatchObject({ pushToken: "rotated-fcm-token" });
     }).pipe(
       Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
       Effect.provide(layerRelayTest),
