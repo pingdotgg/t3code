@@ -17,16 +17,13 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { ACP_REGISTRY_URL } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
-
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
-import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
 const serverContents = "antigravity runtime\n";
 const harnessContents = "local harness\n";
@@ -130,12 +127,13 @@ interface HarnessOptions {
   readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
-  /** Served for the ACP Registry index. */
-  readonly registry?: unknown;
-  /** Served by URL instead of the pinned archive. */
-  readonly archives?: Readonly<Record<string, Uint8Array>>;
-  readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
   readonly connectTimeout?: boolean;
+  readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
+  readonly native?: boolean;
+  readonly nativeVersion?: string;
+  readonly nativeManifest?: (manifest: { version: string; url: string; sha512: string }) => unknown;
+  readonly beforeManifest?: Effect.Effect<void>;
+  readonly updateChecksEnabled?: Effect.Effect<boolean>;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -143,6 +141,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const digest = yield* Digest.Digest;
   const baseDir =
     options.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-test-" }));
   const platform = options.platform ?? hostPlatform;
@@ -178,7 +177,10 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   });
   const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
     baseDir,
-    releaseAsset: asset,
+    ...(options.native ? {} : { releaseAsset: asset }),
+    ...(options.updateChecksEnabled === undefined
+      ? {}
+      : { updateChecksEnabled: options.updateChecksEnabled }),
     ...(options.useDefaultValidation
       ? {}
       : {
@@ -207,19 +209,22 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
       HttpClient.make((request) =>
         Effect.suspend(() => {
           requests.push(request.url);
-          if (request.url === ACP_REGISTRY_URL) {
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
+          if (request.url.includes("/manifests/")) {
+            return Effect.gen(function* () {
+              yield* options.beforeManifest ?? Effect.void;
+              const version = options.nativeVersion ?? "1.5.7";
+              const folder = platform === "win32" ? "windows-x64" : "linux-x64";
+              const manifest = {
+                version,
+                url: `https://storage.googleapis.com/antigravity-public/antigravity-cli/${version}-123/${folder}/cli_${platform === "win32" ? "windows_x64.exe" : "linux_x64.tar.gz"}`,
+                sha512: Hex.encode(yield* digest.digest(Digest.sha512, archive).pipe(Effect.orDie)),
+              };
+              return HttpClientResponse.fromWeb(
                 request,
-                options.registry === undefined
-                  ? new Response(null, { status: 503 })
-                  : Response.json(options.registry),
-              ),
-            );
+                new Response(JSON.stringify(options.nativeManifest?.(manifest) ?? manifest)),
+              );
+            });
           }
-          const served = options.archives?.[request.url];
-          if (served)
-            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(served)));
           if (options.connectTimeout) {
             return Effect.fail(
               new HttpClientError.HttpClientError({
@@ -283,44 +288,257 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
 });
 
-// A zip comment changes the archive's hash without changing its members.
-const withZipComment = (archive: Buffer, comment: string) => {
-  const bytes = Buffer.concat([archive, Buffer.from(comment)]);
-  bytes.writeUInt16LE(Buffer.byteLength(comment), archive.byteLength - 2);
-  return bytes;
-};
-const upstreamArchive = withZipComment(completeArchive, "upstream");
-const upstreamUrl = "https://dl.google.com/agy-extensions/releases/test/agy-acp-server-1.4.1.zip";
-const registryListing = (archive = upstreamUrl) => ({
-  version: "1.0.0",
-  agents: [
-    { id: "other-agent", version: "9.9.9", distribution: { npx: { package: "other" } } },
-    {
-      id: "antigravity-acp",
-      version: "1.4.1",
-      distribution: {
-        binary: Object.fromEntries(
-          ["linux-x86_64", "windows-x86_64"].map((target) => [target, { archive, cmd: "./agy" }]),
-        ),
-      },
-    },
-  ],
-});
-const withdrawnManifest: ModelManifest.ModelManifestData = {
-  ...ModelManifest.BUNDLED_MODEL_MANIFEST,
-  compatibility: [
-    {
-      driver: "antigravity",
-      t3CodeRange: ">=0.0.42",
-      ranges: [{ range: ">=1.4.0", status: "broken" }],
-    },
-  ],
-};
-const pinnedAsset = Effect.fn("test.pinnedAntigravityAsset")(function* () {
-  return { ...(yield* releaseAsset()), version: "1.3.0" };
-});
-
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity installation", (it) => {
+  it.effect.each([...new Set(["win32", hostPlatform])] as NodeJS.Platform[])(
+    "migrates the legacy managed runtime to the native CLI on %s and retains the old release",
+    (platform) =>
+      Effect.gen(function* () {
+        const archive =
+          platform === "win32"
+            ? Buffer.from(serverContents)
+            : Buffer.from(
+                "H4sIAAAAAAACE+3RMQ7CQAwEQNe8Ik8wgYj3XIFQCiiOCxK/56CJRA9CYqZZrxsXLpc2n2q5ze0en5LdYZpe2b1n5rhf5+d+m+MuY8j4guXaSu3n4z+V9f9DXXo5HzcBAAAAAAAAAADAz3sA56lbdQAoAAA=",
+                "base64",
+              );
+        const { installation, validations, requests, fs, baseDir, stagingReleased } =
+          yield* makeHarness({ native: true, archive, platform, previous: true });
+        yield* installation.start;
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        yield* Deferred.await(stagingReleased);
+        const resolved = yield* installation.resolve();
+        expect(resolved).toMatchObject({ source: "managed", version: "1.5.7", harnessPath: null });
+        expect(validations[0]?.executable.harnessPath).toBeNull();
+        expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
+        expect(requests.some((url) => url.includes("/manifests/"))).toBe(true);
+        const restarted = yield* makeHarness({
+          baseDir,
+          native: true,
+          archive,
+          platform,
+          nativeVersion: "1.5.6",
+        });
+        expect(yield* restarted.installation.start).toMatchObject({
+          phase: "verifying",
+          message: "Checking the installed runtime.",
+        });
+        expect(yield* terminalState(restarted.installation)).toMatchObject({
+          phase: "succeeded",
+          installedVersion: "1.5.7",
+        });
+        expect(restarted.requests.filter((url) => url.includes("storage.googleapis.com"))).toEqual(
+          [],
+        );
+        expect((yield* restarted.installation.resolve()).executablePath).toBe(
+          resolved.executablePath,
+        );
+      }),
+  );
+
+  // These tar fixtures exercise the POSIX extraction path; Windows downloads one executable.
+  it.effect.skipIf(hostPlatform === "win32")(
+    "rejects unsafe native tar members before activation",
+    () =>
+      Effect.gen(function* () {
+        for (const archive of [
+          "H4sIAAAAAAACE+3OMQqDQBAFUI/iCYxZJPdZMIRtFHQN5PYOKbW2EN5j4P9iYCZPtXyW/C3111ylD69h+Gc45rk/U4r1NnXdI2be6lrG90XPbWvNS5xvAAAAAAAAAAAA4D523kNDtgAoAAA=",
+          "H4sIAAAAAAACE+3RMQ7CMBAEQNe8Ii8IBhzxHhcIpYDCcSLxewwNiJ4IiZlmb6+54vp+m691PJe8jPUWviI2x2F4ZvOZMe7Ta37sdzGlQ+hiWME81Vza+fCf3p7flbmVy2kTAAAAAAAAAAAA+Hl3jhn2/wAoAAA=",
+          "H4sIAAAAAAACE+3TPQrCQBAG0K09RY4wRoPn2UJCClOsG8Hbu6YJ2CtI3mvmp5li+PJcp7Hkx1Sf6VuiuQzDWpvPGtGft/69P0Z/itRF+oHlXnNp59M+5e3/XVnacLseEnv8v/zLv/wDAAAAAAAAAPyZF/c+VksAKAAA",
+        ]) {
+          const { installation, validations } = yield* makeHarness({
+            native: true,
+            archive: Buffer.from(archive, "base64"),
+            platform: "linux",
+            previous: true,
+          });
+          yield* installation.start;
+          expect((yield* terminalState(installation)).phase).toBe("failed");
+          expect(validations).toEqual([]);
+          yield* expectPreviousRelease(installation);
+        }
+      }),
+  );
+
+  it.effect.each([true, false])(
+    "respects background update checks (%s) while allowing explicit installation",
+    (enabled) =>
+      Effect.gen(function* () {
+        const { installation, requests } = yield* makeHarness({
+          native: true,
+          archive: Buffer.from(serverContents),
+          platform: "win32",
+          updateChecksEnabled: Effect.succeed(enabled),
+        });
+        yield* installation.checkForUpdate;
+        if (enabled) {
+          yield* installation.changes.pipe(
+            Stream.filter((value) => value.version === "1.5.7"),
+            Stream.runHead,
+          );
+          yield* installation.state;
+          expect(requests).toHaveLength(1);
+        } else {
+          yield* installation.changes.pipe(Stream.runHead);
+          expect(requests).toEqual([]);
+        }
+        yield* installation.start;
+        expect((yield* terminalState(installation)).phase).toBe("succeeded");
+      }),
+  );
+
+  it.effect("keeps withdrawn native releases from activating or launching", () =>
+    Effect.gen(function* () {
+      let withdrawn = false;
+      const manifest = Effect.sync(() =>
+        withdrawn
+          ? ({
+              ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+              compatibility: [
+                {
+                  driver: "antigravity",
+                  t3CodeRange: ">=0.0.42",
+                  ranges: [{ range: ">=1.5.7", status: "broken" }],
+                },
+              ],
+            } satisfies ModelManifest.ModelManifestData)
+          : ModelManifest.BUNDLED_MODEL_MANIFEST,
+      );
+      const first = yield* makeHarness({
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        previous: true,
+        manifest,
+        validate: () =>
+          Effect.sync(() => {
+            withdrawn = true;
+          }),
+      });
+      yield* first.installation.start;
+      expect((yield* terminalState(first.installation)).phase).toBe("failed");
+      yield* expectPreviousRelease(first.installation);
+      withdrawn = false;
+      const retry = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        manifest,
+      });
+      yield* retry.installation.start;
+      expect((yield* terminalState(retry.installation)).phase).toBe("succeeded");
+      withdrawn = true;
+      expect(yield* retry.installation.resolve().pipe(Effect.flip)).toMatchObject({
+        operation: "resolve",
+      });
+      expect(yield* retry.installation.start.pipe(Effect.flip)).toMatchObject({
+        operation: "start",
+      });
+      const recovery = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.6",
+        archive: Buffer.from("recovery runtime"),
+        platform: "win32",
+        manifest,
+      });
+      yield* recovery.installation.checkForUpdate;
+      expect(yield* recovery.installation.state).toMatchObject({
+        installedVersion: "1.5.7",
+        version: "1.5.6",
+      });
+      yield* recovery.installation.start;
+      expect(yield* terminalState(recovery.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.6",
+      });
+    }),
+  );
+
+  it.effect("discovers subsequent native releases from Google's CLI channel", () =>
+    Effect.gen(function* () {
+      const first = yield* makeHarness({
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+      });
+      yield* first.installation.start;
+      expect((yield* terminalState(first.installation)).phase).toBe("succeeded");
+      const initialPath = (yield* first.installation.resolve()).executablePath;
+      const next = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.8",
+        archive: Buffer.from("next runtime"),
+        platform: "win32",
+      });
+      yield* next.installation.start;
+      expect(yield* terminalState(next.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.8",
+      });
+      const nextPath = (yield* next.installation.resolve()).executablePath;
+      expect(nextPath).not.toBe(initialPath);
+      const republished = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeVersion: "1.5.8",
+        archive: Buffer.from("republished runtime"),
+        platform: "win32",
+      });
+      yield* republished.installation.start;
+      expect((yield* terminalState(republished.installation)).phase).toBe("succeeded");
+      expect((yield* republished.installation.resolve()).executablePath).not.toBe(nextPath);
+      const offline = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        nativeManifest: () => ({}),
+        archive: Buffer.from("unused"),
+        platform: "win32",
+      });
+      yield* offline.installation.start;
+      expect(yield* terminalState(offline.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.8",
+      });
+      expect(offline.requests.filter((url) => url.includes("storage.googleapis.com"))).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "invalid checksum",
+      change: (manifest: { version: string; url: string; sha512: string }) => ({
+        ...manifest,
+        sha512: "0".repeat(128),
+      }),
+    },
+    {
+      name: "foreign download",
+      change: (manifest: { version: string; url: string; sha512: string }) => ({
+        ...manifest,
+        url: "https://example.com/agy.exe",
+      }),
+    },
+  ])("rejects a native $name and preserves the legacy release", ({ change }) =>
+    Effect.gen(function* () {
+      const { installation, validations } = yield* makeHarness({
+        native: true,
+        nativeManifest: change,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        previous: true,
+      });
+      const result = yield* Effect.result(installation.start);
+      if (result._tag === "Success")
+        expect((yield* terminalState(installation)).phase).toBe("failed");
+      expect(validations).toEqual([]);
+      yield* expectPreviousRelease(installation);
+    }),
+  );
+
   it.effect("reports missing Node before downloading the standalone provider runtime", () =>
     Effect.gen(function* () {
       const { installation, requests, validations } = yield* makeHarness();
@@ -830,14 +1048,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         });
 
         const { installation: windows } = yield* makeHarness({ baseDir, platform: "win32" });
-        for (const name of ["agy.EXE", "agy.CMD"]) {
+        for (const name of ["agy.EXE", "agy.cmd"]) {
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
-            executablePath: path.join(windowsDirectory, name),
-            harnessPath: null,
-          });
+          const selected = yield* windows.resolve("agy", { PATH: windowsDirectory });
+          expect(selected.harnessPath).toBeNull();
+          expect((yield* fs.realPath(selected.executablePath)).toLowerCase()).toBe(
+            (yield* fs.realPath(path.join(windowsDirectory, name))).toLowerCase(),
+          );
         }
       }),
   );
@@ -930,14 +1149,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
 
   it.effect("keeps leased releases available while new sessions resolve the new release", () =>
     Effect.gen(function* () {
-      const { installation, fs, stagingReleased } = yield* makeHarness({ previous: true });
+      const manifestEntered = yield* Deferred.make<void>();
+      const releaseManifest = yield* Deferred.make<void>();
+      const { installation, fs, stagingReleased } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        archive: Buffer.from(serverContents),
+        previous: true,
+        beforeManifest: Deferred.succeed(manifestEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseManifest)),
+        ),
+      });
       const processScope = yield* Scope.make();
       const oldExecutable = yield* installation.acquire().pipe(Scope.provide(processScope));
-      yield* installation.start;
+      const starting = yield* installation.start.pipe(Effect.forkScoped);
+      yield* Deferred.await(manifestEntered);
+      const concurrent = yield* installation.acquire().pipe(Scope.provide(processScope));
+      expect(concurrent.executablePath).toBe(oldExecutable.executablePath);
+      yield* Deferred.succeed(releaseManifest, undefined);
+      yield* Fiber.join(starting);
       expect((yield* terminalState(installation)).phase).toBe("succeeded");
       yield* Deferred.await(stagingReleased);
       const current = yield* installation.resolve();
-      expect(current.version).toBe("fixture-new");
+      expect(current.version).toBe("1.5.7");
       expect(current.executablePath).not.toBe(oldExecutable.executablePath);
       expect(yield* fs.readFileString(oldExecutable.executablePath)).toBe(serverContents);
       expect(yield* installation.remove().pipe(Effect.flip)).toMatchObject({ operation: "remove" });
@@ -1082,169 +1316,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       });
       expect(yield* installation.state).toMatchObject({ phase: "idle", operationId: null });
       expect(requests).toEqual([]);
-    }),
-  );
-
-  it.effect("updates past the pinned release to the registry release and never downgrades", () =>
-    Effect.gen(function* () {
-      const asset = yield* pinnedAsset();
-      const h = yield* makeHarness({
-        asset,
-        registry: registryListing(),
-        archives: { [upstreamUrl]: upstreamArchive },
-      });
-      yield* h.installation.checkForUpdate;
-      // A fresh install still gets the pinned release.
-      expect(yield* h.installation.state).toMatchObject({ version: "1.3.0" });
-      yield* h.installation.start;
-      expect(yield* terminalState(h.installation)).toMatchObject({
-        phase: "succeeded",
-        installedVersion: "1.3.0",
-        version: "1.4.1",
-        totalBytes: null,
-      });
-
-      yield* h.installation.start;
-      expect(yield* terminalState(h.installation)).toMatchObject({
-        phase: "succeeded",
-        installedVersion: "1.4.1",
-        version: "1.4.1",
-      });
-      expect(h.validations.at(-1)?.version).toBe("1.4.1");
-      expect(h.requests).toEqual([ACP_REGISTRY_URL, asset.url, upstreamUrl]);
-      const selected = yield* h.installation.resolve();
-      expect(selected.version).toBe("1.4.1");
-      expect(yield* h.fs.readFileString(selected.executablePath)).toBe(serverContents);
-
-      // Without registry information the older pin is not offered as a reinstall.
-      const restarted = yield* makeHarness({ baseDir: h.baseDir, asset });
-      expect(yield* restarted.installation.state).toMatchObject({
-        installedVersion: "1.4.1",
-        version: "1.4.1",
-      });
-      yield* restarted.installation.start;
-      expect(yield* terminalState(restarted.installation)).toMatchObject({
-        phase: "succeeded",
-        installedVersion: "1.4.1",
-      });
-      expect(restarted.requests).toEqual([]);
-      expect(restarted.validations.map((entry) => entry.version)).toEqual(["1.4.1"]);
-    }),
-  );
-
-  it.effect.each([
-    {
-      name: "hosted outside Google's downloads",
-      registry: registryListing("https://example.com/agy.zip"),
-    },
-    {
-      name: "from an oversized registry index",
-      registry: { ...registryListing(), padding: "x".repeat(1024 * 1024) },
-    },
-    {
-      name: "escaping Google's releases path",
-      registry: registryListing(
-        "https://dl.google.com/agy-extensions/releases/%2e%2e/%2e%2e/other.zip",
-      ),
-    },
-    {
-      name: "withdrawn by the model manifest",
-      registry: registryListing(),
-      manifest: Effect.succeed(withdrawnManifest),
-    },
-  ])("does not offer a registry release $name", ({ registry, manifest }) =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({
-        asset: yield* pinnedAsset(),
-        registry,
-        ...(manifest ? { manifest } : {}),
-      });
-      yield* h.installation.start;
-      yield* terminalState(h.installation);
-      yield* h.installation.checkForUpdate;
-      expect(yield* h.installation.state).toMatchObject({
-        installedVersion: "1.3.0",
-        version: "1.3.0",
-      });
-    }),
-  );
-
-  it.effect("does not retry a failed registry lookup within the hour", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      yield* h.installation.checkForUpdate;
-      yield* h.installation.checkForUpdate;
-      expect(h.requests).toEqual([ACP_REGISTRY_URL]);
-      yield* TestClock.adjust("1 hour");
-      yield* h.installation.checkForUpdate;
-      expect(h.requests).toEqual([ACP_REGISTRY_URL, ACP_REGISTRY_URL]);
-    }),
-  );
-
-  it.effect.each(["update", "reinstall"] as const)(
-    "rejects withdrawal during $0 validation",
-    (operation) =>
-      Effect.gen(function* () {
-        let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
-        let withdraw = operation === "update";
-        const h = yield* makeHarness({
-          asset: yield* pinnedAsset(),
-          registry: registryListing(),
-          archives: { [upstreamUrl]: upstreamArchive },
-          manifest: Effect.sync(() => manifest),
-          validate: (_executable, version) =>
-            Effect.sync(() => {
-              if (withdraw && version === "1.4.1") manifest = withdrawnManifest;
-            }),
-        });
-        yield* h.installation.start;
-        yield* terminalState(h.installation);
-        yield* h.installation.checkForUpdate;
-        if (operation === "reinstall") {
-          yield* h.installation.start;
-          expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
-          withdraw = true;
-        }
-        yield* h.installation.start;
-        expect((yield* terminalState(h.installation)).phase).toBe("failed");
-        if (operation === "update") {
-          expect((yield* h.installation.resolve()).version).toBe("1.3.0");
-        } else {
-          expect((yield* h.installation.state).version).toBe("1.3.0");
-          yield* Effect.flip(h.installation.resolve());
-        }
-      }),
-  );
-
-  it.effect("returns an install the manifest withdraws to the pinned release", () =>
-    Effect.gen(function* () {
-      let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
-      const h = yield* makeHarness({
-        asset: yield* pinnedAsset(),
-        registry: registryListing(),
-        archives: { [upstreamUrl]: upstreamArchive },
-        manifest: Effect.sync(() => manifest),
-      });
-      yield* h.installation.checkForUpdate;
-      yield* h.installation.start;
-      yield* terminalState(h.installation);
-      yield* h.installation.start;
-      expect(yield* terminalState(h.installation)).toMatchObject({ installedVersion: "1.4.1" });
-
-      manifest = withdrawnManifest;
-      expect((yield* Effect.flip(h.installation.resolve())).detail).toContain("no longer works");
-      yield* h.installation.checkForUpdate;
-      expect(yield* h.installation.state).toMatchObject({
-        installedVersion: "1.4.1",
-        version: "1.3.0",
-      });
-      yield* h.installation.start;
-      expect(yield* terminalState(h.installation)).toMatchObject({
-        phase: "succeeded",
-        installedVersion: "1.3.0",
-        version: "1.3.0",
-      });
-      expect((yield* h.installation.resolve()).version).toBe("1.3.0");
     }),
   );
 });
