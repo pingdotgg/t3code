@@ -3,6 +3,7 @@ import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
+import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
 import {
   createEnvironmentPresentationAtoms,
@@ -24,10 +25,10 @@ function entry(environmentId: EnvironmentId, label = environmentId as string) {
     profile: Option.none(),
   };
 }
-function config(pullRequests = false, cwd = "/workspace"): ServerConfig {
+function config(cwd = "/workspace"): ServerConfig {
   return {
     cwd,
-    environment: { capabilities: { pullRequests }, platform: { machine: "desktop" } },
+    environment: { capabilities: {}, platform: { machine: "desktop" } },
   } as ServerConfig;
 }
 function harness() {
@@ -53,14 +54,16 @@ function harness() {
 }
 
 describe("environment summary subscriptions", () => {
-  it("tracks capabilities across environments, config loss and removal", () => {
+  it("tracks loaded configs across environments, config loss and removal", () => {
     const h = harness();
     const stop = h.registry.subscribe(h.pullRequestsSupportedAtom, () => {});
     try {
+      h.registry.set(h.configs(FIRST), null);
+      h.registry.set(h.configs(SECOND), null);
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(false);
-      h.registry.set(h.configs(FIRST), config(true));
+      h.registry.set(h.configs(FIRST), config());
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(true);
-      h.registry.set(h.configs(SECOND), config(true));
+      h.registry.set(h.configs(SECOND), config());
       h.registry.set(h.configs(FIRST), null);
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(true);
       h.registry.set(h.catalog, { isReady: true, entries: new Map([[FIRST, entry(FIRST)]]) });
@@ -76,12 +79,80 @@ describe("environment summary subscriptions", () => {
       });
       expect(h.registry.get(h.environmentIdsAtom)).toEqual([SECOND, FIRST]);
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(true);
-      h.registry.set(h.configs(SECOND), config(false));
+      h.registry.set(h.configs(SECOND), null);
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(false);
       h.registry.set(h.catalog, { isReady: true, entries: new Map() });
       expect(h.registry.get(h.environmentIdsAtom)).toEqual([]);
       expect(h.registry.get(h.identitiesAtom)).toEqual([]);
       expect(h.registry.get(h.environmentsAtom)).toEqual([]);
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
+});
+
+describe("presentations with providers", () => {
+  it("leaves out disabled connections until they are re-enabled", () => {
+    const h = harness();
+    const atom = h.full.presentationsWithProvidersAtom;
+    const withSecond = (enabled: boolean): EnvironmentCatalogState => ({
+      isReady: true,
+      entries: new Map([
+        [FIRST, entry(FIRST)],
+        [SECOND, { ...entry(SECOND), enabled }],
+      ]),
+    });
+    const stop = h.registry.subscribe(atom, () => {});
+    try {
+      h.registry.set(h.configs(SECOND), config("/second"));
+      h.registry.set(h.catalog, withSecond(false));
+      expect([...h.registry.get(atom).keys()]).toEqual([FIRST]);
+      expect(h.registry.get(h.full.presentationsAtom).has(SECOND)).toBe(true);
+      h.registry.set(h.catalog, withSecond(true));
+      expect([...h.registry.get(atom).keys()]).toEqual([FIRST, SECOND]);
+      expect(h.registry.get(atom).get(SECOND)?.serverConfig?.cwd).toBe("/second");
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
+
+  it("leaves out unsupported environments", () => {
+    const h = harness();
+    const atom = h.full.presentationsWithProvidersAtom;
+    const stop = h.registry.subscribe(atom, () => {});
+    try {
+      h.registry.set(h.catalog, {
+        isReady: true,
+        entries: new Map<EnvironmentId, ConnectionCatalogEntry>([
+          [FIRST, entry(FIRST)],
+          [SECOND, { ...entry(SECOND), unsupportedReason: "Server is too old." }],
+        ]),
+      });
+      expect([...h.registry.get(atom).keys()]).toEqual([FIRST]);
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
+});
+
+describe("connection presentation", () => {
+  it("presents an enabled environment as connecting until its supervisor reports", () => {
+    const h = harness();
+    const phase = () => h.registry.get(h.full.presentationAtom(FIRST))?.connection.phase;
+    const stop = h.registry.subscribe(h.full.presentationAtom(FIRST), () => {});
+    try {
+      expect(phase()).toBe("connecting");
+      h.registry.set(h.catalog, {
+        isReady: true,
+        entries: new Map([[FIRST, { ...entry(FIRST), enabled: false }]]),
+      });
+      expect(phase()).toBe("available");
+      h.registry.set(h.catalog, { isReady: true, entries: new Map([[FIRST, entry(FIRST)]]) });
+      h.registry.set(h.state, AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE }));
+      expect(phase()).toBe("available");
     } finally {
       stop();
       h.registry.dispose();

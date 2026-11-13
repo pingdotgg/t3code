@@ -23,9 +23,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
 
 // Server tabs render on the desktop only for its own environment.
-vi.mock(import("~/state/primaryEnvironment"), async () => {
+vi.mock(import("~/state/primaryEnvironment"), async (original) => {
   const { Atom } = await import("effect/reactivity");
-  return { primaryEnvironmentIdAtom: Atom.make(EnvironmentId.make("host-webview-order")) };
+  return {
+    ...(await original()),
+    primaryEnvironmentIdAtom: Atom.make(EnvironmentId.make("host-webview-order")),
+  };
 });
 
 vi.mock(import("~/state/session"), async (original) => ({

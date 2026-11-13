@@ -46,7 +46,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           sparse-checkout: |
@@ -55,7 +55,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -77,19 +77,27 @@ jobs:
 
           vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
 
-          deployment_url="$(
+          deployment_output="$(
             vp dlx vercel@53.1.1 deploy \
               --archive=tgz \
               --yes \
               --token "$VERCEL_TOKEN" \
-              --scope "$vercel_scope"
+              --scope "$vercel_scope" \
+              --build-env "VITE_RELEASE_CHANNEL=preview"
           )"
+          printf '%s\n' "$deployment_output"
+          # Vercel can print lockfile warnings to stdout before the deployment URL.
+          deployment_url="$(printf '%s\n' "$deployment_output" | grep -E '^https://[[:alnum:].-]+\.vercel\.app$')"
+          if [[ "$deployment_url" == *$'\n'* ]]; then
+            echo "Vercel returned multiple deployment URLs." >&2
+            exit 1
+          fi
 
           echo "Deployed $deployment_url"
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
 
       - name: Comment deployment URL
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment_url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

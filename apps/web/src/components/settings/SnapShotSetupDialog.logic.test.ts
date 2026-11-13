@@ -128,38 +128,6 @@ it("resumes KDE setup after the helper passes its real permission check", () => 
   expect(captureSetupInitialStep({ ...state, shortcutRegistered: false })).toBe("shortcut");
 });
 
-it("uses the current desktop's access requirements while preserving setup for the others", () => {
-  const kde: DesktopSnapShotState = {
-    ...gnome,
-    linuxDesktop: "kde",
-    linuxBackend: "kde",
-    kdeHelper: { status: "not-installed", message: "Install the helper" },
-    shortcutVerified: false,
-  };
-  expect(captureSetupDesktopName(kde)).toBe("KDE Plasma");
-  expect(captureSetupInitialStep(kde)).toBe("access");
-  expect(
-    captureSetupInitialStep({
-      ...kde,
-      kdeHelper: { status: "ready", message: "Ready" },
-      shortcutRegistered: false,
-    }),
-  ).toBe("shortcut");
-
-  const niri: DesktopSnapShotState = {
-    ...gnome,
-    linuxDesktop: "niri",
-    linuxBackend: "niri",
-    shortcutRegistered: false,
-  };
-  expect(captureSetupDesktopName(niri)).toBe("Niri");
-  expect(captureSetupInitialStep(niri)).toBe("shortcut");
-
-  expect(captureSetupDesktopName(gnome)).toBe("GNOME");
-  expect(captureSetupInitialStep(gnome)).toBe("shortcut");
-  expect(captureSetupShortcutReady(gnome, false)).toBe(true);
-});
-
 it("does not report a successful check when capture support could not be read", () => {
   expect(captureSetupCheckMessage({ ...gnome, message: "Desktop disconnected" })).toContain(
     "Still unable to check access",

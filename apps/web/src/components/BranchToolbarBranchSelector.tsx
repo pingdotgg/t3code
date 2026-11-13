@@ -1,7 +1,5 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useRightPanelStore } from "../rightPanelStore";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -16,10 +14,10 @@ import {
   type VcsRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
+import { GitBranchIcon } from "lucide-react";
 import {
-  useDeferredValue,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useOptimistic,
   useState,
@@ -33,7 +31,8 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useQuietThreadShell } from "../state/entities";
+import { useProjectClone } from "../state/projectClones";
+import { readThreadShell, useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
@@ -41,16 +40,18 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
-import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
+import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  isWorktreeChangeBlocked,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  resolveDefaultWorktreeBaseBranch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   sanitizeNewRefName,
@@ -58,9 +59,8 @@ import {
 } from "./BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
-  prStatusIndicator,
-  resolveThreadPullRequestBadge,
-  useLinkedThreadPullRequest,
+  resolveDisplayedThreadPr,
+  useThreadDisplayedPullRequest,
 } from "./ThreadStatusIndicators";
 
 import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
@@ -90,6 +90,8 @@ interface BranchToolbarBranchSelectorProps {
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
+
+const WORKTREE_CHANGE_BLOCKED_MESSAGE = "Stop the current turn to switch worktrees.";
 
 function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
@@ -126,6 +128,9 @@ export function BranchToolbarBranchSelector({
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
     reportFailure: false,
   });
+  const refreshLocalStatusForPicker = useAtomCommand(vcsEnvironment.refreshLocalStatusForPicker, {
+    reportFailure: false,
+  });
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
     reportFailure: false,
   });
@@ -151,7 +156,9 @@ export function BranchToolbarBranchSelector({
       : (serverThread?.branch ?? draftThread?.branch ?? null);
   const activeWorktreePath = forceNewWorktree
     ? null
-    : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
+    : serverThread
+      ? serverThread.worktreePath
+      : (draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
@@ -165,6 +172,10 @@ export function BranchToolbarBranchSelector({
       draftThreadEnvMode: draftThread?.envMode,
     });
 
+  const readLatestThreadState = () =>
+    readThreadShell(threadRef) ??
+    serverThread ?? { runtime: null, worktreePath: activeWorktreePath };
+
   const setThreadBranch = (
     branch: string | null,
     worktreePath: string | null,
@@ -175,8 +186,22 @@ export function BranchToolbarBranchSelector({
       !activeProject ||
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
     )
-      return;
-    if (serverSession && worktreePath !== activeWorktreePath) {
+      return false;
+    const latest = readLatestThreadState();
+    if (automatic && (latest.runtime || latest.worktreePath)) return false;
+    if (
+      isWorktreeChangeBlocked({
+        runtime: latest.runtime,
+        currentWorktreePath: latest.worktreePath,
+        nextWorktreePath: worktreePath,
+      })
+    ) {
+      toastManager.add(
+        stackedThreadToast({ type: "warning", title: WORKTREE_CHANGE_BLOCKED_MESSAGE }),
+      );
+      return false;
+    }
+    if (latest.runtime && worktreePath !== latest.worktreePath) {
       void stopThreadSession({
         environmentId,
         input: { threadId: activeThreadId },
@@ -195,7 +220,7 @@ export function BranchToolbarBranchSelector({
     }
     if (hasServerThread) {
       onActiveThreadBranchOverrideChange?.(branch);
-      return;
+      return true;
     }
     const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
       nextWorktreePath: worktreePath,
@@ -209,11 +234,11 @@ export function BranchToolbarBranchSelector({
       environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
       projectRef: scopeProjectRef(environmentId, activeProject.id),
     });
+    return true;
   };
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
-  const deferredBranchQuery = useDeferredValue(branchQuery);
 
   const branchStatusQuery = useEnvironmentQuery(
     branchCwd === null
@@ -223,23 +248,40 @@ export function BranchToolbarBranchSelector({
           input: { cwd: branchCwd },
         }),
   );
+  const projectStatusQuery = useEnvironmentQuery(
+    activeProjectCwd === null
+      ? null
+      : vcsEnvironment.status({ environmentId, input: { cwd: activeProjectCwd } }),
+  );
+  const activeProjectCheckoutRoot = projectStatusQuery.data?.workingTree.rootPath;
+  const trimmedBranchQuery = branchQuery.trim();
   const branchRefState = usePaginatedBranches({
     environmentId,
     cwd: branchCwd,
-    // The server filters refs by substring, so it has to be given the sanitized
-    // name as well: querying the raw "new branch" drops an existing new-branch
-    // from the response entirely, which would defeat the collision check below.
-    // Ref names cannot contain an ASCII space, so sanitizing loses no matches.
-    query: sanitizeNewRefName(deferredBranchQuery.trim()),
+    // Substring search needs sanitized names to detect new-branch collisions; refs cannot contain ASCII
+    // spaces.
+    query: sanitizeNewRefName(trimmedBranchQuery),
   });
-  const trimmedBranchQuery = branchQuery.trim();
-  const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const refs = branchRefState.refs;
   const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
-  const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
+  const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+  const isWorktreeChangeBlockedForRef = (refName: VcsRef) =>
+    activeProjectCwd !== null &&
+    isWorktreeChangeBlocked({
+      runtime: serverSession,
+      currentWorktreePath: serverThread ? serverThread.worktreePath : activeWorktreePath,
+      nextWorktreePath: isSelectingWorktreeBase
+        ? null
+        : resolveBranchSelectionTarget({
+            activeProjectCwd,
+            activeProjectCheckoutRoot,
+            activeWorktreePath,
+            refName,
+          }).nextWorktreePath,
+    });
   const checkoutPullRequestItemValue =
     canChangeThreadBranch && prReference && onCheckoutPullRequestRequest
       ? `__checkout_pull_request__:${prReference}`
@@ -251,7 +293,6 @@ export function BranchToolbarBranchSelector({
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
-  const defaultBranchName = refs.find((refName) => refName.isDefault)?.name ?? null;
   const pickerCreateBranchItemValue = hasExactBranchMatch ? null : createBranchItemValue;
   const branchPickerItems = [
     ...(checkoutPullRequestItemValue ? [checkoutPullRequestItemValue] : []),
@@ -259,12 +300,12 @@ export function BranchToolbarBranchSelector({
     ...(pickerCreateBranchItemValue ? [pickerCreateBranchItemValue] : []),
   ];
   const filteredBranchPickerItems =
-    normalizedDeferredBranchQuery.length === 0
+    normalizedBranchQuery.length === 0
       ? branchPickerItems
       : branchPickerItems.filter((itemValue) =>
           shouldIncludeBranchPickerItem({
             itemValue,
-            normalizedQuery: normalizedDeferredBranchQuery,
+            normalizedQuery: normalizedBranchQuery,
             createBranchItemValue: pickerCreateBranchItemValue,
             checkoutPullRequestItemValue,
           }),
@@ -382,20 +423,34 @@ export function BranchToolbarBranchSelector({
   const selectBranch = (refName: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
+    const latest = readLatestThreadState();
     if (isSelectingWorktreeBase) {
+      if (latest.worktreePath) return;
       setThreadBranch(refName.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
     }
-
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
-      activeWorktreePath,
+      activeProjectCheckoutRoot,
+      activeWorktreePath: latest.worktreePath,
       refName,
     });
 
-    if (selectionTarget.reuseExistingWorktree) {
+    if (
+      isWorktreeChangeBlocked({
+        runtime: latest.runtime,
+        currentWorktreePath: latest.worktreePath,
+        nextWorktreePath: selectionTarget.nextWorktreePath,
+      })
+    )
+      return;
+
+    if (
+      selectionTarget.reuseExistingWorktree &&
+      !(selectionTarget.staysInActiveCheckout && canWriteSourceControl)
+    ) {
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
@@ -423,8 +478,11 @@ export function BranchToolbarBranchSelector({
         const nextBranchName = refName.isRemote
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
-        setOptimisticBranch(nextBranchName);
-        setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
+            ? nextBranchName
+            : previousBranch,
+        );
         return;
       }
       setOptimisticBranch(previousBranch);
@@ -460,8 +518,10 @@ export function BranchToolbarBranchSelector({
         },
       });
       if (createBranchResult._tag === "Success") {
-        setOptimisticBranch(createBranchResult.value.refName);
-        setThreadBranch(createBranchResult.value.refName, activeWorktreePath);
+        const nextBranchName = createBranchResult.value.refName;
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, activeWorktreePath) ? nextBranchName : previousBranch,
+        );
         return;
       }
       setOptimisticBranch(previousBranch);
@@ -479,12 +539,24 @@ export function BranchToolbarBranchSelector({
 
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
     ? null
-    : (defaultBranchName ?? currentGitBranch);
+    : resolveDefaultWorktreeBaseBranch(refs);
 
-  // A started thread's server is creating its worktree and records the branch
-  // itself; defaulting it here would reset the thread to the base checkout and
-  // detach the agent that just started.
+  const projectCloneDone = useProjectClone(activeProjectRef)?.phase === "done";
+  const refreshRefsAfterClone = useEffectEvent(() => {
+    if (branchCwd === null) return;
+    void refreshLocalStatusForPicker({
+      environmentId,
+      input: { cwd: branchCwd, localOnly: true },
+    });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs listed while the project was cloning are empty; reload them past the server's snapshot when the clone finishes
+  useEffect(() => {
+    if (projectCloneDone) refreshRefsAfterClone();
+  }, [projectCloneDone]);
+
+  // The server sets started threads' branches; defaulting here would detach the agent from its worktree.
   const threadStarted = serverSession !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes a default base branch to the server thread or draft once branches load for a new worktree thread
   useEffect(() => {
     if (
       threadStarted ||
@@ -507,6 +579,12 @@ export function BranchToolbarBranchSelector({
 
   const handleOpenChange = (open: boolean) => {
     setIsBranchMenuOpen(open);
+    if (open && !isBranchMenuOpen && branchCwd !== null) {
+      void refreshLocalStatusForPicker({
+        environmentId,
+        input: { cwd: branchCwd, localOnly: true },
+      });
+    }
     if (!open) {
       setBranchQuery("");
     }
@@ -535,36 +613,22 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     resolvedActiveBranch,
   });
-  const branchPr =
-    branchPrBranch !== null && branchStatusQuery.data?.refName === branchPrBranch
-      ? (branchStatusQuery.data.pr ?? null)
-      : null;
-  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(environmentId);
-  const linkedStatus = useLinkedThreadPullRequest(
+  const branchPr = resolveDisplayedThreadPr({
+    threadBranch: branchPrBranch,
+    gitStatus: branchStatusQuery.data,
+  });
+  const {
+    badge: prBadge,
+    number: prNumber,
+    url: prUrl,
+    status: prStatus,
+  } = useThreadDisplayedPullRequest(
     environmentId,
-    serverThread?.linkedPullRequest,
-    true,
-    serverThread?.pullRequests,
-    serverThread?.branchPullRequest,
+    serverThread,
+    branchPr,
+    branchStatusQuery.data?.sourceControlProvider,
   );
-  const currentLinkedPr = supportsMultiplePullRequests
-    ? resolveThreadCurrentPullRequestLink(serverThread?.pullRequests ?? [])
-    : null;
-  const prBadge = supportsMultiplePullRequests
-    ? resolveThreadPullRequestBadge(serverThread?.pullRequests)
-    : null;
-  const displayedPr = linkedStatus?.pr ?? (currentLinkedPr === null ? branchPr : null);
-  const displayedPrStatus = prStatusIndicator(
-    displayedPr,
-    linkedStatus?.sourceControlProvider ?? branchStatusQuery.data?.sourceControlProvider,
-  );
-  const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
-  const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
-  const panelPrLabel =
-    prNumber === undefined
-      ? ""
-      : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
@@ -631,9 +695,11 @@ export function BranchToolbarBranchSelector({
             (!activeProjectCwd ||
               !resolveBranchSelectionTarget({
                 activeProjectCwd,
+                activeProjectCheckoutRoot,
                 activeWorktreePath,
                 refName,
-              }).reuseExistingWorktree))
+              }).reuseExistingWorktree)) ||
+          isWorktreeChangeBlockedForRef(refName)
         }
         onClick={() => selectPickerItem(itemValue)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
@@ -650,12 +716,16 @@ export function BranchToolbarBranchSelector({
       onSelectItem={selectPickerItem}
       value={resolvedActiveBranch}
       query={branchQuery}
-      resultsQuery={deferredTrimmedBranchQuery}
       onQueryChange={setBranchQuery}
       hasNextPage={hasNextPage}
       isFetchingNextPage={isFetchingNextPage}
       onLoadNext={branchRefState.loadNext}
       statusText={branchStatusText}
+      notice={
+        refs.some((refName) => isWorktreeChangeBlockedForRef(refName))
+          ? WORKTREE_CHANGE_BLOCKED_MESSAGE
+          : null
+      }
       renderItem={renderPickerItem}
       getItemType={(item) =>
         item === checkoutPullRequestItemValue
@@ -690,7 +760,7 @@ export function BranchToolbarBranchSelector({
             pullRequests={serverThread?.pullRequests ?? []}
             number={prNumber}
             url={prUrl}
-            status={displayedPrStatus}
+            status={prStatus}
             onOpenList={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
             onOpenPullRequest={(event, targetUrl = prUrl) => {
               if (targetUrl) openPrLink(event, targetUrl);
@@ -719,37 +789,21 @@ export function BranchToolbarBranchSelector({
           >
             <GitBranchIcon
               className={cn(
-                "size-3 shrink-0 opacity-70",
+                "size-3 shrink-0",
                 displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
               )}
             />
             <ComposerContextLabel displayMode={displayMode}>
-              <MiddleTruncate
-                value={triggerLabel}
-                variant={displayMode === "panel" ? "cap-aligned" : "default"}
-                className="w-full"
-              />
+              <MiddleTruncate value={triggerLabel} variant="cap-aligned" className="w-full" />
             </ComposerContextLabel>
-            {displayMode !== "panel" ? (
-              <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-            ) : null}
           </ComboboxTrigger>
         </span>
-        {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
-          <ThreadDetailsPrRows
+        {displayMode === "panel" ? (
+          <ThreadDetailsThreadPrRows
             threadRef={threadRef}
-            links={serverThread?.pullRequests ?? []}
-            currentLink={currentLinkedPr}
-            onOpenLink={openPrLink}
-            environmentId={environmentId}
-            pr={displayedPr}
-            number={prNumber}
-            reference={currentLinkedPr}
-            status={displayedPrStatus}
             project={activeProject}
-            label={panelPrLabel}
-            openAriaLabel={prUrl ?? "Open pull request"}
-            onOpen={(event) => openPrLink(event, prUrl)}
+            branchPr={branchPr}
+            branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
             onActed={() => branchStatusQuery.refresh()}
           />
         ) : null}

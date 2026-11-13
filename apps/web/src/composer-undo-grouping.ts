@@ -2,31 +2,26 @@ import { closeHistory, isHistoryTransaction } from "@tiptap/pm/history";
 import type { Transaction } from "@tiptap/pm/state";
 import { ReplaceStep } from "@tiptap/pm/transform";
 
-/**
- * ProseMirror's history only starts a new undo step after a pause or when an
- * edit is not next to the last one, so typing, backspacing and typing again
- * without pausing is one step, and a store rewrite of the whole document
- * (autocomplete inserting a chip, list continuation) makes every later edit
- * "adjacent" and joins it.
- */
+// Whole-draft rewrites make all edits adjacent; explicit boundaries keep change kinds separate.
 export const COMPOSER_UNDO_GROUP_DELAY = 1000;
 
 export type ComposerChangeKind = "insert" | "delete" | "other";
 
+const CLIPBOARD_EDIT_META = "composerClipboardEdit";
+
 /**
- * ProseMirror tags these itself only on its built-in clipboard paths; the
- * composer's `handlePaste` and cut handler replace those paths, so each of
- * their dispatches must call this, or the change merges with the typing or
- * deleting around it.
+ * Tag custom paste/cut dispatches; ProseMirror only tags its built-in paths.
+ * Not `uiEvent`: Tiptap's paste rules would style the already parsed paste a second time.
  */
 export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Transaction {
-  return tr.setMeta("uiEvent", event);
+  return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   if (!tr.docChanged) return null;
   const uiEvent = tr.getMeta("uiEvent");
   if (uiEvent === "paste" || uiEvent === "drop" || uiEvent === "cut") return "other";
+  if (tr.getMeta(CLIPBOARD_EDIT_META) != null) return "other";
   // IME input replaces its own range on each keystroke; it is still typing.
   if (tr.getMeta("composition") != null) return "insert";
   let kind: ComposerChangeKind | null = null;
@@ -41,9 +36,7 @@ function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   return kind;
 }
 
-/**
- * Must run before the transaction is applied.
- */
+/** Must run before the transaction is applied. */
 export function groupUndoByChangeKind(
   tr: Transaction,
   previous: ComposerChangeKind | null,

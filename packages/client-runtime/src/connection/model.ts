@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
@@ -53,8 +53,6 @@ export const PersistedConnectionTarget = Schema.Union([
   SshConnectionTarget,
 ]);
 export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
-
-export type ConnectionTargetKind = ConnectionTarget["_tag"];
 
 export type NetworkStatus = "unknown" | "offline" | "online";
 
@@ -156,6 +154,8 @@ export interface PreparedConnection {
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization | null;
   readonly target: ConnectionTarget;
+  /** What the server said about itself while this connection was prepared. */
+  readonly descriptor?: ExecutionEnvironmentDescriptor;
 }
 
 export type SupervisorConnectionPhase =

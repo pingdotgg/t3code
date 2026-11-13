@@ -41,7 +41,7 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
   return isPreviewSupportedInRuntime() || serverBrowser;
 }
 
-type RuntimeSnapshot = Pick<PreviewSessionSnapshot, "runtime" | "automationOwner">;
+type RuntimeSnapshot = Pick<PreviewSessionSnapshot, "runtime" | "headless" | "automationOwner">;
 
 /** The desktop app hosts this server tab, in a panel `<webview>` or a background window. */
 function desktopHostsServerTab(
@@ -52,6 +52,7 @@ function desktopHostsServerTab(
   return (
     isElectron &&
     snapshot?.runtime === "server" &&
+    !snapshot.headless &&
     primaryEnvironmentId !== null &&
     environmentId === primaryEnvironmentId
   );

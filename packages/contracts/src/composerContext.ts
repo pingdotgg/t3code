@@ -1,17 +1,20 @@
 import * as Schema from "effect/Schema";
 
+import { AssistantCitation } from "./assistantCitations.ts";
 import {
   EnvironmentId,
   ForwardCompatibleArray,
+  GuestMessageId,
+  GuestShareId,
   NonNegativeInt,
   PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
+  TurnItemId,
 } from "./baseSchemas.ts";
+import { GUEST_MESSAGE_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
 
-/**
- * Bytes never live here: image and file records bind to a `ChatAttachment` by id.
- */
+/** Image and file records reference `ChatAttachment` ids, never bytes. */
 
 export const COMPOSER_CONTEXT_KINDS = [
   "image",
@@ -23,6 +26,8 @@ export const COMPOSER_CONTEXT_KINDS = [
   "mention",
   "skill",
   "thread",
+  "environment",
+  "response",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -56,8 +61,7 @@ export const ComposerContextKind = TrimmedNonEmptyString.check(
 );
 export type ComposerContextKind = typeof ComposerContextKind.Type;
 
-// Same rules as the private `ChatAttachmentId` in orchestration.ts; duplicated here because
-// orchestration.ts imports this module.
+// Duplicates the private ChatAttachmentId rules to avoid an orchestration.ts import cycle.
 const ContextAttachmentId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CONTEXT_ID_MAX_CHARS),
   Schema.isPattern(CONTEXT_ID_PATTERN),
@@ -143,9 +147,7 @@ export const ElementContextRecord = Schema.Struct({
 });
 export type ElementContextRecord = typeof ElementContextRecord.Type;
 
-// Optional record fields are `optionalKey`: a record holding an explicit
-// `undefined` cannot be sent as JSON, so it fails its own check and is dropped
-// alone instead of failing the whole message.
+// `optionalKey` rejects explicit undefined within one record, so only that record is dropped.
 export const PreviewAnnotationContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("preview-annotation"),
@@ -213,12 +215,45 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
-const isJson = Schema.is(Schema.Json);
+/**
+ * One of the user's machines (a T3 Code environment), mentioned so the agent
+ * links it or works there. Only identity travels: the agent links it by id,
+ * and the user's client supplies its addresses.
+ */
+export const EnvironmentContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("environment"),
+  environmentId: EnvironmentId,
+});
+export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 
 /**
- * Known discriminators are excluded so a malformed known record fails its own schema instead of
- * sliding through unchecked.
+ * An earlier assistant response the user is replying to. Only its identity and opening travel:
+ * the agent rereads the rest by item id, so a reply costs the same however long the response is.
  */
+export const ResponseContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("response"),
+  /** Where the response is and how it starts, as the reader saw it. */
+  citation: AssistantCitation,
+  itemId: TurnItemId,
+  /** The subagents whose results that response reported on. */
+  subagents: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        title: ContextLabel,
+        /** Set when the subagent's thread lives on a linked environment. */
+        environmentId: Schema.optional(EnvironmentId),
+      }),
+    ).check(Schema.isMaxLength(20)),
+  ),
+});
+export type ResponseContextRecord = typeof ResponseContextRecord.Type;
+
+const isJson = Schema.is(Schema.Json);
+
+/** Excludes known discriminators so malformed known records fail their own schema. */
 export const UnknownContextRecord = Schema.Struct({
   ...recordBase,
   kind: ComposerContextKind.check(Schema.isPattern(KNOWN_KIND_PATTERN)),
@@ -246,6 +281,8 @@ export const KnownComposerContextRecord = Schema.Union([
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
+  EnvironmentContextRecord,
+  ResponseContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 
@@ -258,9 +295,23 @@ export type ComposerContextRecord = typeof ComposerContextRecord.Type;
 export const COMPOSER_CONTEXT_MAX_RECORDS = 200;
 const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 
+/**
+ * Marks a user message as a guest's, sent by the owner. The message `text` keeps the attributed
+ * form the agent reads; clients show `text` here with `name` beside it. Only the server sets it.
+ */
+export const GuestMessageAttribution = Schema.Struct({
+  guestMessageId: GuestMessageId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(GUEST_NAME_MAX_LENGTH)),
+  text: Schema.String.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
+  /** The link the guest used. Only that link's guest may load the message's files. */
+  shareId: Schema.optional(GuestShareId),
+});
+export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
+
 /** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
+  guest: Schema.optional(GuestMessageAttribution),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

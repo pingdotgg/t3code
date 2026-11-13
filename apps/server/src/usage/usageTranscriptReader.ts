@@ -1,12 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * The direct `node:fs` streaming is deliberate: a cold 30-day window is ~1.4 GB
- * across ~1,500 files, and buffer-level streaming is roughly an order of
- * magnitude cheaper than materialising each file.
- */
+// Cold windows span ~1.4 GB/1,500 files; node:fs buffer streaming is ~10x cheaper than materializing files.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
+import * as NodeUtil from "node:util";
+import * as NodeZlib from "node:zlib";
 
 import type {
   SelectedFields,
@@ -24,12 +23,7 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
-/**
- * The guard hash fingerprints the bytes immediately before `resumeOffset`. A
- * resume only proceeds when those bytes still match: transcripts are
- * append-only by design, but a rotated or rewritten file silently mis-parsed
- * from the middle would corrupt usage totals.
- */
+/** Resume only if bytes before resumeOffset match the guard hash; rewritten files would corrupt totals. */
 export interface TranscriptParsePosition {
   readonly resumeOffset: number;
   readonly guardLength: number;
@@ -39,11 +33,7 @@ export interface TranscriptParsePosition {
 
 export interface TranscriptParseResult {
   readonly records: readonly UsageRecord[];
-  /**
-   * Records from a trailing segment the writer has not newline-terminated yet.
-   * Kept out of `records` because `position` deliberately excludes that
-   * segment: the next scan re-reads it once the writer finishes the line.
-   */
+  /** Unterminated tail records stay outside records/position so the next scan rereads them. */
   readonly tailRecords: readonly UsageRecord[];
   /** Includes tentative tail diagnostics; position.state only includes committed lines. */
   readonly malformedRecords: number;
@@ -53,8 +43,12 @@ export interface TranscriptParseResult {
 
 export const GUARD_LENGTH = 64;
 const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
+const READ_CHUNK_BYTES = 256 * 1024;
 const NEWLINE = 0x0a;
 const STAT_CONCURRENCY = 32;
+const WALK_CONCURRENCY = 16;
+// Measured about 3x faster than the promise API's stat across 20,000 transcripts.
+const statFile = NodeUtil.promisify(NodeFS.stat);
 const CARRIAGE_RETURN = 0x0d;
 
 function selectUsageFields(fields: SelectedFields) {
@@ -78,44 +72,59 @@ function fnv1a(buffer: Buffer): number {
   return hash >>> 0;
 }
 
-/**
- * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
- * never carry usage, so the basename filter keeps a cold scan off those files.
- * Results keep `readdir` order, which the aggregator's first-seen dedupe relies
- * on.
- */
+/** Skips Grok logs without usage; preserves readdir order for first-seen deduplication. */
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<{ readonly files: readonly TranscriptFile[]; readonly failedPaths: number }> {
+): Promise<{
+  readonly files: readonly TranscriptFile[];
+  readonly walked: readonly string[];
+  readonly failedPaths: number;
+}> {
   const fileName = options?.fileName;
-  const candidates: string[] = [];
   let failedPaths = 0;
-  const walk = async (dir: string): Promise<void> => {
+  let reading = 0;
+  const waiting: Array<() => void> = [];
+  // Sibling directories read together; each returns its own list so the result keeps readdir order.
+  const walk = async (dir: string): Promise<readonly string[]> => {
+    if (reading < WALK_CONCURRENCY) reading += 1;
+    else await new Promise<void>((resume) => waiting.push(resume));
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
     } catch {
       failedPaths += 1;
-      return;
+      return [];
+    } finally {
+      // A waiting directory takes over this slot, so the count only drops when none waits.
+      const next = waiting.shift();
+      if (next === undefined) reading -= 1;
+      else next();
     }
-    for (const entry of entries) {
-      const child = NodePath.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(child);
-      else if (fileName !== undefined ? entry.name === fileName : entry.name.endsWith(".jsonl")) {
-        candidates.push(child);
-      }
-    }
+    const found = await Promise.all(
+      entries.map((entry) => {
+        const child = NodePath.join(dir, entry.name);
+        if (entry.isDirectory()) return walk(child);
+        return (
+          fileName !== undefined
+            ? entry.name === fileName
+            : entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst")
+        )
+          ? [child]
+          : [];
+      }),
+    );
+    return found.flat();
   };
-  await walk(root);
+  const candidates = await walk(root);
 
   const found: Array<TranscriptFile | undefined> = Array.from({ length: candidates.length });
   const queue = candidates.entries();
   const statQueued = async (): Promise<void> => {
     for (const [index, path] of queue) {
       try {
-        const stats = await NodeFSP.stat(path);
+        const stats = await statFile(path);
         if (stats.mtimeMs >= sinceMs) {
           found[index] = { path, size: stats.size, mtimeMs: stats.mtimeMs };
         }
@@ -129,7 +138,7 @@ export async function listTranscriptFiles(
   await Promise.all(
     Array.from({ length: Math.min(STAT_CONCURRENCY, candidates.length) }, statQueued),
   );
-  return { files: found.filter((file) => file !== undefined), failedPaths };
+  return { files: found.filter((file) => file !== undefined), walked: candidates, failedPaths };
 }
 
 export async function readDirectoryVolumeId(path: string): Promise<string> {
@@ -160,12 +169,30 @@ async function guardMatches(
   }
 }
 
-/**
- * Several would be one pass over the line each, so they are matched together as
- * one alternation over the line's latin1 view instead: latin1 maps every byte
- * to one character without validating it, so an ASCII marker matches exactly
- * where its bytes do.
- */
+/** Plain files reuse one buffer, so a chunk is only valid until the next one is requested. */
+async function* readChunks(
+  handle: NodeFSP.FileHandle,
+  start: number,
+  compressed: boolean,
+): AsyncGenerator<Buffer> {
+  if (compressed) {
+    // Compressed snapshots cache a full parse; decoded byte offsets cannot
+    // resume the compressed input.
+    yield* handle
+      .createReadStream({ start, autoClose: true, highWaterMark: READ_CHUNK_BYTES })
+      .compose(NodeZlib.createZstdDecompress());
+    return;
+  }
+  const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+  for (let position = start; ;) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    if (bytesRead === 0) return;
+    position += bytesRead;
+    yield buffer.subarray(0, bytesRead);
+  }
+}
+
+// Match markers in one latin1 alternation; one character per byte preserves exact ASCII offsets.
 export function transcriptLineGate(markers: readonly [string, ...string[]]) {
   if (markers.length === 1) {
     const marker = Buffer.from(markers[0]);
@@ -177,15 +204,7 @@ export function transcriptLineGate(markers: readonly [string, ...string[]]) {
   return (line: Buffer) => pattern.test(line.toString("latin1"));
 }
 
-/**
- * Streams one transcript and returns the usage records it contains, or `null`
- * when the file could not be read.
- *
- * The distinction matters to the caller's cache: a genuinely empty transcript
- * is a stable fact worth memoising, while a transient read failure memoised
- * under the same `(size, mtime)` key would silently drop that file's usage
- * until the file next changes.
- */
+/** Returns null on read failure; caching it as empty would hide usage until size/mtime changes. */
 export async function readTranscriptRecords<State>(
   filePath: string,
   format: TranscriptUsageFormat<State>,
@@ -193,6 +212,7 @@ export async function readTranscriptRecords<State>(
   options?: { readonly streamingThresholdBytes?: number },
 ): Promise<TranscriptParseResult | null> {
   const streamingThresholdBytes = options?.streamingThresholdBytes ?? STREAMING_THRESHOLD_BYTES;
+  const compressed = filePath.endsWith(".jsonl.zst");
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
@@ -212,6 +232,7 @@ export async function readTranscriptRecords<State>(
         ? Option.none()
         : decodeState(resumeFrom.state);
     if (
+      !compressed &&
       resumeFrom !== undefined &&
       resumeFrom.resumeOffset > 0 &&
       (codec === undefined || Option.isSome(savedState)) &&
@@ -247,13 +268,13 @@ export async function readTranscriptRecords<State>(
 
     const append = (segment: Buffer) => {
       if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
-        if (segment.length > 0) pendingChunks.push(segment);
+        // Copy: the next read overwrites the chunk this segment points into.
+        if (segment.length > 0) pendingChunks.push(Buffer.from(segment));
         pendingBytes += segment.length;
         return;
       }
       if (!streaming) {
-        // Usage has no import-history budget: retain all selected usage fields,
-        // regardless of the size of the surrounding unselected tool content.
+        // Usage has no import-history budget; retain selected fields regardless of surrounding tool payload size.
         streaming = createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity });
         decoder = new NodeStringDecoder.StringDecoder("utf8");
         for (const pending of pendingChunks) streaming.write(decoder.write(pending));
@@ -279,12 +300,7 @@ export async function readTranscriptRecords<State>(
       streaming = undefined;
       decoder = undefined;
     };
-    const stream = handle.createReadStream({
-      start,
-      autoClose: false,
-      highWaterMark: 256 * 1024,
-    }) as AsyncIterable<Buffer>;
-    for await (const chunk of stream) {
+    for await (const chunk of readChunks(handle, start, compressed)) {
       let lineStart = 0;
       while (lineStart < chunk.length) {
         const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
@@ -304,15 +320,14 @@ export async function readTranscriptRecords<State>(
       scanOffset += chunk.length;
     }
 
-    // The unfinished tail parses against a copy, so the saved state stays at
-    // `resumeOffset` and the next scan replays the tail from it.
+    // Parse unfinished tails against copied state so the next scan can replay from resumeOffset.
     const encodedState = encodeState === undefined ? null : encodeState(state);
     const tailRecords: UsageRecord[] = [];
     const tailState =
       decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
     finish(tailState, tailRecords);
 
-    const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
+    const guardLength = compressed ? 0 : Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;
     if (guardLength > 0) {
       const window = Buffer.alloc(guardLength);
@@ -325,7 +340,7 @@ export async function readTranscriptRecords<State>(
       tailRecords,
       malformedRecords: format.readMalformedRecords?.(tailState) ?? 0,
       position: {
-        resumeOffset,
+        resumeOffset: compressed ? 0 : resumeOffset,
         guardLength,
         guardHash,
         state: encodedState,

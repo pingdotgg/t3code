@@ -27,7 +27,6 @@ const file = {
   b_mode: "100644",
   diff: "@@ -1 +1 @@\n-before\n+after\n",
 };
-/** Supplies JSON at the process boundary while retaining the real CLI adapter and decoder. */
 function output(body: unknown, stdoutTruncated = false) {
   return Effect.succeed({
     exitCode: ChildProcessSpawner.ExitCode(0),
@@ -37,7 +36,6 @@ function output(body: unknown, stdoutTruncated = false) {
     stderrTruncated: false,
   });
 }
-/** Supplies the failure classification produced by VcsProcess for an unsuccessful glab call. */
 function failure(failureKind: "not-found" | "authentication" | "rate-limited" | "command-failed") {
   return Effect.fail(
     new VcsProcessExitError({
@@ -147,7 +145,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
   );
   it.effect("keeps modern pagination without requesting legacy changes", () =>
     Effect.gen(function* () {
-      run.mockReturnValueOnce(output(Array.from({ length: 100 }, () => file)));
+      run.mockReturnValueOnce(output(Array.from({ length: 30 }, () => file)));
       run.mockReturnValueOnce(output([file]));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
       const first = yield* cli.getMergeRequestDiff(input);
@@ -157,7 +155,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
       ).toBeNull();
       expect(run).toHaveBeenCalledTimes(2);
       expect(run.mock.calls[1]?.[0].args).toContain(
-        "projects/acme%2Fnested%2Fweb/merge_requests/7/diffs?per_page=100&page=2",
+        "projects/acme%2Fnested%2Fweb/merge_requests/7/diffs?per_page=30&page=2",
       );
     }),
   );

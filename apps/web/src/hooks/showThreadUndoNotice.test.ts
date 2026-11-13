@@ -1,9 +1,18 @@
+import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { toastManager } from "../components/ui/toast";
-import { showThreadUndoNotice, useThreadUndoNotice } from "./showThreadUndoNotice";
-import * as ThreadUndo from "./threadUndo";
+import { announce, cancelAnnouncement } from "../lib/announce";
+import {
+  releaseThreadUndoShortcut,
+  showThreadUndoNotice,
+  threadUndoClaimsShortcut,
+  useThreadUndoNotice,
+} from "./showThreadUndoNotice";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
+
+vi.mock("../lib/announce", () => ({ announce: vi.fn(), cancelAnnouncement: vi.fn() }));
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -38,5 +47,66 @@ describe("thread undo notice", () => {
     expect(undo).not.toHaveBeenCalled();
     await notice().undo();
     expect(undo).toHaveBeenCalledOnce();
+  });
+
+  it("claims mod+z from text fields until the user types, then again for a new notice", () => {
+    const { options } = setup();
+    expect(threadUndoClaimsShortcut()).toBe(false);
+    showThreadUndoNotice(options);
+    expect(threadUndoClaimsShortcut()).toBe(true);
+    releaseThreadUndoShortcut();
+    expect(threadUndoClaimsShortcut()).toBe(false);
+    showThreadUndoNotice({ ...options, claim: ThreadUndo.begin("pin", "env/next") });
+    expect(threadUndoClaimsShortcut()).toBe(true);
+  });
+
+  it("stops claiming mod+z once nothing is left to undo", async () => {
+    const { options } = setup();
+    showThreadUndoNotice(options);
+    await notice().undo();
+    expect(threadUndoClaimsShortcut()).toBe(false);
+    showThreadUndoNotice({ ...options, claim: ThreadUndo.begin("pin", "env/expiring") });
+    vi.advanceTimersByTime(5_000);
+    expect(threadUndoClaimsShortcut()).toBe(false);
+  });
+
+  it("announces each new summary once, and cancels it when the notice clears", async () => {
+    const { options } = setup();
+    vi.mocked(announce).mockClear();
+    vi.mocked(cancelAnnouncement).mockClear();
+    showThreadUndoNotice(options);
+    expect(announce).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/^Unpinned 1 thread, /),
+      "thread-undo-notice",
+    );
+    ThreadUndo.invalidate("pin", "env/other");
+    expect(announce).toHaveBeenCalledOnce();
+    showThreadUndoNotice({ ...options, claim: ThreadUndo.begin("pin", "env/second") });
+    expect(announce).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^Unpinned 2 threads, /),
+      "thread-undo-notice",
+    );
+    await notice().undo();
+    expect(cancelAnnouncement).toHaveBeenCalledWith("thread-undo-notice");
+  });
+
+  it("announces that the undo happened, naming the undone action", async () => {
+    const { options } = setup();
+    showThreadUndoNotice(options);
+    vi.mocked(announce).mockClear();
+    await notice().undo();
+    expect(announce).toHaveBeenCalledExactlyOnceWith("Undid unpin of 1 thread");
+  });
+
+  it("does not announce an undo that failed", async () => {
+    const { options, add } = setup();
+    showThreadUndoNotice({
+      ...options,
+      undo: async () => AsyncResult.failure(Cause.fail(new Error("offline"))),
+    });
+    vi.mocked(announce).mockClear();
+    await notice().undo();
+    expect(add).toHaveBeenCalledOnce();
+    expect(announce).not.toHaveBeenCalled();
   });
 });
