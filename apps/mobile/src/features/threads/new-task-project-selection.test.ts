@@ -2,7 +2,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
   isSameRepository,
@@ -76,6 +76,32 @@ describe("getProjectScopeSelectionTarget", () => {
     // With nothing connected, the usual order still applies.
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
+  });
+
+  it("starts a grouped repository in its root checkout in the preferred environment", () => {
+    const inRepository = (id: string, workspaceRoot: string) => {
+      const project = makeProject(id, "environment", {
+        workspaceRoot,
+        repositoryKey: "github.com/owner/workspace",
+      });
+      return {
+        ...project,
+        repositoryIdentity: { ...project.repositoryIdentity!, rootPath: "/work/workspace" },
+      };
+    };
+    const [scope] = buildHomeProjectScopes({
+      projects: [
+        inRepository("old-tool", "/work/workspace/_archive/old-tool"),
+        inRepository("app-a", "/work/workspace/app-a"),
+        inRepository("root", "/work/workspace"),
+      ],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    const environment = EnvironmentId.make("environment");
+    expect(getProjectScopeSelectionTarget(scope!, environment, new Set([environment])).id).toBe(
+      "root",
+    );
   });
 });
 

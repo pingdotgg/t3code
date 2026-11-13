@@ -283,6 +283,11 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.representative.id).toBe("root");
+    expect(groups[0]?.members.map((member) => member.project.id)).toEqual([
+      "root",
+      "old-tool",
+      "app-a",
+    ]);
   });
 
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
