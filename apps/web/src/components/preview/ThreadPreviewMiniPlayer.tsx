@@ -56,6 +56,7 @@ import { Atom } from "effect/reactivity";
 import { deviceScreenKey, deviceStreamScreenAtom } from "../device/deviceStreamSession";
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
+import { PreviewUnreachable } from "./PreviewUnreachable";
 import { showPreviewPopup } from "./showPreviewPopup";
 import {
   clampPreviewMiniPlayerPosition,
@@ -262,6 +263,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     snapshot.navStatus._tag === "Success"
       ? previewPdfAssetUrl(snapshot.navStatus.url, httpBaseUrl)
       : null;
+  const loadFailed = snapshot.navStatus._tag === "LoadFailed" ? snapshot.navStatus : null;
   const poppedOut = serverTab ? serverPictureInPicture : Boolean(desktopOverlay?.pictureInPicture);
   const canPopOut = serverTab
     ? poppedOut || (pdfUrl === null && supportsServerPictureInPicture())
@@ -335,14 +337,23 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
           <>
             <BrowserSurfaceSlot
               tabId={runtimeTabId}
-              visible={Boolean(desktopOverlay?.hasWebContents)}
+              visible={Boolean(desktopOverlay?.hasWebContents) && !loadFailed}
               cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
               zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
               fitSourceContent
               layoutVersion={`${frame.x}:${frame.y}`}
               className="absolute inset-0"
             />
-            {!desktopOverlay?.hasWebContents ? (
+            {loadFailed ? (
+              <div className="pointer-events-auto absolute inset-0 z-[48] overflow-hidden rounded-[inherit]">
+                <PreviewUnreachable
+                  url={loadFailed.url}
+                  code={loadFailed.code}
+                  description={loadFailed.description}
+                  onReload={() => void previewBridge?.refresh(runtimeTabId)}
+                />
+              </div>
+            ) : !desktopOverlay?.hasWebContents ? (
               <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
                 Reconnecting preview…
               </div>
