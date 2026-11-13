@@ -128,6 +128,10 @@ describe("ssh config", () => {
       const sshDir = path.join(homeDir, ".ssh");
       yield* fs.makeDirectory(path.join(sshDir, "config.d"), { recursive: true });
       yield* fs.makeDirectory(path.join(sshDir, "teams", "one"), { recursive: true });
+      const blockedDir = path.join(sshDir, "teams", "blocked");
+      yield* fs.makeDirectory(blockedDir);
+      yield* fs.chmod(blockedDir, 0o000);
+      yield* Effect.addFinalizer(() => fs.chmod(blockedDir, 0o755).pipe(Effect.ignore));
       yield* fs.writeFileString(
         path.join(sshDir, "config"),
         [

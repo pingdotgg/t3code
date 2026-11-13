@@ -116,16 +116,18 @@ const expandGlob = Effect.fnUntraced(function* (
 
   const directoryPattern = path.dirname(pattern);
   const basePattern = path.basename(pattern);
-  const directories = hasGlobWildcard(directoryPattern)
-    ? yield* expandGlob(directoryPattern)
-    : [directoryPattern];
+  const directoryIsGlob = hasGlobWildcard(directoryPattern);
+  const directories = directoryIsGlob ? yield* expandGlob(directoryPattern) : [directoryPattern];
 
   const matcher = globToRegExp(basePattern);
   const matchedPaths: string[] = [];
   for (const directory of directories) {
     if (!(yield* fs.exists(directory))) continue;
     if ((yield* fs.stat(directory)).type !== "Directory") continue;
-    const entries = yield* fs.readDirectory(directory);
+    // Like OpenSSH's glob, a wildcard-matched directory we cannot read matches nothing.
+    const entries = directoryIsGlob
+      ? yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => NO_HOSTS))
+      : yield* fs.readDirectory(directory);
     for (const entry of entries) {
       if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
       if (!matcher.test(entry)) {
