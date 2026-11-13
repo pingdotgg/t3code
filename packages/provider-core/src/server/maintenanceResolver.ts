@@ -648,18 +648,71 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
   },
 );
 
+const decodeVitePlusConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ shimMode: Schema.optional(Schema.Unknown) })),
+);
+
+/** With `shimMode: "system_first"` (`vp env off`), a Vite+ shim runs the next same-named command on PATH. */
+const followVitePlusSystemFirstShim = Effect.fn("followVitePlusSystemFirstShim")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  if (!isVitePlusGlobalCommandPath(context.resolvedCommandPath)) return context;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const shimDir = path.dirname(context.resolvedCommandPath);
+  const dataDir = path.dirname(shimDir);
+  // Without VP_HOME, the XDG layout keeps shims in `~/.local/share/vite-plus` and config in `$XDG_CONFIG_HOME/vite-plus`.
+  const home = context.env.VP_HOME
+    ? undefined
+    : /^(.*)\/\.local\/share\/vite-plus$/.exec(dataDir.replaceAll("\\", "/"))?.[1];
+  const configPaths = [
+    ...(home !== undefined
+      ? [path.join(context.env.XDG_CONFIG_HOME || path.join(home, ".config"), "vite-plus")]
+      : []),
+    dataDir,
+  ].map((dir) => path.join(dir, "config.json"));
+  const config = yield* Effect.firstSuccessOf(
+    configPaths.map((configPath) => fileSystem.readFileString(configPath)),
+  ).pipe(Effect.orElseSucceed(() => ""));
+  if (Option.getOrUndefined(decodeVitePlusConfig(config))?.shimMode !== "system_first") {
+    return context;
+  }
+  const delimiter = context.platform === "win32" ? ";" : ":";
+  const dirKey = (dir: string) => normalizeCommandPath(dir).replace(/\/+$/, "");
+  const shimDirKey = dirKey(shimDir);
+  const env = Object.fromEntries(
+    Object.entries(context.env).map(([name, value]) => [
+      name,
+      name.toLowerCase() === "path" && value
+        ? value
+            .split(delimiter)
+            .filter((entry) => dirKey(entry) !== shimDirKey)
+            .join(delimiter)
+        : value,
+    ]),
+  );
+  const command = path.basename(context.resolvedCommandPath).replace(/\.(?:exe|cmd|bat|ps1)$/i, "");
+  const resolvedCommandPath = yield* resolveCommandPath(command, { env });
+  if (!resolvedCommandPath) return context;
+  const realCommandPath = yield* fileSystem
+    .realPath(resolvedCommandPath)
+    .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
+  return { ...context, resolvedCommandPath, realCommandPath };
+});
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
   definition: PackageManagedProviderMaintenanceDefinition,
-  context: ProviderMaintenanceResolutionContext | null,
+  configuredContext: ProviderMaintenanceResolutionContext | null,
 ) {
-  if (!context) {
+  if (!configuredContext) {
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName: definition.npmPackageName,
     });
   }
+  const context = yield* followVitePlusSystemFirstShim(configuredContext);
   const manual = makeManualOnlyProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
