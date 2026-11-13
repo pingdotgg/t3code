@@ -34,6 +34,7 @@ export default Effect.gen(function* () {
         updated_at
       FROM orchestration_v2_projection_threads
       WHERE thread_id > ${afterThreadId}
+        AND json_valid(payload_json)
         AND json_type(payload_json, '$.pullRequests') IS NULL
         AND json_type(payload_json, '$.linkedPullRequest') = 'object'
       ORDER BY thread_id
@@ -65,6 +66,7 @@ export default Effect.gen(function* () {
       WHERE sequence > ${afterSequence}
         AND application_event_version = 2 AND aggregate_kind = 'thread'
         AND event_type LIKE 'thread.%'
+        AND json_valid(payload_json)
         AND json_type(payload_json, '$.pullRequests') IS NULL
         AND json_type(payload_json, '$.linkedPullRequest') = 'object'
       ORDER BY sequence
