@@ -7,15 +7,15 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
-import { totalTokens, type TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
+import {
+  EMPTY_TOTALS,
+  totalTokens,
+  type TranscriptUsageFormat,
+} from "@t3tools/provider-core/server/usage";
 import * as Schema from "effect/Schema";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
-import {
-  listTranscriptFiles,
-  readTranscriptRecords,
-  transcriptLineGate,
-} from "./usageTranscriptReader.ts";
+import { listTranscriptFiles, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -537,6 +537,22 @@ describe("readTranscriptRecords resume", () => {
     );
   });
 
+  it("parses a line whose usage nests deeper than the main thread can deserialize", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    const deep = `${"[".repeat(6000)}0${"]".repeat(6000)}`;
+    const nested = claudeLine(2, 6).replace(
+      '"output_tokens":6',
+      `"output_tokens":6,"ignored":${deep}`,
+    );
+    await NodeFSP.writeFile(path, claudeLine(1, 5) + nested + claudeLine(3, 7));
+
+    const parsed = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    assert.deepStrictEqual(
+      parsed?.records.map((record) => record.totals.outputTokens),
+      [5, 6, 7],
+    );
+  });
+
   it("keeps a CRLF Codex reducer line whose marker straddles a stream chunk", async () => {
     const path = NodePath.join(dir, "rollout.jsonl");
     const crlf = (line: string) => line.replace("\n", "\r\n");
@@ -559,20 +575,52 @@ describe("readTranscriptRecords resume", () => {
   });
 });
 
-describe("transcriptLineGate", () => {
-  const gates = {
-    one: transcriptLineGate(['"usage"']),
-    several: transcriptLineGate(['"token_count"', '"session_meta"', '"a.b(c)"']),
-  };
+describe("usage marker gate", () => {
   const markers = { one: ['"usage"'], several: ['"token_count"', '"session_meta"', '"a.b(c)"'] };
+  // Returns the ids of the lines the gate let through to the parser.
+  const gatedLines = async (kind: keyof typeof markers, lines: readonly Buffer[]) => {
+    const path = NodePath.join(dir, `${kind}.jsonl`);
+    await NodeFSP.writeFile(
+      path,
+      Buffer.concat(lines.flatMap((line) => [line, Buffer.from("\n")])),
+    );
+    const format: TranscriptUsageFormat<unknown> = {
+      ...TEST_FORMATS.claude,
+      selectFields: { id: true },
+      usageMarkers: markers[kind] as [string, ...string[]],
+      parseProjected: (projected) => [
+        {
+          provider: "claude",
+          timestampMs: 0,
+          model: "",
+          sessionId: String((projected as { id: number }).id),
+          totals: EMPTY_TOTALS,
+          reportedCostUsd: null,
+          speed: "standard",
+          dedupeKey: null,
+        },
+      ],
+    };
+    const result = await readTranscriptRecords(path, format);
+    return result!.records.map((record) => record.sessionId);
+  };
 
-  it("matches markers beside multi-byte and malformed UTF-8", () => {
+  it("matches markers beside multi-byte and malformed UTF-8", async () => {
     const invalid = Buffer.from([0xff, 0xc3]);
     for (const kind of ["one", "several"] as const) {
       for (const marker of markers[kind]) {
-        assert.isTrue(gates[kind](Buffer.from(`{"text":"日本語 é",${marker}:1}`)));
-        assert.isTrue(gates[kind](Buffer.concat([invalid, Buffer.from(marker), invalid])));
-        assert.isFalse(gates[kind](Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`)));
+        const lines = [
+          Buffer.from(`{"id":0,"text":"日本語 é",${marker}:1}`),
+          Buffer.concat([
+            Buffer.from('{"id":1,"text":"'),
+            invalid,
+            Buffer.from(`",${marker}:"`),
+            invalid,
+            Buffer.from('"}'),
+          ]),
+          Buffer.from(`{"id":2,"text":"日本語 é ${marker.slice(1, -1)}"}`),
+        ];
+        assert.deepStrictEqual(await gatedLines(kind, lines), ["0", "1"]);
       }
     }
   });

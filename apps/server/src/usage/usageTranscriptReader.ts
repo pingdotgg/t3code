@@ -1,11 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- the scan worker pool runs outside the Effect runtime.
 // Cold windows span ~1.4 GB/1,500 files; node:fs buffer streaming is ~10x cheaper than materializing files.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
 import * as NodeUtil from "node:util";
-import * as NodeZlib from "node:zlib";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import type {
   SelectedFields,
@@ -44,12 +44,10 @@ export interface TranscriptParseResult {
 export const GUARD_LENGTH = 64;
 const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
 const READ_CHUNK_BYTES = 256 * 1024;
-const NEWLINE = 0x0a;
 const STAT_CONCURRENCY = 32;
 const WALK_CONCURRENCY = 16;
 // Measured about 3x faster than the promise API's stat across 20,000 transcripts.
 const statFile = NodeUtil.promisify(NodeFS.stat);
-const CARRIAGE_RETURN = 0x0d;
 
 function selectUsageFields(fields: SelectedFields) {
   return (path: ReadonlyArray<string | number | null>): boolean => {
@@ -169,39 +167,333 @@ async function guardMatches(
   }
 }
 
-/** Plain files reuse one buffer, so a chunk is only valid until the next one is requested. */
-async function* readChunks(
-  handle: NodeFSP.FileHandle,
-  start: number,
-  compressed: boolean,
-): AsyncGenerator<Buffer> {
-  if (compressed) {
-    // Compressed snapshots cache a full parse; decoded byte offsets cannot
-    // resume the compressed input.
-    yield* handle
-      .createReadStream({ start, autoClose: true, highWaterMark: READ_CHUNK_BYTES })
-      .compose(NodeZlib.createZstdDecompress());
-    return;
+const LINE = 0;
+const PIECE = 1;
+const LINE_END = 2;
+const TAIL = 3;
+// Set on a LINE or TAIL whose value is the line's text for format.parseLine.
+const RAW = 4;
+// Parallel parsing beyond UsageService's four concurrent reads would only queue.
+const SCAN_WORKERS = 4;
+const SCAN_WORKER_IDLE_MS = 10_000;
+
+interface ScanJob {
+  readonly fd: number;
+  readonly start: number;
+  readonly compressed: boolean;
+  readonly streamingThresholdBytes: number;
+  readonly selectFields: SelectedFields;
+  readonly marker?: string;
+  readonly pattern?: string;
+}
+
+/**
+ * Parts arrive in file order. A LINE or TAIL takes the next entry of `values`, a gated line
+ * parsed and projected to the format's selected fields (its text when flagged RAW); each PIECE
+ * ends at `ends[i]` in `bytes`.
+ */
+interface ScanBatch {
+  readonly kinds: readonly number[];
+  readonly values: readonly unknown[];
+  readonly ends: readonly number[];
+  readonly bytes: ArrayBuffer;
+  readonly resumeOffset: number;
+  readonly done: boolean;
+  /** On the last batch: the unterminated tail is a line too large to buffer. */
+  readonly streaming: boolean;
+}
+
+// Splitting, gating and JSON-parsing lines is most of a scan's CPU, so it runs off the main
+// thread; the main thread applies the format to the projected lines in order, keeping its state.
+// Inline source also runs in bundles and single-executable builds without module files.
+const scanWorkerSource = `
+const { parentPort } = require("node:worker_threads");
+const NodeFS = require("node:fs");
+const NodeStream = require("node:stream");
+const NodeZlib = require("node:zlib");
+const NEWLINE = 0x0a;
+const READ_CHUNK_BYTES = ${READ_CHUNK_BYTES};
+const BATCH_BYTES = 1024 * 1024;
+const [LINE, PIECE, LINE_END, TAIL, RAW] = [${LINE}, ${PIECE}, ${LINE_END}, ${TAIL}, ${RAW}];
+// Deserializing a deeply nested value overflows the main thread's stack; such lines go as text.
+const MAX_CLONE_DEPTH = 64;
+const EMPTY = Buffer.alloc(0);
+const CARRIAGE_RETURN = 0x0d;
+
+// Mirrors the streaming JSON reader's projection, so a line projects the same either way.
+const project = (value, fields) => {
+  if (fields === true || typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) return [];
+  const projected = {};
+  for (const key of Object.keys(value)) {
+    if (Object.hasOwn(fields, key)) projected[key] = project(value[key], fields[key]);
   }
-  const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
-  for (let position = start; ;) {
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+  return projected;
+};
+
+const deeperThan = (value, depth) => {
+  if (typeof value !== "object" || value === null) return false;
+  if (depth === 0) return true;
+  for (const child of Object.values(value)) if (deeperThan(child, depth - 1)) return true;
+  return false;
+};
+
+const read = (fd, buffer, position) =>
+  new Promise((resolve, reject) =>
+    NodeFS.read(fd, buffer, 0, buffer.length, position, (error, bytesRead) =>
+      error ? reject(error) : resolve(bytesRead),
+    ),
+  );
+
+// A reused buffer is only valid until the next chunk is requested.
+async function* fileChunks(job, reuse) {
+  let buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+  for (let position = job.start; ; ) {
+    const bytesRead = await read(job.fd, buffer, position);
     if (bytesRead === 0) return;
     position += bytesRead;
     yield buffer.subarray(0, bytesRead);
+    if (!reuse) buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
   }
 }
 
-// Match markers in one latin1 alternation; one character per byte preserves exact ASCII offsets.
-export function transcriptLineGate(markers: readonly [string, ...string[]]) {
-  if (markers.length === 1) {
-    const marker = Buffer.from(markers[0]);
-    return (line: Buffer) => line.includes(marker);
-  }
-  const pattern = new RegExp(
-    markers.map((marker) => marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+function readChunks(job) {
+  if (!job.compressed) return fileChunks(job, true);
+  // Compressed snapshots cache a full parse; decoded offsets cannot resume the compressed input.
+  // Not an fs stream: destroying one closes the main thread's descriptor even without autoClose.
+  return NodeStream.Readable.from(fileChunks(job, false), { objectMode: false }).compose(
+    NodeZlib.createZstdDecompress(),
   );
-  return (line: Buffer) => pattern.test(line.toString("latin1"));
+}
+
+async function* scan(job) {
+  let passes;
+  if (job.marker !== undefined) {
+    const marker = Buffer.from(job.marker);
+    passes = (line) => line.includes(marker);
+  } else {
+    // latin1 maps each byte to one character, so ASCII markers match exactly where their bytes do.
+    const pattern = new RegExp(job.pattern);
+    passes = (line) => pattern.test(line.toString("latin1"));
+  }
+  let kinds = [];
+  let values = [];
+  let parts = [];
+  let bytes = 0;
+  const push = (kind, part) => {
+    kinds.push(kind);
+    parts.push(part);
+    bytes += part.length;
+  };
+  // Every format reads a line as JSON.parse plus parseProjected, and skips unparseable lines.
+  const pushLine = (kind, line) => {
+    const content =
+      line.length > 0 && line[line.length - 1] === CARRIAGE_RETURN ? line.subarray(0, -1) : line;
+    const text = content.toString("utf8");
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return;
+    }
+    const projected = project(parsed, job.selectFields);
+    const raw = deeperThan(projected, MAX_CLONE_DEPTH);
+    kinds.push(raw ? kind | RAW : kind);
+    values.push(raw ? text : projected);
+    parts.push(EMPTY);
+  };
+  let resumeOffset = job.start;
+  let scanOffset = job.start;
+  let pending = [];
+  let pendingBytes = 0;
+  let streaming = false;
+  const batch = (done) => {
+    // An unpooled buffer owns its ArrayBuffer, so it can be transferred without a copy.
+    const out = Buffer.allocUnsafeSlow(bytes);
+    const ends = [];
+    let offset = 0;
+    for (const part of parts) {
+      part.copy(out, offset);
+      offset += part.length;
+      ends.push(offset);
+    }
+    const result = { kinds, values, ends, bytes: out.buffer, resumeOffset, done, streaming };
+    kinds = [];
+    values = [];
+    parts = [];
+    bytes = 0;
+    return result;
+  };
+  const append = (segment) => {
+    if (!streaming && pendingBytes + segment.length <= job.streamingThresholdBytes) {
+      // Copy: the next read overwrites the chunk this segment points into.
+      if (segment.length > 0) pending.push(Buffer.from(segment));
+      pendingBytes += segment.length;
+      return;
+    }
+    if (!streaming) {
+      streaming = true;
+      for (const part of pending) push(PIECE, part);
+      pending = [];
+      pendingBytes = 0;
+    }
+    if (segment.length > 0) push(PIECE, Buffer.from(segment));
+  };
+  const pendingLine = () =>
+    pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
+  let consumed = 0;
+  for await (const chunk of readChunks(job)) {
+    let lineStart = 0;
+    while (lineStart < chunk.length) {
+      const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
+      if (newlineIndex === -1) {
+        append(chunk.subarray(lineStart));
+        break;
+      }
+      if (!streaming && pendingBytes === 0) {
+        const line = chunk.subarray(lineStart, newlineIndex);
+        if (passes(line)) pushLine(LINE, line);
+      } else {
+        append(chunk.subarray(lineStart, newlineIndex));
+        if (streaming) push(LINE_END, EMPTY);
+        else if (pendingBytes > 0) {
+          const line = pendingLine();
+          if (passes(line)) pushLine(LINE, line);
+        }
+        pending = [];
+        pendingBytes = 0;
+        streaming = false;
+      }
+      lineStart = newlineIndex + 1;
+      resumeOffset = scanOffset + lineStart;
+    }
+    scanOffset += chunk.length;
+    consumed += chunk.length;
+    if (consumed >= BATCH_BYTES || bytes >= BATCH_BYTES) {
+      consumed = 0;
+      yield batch(false);
+    }
+  }
+  if (!streaming && pendingBytes > 0) {
+    const line = pendingLine();
+    if (passes(line)) pushLine(TAIL, line);
+  }
+  yield batch(true);
+}
+
+let job;
+let ahead;
+const prefetch = () => {
+  ahead = job.next();
+  // Rejections are reported when the main thread asks for this batch.
+  ahead.catch(() => {});
+};
+parentPort.on("message", async (message) => {
+  if (message.type === "start") {
+    job = scan(message.job);
+    prefetch();
+  }
+  try {
+    const { value } = await ahead;
+    if (!value.done) prefetch();
+    parentPort.postMessage(value, [value.bytes]);
+  } catch (error) {
+    parentPort.postMessage({ error: String(error && error.message ? error.message : error) });
+  }
+});
+`;
+
+interface ScanWorker {
+  readonly thread: NodeWorkerThreads.Worker;
+  failed: boolean;
+  pending?: { resolve: (reply: unknown) => void; reject: (error: unknown) => void } | undefined;
+  idleTimer?: ReturnType<typeof setTimeout>;
+}
+
+const idleWorkers: ScanWorker[] = [];
+const waitingForWorker: Array<(worker: ScanWorker) => void> = [];
+let liveWorkers = 0;
+
+function spawnScanWorker(): ScanWorker {
+  liveWorkers += 1;
+  const worker: ScanWorker = {
+    thread: new NodeWorkerThreads.Worker(scanWorkerSource, { eval: true }),
+    failed: false,
+  };
+  const settle = (outcome: { reply: unknown } | { error: unknown }) => {
+    const pending = worker.pending;
+    worker.pending = undefined;
+    if (pending === undefined) return;
+    if ("reply" in outcome) pending.resolve(outcome.reply);
+    else pending.reject(outcome.error);
+  };
+  worker.thread.on("message", (reply) => settle({ reply }));
+  const fail = (error: unknown) => {
+    worker.failed = true;
+    settle({ error });
+  };
+  worker.thread.on("error", fail);
+  worker.thread.on("messageerror", fail);
+  worker.thread.on("exit", () => fail(new Error("Transcript scan worker exited.")));
+  return worker;
+}
+
+async function acquireScanWorker(): Promise<ScanWorker> {
+  for (let worker = idleWorkers.pop(); worker !== undefined; worker = idleWorkers.pop()) {
+    clearTimeout(worker.idleTimer);
+    if (worker.failed) {
+      liveWorkers -= 1;
+      continue;
+    }
+    worker.thread.ref();
+    return worker;
+  }
+  if (liveWorkers < SCAN_WORKERS) return spawnScanWorker();
+  return new Promise((resolve) => waitingForWorker.push(resolve));
+}
+
+function releaseScanWorker(worker: ScanWorker, reusable: boolean): void {
+  if (!reusable || worker.failed) {
+    liveWorkers -= 1;
+    void worker.thread.terminate();
+    const waiting = waitingForWorker.shift();
+    if (waiting !== undefined) waiting(spawnScanWorker());
+    return;
+  }
+  const waiting = waitingForWorker.shift();
+  if (waiting !== undefined) return waiting(worker);
+  worker.thread.unref();
+  worker.idleTimer = setTimeout(() => {
+    const index = idleWorkers.indexOf(worker);
+    if (index === -1) return;
+    idleWorkers.splice(index, 1);
+    liveWorkers -= 1;
+    void worker.thread.terminate();
+  }, SCAN_WORKER_IDLE_MS).unref();
+  idleWorkers.push(worker);
+}
+
+async function* scanTranscript(job: ScanJob): AsyncGenerator<ScanBatch> {
+  const worker = await acquireScanWorker();
+  let finished = false;
+  try {
+    for (let message: object = { type: "start", job }; ; message = { type: "next" }) {
+      const reply = await new Promise<ScanBatch | { readonly error: string }>((resolve, reject) => {
+        worker.pending = { resolve: resolve as (reply: unknown) => void, reject };
+        worker.thread.postMessage(message);
+      });
+      if ("error" in reply) {
+        finished = true;
+        throw new Error(reply.error);
+      }
+      if (reply.done) finished = true;
+      yield reply;
+      if (reply.done) return;
+    }
+  } finally {
+    // An abandoned scan still has a batch in flight, so its worker is not reused.
+    releaseScanWorker(worker, finished);
+  }
 }
 
 /** Returns null on read failure; caching it as empty would hide usage until size/mtime changes. */
@@ -243,81 +535,69 @@ export async function readTranscriptRecords<State>(
       resumed = true;
     }
 
-    const toLineString = (lineBuffer: Buffer): string => {
-      const content =
-        lineBuffer.length > 0 && lineBuffer[lineBuffer.length - 1] === CARRIAGE_RETURN
-          ? lineBuffer.subarray(0, -1)
-          : lineBuffer;
-      return content.toString("utf8");
+    const parseProjected = (projected: unknown, lineState: State, out: UsageRecord[]): void => {
+      for (const record of format.parseProjected(projected, lineState)) out.push(record);
     };
-
-    const mightCarryUsage = transcriptLineGate(format.usageMarkers);
-    const parseLine = (lineBuffer: Buffer, lineState: State, out: UsageRecord[]): void => {
-      if (!mightCarryUsage(lineBuffer)) return;
-      for (const record of format.parseLine(toLineString(lineBuffer), lineState)) out.push(record);
+    const parseValue = (kind: number, value: unknown, lineState: State, out: UsageRecord[]) => {
+      if (kind & RAW)
+        for (const record of format.parseLine(value as string, lineState)) out.push(record);
+      else parseProjected(value, lineState, out);
     };
 
     const records: UsageRecord[] = [];
     let resumeOffset = start;
-    let scanOffset = start;
-    let pendingChunks: Buffer[] = [];
-    let pendingBytes = 0;
-    let streaming: ReturnType<typeof createTranscriptJsonReader> | undefined;
-    let decoder: NodeStringDecoder.StringDecoder | undefined;
+    let tail: { readonly kind: number; readonly value: unknown } | undefined;
+    let tailStreaming = false;
+    let streaming:
+      | {
+          readonly reader: ReturnType<typeof createTranscriptJsonReader>;
+          readonly decoder: NodeStringDecoder.StringDecoder;
+        }
+      | undefined;
     const selectPath = selectUsageFields(format.selectFields);
-
-    const append = (segment: Buffer) => {
-      if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
-        // Copy: the next read overwrites the chunk this segment points into.
-        if (segment.length > 0) pendingChunks.push(Buffer.from(segment));
-        pendingBytes += segment.length;
-        return;
-      }
-      if (!streaming) {
-        // Usage has no import-history budget; retain selected fields regardless of surrounding tool payload size.
-        streaming = createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity });
-        decoder = new NodeStringDecoder.StringDecoder("utf8");
-        for (const pending of pendingChunks) streaming.write(decoder.write(pending));
-        pendingChunks = [];
-        pendingBytes = 0;
-      }
-      streaming.write(decoder!.write(segment));
-    };
-    const finish = (lineState: State, out: UsageRecord[]) => {
-      if (streaming) {
-        streaming.write(decoder!.end());
-        const projected = streaming.finish();
-        for (const record of format.parseProjected(projected, lineState)) out.push(record);
-      } else if (pendingBytes > 0) {
-        const line =
-          pendingChunks.length === 1
-            ? pendingChunks[0]!
-            : Buffer.concat(pendingChunks, pendingBytes);
-        parseLine(line, lineState, out);
-      }
-      pendingChunks = [];
-      pendingBytes = 0;
+    // Usage has no import-history budget; retain selected fields regardless of surrounding tool payload size.
+    const startStreaming = () => ({
+      reader: createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity }),
+      decoder: new NodeStringDecoder.StringDecoder("utf8"),
+    });
+    const finishStreaming = (lineState: State, out: UsageRecord[]) => {
+      const { reader, decoder } = streaming ?? startStreaming();
       streaming = undefined;
-      decoder = undefined;
+      reader.write(decoder.end());
+      parseProjected(reader.finish(), lineState, out);
     };
-    for await (const chunk of readChunks(handle, start, compressed)) {
-      let lineStart = 0;
-      while (lineStart < chunk.length) {
-        const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
-        if (newlineIndex === -1) {
-          append(chunk.subarray(lineStart));
-          break;
-        }
-        if (!streaming && pendingBytes === 0) {
-          parseLine(chunk.subarray(lineStart, newlineIndex), state, records);
-        } else {
-          append(chunk.subarray(lineStart, newlineIndex));
-          finish(state, records);
-        }
-        lineStart = newlineIndex + 1;
-        resumeOffset = scanOffset + lineStart;
+
+    const [firstMarker, ...otherMarkers] = format.usageMarkers;
+    const job: ScanJob = {
+      fd: handle.fd,
+      start,
+      compressed,
+      streamingThresholdBytes,
+      selectFields: format.selectFields,
+      ...(otherMarkers.length === 0
+        ? { marker: firstMarker }
+        : {
+            pattern: format.usageMarkers
+              .map((marker) => marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+              .join("|"),
+          }),
+    };
+    for await (const batch of scanTranscript(job)) {
+      const bytes = Buffer.from(batch.bytes);
+      let partStart = 0;
+      let valueIndex = 0;
+      for (const [index, kind] of batch.kinds.entries()) {
+        const part = bytes.subarray(partStart, batch.ends[index]);
+        partStart = batch.ends[index]!;
+        if ((kind & ~RAW) === LINE) parseValue(kind, batch.values[valueIndex++], state, records);
+        else if (kind === PIECE) {
+          streaming ??= startStreaming();
+          streaming.reader.write(streaming.decoder.write(part));
+        } else if (kind === LINE_END) finishStreaming(state, records);
+        else tail = { kind, value: batch.values[valueIndex++] };
       }
-      scanOffset += chunk.length;
+      resumeOffset = batch.resumeOffset;
+      tailStreaming = batch.done && batch.streaming;
     }
 
     // Parse unfinished tails against copied state so the next scan can replay from resumeOffset.
@@ -325,7 +605,8 @@ export async function readTranscriptRecords<State>(
     const tailRecords: UsageRecord[] = [];
     const tailState =
       decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
-    finish(tailState, tailRecords);
+    if (tailStreaming) finishStreaming(tailState, tailRecords);
+    else if (tail !== undefined) parseValue(tail.kind, tail.value, tailState, tailRecords);
 
     const guardLength = compressed ? 0 : Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;
