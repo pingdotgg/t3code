@@ -4,8 +4,18 @@ import type {
 } from "@t3tools/contracts";
 
 /** Buffered output drains on the session that produced it, on the selection that session last ran. */
-export function resolveBufferedProviderContinuation(
-  projection: Pick<OrchestrationV2ThreadProjection, "providerThreads" | "runs">,
+export function resolveBufferedProviderContinuation<
+  ProviderThread extends Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "id">,
+>(
+  projection: {
+    readonly providerThreads: ReadonlyArray<ProviderThread>;
+    readonly runs: ReadonlyArray<
+      Pick<
+        OrchestrationV2ThreadProjection["runs"][number],
+        "providerThreadId" | "startedAt" | "modelSelection"
+      >
+    >;
+  },
   command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
 ) {
   if (
@@ -20,7 +30,8 @@ export function resolveBufferedProviderContinuation(
     (candidate) => candidate.id === command.continuationProviderThreadId,
   );
   const modelSelection = projection.runs.findLast(
-    (run) => run.providerThreadId === providerThread?.id,
+    // A send queued on this thread and never started names a model the session never ran.
+    (run) => run.providerThreadId === providerThread?.id && run.startedAt !== null,
   )?.modelSelection;
   return providerThread === undefined || modelSelection === undefined
     ? undefined
