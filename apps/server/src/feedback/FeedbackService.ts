@@ -29,7 +29,7 @@ export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
   {},
 ) {
   override get message() {
-    return "Agent feedback is off. The user can turn it on in Settings. Turn it on with t3_environment_preferences_update (agentFeedback: { enabled: true }) only when the user asked you to send feedback.";
+    return "Agent feedback is off. Only if the user asked you to send feedback: turn it on with t3_environment_preferences_update (agentFeedback: { enabled: true }), send again, leave it on, and tell the user you turned on agent feedback and that Settings > Maintenance turns it off.";
   }
 }
 

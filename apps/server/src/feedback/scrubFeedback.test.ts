@@ -34,6 +34,24 @@ describe("scrubFeedback", () => {
       [],
       "[redacted] t3_environment_preferences_update apps/server/src/persistence/Migrations/088",
     ],
+    [
+      "whole absolute paths",
+      "/home/x/acme and /tmp/a/b.ts, ~/acme/app, file:///srv/acme/x.ts, C:\\Users\\x\\acme\\a.ts",
+      [],
+      "[redacted] and [redacted], [redacted], [redacted], [redacted]",
+    ],
+    [
+      "the tail of a known path",
+      "Opened /home/alice/Develop/acme and /Users/al/My Project/src/a.ts",
+      ["/home/alice", "/Users/al/My Project"],
+      "Opened [redacted] and [redacted]",
+    ],
+    [
+      "nothing that only looks like a path",
+      "See https://github.com/org/repo for t3 thread send and t3_thread_read: 3/10 and/or a / b /mcp",
+      [],
+      "See https://github.com/org/repo for t3 thread send and t3_thread_read: 3/10 and/or a / b /mcp",
+    ],
   ])("scrubs %s", (_, text, sensitive, expected) => {
     expect(scrubFeedback(text, sensitive)).toBe(expected);
   });
