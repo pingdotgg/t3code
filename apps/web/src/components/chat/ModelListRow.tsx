@@ -66,7 +66,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <div
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
         onPointerEnter={titleWhenClipped(
-          props.subProvider ? `${displayName} · ${props.subProvider}` : displayName,
+          [...new Set([displayName, props.subProvider, props.providerDisplayName])]
+            .filter(Boolean)
+            .join(" · "),
         )}
       >
         <div className="min-w-0 truncate text-sm font-normal leading-snug">
