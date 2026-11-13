@@ -266,7 +266,7 @@ const BOOTSTRAP_RETRY_TIMEOUT_MS = 15_000;
 const BOOTSTRAP_RETRY_STEP_MS = 500;
 
 async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
-  const startedAt = Date.now();
+  let startedAt = Date.now();
   while (true) {
     try {
       return await operation();
@@ -275,11 +275,10 @@ async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<
         throw error;
       }
 
-      // A database upgrade can take minutes; the server says so while it runs.
-      if (
-        !isDatabaseMigrationInProgress(error) &&
-        Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS
-      ) {
+      // A database upgrade can take minutes; the budget restarts after each response saying so.
+      if (isDatabaseMigrationInProgress(error)) {
+        startedAt = Date.now();
+      } else if (Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS) {
         throw error;
       }
 
