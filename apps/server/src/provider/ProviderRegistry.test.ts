@@ -4213,6 +4213,44 @@ it.layer(
         ),
     );
 
+    it.effect("keeps Claude ready with the endpoint from a --settings launch arg", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-launch-settings-",
+        });
+        const profilePath = path.join(configDir, "gateway-settings.json");
+        yield* fileSystem.writeFileString(
+          profilePath,
+          JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://gateway.example" } }),
+        );
+        const status = yield* checkClaudeProviderStatus(
+          {
+            ...defaultClaudeSettings,
+            homePath: configDir,
+            launchArgs: `--settings ${profilePath}`,
+          },
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          { ANTHROPIC_BASE_URL: "" },
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.type, "customEndpoint");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect.each([
       "https://api.anthropic.com",
       "https://api.anthropic.com:443",

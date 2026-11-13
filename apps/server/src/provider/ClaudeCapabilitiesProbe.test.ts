@@ -47,6 +47,40 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("starts the probe with the gateway profile from a --settings launch arg", () =>
+  Effect.gen(function* () {
+    let probeSettings: unknown;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      probeSettings = options?.settings;
+      return {
+        initializationResult: async () => ({ account: {}, commands: [], models: [] }),
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
+          new Promise((_, reject) => reject(new Error("usage unavailable"))),
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped();
+    const profile = {
+      apiKeyHelper: "echo gateway-test-key",
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example" },
+      modelPicker: {
+        replaceBuiltInOptions: true,
+        options: [{ model: "gateway-opus", label: "Gateway Opus" }],
+      },
+    };
+    yield* fileSystem.writeFileString(`${configDir}/gateway.json`, JSON.stringify(profile));
+    yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({
+        binaryPath: "claude",
+        launchArgs: `--settings ${configDir}/gateway.json`,
+      }),
+      { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
+    );
+    assert.deepEqual(probeSettings, { disableAllHooks: true, ...profile });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
     let abortSignal: AbortSignal | undefined;
