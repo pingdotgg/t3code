@@ -1,6 +1,8 @@
 import { ThreadId, type ProjectId, type TerminalCwdNotFoundError } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -9,9 +11,10 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
+import { withWorkspaceLease } from "./workspaceLease.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
-class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
+export class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
   "WorktreeRecreateError",
   {
     worktreePath: Schema.String,
@@ -165,6 +168,31 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     );
   });
 });
+
+export class ThreadWorktreeRestore extends Context.Service<
+  ThreadWorktreeRestore,
+  {
+    readonly restore: (
+      thread: WorktreeThread,
+    ) => Effect.Effect<void, WorktreeRecreateError | WorktreeRecreateNoBaseError>;
+  }
+>()("t3/workspace/restoreMissingWorktree/ThreadWorktreeRestore") {}
+
+// Turn start restores under the same lease, so concurrent restores see each other's worktree.
+export const layerThreadWorktreeRestore = Layer.effect(
+  ThreadWorktreeRestore,
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const restore = yield* makeRestoreMissingWorktree;
+    return {
+      restore: Effect.fn("ThreadWorktreeRestore.restore")(function* (thread: WorktreeThread) {
+        return yield* thread.worktreePath === null
+          ? restore(thread)
+          : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread));
+      }),
+    };
+  }),
+);
 
 // Worktree setup uses terminals, so recovery must stay outside TerminalManager.
 export const makePrepareTerminalLaunch = Effect.fn(
