@@ -32,18 +32,6 @@ describe("isConfiguredAcpLocalAgent", () => {
         {
           acpRegistry_oh_my_pi: {
             driver: "acpRegistry",
-            config: { source: "local", localPresetId: "oh-my-pi" },
-          },
-        },
-        ohMyPi,
-      ),
-    ).toBe(true);
-    // Separate map so the marker-only entry cannot satisfy the .some(...) check first.
-    expect(
-      isConfiguredAcpLocalAgent(
-        {
-          acpRegistry_oh_my_pi_full: {
-            driver: "acpRegistry",
             config: {
               source: "local",
               localPresetId: "oh-my-pi",
@@ -75,7 +63,7 @@ describe("isConfiguredAcpLocalAgent", () => {
     ).toBe(true);
   });
 
-  it("ignores registry agents, other commands, and different arguments", () => {
+  it("ignores registry agents, other commands, different arguments, and a cleared executable", () => {
     expect(
       isConfiguredAcpLocalAgent(
         {
@@ -99,6 +87,10 @@ describe("isConfiguredAcpLocalAgent", () => {
               commandPath: "node",
               commandArgs: ["acp"],
             },
+          },
+          acpRegistry_cleared_command: {
+            driver: "acpRegistry",
+            config: { source: "local", localPresetId: "oh-my-pi" },
           },
         },
         ohMyPi,
