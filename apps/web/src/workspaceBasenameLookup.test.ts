@@ -132,9 +132,10 @@ describe("agentWorkingDirectories", () => {
         "cd /work/repo-c && cd /work/repo-b && git diff",
         "git status",
         `/bin/zsh -lc "cd '/work/my repo'; ls"`,
+        "cd -P /work/repo-a # not this; cd /work/commented",
         "cd /work/repo-c\npwd",
       ),
-    ).toEqual(["/work/repo-c", "/work/my repo", "/work/repo-b"]);
+    ).toEqual(["/work/repo-c", "/work/repo-a", "/work/my repo", "/work/repo-b"]);
   });
 
   it("skips operands only the shell can resolve and words that are not the command", () => {
@@ -143,6 +144,7 @@ describe("agentWorkingDirectories", () => {
         "cd docs && cd ../other && cd ~/repo && cd $ROOT/x && cd /work/*/src",
         "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
         `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
+        "echo bash -c 'cd /work/j'; cd -",
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);

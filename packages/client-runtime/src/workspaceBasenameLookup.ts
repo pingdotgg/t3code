@@ -137,9 +137,10 @@ export function pickProjectLinkMatch(
   return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
-// A quoted string is one token, so `cd` inside quoted data is not read as a command.
-const SHELL_TOKEN = /"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
+// A quoted string or a comment is one token, so `cd` inside either is not read as a command.
+const SHELL_TOKEN = /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
 const SHELL_NAME = /(?:^|\/)(?:ba|z|da)?sh$/;
+const CD_OPTION = /^-[LPe@]*$|^--$/;
 
 /** The operands of the `cd` commands in `script`, in order, through `sh -c "<script>"`. */
 function cdOperands(script: string): Array<string> {
@@ -147,11 +148,13 @@ function cdOperands(script: string): Array<string> {
   let words: Array<string> = [];
   let wordOpen = false;
   const endCommand = () => {
-    const flag = words.findIndex((word) => /^-[a-z]*c$/.test(word));
-    const inner = words[flag + 1];
-    if (words[0] === "cd" && words[1] !== undefined) operands.push(words[1]);
-    else if (flag > 0 && inner !== undefined && /^(["']).*\1$/s.test(inner)) {
-      if (words.slice(0, flag).some((word) => SHELL_NAME.test(word))) {
+    const [name = "", ...rest] = words;
+    if (name === "cd") {
+      const operand = rest.find((word) => !CD_OPTION.test(word));
+      if (operand !== undefined) operands.push(operand);
+    } else if (SHELL_NAME.test(name)) {
+      const inner = rest[rest.findIndex((word) => /^-[a-z]*c$/.test(word)) + 1];
+      if (inner !== undefined && /^(["']).*\1$/s.test(inner)) {
         operands.push(...cdOperands(inner.slice(1, -1)));
       }
     }
@@ -160,7 +163,7 @@ function cdOperands(script: string): Array<string> {
   };
   for (const [token] of script.matchAll(SHELL_TOKEN)) {
     if (/^[;&|()\n]/.test(token)) endCommand();
-    else if (/^[ \t]/.test(token)) wordOpen = false;
+    else if (/^[ \t]/.test(token) || (!wordOpen && token.startsWith("#"))) wordOpen = false;
     else if (wordOpen) words[words.length - 1] += token;
     else {
       words.push(token);
