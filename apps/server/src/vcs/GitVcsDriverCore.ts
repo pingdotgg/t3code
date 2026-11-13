@@ -5309,15 +5309,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : newTrackingBranch
-            ? ["checkout", newTrackingBranch]
-            : remoteExists && !localTrackingBranch
-              ? ["checkout", "--track", input.refName]
-              : remoteExists && localTrackingBranch
-                ? ["checkout", localTrackingBranch]
-                : ["checkout", input.refName];
+        : newTrackingBranch
+          ? ["checkout", newTrackingBranch]
+          : remoteExists && !localTrackingBranch
+            ? ["checkout", "--track", input.refName]
+            : remoteExists && localTrackingBranch
+              ? ["checkout", localTrackingBranch]
+              : ["checkout", input.refName];
 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
 
