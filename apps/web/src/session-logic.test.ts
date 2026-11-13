@@ -12,6 +12,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
@@ -38,8 +39,29 @@ import {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
-import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
+import {
+  makeStreamingTimelineFixture,
+  makeStreamingWorkTimelineFixture,
+  makeThreadProjectionFixture,
+  withStreamedText,
+} from "./test-fixtures";
 import type { ChatMessage } from "./types";
+
+function streamingPlanArtifact(
+  fixture: ReturnType<typeof makeStreamingWorkTimelineFixture>,
+  markdown: string,
+  status: "active" | "superseded",
+): OrchestrationV2PlanArtifact {
+  return {
+    id: PlanId.make("live-plan"),
+    threadId: fixture.threadId,
+    runId: fixture.runId,
+    nodeId: NodeId.make("live-node"),
+    kind: "proposed_plan",
+    markdown,
+    status,
+  };
+}
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {
@@ -226,7 +248,7 @@ describe("V2 session presentation", () => {
 
     const targets = deriveRevertTurnCountByUserMessageId({
       timelineEntries,
-      threadStartCheckpointReady: true,
+      threadStartCheckpointAvailable: true,
       checkpoints: [
         {
           runId,
@@ -266,7 +288,7 @@ describe("V2 session presentation", () => {
           },
         };
       });
-    const checkpoint = (ordinal: number, status: "ready" | "stale" = "ready") => ({
+    const checkpoint = (ordinal: number, status: "ready" | "missing" | "stale" = "ready") => ({
       runId: runId(ordinal),
       checkpointTurnCount: ordinal,
       checkpointRef: `checkpoint-${ordinal}` as never,
@@ -278,13 +300,13 @@ describe("V2 session presentation", () => {
     const targets = (
       ordinals: ReadonlyArray<number>,
       checkpoints: ReadonlyArray<ReturnType<typeof checkpoint>>,
-      options: { threadStartCheckpointReady?: boolean; unsettledRunId?: RunId } = {},
+      options: { threadStartCheckpointAvailable?: boolean; unsettledRunId?: RunId } = {},
     ) =>
       Object.fromEntries(
         deriveRevertTurnCountByUserMessageId({
           timelineEntries: ordinals.flatMap(turn),
           checkpoints,
-          threadStartCheckpointReady: options.threadStartCheckpointReady ?? true,
+          threadStartCheckpointAvailable: options.threadStartCheckpointAvailable ?? true,
           unsettledRunId: options.unsettledRunId ?? null,
         }),
       );
@@ -297,6 +319,11 @@ describe("V2 session presentation", () => {
         "user-5": 4,
       });
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
+      // Without file snapshots, missing checkpoints still pin the conversation.
+      expect(targets([1, 2], [checkpoint(1, "missing"), checkpoint(2, "missing")])).toEqual({
+        "user-1": 0,
+        "user-2": 1,
+      });
     });
 
     it("preserves a notification-only wake run while ignoring inherited and unrelated work", () => {
@@ -360,7 +387,7 @@ describe("V2 session presentation", () => {
               checkpoint(7),
               checkpoint(8),
             ],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
           }),
         ),
       ).toEqual({ "user-1": 0, "user-3": 2 });
@@ -371,7 +398,7 @@ describe("V2 session presentation", () => {
       expect(targets([1, 2], [checkpoint(1, "stale"), checkpoint(2)])).toEqual({ "user-1": 0 });
       // Earlier history is paged out, so the first loaded run's predecessor is unknown.
       expect(
-        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointReady: false }),
+        targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointAvailable: false }),
       ).toEqual({ "user-5": 4 });
       expect(targets([1, 2], [checkpoint(1), checkpoint(2)], { unsettledRunId: runId(2) })).toEqual(
         { "user-1": 0 },
@@ -384,7 +411,7 @@ describe("V2 session presentation", () => {
           deriveRevertTurnCountByUserMessageId({
             timelineEntries: [1, 2, 3].flatMap(turn),
             checkpoints: [checkpoint(1), checkpoint(2), checkpoint(3)],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
             availableRevertTurnCounts: new Set([0, 1]),
           }),
         ),
@@ -404,7 +431,7 @@ describe("V2 session presentation", () => {
           deriveRevertTurnCountByUserMessageId({
             timelineEntries: [...inheritedEntries, ...turn(2)],
             checkpoints: [{ ...checkpoint(7), runId: fixture.historyRunId }, checkpoint(2)],
-            threadStartCheckpointReady: true,
+            threadStartCheckpointAvailable: true,
           }),
         ),
       ).toEqual({ "user-2": 0 });
@@ -1118,6 +1145,82 @@ describe("native provider presentation in the v2 timeline", () => {
     ).toBe("message");
   });
 
+  it("shows a late async answer that started a later run where that run begins", () => {
+    const requestId = RuntimeRequestId.make("late-question");
+    const inRun = (item: OrchestrationV2TurnItem, runId: string, ordinal: number) =>
+      visible({ ...item, runId: RunId.make(runId), ordinal });
+    const userMessage = (
+      id: string,
+      text: string,
+    ): Extract<OrchestrationV2TurnItem, { type: "user_message" }> => ({
+      ...base,
+      id: TurnItemId.make(id),
+      type: "user_message",
+      messageId: MessageId.make(id),
+      inputIntent: "queued_turn",
+      text,
+      createdBy: "user",
+      creationSource: "web",
+      attachments: [],
+    });
+    const assistantMessage = (id: string, text: string): OrchestrationV2TurnItem => ({
+      ...base,
+      id: TurnItemId.make(id),
+      type: "assistant_message",
+      messageId: MessageId.make(id),
+      text,
+      streaming: false,
+    });
+    const question = inRun(
+      {
+        ...base,
+        id: TurnItemId.make("late-question"),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: { color: "Blue" }, attachmentsByQuestionId: {} },
+      },
+      "run-8",
+      8_000_070,
+    );
+    const answerMessageId = MessageId.make(`async-answer:${requestId}`);
+    const settledPrefix = [
+      question,
+      inRun(userMessage("queued", "Queued follow-up"), "run-9", 9_000_001),
+      inRun(assistantMessage("reply-9", "RUN 9 REPLY"), "run-9", 9_000_002),
+    ];
+    const lateRun = [
+      inRun(
+        {
+          ...userMessage(answerMessageId, "Which color?\nBlue"),
+          inputIntent: "steer",
+          creationSource: "server",
+        },
+        "run-10",
+        10_000_001,
+      ),
+      inRun(assistantMessage("reply-10", "RUN 10 ACKNOWLEDGED BLUE"), "run-10", 10_000_002),
+    ];
+    const input = { visibleTurnItems: [...settledPrefix, ...lateRun], optimisticMessages: [] };
+    const messageIds = (entries: ReadonlyArray<TimelineEntry>) =>
+      entries.flatMap((entry) => (entry.kind === "message" ? [entry.message.id] : []));
+    const expectedMessageIds = ["queued", "reply-9", answerMessageId, "reply-10"];
+
+    expect
+      .soft(messageIds(deriveTimelineEntriesFromVisibleTurnItems(input)), "full projection")
+      .toEqual(expectedMessageIds);
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      ...input,
+      visibleTurnItems: settledPrefix,
+    });
+    expect
+      .soft(
+        messageIds(deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous).entries),
+        "incremental projection",
+      )
+      .toEqual(expectedMessageIds);
+  });
+
   it("excludes checkpoint-only work from the timeline", () => {
     const message: OrchestrationV2TurnItem = {
       ...base,
@@ -1618,6 +1721,66 @@ describe("incremental v2 timeline entries", () => {
       "live-work",
       "live-assistant",
     ]);
+  });
+
+  it("keeps every other entry when streaming plan text changes", () => {
+    const fixture = makeStreamingWorkTimelineFixture("proposed_plan");
+    // Codex emits `plan.updated` with each delta, so the artifact array is rebuilt too.
+    const plans = (markdown: string) => [streamingPlanArtifact(fixture, markdown, "active")];
+    let input = {
+      visibleTurnItems: withStreamedText(
+        fixture.visibleTurnItems,
+        fixture.streamingItemId,
+        "Let",
+        fixture.time(20),
+      ),
+      optimisticMessages: [],
+      plans: plans("Let"),
+    };
+    let projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    for (const [step, text] of ["Let me", "Let me check the tests"].entries()) {
+      input = {
+        visibleTurnItems: withStreamedText(
+          input.visibleTurnItems,
+          fixture.streamingItemId,
+          text,
+          fixture.time(21 + step),
+        ),
+        optimisticMessages: [],
+        plans: plans(text),
+      };
+      const previous = projection;
+      projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+      expect(projection.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+      for (const [index, entry] of previous.entries.entries()) {
+        if (entry.id !== fixture.streamingItemId) expect(projection.entries[index]).toBe(entry);
+      }
+    }
+  });
+
+  it("rebuilds the plan entry when only its artifact status changes", () => {
+    const fixture = makeStreamingWorkTimelineFixture("proposed_plan");
+    const visibleTurnItems = withStreamedText(
+      fixture.visibleTurnItems,
+      fixture.streamingItemId,
+      "Plan",
+      fixture.time(20),
+    );
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      visibleTurnItems,
+      optimisticMessages: [],
+      plans: [streamingPlanArtifact(fixture, "Plan", "active")],
+    });
+    const input = {
+      visibleTurnItems,
+      optimisticMessages: [],
+      plans: [streamingPlanArtifact(fixture, "Plan", "superseded")],
+    };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+    expect(next.entries.find((entry) => entry.kind === "proposed-plan")).toMatchObject({
+      proposedPlan: { status: "superseded" },
+    });
   });
 });
 
