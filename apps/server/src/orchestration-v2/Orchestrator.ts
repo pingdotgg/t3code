@@ -4439,19 +4439,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .map((message) => message.id),
       );
       const userRuns = queuedRuns.filter((run) => !automaticMessageIds.has(run.userMessageId));
+      // User work waiting behind a usage limit cannot start until the reset or the user acts.
       const latest = latestExecutedRun(projection.runs);
-      // User work held behind a usage limit waits for the reset either way, so it may sleep through it.
+      const limitRecords =
+        userRuns.length === 0 || latest?.status !== "failed"
+          ? null
+          : yield* loadProjectionForCommand(command, ["turnItems", "providerSessions"], {
+              turnItemTypes: ["error"],
+              turnItemRunIds: [latest.id],
+            });
       const heldBehindLimit =
-        userRuns.length > 0 &&
-        userRuns.every((run) => run.queueHeld === true) &&
-        latest?.status === "failed" &&
-        latestRootProviderFailure(
-          latest,
-          (yield* loadProjectionForCommand(command, ["turnItems"], {
-            turnItemTypes: ["error"],
-            turnItemRunIds: [latest.id],
-          })).turnItems,
-        )?.class === "usage_limit";
+        limitRecords !== null &&
+        userRuns.every((run) =>
+          usageLimitHoldsQueue({ ...limitRecords, runs: projection.runs }, run.providerInstanceId),
+        );
       if (userRuns.length > 0 && !heldBehindLimit) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

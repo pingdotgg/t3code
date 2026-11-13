@@ -9277,7 +9277,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
 
 it.layer(layerTest)("snooze queued runs", (it) => {
   it.effect.each(["notification", "delegated-completion", "user", "limited-user"] as const)(
-    "only user messages block snooze with a held %s run, unless a usage limit holds them",
+    "only user messages block snooze with a queued %s run, unless a usage limit holds them",
     (kind) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -9366,29 +9366,6 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                 }
               : {}),
         });
-        const beforeRecovery = yield* orchestrator.getThreadProjection(threadId);
-        yield* eventSink.commitCommand({
-          commandId: CommandId.make(`recovery:${threadId}`),
-          threadId,
-          commandType: "provider-runtime.reconcile",
-          acceptedAt: now,
-          events: beforeRecovery.runs.map((run) => ({
-            id: EventId.make(`recovery:${run.id}`),
-            type: "run.updated" as const,
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload:
-              run.status === "queued"
-                ? { ...run, queueHeld: true }
-                : {
-                    ...run,
-                    status: kind === "limited-user" ? ("failed" as const) : ("cancelled" as const),
-                    completedAt: now,
-                  },
-          })),
-          effects: [],
-        });
         if (kind === "limited-user") {
           yield* eventSink.write({
             events: [
@@ -9426,8 +9403,38 @@ it.layer(layerTest)("snooze queued runs", (it) => {
             ],
           });
         }
+        const beforeRecovery = yield* orchestrator.getThreadProjection(threadId);
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`recovery:${threadId}`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: beforeRecovery.runs.map((run) => ({
+            id: EventId.make(`recovery:${run.id}`),
+            type: "run.updated" as const,
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload:
+              run.status === "queued"
+                ? // A usage limit stops the queue from starting without marking it held.
+                  kind === "limited-user"
+                  ? run
+                  : { ...run, queueHeld: true }
+                : {
+                    ...run,
+                    status: kind === "limited-user" ? ("failed" as const) : ("cancelled" as const),
+                    completedAt: now,
+                  },
+          })),
+          effects: [],
+        });
         const beforeSnooze = yield* orchestrator.getThreadProjection(threadId);
-        assert.isTrue(beforeSnooze.runs.some((run) => run.status === "queued" && run.queueHeld));
+        assert.isTrue(
+          beforeSnooze.runs.some(
+            (run) => run.status === "queued" && (kind === "limited-user" || run.queueHeld),
+          ),
+        );
         const snooze = orchestrator.dispatch({
           type: "thread.snooze",
           commandId: CommandId.make(`snooze:${threadId}`),
