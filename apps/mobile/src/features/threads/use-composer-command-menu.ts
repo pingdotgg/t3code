@@ -557,6 +557,7 @@ export function useComposerCommandMenu({
     items.length === 0 &&
     !pathSearch.isPending &&
     !threadSearch.isPending &&
+    !threadSearch.hasOlderRows &&
     !(pathSearch.truncated && trigger.query.endsWith(" "));
   const nextCarried = ruledOut ? null : trigger;
   if (

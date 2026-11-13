@@ -11,7 +11,12 @@ import {
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
-  useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
+  useThreadSearch: vi.fn(() => ({
+    matches: [],
+    query: "",
+    isPending: false,
+    hasOlderRows: false,
+  })),
   useComposerPathSearch: vi.fn(() => ({ entries: [], isPending: false, truncated: false })),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
@@ -29,7 +34,7 @@ vi.mock("../../state/server", () => ({
 }));
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { useComposerPathSearch } from "../../state/queries";
+import { useComposerPathSearch, useThreadSearch } from "../../state/queries";
 import {
   buildComposerModelItems,
   buildComposerSlashCommandItems,
@@ -233,6 +238,11 @@ describe("a mention search with spaces", () => {
       refresh: vi.fn(),
     });
 
+  const olderThreads = (hasOlderRows: boolean) =>
+    vi
+      .mocked(useThreadSearch)
+      .mockReturnValue({ matches: [], query: "", isPending: false, hasOlderRows });
+
   it("stays open across a space while a result contains the typed text", async () => {
     pathSearch(false, ["Foreign Subsidiaries/Script Notes.md", "Foreign.md"]);
     await using menu = await mountMenu({
@@ -263,6 +273,10 @@ describe("a mention search with spaces", () => {
     expect(onChangeDraftMessage).not.toHaveBeenCalled();
 
     pathSearch(false, ["ChatComposer.tsx"]);
+    // An older thread the search found is not in the shells yet, so the search stays open for it.
+    olderThreads(true);
+    expect((await menu.type("Fix @ChatComposer so")).trigger?.query).toBe("ChatComposer so");
+    olderThreads(false);
     expect((await menu.type("Fix @ChatComposer so")).trigger).toBeNull();
     expect((await menu.type("Fix @ChatComposer so that")).trigger).toBeNull();
   });

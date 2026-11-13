@@ -418,6 +418,7 @@ export function useComposerMenuItems({
     spacedQueryIsEmpty &&
     !workspaceEntries.isPending &&
     !threadSearch.isPending &&
+    !threadSearch.hasOlderRows &&
     !(workspaceEntries.truncated && pathTriggerQuery.endsWith(" "));
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
