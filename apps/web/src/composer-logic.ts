@@ -17,8 +17,8 @@ import {
 
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
+export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill" | "folder";
+export type ComposerSlashCommand = "model" | "side" | "btw" | "clear" | "cd" | "no";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -250,6 +250,16 @@ export function collapseExpandedComposerCursor(
 
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
+  // `/cd <destination>`: the whole rest of the line is the query, so a path keeps its spaces.
+  const folderCommand = /^\/cd[ \t]/i.exec(text);
+  if (folderCommand && cursor >= folderCommand[0].length && !/[\r\n]/.test(text)) {
+    return {
+      kind: "folder",
+      query: text.slice(folderCommand[0].length),
+      rangeStart: folderCommand[0].length,
+      rangeEnd: text.length,
+    };
+  }
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
   if (token.startsWith("/")) {
@@ -316,6 +326,16 @@ export function composerStateAtPromptEnd(
       ? null
       : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
   };
+}
+
+type FolderMoveCommand = { readonly command: "cd" | "no"; readonly path: string | null };
+
+export function parseFolderMoveCommand(text: string): FolderMoveCommand | null {
+  const match = /^\/(cd|no)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (!match) return null;
+  const argument = match[2]?.trim() ?? "";
+  if (match[1]?.toLowerCase() === "no") return { command: "no", path: argument || null };
+  return { command: "cd", path: (/^(["'])([\s\S]*)\1$/.exec(argument)?.[2] ?? argument) || null };
 }
 
 /**

@@ -39,6 +39,8 @@ function row(index: number): OrchestrationV2ProjectedTurnItem {
   };
 }
 
+const folder = (runId: string, cwd = `/${runId}`) => ({ id: runId as never, cwd });
+
 describe("threadHistoryMerge", () => {
   it("fills activity around partial messages in canonical order and preserves live edits", () => {
     const initial = { ...v2Projection, turnItems: [row(4).item], visibleTurnItems: [row(4)] };
@@ -112,11 +114,13 @@ describe("threadHistoryMerge", () => {
     const recent = [row(2), row(3)];
     const projection = {
       ...v2Projection,
+      runFolders: [folder("run-2")],
       turnItems: recent.map((entry) => entry.item),
       visibleTurnItems: recent.map((entry, position) => ({ ...entry, position })),
     };
     const older = [row(0), row(1), row(2)];
-    const merged = mergeOlderHistoryIntoProjection(projection, older);
+    const pageFolders = [folder("run-1"), folder("run-2", "/stale")];
+    const merged = mergeOlderHistoryIntoProjection(projection, older, undefined, pageFolders);
     expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
       "item-0",
       "item-1",
@@ -130,6 +134,8 @@ describe("threadHistoryMerge", () => {
       "item-0",
       "item-1",
     ]);
+    expect(merged.runFolders).toEqual([folder("run-2"), folder("run-1")]);
+    expect(merged.runs).toBe(projection.runs);
   });
 
   it("fills inherited activity without confusing identical item IDs from different source threads", () => {
@@ -145,7 +151,10 @@ describe("threadHistoryMerge", () => {
       turnItems: [local.item],
       visibleTurnItems: [preview, local],
     };
-    const merged = mergeOlderHistoryIntoProjection(projection, [inherited(0), inherited(1)]);
+    const page = () => [inherited(0), inherited(1)];
+    const sourceFolders = [folder("run-source")];
+    const merged = mergeOlderHistoryIntoProjection(projection, page(), undefined, sourceFolders);
+    expect(merged.runFolders).toEqual(sourceFolders);
     expect(
       merged.visibleTurnItems.map((entry) => [entry.sourceThreadId, entry.sourceItemId]),
     ).toEqual([
@@ -155,7 +164,7 @@ describe("threadHistoryMerge", () => {
     ]);
     expect(merged.visibleTurnItems[1]?.item).toBe(preview.item);
     expect(merged.turnItems).toEqual([local.item]);
-    expect(mergeOlderHistoryIntoProjection(merged, [inherited(0), inherited(1)])).toBe(merged);
+    expect(mergeOlderHistoryIntoProjection(merged, page(), undefined, sourceFolders)).toBe(merged);
   });
 
   it("retains live rows that arrived after the older page was fetched", () => {

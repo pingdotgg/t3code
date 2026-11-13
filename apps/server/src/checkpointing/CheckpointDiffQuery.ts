@@ -175,10 +175,45 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
-      const firstScope =
+      const firstRun = projection.runs.find((run) => run.ordinal === 1);
+      const firstScopeId = projection.checkpoints.find(
+        (checkpoint) => checkpoint.status === "ready" && checkpoint.runId === firstRun?.id,
+      )?.scopeId;
+      let firstScope =
         input.fromTurnCount === 0
-          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
+          ? projection.checkpointScopes.find((scope) => scope.id === firstScopeId)
           : undefined;
+      if (input.fromTurnCount === 0 && firstScope === undefined && firstRun !== undefined) {
+        const initialRun = yield* threads
+          .getThreadRecords(input.threadId, ["runs"], { runIds: [firstRun.id] })
+          .pipe(
+            Effect.map((records) => records.runs.find((run) => run.id === firstRun.id)),
+            Effect.mapError(
+              () => new CheckpointThreadNotFoundError({ operation, threadId: input.threadId }),
+            ),
+          );
+        if (initialRun !== undefined && initialRun.rootNodeId !== null) {
+          const initialNode = yield* threads
+            .getThreadRecords(input.threadId, ["nodes"], { nodeIds: [initialRun.rootNodeId] })
+            .pipe(
+              Effect.map((records) =>
+                records.nodes.find((node) => node.id === initialRun.rootNodeId),
+              ),
+              Effect.mapError(
+                () => new CheckpointThreadNotFoundError({ operation, threadId: input.threadId }),
+              ),
+            );
+          firstScope = projection.checkpointScopes.find(
+            (scope) => scope.id === initialNode?.checkpointScopeId,
+          );
+        }
+      }
+      firstScope ??= projection.checkpointScopes.find(
+        (scope) => scope.kind === "root_run" && scope.runId === firstRun?.id,
+      );
+      const fromCheckpoint =
+        parentCheckpoint ??
+        readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -187,13 +222,29 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
-      if (fromCheckpointRef === undefined) {
+          : fromCheckpoint?.ref;
+      // Run 1 captured the thread baseline, and each run captures its own baseline in its folder.
+      const fromEnd =
+        input.fromTurnCount === 0
+          ? { runId: firstRun?.id, scopeId: firstScope?.id }
+          : fromCheckpoint;
+      const { runs } = yield* threads
+        .getThreadRecords(input.threadId, ["runs"], {
+          runIds: [toCheckpoint, fromEnd].flatMap((end) => (end?.runId == null ? [] : [end.runId])),
+        })
+        .pipe(
+          Effect.mapError(
+            () => new CheckpointThreadNotFoundError({ operation, threadId: input.threadId }),
+          ),
+        );
+      const folder = (end: typeof fromEnd) =>
+        runs.find((run) => run.id === end?.runId)?.cwd ??
+        projection.checkpointScopes.find((scope) => scope.id === end?.scopeId)?.cwd;
+      const cwd = folder(toCheckpoint) ?? toScope.cwd;
+      if (
+        fromCheckpointRef === undefined ||
+        (input.fromTurnCount !== input.toTurnCount - 1 && folder(fromEnd) !== cwd)
+      ) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
@@ -203,7 +254,7 @@ export const make = Effect.gen(function* () {
       }
 
       const comparison = {
-        cwd: toScope.cwd,
+        cwd,
         fromCheckpointRef,
         toCheckpointRef: toCheckpoint.ref,
         fallbackFromToHead: false,

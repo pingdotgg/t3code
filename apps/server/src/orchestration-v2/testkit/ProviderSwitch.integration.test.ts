@@ -86,6 +86,7 @@ interface CapturedTurn {
   readonly nativeThreadId?: string | null;
   readonly providerTurnOrdinal?: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly nativeStorageFolder?: string;
 }
 
 function unimplemented(driver: ProviderDriverKind, detail: string) {
@@ -276,6 +277,9 @@ function makeTestAdapter(input: {
                     input.refusalCause ?? new ClaudeBackgroundWorkBlocksQueryReplacementError(),
                 });
               yield* Effect.yieldNow;
+              const nativeStorageFolder = yield* (
+                turnInput.readNativeStorageFolder ?? Effect.undefined
+              );
               yield* Ref.update(input.capturedTurns, (turns) => [
                 ...turns,
                 {
@@ -290,6 +294,7 @@ function makeTestAdapter(input: {
                   ...(turnInput.nativeThreadHasTurns === undefined
                     ? {}
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
+                  ...(nativeStorageFolder === undefined ? {} : { nativeStorageFolder }),
                 },
               ]);
               const providerTurnId = ProviderTurnId.make(
@@ -1374,6 +1379,8 @@ describe("orchestration v2 provider switching", () => {
     (attempts) =>
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("resume-fallback-native-turns");
+        const laterCwd = yield* checkpointWorkspace("resume-fallback-native-turns-later");
+        const override = { cwd, approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } };
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const failResumeOnce = yield* Ref.make(false);
         const generation = yield* Ref.make(0);
@@ -1464,6 +1471,7 @@ describe("orchestration v2 provider switching", () => {
           }
           yield* Ref.set(failResumeOnce, true);
           yield* runToCompletion(2);
+          override.cwd = laterCwd;
           yield* runToCompletion(3);
 
           const turns = yield* Ref.get(capturedTurns);
@@ -1474,6 +1482,8 @@ describe("orchestration v2 provider switching", () => {
           assert.isFalse(turns[1]?.nativeThreadHasTurns);
           assert.equal(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);
           assert.isTrue(turns[2]?.nativeThreadHasTurns);
+          // Run 2 created the replacement session there; run 3 ran in the later folder.
+          assert.equal(turns[2]?.nativeStorageFolder, cwd);
 
           const projection = yield* orchestrator.getThreadProjection(threadId);
           const run2 = projection.runs[1]!;
@@ -1491,14 +1501,7 @@ describe("orchestration v2 provider switching", () => {
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
-              {
-                name: "resume-fallback-native-turns",
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: { type: "readOnly" },
-                },
-              },
+              { name: "resume-fallback-native-turns", runtimePolicyOverride: override },
               layerRegistry,
             ),
           ),
@@ -2373,7 +2376,11 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
-  it.live("resumes a queued account switch without requiring a portable handoff", () =>
+  it.live.each([
+    { folder: "the source's folder", source: "/repo/created-here", target: undefined },
+    // The target row recorded a session of its own earlier; the resumed session's folder is unknown.
+    { folder: "no folder", source: undefined, target: "/repo/recorded-earlier" },
+  ])("resumes a queued account switch without a handoff, carrying $folder", ({ source, target }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("queued-account-switch");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -2492,6 +2499,18 @@ describe("orchestration v2 provider switching", () => {
         const now = yield* DateTime.now;
         yield* eventSink.write({
           events: [
+            ...[source, target].map((nativeStorageFolder, index) => ({
+              id: EventId.make(`event:queued-account-switch:storage-folder-${index}`),
+              type: "provider-thread.updated" as const,
+              threadId: queuedThreadId,
+              occurredAt: now,
+              payload: {
+                ...queued.providerThreads.find(
+                  (providerThread) => providerThread.id === queued.runs[index]?.providerThreadId,
+                )!,
+                nativeStorageFolder,
+              },
+            })),
             {
               id: EventId.make("event:queued-account-switch:first-complete"),
               type: "run.updated",
@@ -2515,10 +2534,11 @@ describe("orchestration v2 provider switching", () => {
         );
         yield* worker.drain();
         const delivered = yield* orchestrator.getThreadProjection(queuedThreadId);
-        const targetNativeRef = delivered.providerThreads.find(
+        const targetProviderThread = delivered.providerThreads.find(
           (providerThread) => providerThread.id === delivered.runs[1]?.providerThreadId,
-        )?.nativeThreadRef;
-        assert.deepEqual(targetNativeRef, sourceNativeRef);
+        );
+        assert.deepEqual(targetProviderThread?.nativeThreadRef, sourceNativeRef);
+        assert.equal(targetProviderThread?.nativeStorageFolder, source);
         return delivered;
       }).pipe(
         Effect.provide(

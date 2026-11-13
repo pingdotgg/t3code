@@ -233,3 +233,42 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
     assert.deepEqual(statuses, { baseline: "error", turn: "error" });
   }),
 );
+
+it.effect("captures a separate baseline when a thread moves between worktrees", () =>
+  Effect.gen(function* () {
+    const refs = new Set<string>();
+    const capturedFolders: string[] = [];
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: ({ checkpointRef }) => Effect.succeed(refs.has(checkpointRef)),
+            captureCheckpoint: ({ cwd, checkpointRef }) =>
+              Effect.sync(() => {
+                refs.add(checkpointRef);
+                capturedFolders.push(cwd);
+              }),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      for (const cwd of ["/repo/source", "/repo/destination", "/repo/destination"]) {
+        const scope = yield* checkpoints.prepareRootRunScope({
+          threadId: ThreadId.make("thread:moved"),
+          runId: RunId.make("run:moved"),
+          rootNodeId: NodeId.make("node:moved"),
+          providerThreadId: ProviderThreadId.make("provider-thread:moved"),
+          cwd,
+          createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+        });
+        yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 1 });
+      }
+      assert.deepEqual(capturedFolders, ["/repo/source", "/repo/destination"]);
+    }).pipe(Effect.provide(layerTest));
+  }),
+);

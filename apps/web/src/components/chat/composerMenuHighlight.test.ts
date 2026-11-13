@@ -19,4 +19,25 @@ describe("resolveComposerMenuActiveItemId", () => {
       }),
     ).toBe("new-result");
   });
+
+  it("leaves a menu without an active row until the user highlights one", () => {
+    const menu = {
+      items: [{ id: "first" }, { id: "second" }],
+      currentSearchKey: "folder:",
+      highlightedSearchKey: "folder:",
+      highlightFirst: false,
+    };
+    expect(resolveComposerMenuActiveItemId({ ...menu, highlightedItemId: null })).toBeNull();
+    expect(resolveComposerMenuActiveItemId({ ...menu, highlightedItemId: "second" })).toBe(
+      "second",
+    );
+    // A row picked for another query does not carry over.
+    expect(
+      resolveComposerMenuActiveItemId({
+        ...menu,
+        highlightedItemId: "second",
+        highlightedSearchKey: "folder:s",
+      }),
+    ).toBeNull();
+  });
 });

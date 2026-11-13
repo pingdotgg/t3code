@@ -33,13 +33,19 @@ import {
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { previousFolderAfter } from "../project/ThreadMoveReceipt.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { findRepositoryRoot } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
+import { rootCheckpointScopeName } from "./CheckpointService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
+import { nativeStorageFolders } from "./NativeStorageFolder.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -51,10 +57,12 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { folderChangeNote, latestCountedRunFolder } from "./FolderChangeNotice.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
@@ -132,7 +140,9 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
+  | EventStore.EventStoreV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
@@ -150,7 +160,9 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
     const eventSink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -160,10 +172,32 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const threadLocks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+
+    const readNativeStorageFolder = Effect.fn("ProviderTurnStartService.readNativeStorageFolder")(
+      function* (
+        threadId: ThreadId,
+        providerThread: OrchestrationV2ProviderThread,
+        history: Pick<Parameters<typeof nativeStorageFolders>[2], "runs" | "attempts">,
+      ) {
+        const folders = yield* nativeStorageFolders(eventStore, threadId, {
+          ...history,
+          providerThreads: [providerThread],
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("orchestration-v2.native-storage-folder-read-failed", {
+              threadId,
+              cause,
+            }).pipe(Effect.as(undefined)),
+          ),
+        );
+        return folders?.get(providerThread.id);
+      },
+    );
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -697,11 +731,23 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      // A thread that moved starts its turn in a new folder, and the run's checkpoints belong there.
+      const startCheckpointScope =
+        resolvedRuntimePolicy.cwd === null || resolvedRuntimePolicy.cwd === checkpointScope.cwd
+          ? checkpointScope
+          : {
+              ...checkpointScope,
+              id: yield* idAllocator.allocate.checkpointScope({
+                threadId: projection.thread.id,
+                name: rootCheckpointScopeName(resolvedRuntimePolicy.cwd),
+              }),
+              cwd: resolvedRuntimePolicy.cwd,
+            };
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
         appThread: projection.thread,
         run,
-        checkpointScope,
+        checkpointScope: startCheckpointScope,
       });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
@@ -790,6 +836,24 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      const folderNote =
+        resolvedRuntimePolicy.cwd === null ||
+        run.restartContinuationOfRunId !== undefined ||
+        isCompactionCommandMessage(message) ||
+        goalCommand
+          ? ""
+          : yield* folderChangeNote(
+              fileSystem,
+              latestCountedRunFolder(projection) ??
+                previousFolderAfter(
+                  (yield* projectionStore.getThreadRecords(projection.thread.id, ["turnItems"], {
+                    turnItemTypes: ["system_notice"],
+                    turnItemRunIds: [null],
+                  })).turnItems,
+                  0,
+                ),
+              resolvedRuntimePolicy.cwd,
+            );
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1032,7 +1096,7 @@ export const layer: Layer.Layer<
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
       let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
-      const loadedProviderThread = yield* Effect.gen(function* () {
+      const loadProviderThread = Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           const sourceProjection = yield* projectionStore.getThreadRecords(
             nativeForkTransfer.sourceThreadId,
@@ -1076,9 +1140,15 @@ export const layer: Layer.Layer<
                 )
                 .map((attempt) => attempt.id),
             );
+            const sourceNativeStorageFolder = yield* readNativeStorageFolder(
+              nativeForkTransfer.sourceThreadId,
+              sourceProviderThread,
+              sourceProjection,
+            );
             const forked = yield* Effect.result(
               session.forkThread({
                 sourceProviderThread,
+                ...(sourceNativeStorageFolder === undefined ? {} : { sourceNativeStorageFolder }),
                 sourceProviderTurns: sourceProjection.providerTurns.filter(
                   (turn) =>
                     turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId),
@@ -1433,6 +1503,49 @@ export const layer: Layer.Layer<
         recoveryTurnItem = handoffTurnItem;
         return replacement;
       });
+      // A move relocates the source's Claude transcript before its row records the new folder.
+      // The wait holds no lock, so the source thread keeps taking commands meanwhile. Moves
+      // commit under the source's lock, so a recheck under it sees any move that landed during
+      // the wait, and none lands between that recheck and the fork.
+      const loadForkedProviderThread = Effect.fn(
+        "ProviderTurnStartService.loadForkedProviderThread",
+      )(function* (sourceThreadId: ThreadId) {
+        const unsettledRelocations = outbox.unsettledEffectIds({
+          threadIds: [sourceThreadId],
+          effectType: "provider-session.relocate-storage",
+        });
+        while (true) {
+          const settled = yield* Effect.forEach(yield* unsettledRelocations, outbox.awaitSettled, {
+            discard: true,
+          }).pipe(Effect.timeoutOption("30 seconds"));
+          if (Option.isNone(settled)) {
+            const error = new ProviderTurnStartError({
+              runId,
+              cause:
+                "The source thread's Claude session is still being moved. Try again in a moment.",
+            });
+            if (input.willRetry === true) return yield* error;
+            yield* settleStartFailure({
+              signal: "provider-thread-load-failure",
+              title: "Provider turn failed to start",
+              error,
+            });
+            return undefined;
+          }
+          const loaded = yield* threadLocks.withLock(
+            sourceThreadId,
+            Effect.gen(function* () {
+              if ((yield* unsettledRelocations).length > 0) return "relocating" as const;
+              return yield* loadProviderThread;
+            }),
+          );
+          if (loaded !== "relocating") return loaded;
+        }
+      });
+      const loadedProviderThread = yield* nativeForkTransfer === undefined ||
+      session.driver !== "claudeAgent"
+        ? loadProviderThread
+        : loadForkedProviderThread(nativeForkTransfer.sourceThreadId);
       if (loadedProviderThread === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
@@ -1469,8 +1582,18 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
+      const repositoryRoot =
+        projection.thread.worktreePath === null && resolvedRuntimePolicy.cwd !== null
+          ? yield* findRepositoryRoot(resolvedRuntimePolicy.cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            )
+          : undefined;
       const runningRun: OrchestrationV2Run = {
         ...run,
+        ...(resolvedRuntimePolicy.cwd === null
+          ? {}
+          : { cwd: resolvedRuntimePolicy.cwd, repositoryRoot }),
         status: "running",
         startedAt: now,
       };
@@ -1484,6 +1607,7 @@ export const layer: Layer.Layer<
       };
       const runningRootNode: OrchestrationV2ExecutionNode = {
         ...rootNode,
+        checkpointScopeId: startCheckpointScope.id,
         status: "running",
         startedAt: now,
       };
@@ -1535,6 +1659,20 @@ export const layer: Layer.Layer<
                   updatedAt: now,
                   consumedAt: now,
                 },
+              },
+            ]),
+        ...(startCheckpointScope === checkpointScope
+          ? []
+          : [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "checkpoint-scope.created" as const,
+                threadId: projection.thread.id,
+                runId: run.id,
+                nodeId: rootNode.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: now,
+                payload: startCheckpointScope,
               },
             ]),
         // Shown only once the replacement session commits with the running transition.
@@ -1641,7 +1779,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, folderNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1708,6 +1846,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        folderNote === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
@@ -1718,7 +1857,7 @@ export const layer: Layer.Layer<
         session: deliverySession,
         run: runningRun,
         rootNode: runningRootNode,
-        checkpointScope,
+        checkpointScope: startCheckpointScope,
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
@@ -1747,6 +1886,13 @@ export const layer: Layer.Layer<
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         hasWorkspaceMoved: runControls.hasWorkspaceMoved,
+        ...(runningProviderThread.nativeStorageFolder === undefined
+          ? {
+              readNativeStorageFolder: yield* Effect.cached(
+                readNativeStorageFolder(projection.thread.id, runningProviderThread, projection),
+              ),
+            }
+          : {}),
         message: {
           messageId: message.id,
           text: userText,
@@ -1799,4 +1945,4 @@ export const layer: Layer.Layer<
       ),
     });
   }),
-);
+).pipe(Layer.provide(ThreadCommandExecutor.layer));

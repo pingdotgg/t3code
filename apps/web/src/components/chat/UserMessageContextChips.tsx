@@ -55,12 +55,14 @@ import {
   skillPopoverDescription,
 } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
-import { TimelineRowCtx } from "./timelineRowContext";
+import { TimelineRowCtx, TimelineRowFolderCtx } from "./timelineRowContext";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
 
 function UserMessageMentionChip(props: {
@@ -68,6 +70,11 @@ function UserMessageMentionChip(props: {
   copyMarkdown: string;
 }) {
   const ctx = use(TimelineRowCtx);
+  const rowFolder = use(TimelineRowFolderCtx)?.cwd;
+  const path =
+    rowFolder === undefined || workspaceRelativeFilePath(rowFolder, ctx.workspaceRoot) === "."
+      ? props.record.path
+      : resolvePathLinkTarget(props.record.path, rowFolder);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -78,12 +85,11 @@ function UserMessageMentionChip(props: {
             aria-label={`Preview ${props.record.path}`}
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
-              if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+              if (ctx.threadRef) useRightPanelStore.getState().openFile(ctx.threadRef, path);
             }}
           >
             <WorkspaceEntryIcon
-              path={props.record.path}
+              path={path}
               environmentId={ctx.activeThreadEnvironmentId}
               cwd={ctx.workspaceRoot}
               theme={ctx.resolvedTheme}
@@ -94,7 +100,7 @@ function UserMessageMentionChip(props: {
       />
       <TooltipPopup>
         <WorkspaceEntryTooltip
-          path={props.record.path}
+          path={path}
           environmentId={ctx.activeThreadEnvironmentId}
           cwd={ctx.workspaceRoot}
         />
@@ -576,6 +582,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           <ChatMarkdown
             text={comment.text}
             cwd={ctx.markdownCwd}
+            fileLinkBaseDir={use(TimelineRowFolderCtx)?.cwd}
             threadRef={ctx.threadRef ?? undefined}
             skills={ctx.skills}
             parseRawHtml={false}

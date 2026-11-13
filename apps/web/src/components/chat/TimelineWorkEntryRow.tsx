@@ -34,7 +34,13 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import {
+  ArrowRightLeftIcon,
+  ChevronRightIcon,
+  CircleAlertIcon,
+  XIcon,
+  RotateCcwIcon,
+} from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
@@ -49,9 +55,11 @@ import { cn } from "~/lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
+import { ThreadMoveReceiptDetails } from "./ThreadMoveReceiptDetails";
 import {
   TimelineRowCtx,
   TimelineRowActivityCtx,
+  TimelineRowFolderCtx,
   WorkGroupViewCtx,
   type TimelineRow,
   type TimelineWorkEntry,
@@ -122,6 +130,7 @@ const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation(
 
 export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
+  const rowFolder = use(TimelineRowFolderCtx)?.cwd;
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   const isStreaming = (entry: TimelineWorkEntry) =>
     isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
@@ -133,6 +142,7 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
           className="text-foreground"
           text={entry.detail ?? ""}
           cwd={ctx.markdownCwd}
+          fileLinkBaseDir={rowFolder}
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
           isStreaming={isStreaming(entry)}
@@ -306,6 +316,56 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               Retry
             </Button>
           </div>
+        ) : null}
+      </WorkLogRow>
+    );
+  }
+  if (failureItem?.type === "system_notice" && failureItem.previousFolder !== undefined) {
+    const details = workEntry.detail;
+    return (
+      <WorkLogRow
+        data-v2-item-type="system_notice"
+        data-v2-item-visibility={workEntry.projectedItem?.visibility}
+        {...(details
+          ? {
+              role: "button" as const,
+              tabIndex: 0 as const,
+              "aria-label": workEntry.label,
+              "aria-expanded": expanded,
+              onClick: toggleExpanded,
+              onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+                if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  toggleExpanded();
+                }
+              },
+            }
+          : {})}
+        icon={<ArrowRightLeftIcon className="size-4 text-icon-muted" />}
+        label={<span className="truncate text-sm text-foreground/80">{workEntry.label}</span>}
+        trailing={
+          <>
+            <TimelineRowTimestamp
+              createdAt={workEntry.createdAt}
+              timestampFormat={timestampFormat}
+              alwaysVisible
+            />
+            {details ? (
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                  expanded && "rotate-90",
+                )}
+              />
+            ) : null}
+          </>
+        }
+      >
+        {expanded && details ? (
+          <WorkLogDetails kind="text">
+            <ThreadMoveReceiptDetails text={details} />
+          </WorkLogDetails>
         ) : null}
       </WorkLogRow>
     );

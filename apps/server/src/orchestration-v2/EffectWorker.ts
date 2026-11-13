@@ -17,6 +17,7 @@ import {
   orchestrationEffectClaimsTotal,
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
+import * as ClaudeSessionRelocation from "./ClaudeSessionRelocation.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -83,6 +84,7 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
+  | Effect.Services<ReturnType<typeof ClaudeSessionRelocation.relocateClaudeSessionStorage>>
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -97,9 +99,19 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const relocationContext =
+      yield* Effect.context<
+        Effect.Services<ReturnType<typeof ClaudeSessionRelocation.relocateClaudeSessionStorage>>
+      >();
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
+        const executionError = (cause: unknown) =>
+          new OrchestrationEffectExecutionError({
+            effectId: effect.id,
+            effectType: effect.request.type,
+            cause,
+          });
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
@@ -627,6 +639,15 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.relocate-storage":
+            return ClaudeSessionRelocation.relocateClaudeSessionStorage(
+              effect.threadId,
+              effect.request,
+            ).pipe(Effect.provideContext(relocationContext), Effect.mapError(executionError));
+          case "scheduled-tasks.move":
+            return resourceCleanup
+              .moveScheduledTasks(effect.request)
+              .pipe(Effect.mapError(executionError));
         }
       }),
     });

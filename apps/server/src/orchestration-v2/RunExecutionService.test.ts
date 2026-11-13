@@ -3009,17 +3009,33 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
-it.effect("records a provider's input rejection at turn start in the terminal error", () =>
+it.effect("records a provider's input rejection at turn start and the folder it recorded", () =>
   Effect.gen(function* () {
     const rejection = "goal objective must be at most 4000 characters";
-    const { written, observed } = yield* captureRootRunTermination({
+    const ingesting = yield* Deferred.make<void>();
+    const { written, observed, finalEvents } = yield* captureRootRunTermination({
       key: "start-failure:input-rejected",
       shouldFinalizeRun: () => Effect.succeed(true),
-      events: () => Stream.never,
+      nativeStorageFolder: "/repo/a",
+      // The adapter's update with the folder is still being ingested when the start fails.
+      events: (ids) =>
+        Stream.make({
+          type: "provider_thread.updated" as const,
+          driver,
+          providerThread: {
+            id: ids.providerThreadId,
+            driver,
+            nativeStorageFolder: "/repo/b",
+          } as OrchestrationV2ProviderThread,
+        }),
+      ingestNormalized: () =>
+        Deferred.succeed(ingesting, undefined).pipe(Effect.andThen(Effect.never)),
       afterStart: (closed) => Deferred.succeed(closed, undefined),
       startTurn: (turnInput) =>
-        Effect.fail(
-          new ProviderAdapter.ProviderAdapterTurnStartError({
+        Effect.gen(function* () {
+          yield* turnInput.recordNativeStorageFolder?.("/repo/b") ?? Effect.void;
+          yield* Deferred.await(ingesting);
+          return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
             driver,
             threadId: turnInput.threadId,
             providerThreadId: turnInput.providerThread.id,
@@ -3029,12 +3045,18 @@ it.effect("records a provider's input rejection at turn start in the terminal er
               errorMessage: rejection,
               method: "thread/goal/set",
             }),
-          }),
-        ),
+          });
+        }),
     });
     assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", rejection);
+    assert.deepEqual(
+      finalEvents.flatMap((event) =>
+        event.type === "provider-thread.updated" ? [event.payload.nativeStorageFolder] : [],
+      ),
+      ["/repo/b"],
+    );
   }),
 );
 
@@ -3522,6 +3544,7 @@ function captureRootRunTermination(input: {
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
+  readonly nativeStorageFolder?: string;
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3696,6 +3719,9 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          ...(input.nativeStorageFolder === undefined
+            ? {}
+            : { nativeStorageFolder: input.nativeStorageFolder }),
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,

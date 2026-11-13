@@ -30,7 +30,12 @@ import { useUiStateStore } from "~/uiStateStore";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
-import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
+import {
+  TimelineRowCtx,
+  TimelineRowActivityCtx,
+  TimelineRowFolderCtx,
+  type TimelineRow,
+} from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
@@ -65,6 +70,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                   ? agentWorkingDirectories(readThreadTurnItems(ctx.threadRef), row.projectedItem)
                   : []
               }
+              fileLinkBaseDir={use(TimelineRowFolderCtx)?.cwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
@@ -340,6 +346,7 @@ export function ProposedPlanTimelineRow({
         environmentId={ctx.activeThreadEnvironmentId}
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
+        fileLinkBaseDir={use(TimelineRowFolderCtx)?.cwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
       />
@@ -438,6 +445,7 @@ function AssistantChangedFilesSectionInner({
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
   const ctx = use(TimelineRowCtx);
+  const rowFolder = use(TimelineRowFolderCtx);
   const persistedExpanded = useUiStateStore(
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
   );
@@ -468,11 +476,13 @@ function AssistantChangedFilesSectionInner({
           {
             environmentId: ctx.activeThreadEnvironmentId,
             filePath,
-            workspaceRoot: ctx.workspaceRoot,
+            workspaceRoot: rowFolder?.cwd ?? ctx.workspaceRoot,
             repositoryRoot:
+              rowFolder?.repositoryRoot ??
+              ((rowFolder === undefined || rowFolder.cwd === ctx.workspaceRoot) &&
               thread?.worktreePath == null
                 ? activeProject?.repositoryIdentity?.rootPath
-                : undefined,
+                : undefined),
           },
           event,
         )

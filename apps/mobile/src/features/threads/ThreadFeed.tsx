@@ -43,6 +43,13 @@ import {
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import {
+  receiptFoldersSignature,
+  runFoldersSignature,
+  timelineRowFolder,
+  timelineRowFolders,
+  type TimelineRowFolders,
+} from "@t3tools/client-runtime/timeline-row-folders";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -55,6 +62,8 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   type RunId,
   type ScheduledTaskId,
   type ScopedThreadRef,
@@ -329,6 +338,9 @@ export interface ThreadFeedProps {
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
+  /** Live runs and the folders of paged-in runs; a row's links resolve in its run's folder. */
+  readonly runs?: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "cwd" | "repositoryRoot">>;
+  readonly runFolders?: OrchestrationV2ThreadProjection["runFolders"];
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -1081,6 +1093,18 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 /** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
 type MarkdownLinkReply = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
 
+const EMPTY_RUN_FOLDERS: ReadonlyArray<never> = [];
+
+function feedRowRunId(row: ThreadFeedRow): RunId | null {
+  if (row.type === "message") return row.message.runId;
+  return "runId" in row ? row.runId : null;
+}
+
+function feedRowPreviousFolder(row: ThreadFeedRow): string | undefined {
+  const item = row.type === "activity-group" ? row.activities[0]?.projectedItem.item : undefined;
+  return item?.type === "system_notice" ? item.previousFolder : undefined;
+}
+
 interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string, reply?: MarkdownLinkReply) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
@@ -1677,7 +1701,8 @@ function renderFeedEntry(
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
-    readonly markdownLinkHandlers: MarkdownLinkHandlers;
+    readonly markdownLinkHandlers: (folder: string | undefined) => MarkdownLinkHandlers;
+    readonly rowFolders: TimelineRowFolders;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
@@ -1700,6 +1725,9 @@ function renderFeedEntry(
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+  const markdownLinkHandlers = props.markdownLinkHandlers(
+    timelineRowFolder(props.rowFolders, feedRowRunId(entry), entry.id)?.cwd,
+  );
 
   if (entry.type === "guest-pending") {
     return (
@@ -1773,7 +1801,7 @@ function renderFeedEntry(
             markdown={entry.text}
             environmentId={props.environmentId}
             markdownStyles={markdownStyles.assistant}
-            linkHandlers={props.markdownLinkHandlers}
+            linkHandlers={markdownLinkHandlers}
             onUseArtifactTemplate={props.onUseArtifactTemplate}
             renderImage={props.renderMarkdownImage}
             skills={props.skills}
@@ -1968,7 +1996,7 @@ function renderFeedEntry(
           markdownStyles={markdownStyles.user}
           reviewCommentColors={props.reviewCommentColors}
           skills={props.skills}
-          linkHandlers={props.markdownLinkHandlers}
+          linkHandlers={markdownLinkHandlers}
           renderImage={props.renderMarkdownImage}
         />
       );
@@ -2200,7 +2228,7 @@ function renderFeedEntry(
                         markdownStyles={styles}
                         reviewCommentColors={props.reviewCommentColors}
                         skills={props.skills}
-                        linkHandlers={props.markdownLinkHandlers}
+                        linkHandlers={markdownLinkHandlers}
                         renderImage={props.renderMarkdownImage}
                       />
                     </MarkdownImageAvailableWidthContext>
@@ -2305,7 +2333,7 @@ function renderFeedEntry(
               markdown={renderedText}
               environmentId={props.environmentId}
               markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
+              linkHandlers={markdownLinkHandlers}
               reply={message.projectedItem}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
@@ -3000,7 +3028,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false, reply?: MarkdownLinkReply) => {
+  // `folder` is a row's own run folder when it differs from the thread's: links resolve there
+  // exactly, with no basename lookup, and the file screen opens them in that folder.
+  const onMarkdownLinkPress = (
+    href: string,
+    imageEmbed = false,
+    folder?: string,
+    reply?: MarkdownLinkReply,
+  ) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -3023,7 +3058,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const media = resolveMarkdownMediaPreview(href, {
       environmentId: props.environmentId,
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot: folder ?? props.workspaceRoot,
       imageEmbed,
     });
     if (media && media.kind !== "file") {
@@ -3065,9 +3100,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
     const presentation = resolveMarkdownLinkPresentation(href);
     if (presentation.kind === "file") {
-      const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
+      const root = folder ?? props.workspaceRoot;
+      const path = resolveFileLinkPath(root, presentation.path);
       if (path === null) return;
-      void findFileLinkTarget(presentation.path, path, request.signal, reply).then((target) => {
+      const openAt = (target: string) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
@@ -3075,8 +3111,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           threadId: String(props.threadId),
           path: fileRoutePathSegments(target),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
+          ...(folder === undefined ? {} : { cwd: folder }),
         });
-      });
+      };
+      if (folder === undefined) {
+        void findFileLinkTarget(presentation.path, path, request.signal, reply).then(openAt);
+      } else openAt(resolveWorkspaceRelativeFilePath(folder, path) ?? path);
       return;
     }
 
@@ -3095,20 +3135,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     threadId: props.threadId,
     workspaceRoot: props.workspaceRoot ?? null,
   });
-  const markdownLinkHandlers: MarkdownLinkHandlers = {
+  // `folder` is a row's own run folder when it differs from the thread's; every file
+  // action resolves there so a tap, the context menu, and its paths agree.
+  const markdownLinkHandlersIn = (folder: string | undefined): MarkdownLinkHandlers => ({
     fileEmbedLabel: (href, standalone) =>
       markdownFileEmbedLabel(
         href,
         {
           environmentId: props.environmentId,
           threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
+          workspaceRoot: folder ?? props.workspaceRoot,
         },
         standalone,
       ),
-    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
+    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, folder, reply),
     linkCustomization: enrichedThreadLinkCustomization,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
+    onImagePress: (href) => onMarkdownLinkPress(href, true, folder),
     resolveImageSource,
     fileContextMenu: (href) => {
       const skill = enrichedSkillReference(href, props.skills);
@@ -3136,7 +3178,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
+      const target = resolveFileChipTarget(href, folder ?? props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId, reply) => {
@@ -3153,11 +3195,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
-      const target = resolveFileChipTarget(href, props.workspaceRoot);
+      const target = resolveFileChipTarget(href, folder ?? props.workspaceRoot);
       if (!target) return;
       switch (actionId) {
         case "copy-full-path":
         case "copy-relative-path": {
+          // A row in its own run folder resolves there exactly, as its tap does.
+          if (folder !== undefined) {
+            const clipboardPath = fileChipClipboardPath(target, actionId);
+            if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
+            return;
+          }
           const presentation = resolveMarkdownLinkPresentation(href);
           const path =
             presentation.kind === "file"
@@ -3192,14 +3240,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return;
         }
         case "open-file":
-          onMarkdownLinkPress(href, false, reply);
+          onMarkdownLinkPress(href, false, folder, reply);
           return;
         case "save":
           shareFileChip(target);
           return;
       }
     },
-  };
+  });
+  const markdownLinkHandlers = markdownLinkHandlersIn(undefined);
   const renderMarkdownImage: MarkdownImageRenderer = (image) => {
     const media = resolveMarkdownMediaPreview(image.href, {
       environmentId: props.environmentId,
@@ -3325,6 +3374,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     />
   );
   const reviewCommentColors = useReviewCommentColors();
+  const markdownLinkHandlersFor = (folder: string | undefined): MarkdownLinkHandlers =>
+    folder === undefined || folder === props.workspaceRoot
+      ? markdownLinkHandlers
+      : markdownLinkHandlersIn(folder);
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
   const compactionLabelsByEntryId = useMemo(
     () => threadFeedCompactionLabels(props.feed),
@@ -3424,6 +3477,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setupAnchorIndex:
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
+  const rowFolders = timelineRowFolders(
+    `${runFoldersSignature(props.runs ?? EMPTY_RUN_FOLDERS, props.runFolders)}`,
+    `${receiptFoldersSignature(groupedFeed, feedRowPreviousFolder)}`,
+  );
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
@@ -3766,7 +3823,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
-            markdownLinkHandlers,
+            markdownLinkHandlers: markdownLinkHandlersFor,
+            rowFolders,
             renderMarkdownImage,
             renderViewedImage,
             renderReasoning,
