@@ -1777,9 +1777,14 @@ describe("pull request watch fingerprints", () => {
       readonly reviews: number;
       readonly removals: number;
       readonly timelineItems: number;
+      readonly mergeStateStatus?: string;
+      readonly totalCommentsCount?: number | null;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
+      mergeStateStatus: input.mergeStateStatus ?? "BLOCKED",
+      updatedAt: "2026-10-01T00:00:00Z",
+      totalCommentsCount: input.totalCommentsCount === undefined ? 3 : input.totalCommentsCount,
       headRefOid: "abc123",
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
@@ -1816,11 +1821,18 @@ describe("pull request watch fingerprints", () => {
     };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
+    const mergeStateChanged = fingerprint({ ...base, mergeStateStatus: "CLEAN" });
+    const reviewCommented = fingerprint({ ...base, totalCommentsCount: 4 });
+    const partial = fingerprint({ ...base, totalCommentsCount: null });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
     const replied = fingerprint({ ...base, reviews: 2 });
 
     expect(checkFinished.status).not.toBe(before.status);
     expect(checkFinished.remarks).toBe(before.remarks);
+    expect(mergeStateChanged.status).not.toBe(before.status);
+    expect(reviewCommented.remarks).not.toBe(before.remarks);
+    expect(before.includesRemarkState).toBe(true);
+    expect(partial.includesRemarkState).toBe(false);
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
