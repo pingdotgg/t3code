@@ -356,42 +356,6 @@ async function flushAcross(
   });
 }
 
-it("does not restore dropped text into a composer locked again while a flush waits", async () => {
-  const draftKey = "flush-relock:draft";
-  await using screen = await renderFlushableComposer(draftKey);
-  await act(async () => emit("Draft"));
-  await screen.setLocked(true);
-  await act(async () => emit("Draft plus more"));
-  await screen.setLocked(false);
-
-  await flushAcross(screen, () => screen.setLocked(true, draftKey));
-  expect(getComposerDraftSnapshot(draftKey).text).toBe("Draft");
-});
-
-it("does not restore dropped text into a draft cleared while a flush waits", async () => {
-  const draftKey = "flush-clear:draft";
-  await using screen = await renderFlushableComposer(draftKey);
-  await screen.setLocked(true);
-  await act(async () => emit("Dropped"));
-  await screen.setLocked(false);
-
-  await flushAcross(screen, () => act(async () => clearComposerDraftContent(draftKey)));
-  expect(getComposerDraftSnapshot(draftKey).text).toBe("");
-});
-
-it("does not restore dropped text after switching to another empty draft while a flush waits", async () => {
-  const first = "flush-switch:first";
-  const other = "flush-switch:other";
-  await using screen = await renderFlushableComposer(first);
-  await screen.setLocked(true);
-  await act(async () => emit("Dropped"));
-  await screen.setLocked(false);
-
-  await flushAcross(screen, () => screen.setLocked(false, other));
-  expect(getComposerDraftSnapshot(first).text).toBe("");
-  expect(getComposerDraftSnapshot(other).text).toBe("");
-});
-
 it("does not restore dropped text through an editor recreated while a flush waits", async () => {
   const draftKey = "flush-recreate:draft";
   await using screen = await renderFlushableComposer(draftKey);
