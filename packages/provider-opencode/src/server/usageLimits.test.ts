@@ -120,6 +120,34 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("fingerprints a plan by its own credential, not by the account", () =>
+    Effect.gen(function* () {
+      const { dir, dataHome } = yield* storeWithCredential("minimax-coding-plan", "sk-cp-plan-key");
+      const client = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(MINIMAX_RESPONSE))),
+      );
+      const endpoints = MINIMAX_ENDPOINT;
+      const alone = yield* readLimits(dataHome, dir, client, endpoints);
+      const plan = alone.windows.find((window) => window.id === "minimax-coding-plan_weekly");
+      assert.isDefined(plan?.credentialFingerprint);
+
+      // The same plan next to another credential keeps its own fingerprint.
+      const withBoth = yield* Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const db = yield* openDatabase(path.join(dataHome, "opencode", "opencode.db"));
+        yield* db.unsafe(
+          "INSERT INTO credential (id, integration_id, value, active, time_created) VALUES (?, ?, ?, 1, 0)",
+          ["cred-2", "minimax", JSON.stringify({ type: "key", key: "sk-cp-other-key" })],
+        );
+        return yield* readLimits(dataHome, dir, client, endpoints);
+      });
+      const samePlan = withBoth.windows.find(
+        (window) => window.id === "minimax-coding-plan_weekly",
+      );
+      assert.strictEqual(samePlan?.credentialFingerprint, plan?.credentialFingerprint);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("never sends a key that MiniMax did not issue", () =>
     Effect.gen(function* () {
       const { dir, dataHome } = yield* storeWithCredential("minimax-coding-plan", "sk-third-party");
@@ -264,12 +292,14 @@ describe("mergeUsageLimits", () => {
             kind: "weekly",
             label: "MiniMax Token Plan · Weekly",
             usedPercent: 9,
+            credentialFingerprint: "plan-account",
           },
         ],
         credentialFingerprint: "minimax-account",
       },
     );
     assert.strictEqual(merged.windows[0]?.credentialFingerprint, "go-account");
-    assert.strictEqual(merged.windows[1]?.credentialFingerprint, "minimax-account");
+    // The integration window keeps the credential that meters it.
+    assert.strictEqual(merged.windows[1]?.credentialFingerprint, "plan-account");
   });
 });

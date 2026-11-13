@@ -347,17 +347,30 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
       if (candidates.length === 0) return empty;
 
       const digest = yield* Digest.Digest;
-      const credentialFingerprint = yield* digest
-        .digest(
-          Digest.sha256,
-          new TextEncoder().encode(
-            candidates
-              .map(([integrationId, credential]) => `${integrationId}\0${credential.key}`)
-              .sort()
-              .join("\0"),
-          ),
-        )
-        .pipe(Effect.map(Hex.encode), Effect.orDie);
+      const fingerprint = (value: string) =>
+        digest
+          .digest(Digest.sha256, new TextEncoder().encode(value))
+          .pipe(Effect.map(Hex.encode), Effect.orDie);
+      // The account names every credential that meters it, so two environments
+      // that share one key but differ in another stay apart.
+      const credentialFingerprint = yield* fingerprint(
+        candidates
+          .map(
+            ([integrationId, credential]) =>
+              `opencode-integrations\0${integrationId}\0${credential.key}`,
+          )
+          .sort()
+          .join("\0"),
+      );
+      // Each window names the credential that meters it, so the same plan on
+      // two environments is one quota.
+      const windowFingerprints = new Map<string, string>();
+      for (const [integrationId, credential] of candidates) {
+        windowFingerprints.set(
+          integrationId,
+          yield* fingerprint(`opencode-integration\0${integrationId}\0${credential.key}`),
+        );
+      }
 
       const client = yield* HttpClient.HttpClient;
       const windows: ServerProviderUsageWindow[] = [];
@@ -409,8 +422,15 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
           plan.weekly_end_time,
           plan.weekly_start_time,
         );
-        if (interval !== null) windows.push(interval);
-        if (weekly !== null) windows.push(weekly);
+        const credentialFingerprint = windowFingerprints.get(integrationId);
+        if (interval !== null)
+          windows.push(
+            credentialFingerprint === undefined ? interval : { ...interval, credentialFingerprint },
+          );
+        if (weekly !== null)
+          windows.push(
+            credentialFingerprint === undefined ? weekly : { ...weekly, credentialFingerprint },
+          );
       }
       return { checkedAt, windows, credentialFingerprint };
     }).pipe(
@@ -458,23 +478,20 @@ export function mergeUsageLimits(
     consoleMetadata.credentialFingerprint,
     integration.credentialFingerprint,
   );
-  // Each window names the credential that meters it, so a pool counts one
-  // credential once even when two accounts report it.
-  const withCredential = (
-    windows: readonly ServerProviderUsageWindow[],
-    fingerprint: string | undefined,
-  ) =>
-    fingerprint === undefined
-      ? windows
-      : windows.map((window) => ({ ...window, credentialFingerprint: fingerprint }));
+  // The Console windows name the Console credential; an integration window
+  // already names the credential that meters it.
+  const consoleWindows =
+    consoleMetadata.credentialFingerprint === undefined
+      ? console.windows
+      : console.windows.map((window) => ({
+          ...window,
+          credentialFingerprint: consoleMetadata.credentialFingerprint,
+        }));
   return {
     ...consoleMetadata,
     ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
     checkedAt: console.checkedAt,
-    windows: [
-      ...withCredential(console.windows, consoleMetadata.credentialFingerprint),
-      ...withCredential(integration.windows, integration.credentialFingerprint),
-    ],
+    windows: [...consoleWindows, ...integration.windows],
   };
 }
 
