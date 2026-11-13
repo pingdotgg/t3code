@@ -398,6 +398,15 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
   }
 });
 
+it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+  for (const [text, maxBytes] of [
+    ["prefix\u001b[31mOK", 6],
+    ["prefix\u001b]0;HIDDEN\u0007OK", 10],
+  ] as const) {
+    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe("OK");
+  }
+});
+
 it("bounds long partial lines and joins surrogate pairs across chunk boundaries", () => {
   const maxBytes = 65_539;
   let expected = "";

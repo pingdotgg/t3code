@@ -159,6 +159,20 @@ describe("terminal session reducers", () => {
     }
   });
 
+  it("does not retain the tail of a control sequence whose introducer was trimmed", () => {
+    for (const [history, maxBytes] of [
+      ["prefix\u001b[31mOK", 6],
+      ["prefix\u001b]0;HIDDEN\u0007OK", 10],
+    ] as const) {
+      const state = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history } },
+        maxBytes,
+      );
+      expect(terminalOutputText(state.output)).toBe("OK");
+    }
+  });
+
   it("delivers all output when several events arrive before a renderer reads", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
