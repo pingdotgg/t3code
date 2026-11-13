@@ -27,6 +27,10 @@ impl Drop for Fixture {
 }
 
 fn fixture(name: &str) -> Fixture {
+    fixture_with_host(name, None)
+}
+
+fn fixture_with_host(name: &str, host: Option<Arc<dyn conn_engine::EngineHost>>) -> Fixture {
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -37,6 +41,7 @@ fn fixture(name: &str) -> Fixture {
     }];
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
     config.stream_flush = Duration::from_millis(5);
+    config.host = host;
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
         engine,
@@ -921,4 +926,81 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
         let (code, _) = idle_agent.failure(tool, args).await;
         assert_eq!(code, "parent_not_active", "{tool}");
     }
+}
+
+/// Provisions a worktree the way the server's host answers, and records the request.
+#[derive(Default)]
+struct WorktreeHost {
+    requests: std::sync::Mutex<Vec<conn_engine::WorktreeRequest>>,
+}
+
+impl conn_engine::EngineHost for WorktreeHost {
+    fn provision_worktree(
+        &self,
+        request: conn_engine::WorktreeRequest,
+    ) -> conn_engine::BoxFuture<'_, Result<conn_engine::ProvisionedWorktree, String>> {
+        let branch = request.branch.clone().unwrap_or_else(|| "t3/abc123".into());
+        let made = conn_engine::ProvisionedWorktree {
+            path: format!("/tmp/conn-mcp-worktrees/{}", branch.replace('/', "-")),
+            branch,
+        };
+        self.requests.lock().unwrap().push(request);
+        Box::pin(std::future::ready(Ok(made)))
+    }
+}
+
+/// `t3_thread_launch` with `workspaceStrategy: {type: "worktree"}` goes to the engine's
+/// worktree launch, as the T3 server's does; the result has the same shape as a root launch.
+#[tokio::test(flavor = "current_thread")]
+async fn launch_prepares_a_worktree() {
+    let host = Arc::new(WorktreeHost::default());
+    let f = fixture_with_host("worktree", Some(host.clone()));
+    let mut c = Client::open(&f.service, client(true)).await;
+    let launched = c
+        .ok(
+            "t3_thread_launch",
+            json!({
+                "projectId": project_id(), "title": "Isolated", "message": "hello",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+                "workspaceStrategy": {"type": "worktree", "baseRef": "main", "branch": "feature/x"},
+                "clientRequestId": "wt-1",
+            }),
+        )
+        .await;
+    let thread = launched["threadId"].as_str().unwrap().to_owned();
+    assert!(launched["runId"].is_string(), "{launched}");
+    let requests = host.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        (
+            requests[0].base_ref.as_str(),
+            requests[0].branch.as_deref(),
+            requests[0].project_root.as_str()
+        ),
+        ("main", Some("feature/x"), ROOT)
+    );
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(thread.as_str().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        projection["thread"]["worktreePath"],
+        "/tmp/conn-mcp-worktrees/feature-x"
+    );
+    assert_eq!(projection["thread"]["branch"], "feature/x");
+    // A retry replays the first launch and makes no second worktree.
+    c.ok(
+        "t3_thread_launch",
+        json!({
+            "projectId": project_id(), "title": "Isolated", "message": "hello",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "workspaceStrategy": {"type": "worktree", "baseRef": "main", "branch": "feature/x"},
+            "clientRequestId": "wt-1",
+        }),
+    )
+    .await;
+    assert_eq!(host.requests.lock().unwrap().len(), 1);
 }

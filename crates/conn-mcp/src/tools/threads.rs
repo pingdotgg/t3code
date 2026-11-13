@@ -462,16 +462,12 @@ pub async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let runtime_mode = resolve_runtime_mode(&limits.runtime_mode, str_arg(args, "runtimeMode"))?;
     let interaction_mode =
         resolve_interaction_mode(&limits.interaction_mode, str_arg(args, "interactionMode"))?;
+    // `root`, `existing_worktree` and `worktree` go to the engine's launch, which makes a new
+    // worktree through the server's host before the thread exists.
     let strategy = args
         .get("workspaceStrategy")
         .cloned()
         .unwrap_or_else(|| json!({"type": "root"}));
-    if strategy["type"] == "worktree" {
-        return Err(fail(
-            "invalid_request",
-            "Conn Server cannot prepare a new worktree yet. No thread was created. Use workspaceStrategy: {type: \"root\"}.",
-        ));
-    }
     let mut input = json!({
         "commandId": command_id,
         "threadId": command_id,

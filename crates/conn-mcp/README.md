@@ -88,7 +88,9 @@ Where they differ, because the engine does not do it yet:
 
 - `t3_thread_send` maps its modes as `ThreadManagementService` does (`auto` steers a running
   turn, else starts; `queue`, `steer`, `restart`). `freshContext` is refused.
-- `t3_thread_launch`: `root` and `existing_worktree` only; no `scratch`, no attachments. The thread
+- `t3_thread_launch`: `root`, `existing_worktree` and `worktree` (the engine makes the worktree
+  through the server's host before the thread exists; `parity.mjs` compares the result). No
+  `scratch`, no attachments (`t3_attachment_prepare_upload` is not served). The thread
   is recorded as `createdBy: user` (the engine's `launch` sets it). Without `modelSelection`
   a client gets the first ready provider's first model.
 - `t3_thread_wait` ends on `waiting` too, as Orbit's driver expects; no restart chains, since the
@@ -98,7 +100,8 @@ Where they differ, because the engine does not do it yet:
 - Delegation: `delegate_task` dispatches the engine's `delegated_task.request`, which makes the
   child (lineage `subagent`) and wakes the parent (`always`; `settled_only` for `mode: wait`,
   upgraded when the wait gives up). Task ids are `node:delegated-task:<commandId>`. No
-  `isolation: worktree`, no remote targets.
+  `isolation: worktree`: the engine's `delegated_task.request` takes no workspace strategy
+  yet. No remote targets.
 - `orchestrator_capabilities`: no option descriptors, favourites or model preferences.
 - Results keep the TS keys; serde_json sorts keys, so the `text` copy orders them differently.
 
