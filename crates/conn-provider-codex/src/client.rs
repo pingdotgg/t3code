@@ -19,8 +19,8 @@ use conn_provider_support::{
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::launch;
 use crate::protocol::{Inbound, RpcError, notification, reply_error, request};
+use crate::{launch, network_gate};
 
 /// A line longer than this is dropped. Tool results with inline images stay below it.
 pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
@@ -81,6 +81,9 @@ struct State {
 
 pub struct AppServer {
     spec: LaunchSpec,
+    /// The Orbit MCP network wait, run once before the first spawn.
+    gate: Option<network_gate::Gate>,
+    gate_done: tokio::sync::OnceCell<()>,
     state: Mutex<State>,
     /// Serializes start-up and `initialize`; never held by notification routing.
     starting: tokio::sync::Mutex<()>,
@@ -90,8 +93,14 @@ impl AppServer {
     /// The T3 server sends a session's app-server nothing beyond `initialize` until a thread
     /// call (no `model/list`: its model catalog comes from a separate status probe).
     pub fn new(spec: LaunchSpec) -> Arc<Self> {
+        Self::with_gate(spec, None)
+    }
+
+    pub fn with_gate(spec: LaunchSpec, gate: Option<network_gate::Gate>) -> Arc<Self> {
         Arc::new(Self {
             spec,
+            gate,
+            gate_done: tokio::sync::OnceCell::new(),
             state: Mutex::new(State::default()),
             starting: tokio::sync::Mutex::new(()),
         })
@@ -146,6 +155,30 @@ impl AppServer {
             && !live.process.has_exited()
         {
             return Ok(live.generation);
+        }
+        if let Some(gate) = &self.gate {
+            self.gate_done
+                .get_or_init(|| async {
+                    let result = gate.wait().await;
+                    if !result.ready || result.waited >= Duration::from_secs(1) {
+                        eprintln!(
+                            "conn-provider-codex: Orbit MCP hosts {} after {} ms: {:?}{}",
+                            if result.ready {
+                                "reachable"
+                            } else {
+                                "unreachable, starting anyway"
+                            },
+                            result.waited.as_millis(),
+                            result.hosts,
+                            if result.pending.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", pending {:?}", result.pending)
+                            },
+                        );
+                    }
+                })
+                .await;
         }
         let (tx, rx) = mpsc::channel(SESSION_INBOX);
         let process = Process::spawn(&self.spec, MAX_LINE_BYTES, tx)

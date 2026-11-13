@@ -12,7 +12,8 @@ conn-provider.workspace = true
 conn-provider-support = { path = "../conn-provider-support" }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+# `net`: the Orbit MCP network wait probes TCP before the first spawn (network_gate.rs).
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros", "net"] }
 
 [lints]
 workspace = true

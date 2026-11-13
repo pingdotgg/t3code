@@ -16,6 +16,7 @@ pub mod context;
 pub mod instructions;
 pub mod launch;
 pub mod mapper;
+pub mod network_gate;
 pub mod protocol;
 pub mod session;
 
@@ -60,7 +61,16 @@ impl CodexProvider {
                 .and_then(|home| cached_models(&home.join("models_cache.json")))
                 .unwrap_or_else(fallback_models),
         ));
-        let server = client::AppServer::new(spec);
+        // TS reads the gate's variables from `{...process.env, ...spawn environment}`.
+        let gate = network_gate::Gate::from_env(|key| {
+            spec.env_set
+                .iter()
+                .rev()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .or_else(|| std::env::var(key).ok())
+        });
+        let server = client::AppServer::with_gate(spec, Some(gate));
         Self {
             instance_id,
             config,
