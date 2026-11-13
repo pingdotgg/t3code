@@ -60,6 +60,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
+import { settingsSectionSearch } from "./settingsScopeNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -197,8 +198,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   }, [compactSearchOpen]);
 
   const handleSectionClick = (to: SettingsPath) => {
+    const search = settingsSectionSearch(to, pathname);
     void navigate({
       to,
+      ...(search && { search }),
       hash: "",
       replace: true,
       hashScrollIntoView: false,
