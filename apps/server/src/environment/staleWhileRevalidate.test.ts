@@ -21,7 +21,7 @@ it.effect("computes once, then answers from memory until the ttl lapses", () =>
     yield* TestClock.adjust("59 seconds");
     assert.equal(yield* read, 1);
     assert.equal(yield* Ref.get(calls), 1);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("serves the stale value while one background refresh replaces it", () =>
@@ -80,7 +80,7 @@ it.effect("shares one first scan that an interrupted caller does not cancel", ()
     yield* Deferred.succeed(release, undefined);
     assert.equal(yield* Fiber.join(next), 1);
     assert.equal(yield* Ref.get(calls), 1);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("starts over after a failed first scan", () =>
@@ -98,7 +98,7 @@ it.effect("starts over after a failed first scan", () =>
 
     assert.isTrue(Exit.isFailure(yield* Effect.exit(read)));
     assert.equal(yield* read, 2);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("abandons a hung refresh so a later call can start another", () =>
@@ -144,7 +144,7 @@ it.effect("abandons a hung refresh so a later call can start another", () =>
     yield* Fiber.await(yield* Deferred.await(refreshed));
     assert.equal(yield* Ref.get(calls), 3);
     assert.equal(yield* read, 3);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("interrupts a background refresh when the owning scope closes", () =>
