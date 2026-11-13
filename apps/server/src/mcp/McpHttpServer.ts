@@ -33,6 +33,7 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as PullRequestWatchService from "../pullRequest/PullRequestWatchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import {
@@ -549,6 +550,7 @@ const parameterValidationMessage = (error: unknown) =>
     : undefined;
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+const isPreviewScreenshotSaveError = Schema.is(PreviewScreenshotSaveError);
 
 const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   cause: Cause.Cause<E>,
@@ -566,9 +568,10 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
       ? firstFailure._tag
       : "PreviewSnapshotError";
   // Preview errors contain server-authored recovery guidance, never page output.
-  const message = isPreviewAutomationError(firstFailure)
-    ? firstFailure.message
-    : parameterValidationMessage(firstFailure);
+  const message =
+    isPreviewAutomationError(firstFailure) || isPreviewScreenshotSaveError(firstFailure)
+      ? firstFailure.message
+      : parameterValidationMessage(firstFailure);
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
@@ -778,7 +781,7 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
   R,
 >(
   tool: T,
-  handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
+  handle: (payload: Schema.Json) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   provide: (
     effect: Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   ) => Effect.Effect<
@@ -813,7 +816,7 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           fiber.context,
           McpInvocationContext.McpInvocationContext,
         );
-        return provide(handle(payload as Tool.Parameters<T>)).pipe(
+        return provide(handle(payload)).pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
@@ -1266,7 +1269,7 @@ export const layerAttachmentToolkit = toolkitRegistration(
 export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsToolkit,
   PullRequestsHandlers.layer,
-);
+).pipe(Layer.provide(PullRequestWatchService.layer));
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
@@ -1307,7 +1310,8 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
     name: "T3 Code",
     version: packageJson.version,
     path: "/mcp",
-    protocols: [McpProtocol.v2025_06_18],
+    // The first protocol is the fallback for clients that offer an unknown version.
+    protocols: [McpProtocol.v2025_06_18, McpProtocol.v2026_07_28],
     allowSessionTermination: true,
     registrations,
   }).pipe(Layer.provide(layerMcpAuthMiddleware));

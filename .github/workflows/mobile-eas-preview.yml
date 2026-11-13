@@ -39,7 +39,7 @@ jobs:
 
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
           # No sparse-checkout here: it makes actions/checkout fetch with
@@ -49,7 +49,7 @@ jobs:
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -67,7 +67,7 @@ jobs:
 
       - name: Setup EAS
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           # eas-cli 22 renamed `project` to `app` in build JSON, and
           # continuous-deploy-fingerprint still reads `build.project.ownerAccount`.
@@ -100,7 +100,7 @@ jobs:
 
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action/continuous-deploy-fingerprint@main
+        uses: expo/expo-github-action/continuous-deploy-fingerprint@5273c2136bd09c2a341fe3340d3e767ce5a13015 # v9.0.2
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           # The Expo action otherwise suppresses the EAS command's failure output.
@@ -156,7 +156,7 @@ jobs:
 
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -189,7 +189,7 @@ jobs:
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -207,7 +207,7 @@ jobs:
 
       - name: Setup EAS
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
@@ -292,7 +292,7 @@ jobs:
       ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -351,7 +351,7 @@ jobs:
 
       - name: Mount build cache
         if: steps.record.outputs.built != 'true'
-        uses: useblacksmith/stickydisk@v1
+        uses: useblacksmith/stickydisk@3f6be1451e3cad893b778bc93495c80452a5da26 # v1.7.2
         with:
           key: ${{ github.repository }}-android-preview-build
           path: ~/.cache/t3-android-preview
@@ -369,7 +369,7 @@ jobs:
 
       - name: Setup Node
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: package.json
 
@@ -386,14 +386,14 @@ jobs:
 
       - name: Setup Java
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup EAS
         if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
