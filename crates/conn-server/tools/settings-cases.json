@@ -1,0 +1,175 @@
+{
+  "about": "Cases for settings-diff.mjs: stored settings.json, a server.updateSettings patch, and an optional providerInstanceMutation. The T3 server's own functions give the expected answer; add a case when settings.rs learns a rule.",
+  "cases": [
+    {
+      "name": "deep merge and replaced keys",
+      "stored": {
+        "storageCleanup": { "worktreeAfterDays": 3, "worktreeOnMerge": true },
+        "defaultModelSelection": { "instanceId": "codex", "model": "a" }
+      },
+      "patch": {
+        "storageCleanup": { "worktreeAfterDays": 5 },
+        "defaultModelSelection": { "instanceId": "claudeAgent", "model": "b" },
+        "enableAgentBrowserAccess": true
+      }
+    },
+    {
+      "name": "every secret group is redacted for clients",
+      "stored": {
+        "cloudSpeechCredentials": { "openai": "sk-openai", "xai": "xai-key" },
+        "sourceControlHosts": {
+          "github": { "tokens": { "github.com": "ghp-token" } },
+          "gitcafe": { "token": "gitcafe-token" },
+          "bitbucket": { "accessToken": "bb-access", "apiToken": "bb-api" }
+        },
+        "textGenerators": {
+          "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key", "enabled": true }
+        },
+        "usageLimitSources": {
+          "u1": { "kind": "cliproxy", "url": "https://proxy.example.com", "managementKey": "mgmt-key" }
+        },
+        "easDeviceHosts": [{ "kind": "eas", "id": "eas1", "label": "EAS", "accessToken": "expo-token" }],
+        "providerInstances": {
+          "oc": {
+            "driver": "opencode",
+            "config": { "serverPassword": "pw" },
+            "environment": [
+              { "name": "KEY", "value": "s3cret", "sensitive": true },
+              { "name": "MODE", "value": "x", "sensitive": false }
+            ]
+          }
+        }
+      },
+      "patch": { "enableAgentBrowserAccess": true }
+    },
+    {
+      "name": "a patch that echoes the marker keeps the stored secrets",
+      "stored": {
+        "cloudSpeechCredentials": { "openai": "sk-openai" },
+        "sourceControlHosts": { "bitbucket": { "accessToken": "bb-access" } },
+        "textGenerators": {
+          "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "tg-key", "enabled": true }
+        }
+      },
+      "patch": {
+        "cloudSpeechCredentials": { "openai": "••••••" },
+        "sourceControlHosts": { "bitbucket": { "accessToken": "••••••" } },
+        "textGenerators": {
+          "tg1": { "kind": "openaiCompatible", "baseUrl": "https://api.example.com/v1", "apiKey": "••••••", "enabled": false }
+        }
+      }
+    },
+    {
+      "name": "a provider instance upsert that echoes redacted values keeps them",
+      "stored": {
+        "providerInstances": {
+          "oc": {
+            "driver": "opencode",
+            "config": { "serverPassword": "pw" },
+            "environment": [{ "name": "KEY", "value": "s3cret", "sensitive": true }]
+          }
+        }
+      },
+      "patch": {},
+      "mutation": {
+        "operation": "upsert",
+        "instanceId": "oc",
+        "instance": {
+          "driver": "opencode",
+          "displayName": "OpenCode",
+          "config": { "serverPassword": "••••••" },
+          "environment": [{ "name": "KEY", "value": "", "sensitive": true, "valueRedacted": true }]
+        }
+      }
+    },
+    {
+      "name": "create on an existing provider instance is refused",
+      "stored": { "providerInstances": { "cx": { "driver": "codex" } } },
+      "patch": {},
+      "mutation": { "operation": "create", "instanceId": "cx", "instance": { "driver": "codex", "displayName": "Other" } }
+    },
+    {
+      "name": "a patch of the wrong type is refused",
+      "stored": {},
+      "patch": { "enableAgentBrowserAccess": "garbage" }
+    },
+    {
+      "name": "entry maps set and remove whole entries",
+      "stored": {
+        "textGenerators": {
+          "a": { "kind": "openaiCompatible", "baseUrl": "https://a.example.com/v1", "enabled": true },
+          "b": { "kind": "openaiCompatible", "baseUrl": "https://b.example.com/v1", "enabled": true }
+        }
+      },
+      "patch": {
+        "textGenerators": {
+          "a": { "kind": "openaiCompatible", "baseUrl": "https://a2.example.com/v1", "enabled": false },
+          "b": null
+        }
+      }
+    },
+    {
+      "name": "legacy project override maps",
+      "stored": {
+        "projectSettingsOverrides": { "p1": { "defaultAutoPull": true }, "p3": { "defaultAutoPull": true } }
+      },
+      "patch": {
+        "projectAutoPullOverrides": { "p1": null, "p2": false },
+        "projectAgentBrowserAccessOverrides": { "p2": true },
+        "projectScriptOverrides": { "p3": [] }
+      }
+    },
+    {
+      "name": "legacy project maps lose to a canonical entry",
+      "stored": {},
+      "patch": {
+        "projectSettingsOverrides": { "p1": { "defaultAutoPull": false } },
+        "projectAutoPullOverrides": { "p1": true }
+      }
+    },
+    {
+      "name": "the legacy idle compaction switch",
+      "stored": {},
+      "patch": { "compactIdleThreads": false }
+    },
+    {
+      "name": "a background activity profile",
+      "stored": {},
+      "patch": { "backgroundActivityProfile": "battery-saver" }
+    },
+    {
+      "name": "custom background activity intervals",
+      "stored": {},
+      "patch": { "backgroundActivityProfile": "balanced", "automaticGitFetchInterval": 60000 },
+      "known": [".backgroundActivity", ".backgroundActivityProfile", ".automaticGitFetchInterval", ".providerHealthRefreshInterval"],
+      "knownWhy": "custom background activity intervals are not ported (settings.rs preset_background_profile)"
+    },
+    {
+      "name": "model favorites, hidden models and order",
+      "stored": { "favorites": [{ "provider": "claudeAgent", "model": "a" }] },
+      "patch": {
+        "setModelFavorites": [
+          { "provider": "claudeAgent", "model": "b", "favorite": true },
+          { "provider": "claudeAgent", "model": "a", "favorite": false }
+        ],
+        "setModelsHidden": [{ "provider": "codex", "model": "m", "hidden": true }],
+        "setProviderModelOrder": { "provider": "codex", "modelOrder": ["m", "n"] }
+      }
+    },
+    {
+      "name": "a secret reference shows as the marker to a client without references",
+      "stored": {
+        "secretProviders": { "op": { "kind": "one_password", "label": "1Password", "config": {} } },
+        "textGenerators": {
+          "tg1": {
+            "kind": "openaiCompatible",
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": { "provider": "op", "reference": "op://vault/item/field" },
+            "enabled": true
+          }
+        }
+      },
+      "patch": { "enableAgentBrowserAccess": true }
+    }
+  ]
+}

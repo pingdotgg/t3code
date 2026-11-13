@@ -222,7 +222,7 @@ mod tests {
             )
             .is_none()
         );
-        let mixed = json!({"patch": {"providerInstances": {}, "enableAssistantStreaming": true}});
+        let mixed = json!({"patch": {"providerInstances": {}, "enableAgentBrowserAccess": true}});
         let error = denied(&["providers:manage"], "server.updateSettings", mixed);
         assert_eq!(error.unwrap()["requiredPermission"], "settings:write");
 

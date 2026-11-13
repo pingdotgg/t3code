@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use conn_contract::{ServerProcessSignal, ServerSignalProcessInput};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
@@ -59,16 +60,25 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         Ok(open_stream(vec![json!({ "tasks": [] })]))
     });
 
+    // File reads, and on macOS two subprocesses: off the event loop.
     table.unary("server.getHostResources", |_, _: Value| async move {
-        Ok(diagnostics::host_resources())
+        blocking(diagnostics::host_resources).await
     });
     table.unary("server.getProcessDiagnostics", |_, _: Value| async move {
         blocking(diagnostics::process_diagnostics).await
     });
-    table.unary("server.signalProcess", |_, input: SignalInput| async move {
-        blocking(move || diagnostics::signal_process(input.pid, input.start_time_ms, &input.signal))
-            .await
-    });
+    // The contract's signal type: an unknown signal fails at decode, as in the T3 server.
+    table.unary(
+        "server.signalProcess",
+        |_, input: ServerSignalProcessInput| async move {
+            let signal = match input.signal {
+                ServerProcessSignal::SIGINT => "SIGINT",
+                ServerProcessSignal::SIGKILL => "SIGKILL",
+            };
+            blocking(move || diagnostics::signal_process(input.pid, input.start_time_ms, signal))
+                .await
+        },
+    );
 
     let Some(environment) = deps.environment.clone() else {
         return;
@@ -150,14 +160,6 @@ struct UpdateSettings {
     patch: Value,
     #[serde(default)]
     provider_instance_mutation: Option<Value>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SignalInput {
-    pid: i64,
-    start_time_ms: i64,
-    signal: String,
 }
 
 /// Runs file or process work off the event loop.
@@ -358,12 +360,12 @@ mod tests {
         let mut stream = config_stream(env.clone(), config);
         assert_eq!(stream.recv().await.unwrap().unwrap()["type"], "snapshot");
         env.settings
-            .update(json!({ "enableAssistantStreaming": false }), None)
+            .update(json!({ "enableAgentBrowserAccess": false }), None)
             .unwrap();
         let event = stream.recv().await.unwrap().unwrap();
         assert_eq!(event["type"], "settingsUpdated");
         assert_eq!(
-            event["payload"]["settings"]["enableAssistantStreaming"],
+            event["payload"]["settings"]["enableAgentBrowserAccess"],
             false
         );
         env.keybindings

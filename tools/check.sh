@@ -70,6 +70,7 @@ monorepo_checks=(
   "client-check"
   "replay"
   "decode coverage"
+  "settings-diff"
   "parity"
 )
 
@@ -99,6 +100,7 @@ else
     node crates/conn-server/tools/replay.mjs "$release/examples/replay_server" "${scenarios[@]}"
   run "decode coverage" \
     node crates/conn-server/tools/decode-coverage.mjs "$decoded" "$release/conn-server"
+  run "settings-diff" node crates/conn-server/tools/settings-diff.mjs "$release/conn-server"
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
 fi

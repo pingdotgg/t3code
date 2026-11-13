@@ -17,6 +17,12 @@
 // - crates/conn-contract/src/upstream.rs: `T3_SERVER_VERSION`, the `version` of
 //   apps/server/package.json. Clients compare it with their own; the Codex provider sends it
 //   as its client version. Every crate reads it as `conn_contract::T3_SERVER_VERSION`.
+// - crates/conn-server/src/settings/generated.rs: the settings fields that hold a secret, per
+//   group, as apps/server/src/settingsSecrets.ts finds them with `secretSettingsFields`
+//   (provider configs by driver, source control hosts by kind, usage limit sources, text
+//   generators, cloud speech, EAS and Simlock device hosts), and the secret provider kinds
+//   this server knows, and the keys of a `projectSettingsOverrides` entry. settings.rs redacts
+//   and restores exactly these secrets.
 //
 // Prints notes for what it cannot generate: scope checks that sit inside a handler
 // (`requiredScopeFor*` functions), which the hand code must follow.
@@ -27,7 +33,7 @@ import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 
-import { importSource, inMonorepo, repoRoot } from "./monorepo.mjs";
+import { importSource, inMonorepo, packageImporter, repoRoot } from "./monorepo.mjs";
 
 const check = process.argv.includes("--check");
 const HEADER = [
@@ -164,6 +170,113 @@ const routesJson = [
   "",
 ].join("\n");
 
+// ---- Settings secrets --------------------------------------------------------------------
+
+const SECRETS_FILE = "apps/server/src/settingsSecrets.ts";
+const secretsText = NodeFS.readFileSync(inMonorepo(SECRETS_FILE), "utf8");
+const contracts = await importSource("packages/contracts/src/index.ts");
+// Workspace packages export `import` conditions only, so resolve them by their package.json.
+const importServerPackage = async (specifier) => {
+  const [, scope, name, subpath] = /^(@[^/]+)\/([^/]+)\/(.+)$/.exec(specifier) ?? [];
+  const dir = inMonorepo("apps/server/node_modules", scope, name);
+  const pkg = JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "package.json"), "utf8"));
+  const target = pkg.exports?.[`./${subpath}`]?.import ?? pkg.exports?.[`./${subpath}`]?.default;
+  if (typeof target !== "string") throw new Error(`${specifier}: no import export`);
+  return import(NodeURL.pathToFileURL(NodePath.join(dir, target)).href);
+};
+const fieldsOf = (schemaName) => {
+  const schema = contracts[schemaName];
+  if (schema === undefined) throw new Error(`${schemaName} is not exported by packages/contracts`);
+  return [...contracts.secretSettingsFields(schema)];
+};
+// `providerSecretFields`: `["driver", secretSettingsFields(Schema)]` rows, then the clients
+// imported from `@t3tools/provider-*/client`, each with its `driverKind` and `settingsSchema`.
+const providerFields = [];
+for (const m of secretsText.matchAll(/\["(\w+)", secretSettingsFields\((\w+)\)\]/g)) {
+  providerFields.push([m[1], fieldsOf(m[2])]);
+}
+for (const m of secretsText.matchAll(/import \{ (\w+Client) \} from "(@t3tools\/provider-[\w-]+\/client)";/g)) {
+  const definition = (await importServerPackage(m[2]))[m[1]];
+  if (!definition?.driverKind || !definition.settingsSchema) {
+    throw new Error(`${m[2]} exports no ${m[1]} with driverKind and settingsSchema`);
+  }
+  providerFields.push([definition.driverKind, [...contracts.secretSettingsFields(definition.settingsSchema)]]);
+}
+if (providerFields.length < 3) throw new Error(`found only ${providerFields.length} provider secret groups in ${SECRETS_FILE}`);
+providerFields.sort(([a], [b]) => (a < b ? -1 : 1));
+// The single-schema groups: `const xSecretFields = secretSettingsFields(Schema);`.
+const groupFields = new Map(
+  [...secretsText.matchAll(/const (\w+)SecretFields = secretSettingsFields\((\w+)\);/g)].map((m) => [m[1], fieldsOf(m[2])]),
+);
+const GROUPS = {
+  usageLimit: "USAGE_LIMIT_SOURCE",
+  textGenerator: "TEXT_GENERATOR",
+  voice: "CLOUD_SPEECH",
+  easDeviceHost: "EAS_DEVICE_HOST",
+  simlockDeviceHost: "SIMLOCK_DEVICE_HOST",
+};
+for (const name of Object.keys(GROUPS)) {
+  if (!groupFields.has(name)) throw new Error(`${SECRETS_FILE} has no ${name}SecretFields: the secret groups changed`);
+}
+for (const name of groupFields.keys()) {
+  if (!(name in GROUPS)) throw new Error(`${SECRETS_FILE} has a new secret group ${name}SecretFields: map it here and in settings.rs`);
+}
+const hostSecrets = await importSource("apps/server/src/sourceControl/sourceControlHostSecrets.ts");
+const hostFields = [...hostSecrets.SOURCE_CONTROL_HOST_SECRET_FIELDS].sort(([a], [b]) => (a < b ? -1 : 1));
+const secretProviders = await importSource("apps/server/src/secrets/secretProviderDefinitions.ts");
+const secretProviderKinds = secretProviders.secretProviderDefinitions.definitions.map((d) => d.kind).sort();
+
+const background = await importSource("packages/shared/src/backgroundActivitySettings.ts");
+const Duration = await packageImporter("packages/shared")("effect/Duration");
+const backgroundPresets = [...contracts.BackgroundActivityProfile.literals].sort().map((profile) => {
+  const preset = background.getBackgroundActivityPresetSettings(profile);
+  if (preset === undefined) throw new Error(`no background activity preset ${profile}`);
+  return [
+    profile,
+    Duration.toMillis(preset.automaticGitFetchInterval),
+    Duration.toMillis(preset.providerHealthRefreshInterval),
+  ];
+});
+const strs = (list) => `&[${list.map(str).join(", ")}]`;
+const secretsRs = rustfmt(
+  [
+    ...HEADER,
+    `// Source: ${SECRETS_FILE} (secretSettingsFields per group), sourceControlHostSecrets.ts,`,
+    "// secrets/secretProviderDefinitions.ts.",
+    "",
+    "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
+    "pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[",
+    ...providerFields.map(([driver, fields]) => `(${str(driver)}, ${strs(fields)}),`),
+    "];",
+    "",
+    "/// Secret fields of `sourceControlHosts.<kind>`, by kind.",
+    "pub(super) const SOURCE_CONTROL_HOST: &[(&str, &[&str])] = &[",
+    ...hostFields.map(([kind, fields]) => `(${str(kind)}, ${strs([...fields])}),`),
+    "];",
+    "",
+    ...Object.entries(GROUPS).flatMap(([name, constant]) => [
+      name === "voice"
+        ? "/// Secret fields of the `cloudSpeechCredentials` object."
+        : `/// Secret fields of each \`${{ usageLimit: "usageLimitSources", textGenerator: "textGenerators", easDeviceHost: "easDeviceHosts", simlockDeviceHost: "simlockDeviceHosts" }[name]}\` entry.`,
+      `pub(super) const ${constant}: &[&str] = ${strs(groupFields.get(name))};`,
+      "",
+    ]),
+    "/// Secret provider kinds this server knows; a client sees no `config` of another kind.",
+    `pub(super) const SECRET_PROVIDER_KINDS: &[&str] = ${strs(secretProviderKinds)};`,
+    "",
+    "/// Background activity presets (`packages/shared/src/backgroundActivitySettings.ts`): the",
+    "/// profile, its git fetch interval and its provider health refresh interval, in ms.",
+    "pub(super) const BACKGROUND_PRESETS: &[(&str, u64, u64)] = &[",
+    ...backgroundPresets.map(([profile, fetch, health]) => `(${str(profile)}, ${fetch}, ${health}),`),
+    "];",
+    "",
+    "/// The keys of a `projectSettingsOverrides` entry (`ProjectSettingsOverrides`). A patch",
+    "/// writes only these; a stored entry keeps the others (`mergeProjectSettingsOverridesPatch`).",
+    `pub(super) const PROJECT_OVERRIDE_KEYS: &[&str] = ${strs(Object.keys(contracts.ProjectSettingsOverrides.fields).sort())};`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Server version ----------------------------------------------------------------------
 
 const serverPackage = JSON.parse(NodeFS.readFileSync(inMonorepo("apps/server/package.json"), "utf8"));
@@ -188,6 +301,7 @@ const outputs = {
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,
+  "crates/conn-server/src/settings/generated.rs": secretsRs,
 };
 
 let stale = false;
