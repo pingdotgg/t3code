@@ -91,16 +91,17 @@ describe("tailClaudeTaskOutput", () => {
         }).pipe(Effect.forkScoped);
         assert.equal(yield* Queue.take(chunks), "start\n");
 
-        yield* fileSystem.writeFileString(file, `start\n${"y\n".repeat(1_000_000)}end\n`);
+        // The skip lands on the second byte of a two-byte é.
+        yield* fileSystem.writeFileString(file, `start\n${"é\n".repeat(1_000_000)}end.\n`);
         const flooded = yield* Queue.take(chunks);
         assert.isAtMost(flooded.length, 256 * 1024 + 1);
-        assert.isTrue(flooded.startsWith("\n"));
-        assert.isTrue(flooded.endsWith("y\nend\n"));
+        assert.equal(flooded.slice(0, 3), "\n\né");
+        assert.isTrue(flooded.endsWith("é\nend.\n"));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("reads what was written last when the tool result stops it", () =>
+  it.effect("reads what was written last when the tool result stops it", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

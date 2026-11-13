@@ -49,6 +49,30 @@ export async function prepareLocalTrackSwitch(
   };
 }
 
+/** When no machine moves, confirming only saves the track; when that track is already saved too,
+ * confirming would do nothing. Track-only hosts are not rows but still get a request. */
+export function nothingToMove(input: {
+  readonly label: string;
+  readonly channel: DesktopUpdateChannel;
+  // Null until the desktop reports it; an unknown track may still need saving.
+  readonly savedChannel: DesktopUpdateChannel | null;
+  readonly switchesLocal: boolean;
+  readonly crossesLocal: boolean;
+  readonly rows: ReadonlyArray<{ readonly skipped: string | null }>;
+  readonly hasTargets: boolean;
+}): { readonly note: string | null; readonly disabledReason: string | null } {
+  if (input.switchesLocal || input.rows.some((row) => row.skipped === null)) {
+    return { note: null, disabledReason: null };
+  }
+  const reason =
+    input.rows.length === 0 && !input.crossesLocal
+      ? `Every connected machine is already on ${input.label}.`
+      : `No machine can switch to ${input.label} now.`;
+  return !input.hasTargets && input.savedChannel === input.channel
+    ? { note: null, disabledReason: reason }
+    : { note: `${reason} This only saves the track.`, disabledReason: null };
+}
+
 /**
  * Whether this app stays put while connected machines move: its updater is off, as for a .deb
  * install or without a feed. Off only because a policy rules out its nightly channel, it moves.
