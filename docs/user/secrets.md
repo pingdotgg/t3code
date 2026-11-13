@@ -62,3 +62,7 @@ The value never appears in the conversation. Most requests keep it from the agen
 passes it to the tool that needs it. When an agent has to run a command with the value, the card
 says so instead: the value goes into a private file that the agent's commands can read for about 24
 hours.
+
+For browser sign-ins, an agent can use the saved secret to replace a password field in its tab.
+The tab must be under agent control, and the target must be an enabled password input. The agent
+receives only confirmation that the field was filled. Each saved secret can be used once.

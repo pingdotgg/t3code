@@ -12,6 +12,9 @@ import {
   EnvironmentId,
   PreviewTabId,
   ProviderInstanceId,
+  ProjectId,
+  SecretRef,
+  SecretRequestError,
   ThreadId,
   type PreviewAutomationLoadError,
   type PreviewAutomationResizeResult,
@@ -38,6 +41,8 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
+import { liveThreadsLayer } from "../mcp/McpToolAccess.testkit.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
@@ -232,6 +237,10 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
+    keyboard: {
+      insertText: vi.fn(async (_text: string) => {}),
+      press: vi.fn(async (_key: string) => {}),
+    },
     locator: vi.fn((): unknown => {
       throw new Error("Unexpected locator action");
     }),
@@ -439,7 +448,21 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
+const secretValues = new Map<SecretRef, { value: string; projectId: ProjectId }>();
+const consumedSecrets: SecretRef[] = [];
 const dependencies = Layer.mergeAll(
+  liveThreadsLayer,
+  Layer.mock(SecretRequests.SecretRequests)({
+    consume: ({ ref, projectId }) =>
+      Effect.suspend(() => {
+        const saved = secretValues.get(ref);
+        if (!saved || saved.projectId !== projectId)
+          return Effect.fail(new SecretRequestError({ reason: "ref_unavailable" }));
+        secretValues.delete(ref);
+        consumedSecrets.push(ref);
+        return Effect.succeed(saved.value);
+      }),
+  }),
   Broker.layer,
   Manager.layer,
   Layer.succeed(ServerEnvironment.ServerEnvironment, {
@@ -569,6 +592,8 @@ const openDesktopViewer = Effect.gen(function* () {
 
 beforeEach(() => {
   contexts.length = 0;
+  secretValues.clear();
+  consumedSecrets.length = 0;
   encoderPageOverride = undefined;
   encoderStreams.length = 0;
   contextRequests.length = 0;
@@ -593,6 +618,93 @@ beforeEach(() => {
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
+
+it.effect("secure password fill consumes only an owned password target and hides failures", () =>
+  Effect.gen(function* () {
+    const { browser, broker, tabId } = yield* ready;
+    const page = contexts[0]!.page;
+    const secretRef = SecretRef.make(`secret-ref:${"a".repeat(32)}`);
+    const wrongProjectRef = SecretRef.make(`secret-ref:${"b".repeat(32)}`);
+    const failedRef = SecretRef.make(`secret-ref:${"c".repeat(32)}`);
+    const password = "private-test-password";
+    const projectId = ProjectId.make("project:mcp-test");
+    for (const ref of [secretRef, failedRef]) secretValues.set(ref, { value: password, projectId });
+    secretValues.set(wrongProjectRef, {
+      value: password,
+      projectId: ProjectId.make("another-project"),
+    });
+    let fieldType = "password";
+    const focused: { activeElement: unknown } = { activeElement: null };
+    const field = {
+      getRootNode: () => focused,
+      tagName: "INPUT",
+      isConnected: true,
+      type: "password",
+      disabled: false,
+      readOnly: false,
+      ownerDocument: { URL: "https://example.com/login" },
+    };
+    focused.activeElement = field;
+    const fill = vi.fn(async (_value: string) => {});
+    const target = {
+      evaluate: async (probe: (element: typeof field) => unknown) => {
+        field.type = fieldType;
+        return probe(field);
+      },
+      fill,
+      dispose: vi.fn(async () => {}),
+    };
+    page.locator.mockImplementation(() => ({ ...target, elementHandle: async () => target }));
+    const typeSecret = (ref = secretRef) =>
+      broker.invoke({
+        scope,
+        tabId,
+        operation: "type",
+        input: { secretRef: ref, locator: "#password", clear: false },
+      });
+    const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+    yield* viewer.input({ type: "takeControl" });
+    expect((yield* typeSecret().pipe(Effect.result))._tag).toBe("Failure");
+    expect(consumedSecrets).toEqual([]);
+    yield* viewer.input({ type: "releaseControl" });
+    fieldType = "text";
+    expect((yield* typeSecret().pipe(Effect.result))._tag).toBe("Failure");
+    expect(consumedSecrets).toEqual([]);
+    fieldType = "password";
+    expect((yield* typeSecret(wrongProjectRef).pipe(Effect.result))._tag).toBe("Failure");
+    expect(fill).not.toHaveBeenCalled();
+    yield* typeSecret();
+    expect(fill).toHaveBeenCalledExactlyOnceWith(password, expect.anything());
+    expect(consumedSecrets).toEqual([secretRef]);
+    const cdp = contexts[0]!.sessions[0]!;
+    const send = cdp.send.getMockImplementation()!;
+    cdp.send.mockImplementation(async (method, input) =>
+      method === "Runtime.evaluate" &&
+      (input as { expression?: string }).expression === "secretEcho"
+        ? { result: { value: { data: [password], [password]: "echo" } } }
+        : send(method, input),
+    );
+    const echoed = yield* broker.invoke({
+      scope,
+      tabId,
+      operation: "evaluate",
+      input: { expression: "secretEcho" },
+    });
+    expect(echoed).toEqual({ data: ["••••••••"], "••••••••": "echo" });
+    expect((yield* typeSecret().pipe(Effect.result))._tag).toBe("Failure");
+    fill.mockRejectedValueOnce(new Error(`locator.fill: could not type ${password}`));
+    const failure = yield* typeSecret(failedRef).pipe(Effect.result);
+    expect(failure._tag).toBe("Failure");
+    const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+      scope,
+      tabId,
+      operation: "snapshot",
+      input: {},
+    });
+    expect(JSON.stringify(snapshot.actionTimeline)).not.toContain(password);
+    expect(JSON.stringify(failure)).not.toContain(password);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
 
 it.effect("tells the desktop once per thread when its agent turns start and end", () =>
   Effect.gen(function* () {

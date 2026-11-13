@@ -609,6 +609,29 @@ it.effect("checks each preview_act action against that action's own input", () =
 
       yield* callTool("preview_act", { action: "type", selector: "#name", text: "Ada" });
       expect(inputs.at(-2)).toEqual({ selector: "#name", text: "Ada" });
+
+      const secretRef = "secret-ref:11111111111111111111111111111111";
+      const secure = {
+        action: "type",
+        tabId: "login-tab",
+        locator: "role=textbox[name=Password]",
+        secretRef,
+      };
+      const filled = yield* callTool("preview_act", secure);
+      expect(filled.isError).toBe(false);
+      expect(inputs.at(-2)).toEqual({ locator: secure.locator, secretRef });
+
+      const count = inputs.length;
+      for (const invalid of [
+        { ...secure, text: "must not be forwarded" },
+        ...["secretRef", "tabId", "locator"].map((omitted) =>
+          Object.fromEntries(Object.entries(secure).filter(([key]) => key !== omitted)),
+        ),
+      ]) {
+        const refused = yield* callTool("preview_act", invalid);
+        expect(refused.isError).toBe(true);
+      }
+      expect(inputs).toHaveLength(count);
     }),
   ).pipe(Effect.provide(layerTest)),
 );

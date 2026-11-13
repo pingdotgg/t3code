@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, SecretRef, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
@@ -384,7 +384,8 @@ export type PreviewAutomationUploadInput = typeof PreviewAutomationUploadInput.T
 
 export const PreviewAutomationTypeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
-  text: Schema.String,
+  text: Schema.optional(Schema.String),
+  secretRef: Schema.optional(SecretRef),
   selector: Schema.optional(LegacySelector),
   locator: Schema.optional(Locator),
   clear: Schema.optional(
@@ -398,6 +399,18 @@ export const PreviewAutomationTypeInput = Schema.Struct({
     (input) =>
       !(input.selector !== undefined && input.locator !== undefined) ||
       "Provide at most one of selector or locator.",
+  ),
+  Schema.makeFilter(
+    (input) =>
+      (input.text === undefined) !== (input.secretRef === undefined) ||
+      "Provide exactly one of text or secretRef.",
+  ),
+  Schema.makeFilter(
+    (input) =>
+      input.secretRef === undefined ||
+      (input.tabId !== undefined &&
+        (input.locator !== undefined || input.selector !== undefined)) ||
+      "secretRef requires an explicit tabId and password input locator or selector.",
   ),
 );
 export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
@@ -458,6 +471,10 @@ export const PreviewAutomationActInput = Schema.Struct({
   button: Schema.optional(Schema.Literals(["left", "right", "middle"])),
   clickCount: Schema.optional(Schema.Int),
   text: Schema.optional(Schema.String),
+  secretRef: Schema.optional(SecretRef).annotate({
+    description:
+      "For type: one-use ref from request_secret, instead of text. Requires tabId and a password input locator. Replaces the value; never returns it.",
+  }),
   clear: Schema.optional(Schema.Boolean),
   values: Schema.optional(Schema.Array(Schema.String)),
   source: Schema.optional(Locator),
