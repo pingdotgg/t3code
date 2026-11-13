@@ -180,6 +180,12 @@ The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear und
 accounts for other providers are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
+When a Claude instance sends its requests to a connected hub (its `ANTHROPIC_BASE_URL` has the same
+host as the hub) and that hub has exactly one Claude account, the thread details card shows that
+account's limits, and hovering a row shows which hub they come from. A hub account signed in with a
+different email or workspace than the instance is skipped. With several hub accounts, or while the
+hub cannot be read, the card keeps its notice, so check **Usage → Limits**.
+
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.

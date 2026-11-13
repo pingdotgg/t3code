@@ -775,8 +775,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const baseUrl =
     (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
     resolvedEnvironment.ANTHROPIC_BASE_URL;
-  const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
-  if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
+  const endpointHost = customClaudeApiEndpointHost(baseUrl);
+  if (endpointHost === undefined && claudeAuthStatus(capabilities) === "unauthenticated") {
     const path = yield* Path.Path;
     const configDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
       .CLAUDE_CONFIG_DIR;
@@ -804,7 +804,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   // A proxy's ANTHROPIC_AUTH_TOKEN reads as an API key; the endpoint is what the token is for.
   const authMetadata =
     apiProviderAuthMetadata(capabilities.apiProvider) ??
-    (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined) ??
+    (endpointHost !== undefined
+      ? { type: "customEndpoint", label: "Custom API endpoint", endpointHost }
+      : undefined) ??
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
