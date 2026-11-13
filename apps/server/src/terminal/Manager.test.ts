@@ -16,6 +16,7 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -2330,6 +2331,7 @@ it.layer(
       const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
         deriveProviderInstanceConfigMap,
         serverSettings,
+        fileSystem: yield* FileSystem.FileSystem,
         path,
         rawProviderInstanceId: "configured_home",
         env: undefined,
@@ -2351,39 +2353,53 @@ it.layer(
     ),
   );
 
-  it.effect.each([
-    { name: "the shared home", host: {}, expectedSqliteHome: "/environment/codex" },
-    {
-      name: "a host override",
-      host: { CODEX_SQLITE_HOME: "/host/sqlite" },
-      expectedSqliteHome: "/host/sqlite",
-    },
-  ])("opens a Codex shadow terminal with SQLite in $name", ({ host, expectedSqliteHome }) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
-        deriveProviderInstanceConfigMap,
-        serverSettings: yield* ServerSettings.ServerSettingsService,
-        path,
-        rawProviderInstanceId: "shadow_home",
-        env: undefined,
-      }).pipe(Effect.provideService(HostProcess.Environment, host));
+  it.effect.skipIf(!symlinksSupported)(
+    "opens a Codex shadow terminal on the provider's SQLite home, or refuses as the provider does",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-shared-" });
+        const shadowHome = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-shadow-" });
+        const resolve = (host: NodeJS.ProcessEnv) =>
+          Effect.gen(function* () {
+            return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+              deriveProviderInstanceConfigMap,
+              serverSettings: yield* ServerSettings.ServerSettingsService,
+              fileSystem,
+              path,
+              rawProviderInstanceId: "shadow_home",
+              env: undefined,
+            });
+          }).pipe(
+            Effect.provide(
+              ServerSettings.layerTest({
+                providerInstances: {
+                  [ProviderInstanceId.make("shadow_home")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    environment: [{ name: "CODEX_HOME", value: sharedHome, sensitive: false }],
+                    config: { shadowHomePath: shadowHome },
+                  },
+                },
+              }),
+            ),
+            Effect.provideService(HostProcess.Environment, host),
+          );
 
-      expect(environment.CODEX_HOME).toBe(path.resolve("/configured/codex-shadow"));
-      expect(environment.CODEX_SQLITE_HOME).toBe(path.resolve(expectedSqliteHome));
-    }).pipe(
-      Effect.provide(
-        ServerSettings.layerTest({
-          providerInstances: {
-            [ProviderInstanceId.make("shadow_home")]: {
-              driver: ProviderDriverKind.make("codex"),
-              environment: [{ name: "CODEX_HOME", value: "/environment/codex", sensitive: false }],
-              config: { shadowHomePath: "/configured/codex-shadow" },
-            },
-          },
-        }),
-      ),
-    ),
+        expect(yield* resolve({})).toMatchObject({
+          CODEX_HOME: shadowHome,
+          CODEX_SQLITE_HOME: sharedHome,
+        });
+        expect(yield* resolve({ CODEX_SQLITE_HOME: "/host/sqlite" })).toMatchObject({
+          CODEX_HOME: shadowHome,
+          CODEX_SQLITE_HOME: "/host/sqlite",
+        });
+
+        yield* fileSystem.writeFileString(path.join(shadowHome, "state_5.sqlite"), "records");
+        const error = yield* resolve({}).pipe(Effect.flip);
+        expect(error._tag).toBe("TerminalProviderEnvironmentError");
+        expect(error.message).toContain("state_5.sqlite");
+      }),
   );
 
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>

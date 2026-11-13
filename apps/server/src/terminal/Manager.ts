@@ -67,7 +67,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
-  codexSqliteHomeEnvironment,
+  materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
@@ -1525,6 +1525,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 )(function* (input: {
   readonly deriveProviderInstanceConfigMap: typeof deriveProviderInstanceConfigMap;
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+  readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
   readonly env: Record<string, string> | undefined;
@@ -1557,11 +1558,22 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
       ).pipe(Effect.provideService(Path.Path, input.path));
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
-      // A terminal's Codex must open the same SQLite home as the provider's.
-      const sqliteHome = codexSqliteHomeEnvironment(layout, {
+      // A terminal's Codex opens the provider's SQLite home, or is refused as the provider is.
+      const sqliteHome = (yield* materializeCodexShadowHome(layout, {
         ...hostEnvironment,
         ...resolved,
-      }).CODEX_SQLITE_HOME;
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TerminalProviderEnvironmentError({
+              providerInstanceId,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+        Effect.provideService(FileSystem.FileSystem, input.fileSystem),
+        Effect.provideService(Path.Path, input.path),
+      )).CODEX_SQLITE_HOME;
       if (layout.mode === "authOverlay") resolved = { ...resolved, CODEX_SQLITE_HOME: sqliteHome };
     }
   } else if (instance.driver === "claudeAgent") {
@@ -1587,6 +1599,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
@@ -1594,6 +1607,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
     resolveProviderInstanceTerminalEnvironment({
       deriveProviderInstanceConfigMap: deriveConfigMap,
       serverSettings,
+      fileSystem,
       path,
       rawProviderInstanceId,
       env,

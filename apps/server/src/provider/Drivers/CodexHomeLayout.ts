@@ -220,7 +220,7 @@ const readLinkState = Effect.fn("CodexHomeLayout.readLinkState")(function* (inpu
  * shared home, so each database has one path and one WAL however many shadows use it. A nonblank
  * value already in `environment` is the user's own choice and stays.
  */
-export function codexSqliteHomeEnvironment(
+function codexSqliteHomeEnvironment(
   layout: CodexHomeLayout,
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
