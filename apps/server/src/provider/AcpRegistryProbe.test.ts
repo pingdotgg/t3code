@@ -467,6 +467,43 @@ describe("ACP Registry probe", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("lists Cursor's plain model ids so its effort stays a separate option", () =>
+    Effect.gen(function* () {
+      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+        search: () => Effect.die("unused search"),
+        prepare: () => Effect.die("unused prepare"),
+        inspect: () => Effect.die("unused inspect"),
+        uninstallManagedBinary: () => Effect.die("unused uninstall"),
+        resolve: () =>
+          Effect.succeed({
+            agent: {
+              id: "cursor",
+              name: "Cursor",
+              version: "1.0.0",
+              description: "Cursor ACP stand-in",
+              distribution: { npx: { package: "cursor@1.0.0" } },
+            },
+            distribution: "npx" as const,
+            spawn: { command: "node", args: [mockAgentPath], env: process.env },
+          }),
+      });
+
+      const result = yield* probeAcpRegistryConfiguration({
+        instanceId,
+        settings: decodeSettings({ agentId: "cursor" }),
+        cwd: process.cwd(),
+        environment: process.env,
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+      expect(result.probe.models.map((model) => model.id)).toEqual([
+        "default",
+        "composer-2",
+        "gpt-5.4",
+        "claude-opus-4-6",
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it("distinguishes authentication failures from generic probe failures", () => {
     const advertised = normalizeAcpRegistryAuthMethods([
       { id: "grok-login", name: "Log in with Grok" },
