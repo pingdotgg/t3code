@@ -15,6 +15,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /** Kimi Code reports limits from `{base_url}/usages` with its stored OAuth token. */
@@ -230,7 +231,8 @@ export type KimiUsageEnvironment =
   | Path.Path
   | HttpClient.HttpClient
   | Digest.Digest
-  | typeof HostProcess.HomeDirectory;
+  | typeof HostProcess.HomeDirectory
+  | typeof HostProcess.Platform;
 
 /** Wire format matches the CLI's own credential files, snake_case included. */
 const encodeStoredCredential = Schema.encodeSync(Schema.fromJsonString(KimiStoredCredential));
@@ -282,17 +284,29 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
   );
   const providerSection = config.match(/\[providers\."managed:kimi-code"\]([^[]*)/);
   const oauthSection = config.match(/\[providers\."managed:kimi-code"\.oauth\]([^[]*)/);
+  // The CLI's own resolution order: `KIMI_CODE_BASE_URL` and
+  // `KIMI_CODE_OAUTH_HOST`/`KIMI_OAUTH_HOST` override the config file, and the
+  // credential slot is derived from the resolved endpoints.
   const baseUrl = normalizeEndpoint(
-    providerSection?.[1]?.match(/^\s*base_url\s*=\s*"([^"]+)"/m)?.[1],
+    input.environment.KIMI_CODE_BASE_URL ??
+      providerSection?.[1]?.match(/^\s*base_url\s*=\s*"([^"]+)"/m)?.[1],
     DEFAULT_KIMI_CODE_BASE_URL,
   );
   const oauthHost = normalizeEndpoint(
-    oauthSection?.[1]?.match(/^\s*oauth_host\s*=\s*"([^"]+)"/m)?.[1],
+    input.environment.KIMI_CODE_OAUTH_HOST ??
+      input.environment.KIMI_OAUTH_HOST ??
+      oauthSection?.[1]?.match(/^\s*oauth_host\s*=\s*"([^"]+)"/m)?.[1],
     DEFAULT_KIMI_OAUTH_HOST,
   );
   const configuredKey = oauthSection?.[1]?.match(/^\s*key\s*=\s*"([^"]+)"/m)?.[1];
+  // An env override re-derives the slot even where the config pins one, exactly
+  // like the CLI's runtime auth resolution.
+  const hasEnvOverride =
+    input.environment.KIMI_CODE_BASE_URL !== undefined ||
+    input.environment.KIMI_CODE_OAUTH_HOST !== undefined ||
+    input.environment.KIMI_OAUTH_HOST !== undefined;
   const oauthKey =
-    configuredKey !== undefined
+    configuredKey !== undefined && !hasEnvOverride
       ? configuredKey.replace(/^oauth\//, "")
       : kimiOAuthKey({
           oauthHost,
@@ -326,12 +340,14 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
           refresh_token: stored.refresh_token,
         }),
       );
-      const response = yield* client
-        .execute(request)
-        .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.flatMap(HttpClientResponse.filterStatusOk));
-      const body: unknown = yield* response.json;
+      const body: unknown = yield* client.execute(request).pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap((response) => response.json),
+        // Headers and body arrive separately; a stalled body must not hang the probe.
+        Effect.timeout(REQUEST_TIMEOUT),
+      );
       return decodeTokenRefresh(body);
-    });
+    }).pipe(Effect.option, Effect.map(Option.flatten));
     const token = Option.getOrUndefined(refreshed);
     if (token === undefined) {
       return makeUnavailableUsageLimits({
@@ -342,25 +358,27 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
     }
     accessToken = token.access_token;
     const expiresAt = token.expires_at ?? Math.floor(nowMs / 1000) + (token.expires_in ?? 900);
-    yield* fileSystem
-      .writeFileString(credentialsPath, serializeStoredCredential(stored, token, expiresAt))
-      .pipe(
-        // The CLI re-refreshes fine; a read-only store must not break the probe.
-        Effect.catchTags({ PlatformError: () => Effect.void }),
-      );
+    // Atomic like the config writer: a truncated credential file would sign the
+    // CLI itself out. The CLI re-refreshes fine either way.
+    yield* writeFileStringAtomically({
+      filePath: credentialsPath,
+      contents: serializeStoredCredential(stored, token, expiresAt),
+    }).pipe(Effect.catchTags({ PlatformError: () => Effect.void }));
   }
 
   const response = yield* Effect.gen(function* () {
     const request = HttpClientRequest.get(`${baseUrl}/usages`).pipe(
       HttpClientRequest.bearerToken(accessToken),
     );
-    const executed = yield* client.execute(request).pipe(Effect.timeout(REQUEST_TIMEOUT));
-    // Kimi answers a signed-out or non-managed account with 401/403, and a
-    // non-Kimi base URL with 404; both leave nothing to display.
-    if (executed.status === 401 || executed.status === 403 || executed.status === 404) {
-      return Option.getOrThrow(Option.none<never>());
-    }
-    const body: unknown = yield* executed.json;
+    const body: unknown = yield* client.execute(request).pipe(
+      // Kimi answers a signed-out or non-managed account with 401/403, and a
+      // non-Kimi base URL with 404; other error statuses must follow the same
+      // path instead of decoding an error body as empty limits.
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((executed) => executed.json),
+      // Headers and body arrive separately; a stalled body must not hang the probe.
+      Effect.timeout(REQUEST_TIMEOUT),
+    );
     return decodeUsagesResponse(body);
   }).pipe(Effect.option);
   const parsed = Option.isSome(response) ? Option.getOrUndefined(response.value) : undefined;

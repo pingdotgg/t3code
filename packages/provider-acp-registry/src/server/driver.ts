@@ -638,12 +638,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.flatMap(withLiveRuntimeState),
-    );
     // Kimi Code reports subscription limits outside ACP; attach them to the
-    // periodic probe like the CLI's own `.user-menu-usage` display.
+    // readiness probe like the CLI's own `.user-menu-usage` display. Snapshot
+    // publication overwrites enrichment's usage limits with the managed
+    // provider's authoritative value, so the probe is where they must flow.
     const isKimiRegistryAgent =
       effectiveConfig.source === "registry" &&
       (effectiveConfig.agentId === "kimi" || effectiveConfig.agentId === "kimi-code");
@@ -669,6 +667,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       if (Option.isNone(usageLimits) || usageLimits.value === undefined) return provider;
       return { ...provider, usageLimits: usageLimits.value };
     });
+    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+      Effect.flatMap(withLiveRuntimeState),
+      Effect.flatMap(withKimiUsageLimits),
+    );
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
@@ -679,7 +682,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
-      Effect.flatMap(withKimiUsageLimits),
     );
     const enrichmentCache = yield* Ref.make<{
       readonly generation: number;

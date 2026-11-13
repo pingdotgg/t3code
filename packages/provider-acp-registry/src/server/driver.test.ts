@@ -18,6 +18,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -697,6 +699,90 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
         "model-a:effort,model-b:effort",
       );
+    }),
+  );
+
+  // Kimi Code reports subscription limits from its own credential store; the
+  // readiness probe publishes them because enrichment publication restores the
+  // managed provider's previous usage limits.
+  it.effect("publishes Kimi usage limits on the provider snapshot", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "acp-driver-kimi-",
+      });
+      yield* fileSystem.makeDirectory(path.join(homeDirectory, "credentials"), {
+        recursive: true,
+      });
+      // Expiry far past the probe's clock, so the stored access token is used as-is.
+      yield* fileSystem.writeFileString(
+        path.join(homeDirectory, "credentials", "kimi-code.json"),
+        JSON.stringify({
+          access_token: "kimi-test-access",
+          refresh_token: "kimi-test-refresh",
+          expires_at: Math.floor(Date.parse("2100-01-01T00:00:00.000Z") / 1000),
+          scope: "kimi-code",
+          token_type: "Bearer",
+          expires_in: 900,
+        }),
+      );
+      const kimiClient = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                limits: [
+                  {
+                    window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+                    detail: { limit: "100", used: "19" },
+                  },
+                ],
+              }),
+            ),
+          ),
+        ),
+      );
+      const agentPath = path.join(homeDirectory, "agent.mjs");
+      const modelsPath = path.join(homeDirectory, "models.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["kimi-model"]));
+      const kimiInstance = yield* AcpRegistryDriver.create({
+        instanceId: ProviderInstanceId.make("acpRegistry_kimi"),
+        displayName: "Kimi Code test",
+        enabled: true,
+        environment: [{ name: "KIMI_CODE_HOME", value: homeDirectory, sensitive: false }],
+        config: decodeSettings({ agentId: "kimi" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "kimi",
+            version: "1.0.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+            }),
+        }),
+        Effect.provideService(HttpClient.HttpClient, kimiClient),
+      );
+
+      const waitForUsageLimits = kimiInstance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.usageLimits?.windows.length === 1),
+        Stream.runHead,
+      );
+      const published = yield* waitForUsageLimits.pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* kimiInstance.snapshot.refresh;
+      yield* Fiber.join(published);
+      expect((yield* kimiInstance.snapshot.getSnapshot).usageLimits).toMatchObject({
+        windows: [{ id: "session", usedPercent: 19 }],
+      });
     }),
   );
 });
