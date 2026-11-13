@@ -1,16 +1,21 @@
 import { act, createElement, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { useComposerPathSearch } from "../../state/queries";
+import { useComposerPathSearch, useThreadSearch } from "../../state/queries";
 import { useComposerDraftSelection } from "../../state/use-composer-drafts";
 import { makeThreadShellFixture } from "../../test-fixtures";
 
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
-  useThreadSearch: vi.fn(),
+  useThreadSearch: vi.fn(() => ({ matches: [], query: "", isPending: false })),
   useComposerPathSearch: vi.fn(() => ({ entries: [], isPending: false, truncated: false })),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
@@ -150,6 +155,16 @@ describe("mobile model mentions", () => {
     };
   };
 
+  it("continues a spaced model label without a matching filesystem path", async () => {
+    await using state = await mountMenu("@GPT", { start: 4, end: 4 }, undefined, {
+      modelOptions: [option("traex:gpt-6.1", { label: "GPT Six" })],
+      modelProviders: [provider("traex")],
+    });
+    await state.renderDraft("@GPT ", { start: 5, end: 5 });
+    expect(state.menu.trigger?.query).toBe("GPT ");
+    expect(state.menu.items.some((item) => item.type === "model")).toBe(true);
+  });
+
   it("offers current, visible models labelled with their provider", () => {
     const items = buildComposerModelItems(
       [
@@ -187,6 +202,7 @@ async function mountMenu(
   draftMessage: string,
   selection: { start: number; end: number },
   threadShells?: Parameters<typeof useComposerCommandMenu>[0]["threadShells"],
+  options: Partial<Parameters<typeof useComposerCommandMenu>[0]> = {},
 ) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const root = createRoot(document.createElement("div"));
@@ -202,6 +218,7 @@ async function mountMenu(
       hasCompactableConversation: false,
       onChangeDraftMessage: () => {},
       ...(threadShells ? { threadShells } : {}),
+      ...options,
     });
     useLayoutEffect(() => {
       menu = value;
@@ -213,6 +230,7 @@ async function mountMenu(
     vi.unstubAllGlobals();
     vi.mocked(useComposerDraftSelection).mockReset();
     vi.mocked(useComposerPathSearch).mockReset();
+    vi.mocked(useThreadSearch).mockReset();
   };
   const renderDraft = async (
     text: string,
@@ -258,9 +276,12 @@ it("keeps a spaced search open while a thread title or capped results may match 
     }
     return state.menu.trigger?.query;
   };
-  await using threads = await mountMenu("@", { start: 1, end: 1 }, [
-    makeThreadShellFixture({ title: "Quarterly Planning" }),
-  ]);
+  await using threads = await mountMenu(
+    "@",
+    { start: 1, end: 1 },
+    [makeThreadShellFixture({ title: "Quarterly Planning" })],
+    { environmentId: EnvironmentId.make("environment-test") },
+  );
   expect(await typeQuery(threads, "@Quarterly Pl")).toBe("Quarterly Pl");
 
   vi.mocked(useComposerPathSearch).mockReturnValue({
@@ -270,4 +291,54 @@ it("keeps a spaced search open while a thread title or capped results may match 
   } as unknown as ReturnType<typeof useComposerPathSearch>);
   await using capped = await mountMenu("@", { start: 1, end: 1 });
   expect(await typeQuery(capped, "@Foreign Ze")).toBe("Foreign Ze");
+});
+
+it("rejects pending fuzzy selections and revalidates when the same query settles", async () => {
+  const onChangeDraftMessage = vi.fn();
+  const entry = { path: "ChatComposer.tsx", kind: "file" as const };
+  vi.mocked(useComposerPathSearch).mockReturnValue({
+    entries: [entry],
+    error: null,
+    refresh: vi.fn(),
+    isPending: true,
+    truncated: false,
+  });
+  await using state = await mountMenu("Fix @ChatComposer", { start: 17, end: 17 }, undefined, {
+    onChangeDraftMessage,
+  });
+  const text = "Fix @ChatComposer so";
+  await state.renderDraft(text, { start: text.length, end: text.length });
+  const item = state.menu.items.find((item) => item.type === "path")!;
+  await act(() => state.menu.onSelect(item));
+  expect.soft(onChangeDraftMessage).not.toHaveBeenCalled();
+  vi.mocked(useComposerPathSearch).mockReturnValue({
+    entries: [entry],
+    error: null,
+    refresh: vi.fn(),
+    isPending: false,
+    truncated: false,
+  });
+  await state.renderDraft(text, { start: text.length, end: text.length });
+  expect(state.menu.trigger).toBeNull();
+  expect(state.menu.items).toEqual([]);
+});
+
+it("continues a spaced machine name when filesystem results do not contain it", async () => {
+  const environmentId = EnvironmentId.make("local");
+  await using state = await mountMenu("@Build", { start: 6, end: 6 }, undefined, {
+    environmentId,
+    environments: [
+      { environmentId: EnvironmentId.make("remote"), label: "Build Server", machine: "server" },
+    ],
+  });
+  await state.renderDraft("@Build ", { start: 7, end: 7 });
+  expect(state.menu.trigger?.query).toBe("Build ");
+  expect(state.menu.items.some((item) => item.type === "environment")).toBe(true);
+});
+
+it("keeps continuation while only the remote thread search is pending", async () => {
+  vi.mocked(useThreadSearch).mockReturnValue({ matches: [], query: "Design", isPending: true });
+  await using state = await mountMenu("@Design", { start: 7, end: 7 });
+  await state.renderDraft("@Design Review", { start: 14, end: 14 });
+  expect(state.menu.trigger?.query).toBe("Design Review");
 });

@@ -1912,6 +1912,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
+    if (
+      trigger.kind === "path" &&
+      isSpacedComposerQueryUnmatched(trigger.query, [item.type === "path" ? item.path : item.label])
+    )
+      return;
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;

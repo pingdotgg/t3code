@@ -31,6 +31,7 @@ import {
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   continueComposerPathTrigger,
+  isSpacedComposerQueryUnmatched,
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
@@ -350,6 +351,11 @@ export function useComposerCommandMenu({
     cwd: previousSearch.trigger?.kind === "path" ? projectCwd : null,
     query: previousSearch.trigger?.kind === "path" ? previousSearch.trigger.query : null,
   });
+  const threadSearch = useThreadSearch(
+    previousSearch.trigger?.kind === "path" && environmentId ? [environmentId] : [],
+    previousSearch.trigger?.kind === "path" ? previousSearch.trigger.query : "",
+    { titlesOnly: true },
+  );
   let trigger = previousSearch.trigger;
   if (
     previousSearch.ownerKey !== ownerKey ||
@@ -375,11 +381,21 @@ export function useComposerCommandMenu({
       previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
       previousSearch.draftMessage,
       previousSearch.queryEnd,
-      pathSearch.isPending || pathSearch.truncated
+      pathSearch.isPending || pathSearch.truncated || threadSearch.isPending
         ? null
         : [
             ...pathSearch.entries.map((entry) => entry.path),
             ...threadShells.map((shell) => shell.title),
+            ...environments
+              .filter((environment) => environment.environmentId !== environmentId)
+              .map((environment) => environment.label),
+            ...(modelOptions && modelProviders
+              ? buildComposerModelItems(
+                  modelOptions,
+                  draftMessage.slice((previousSearch.trigger?.rangeStart ?? 0) + 1, cursor),
+                  modelProviders,
+                ).map((item) => item.label)
+              : []),
           ],
     );
     trigger =
@@ -402,12 +418,6 @@ export function useComposerCommandMenu({
       trigger,
     });
   }
-  // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(
-    trigger?.kind === "path" && environmentId ? [environmentId] : [],
-    trigger?.kind === "path" ? trigger.query : "",
-    { titlesOnly: true },
-  );
   const pullRequestSearch = useComposerPullRequestSearch({
     environmentId,
     projectId: pullRequestProjectId,
@@ -598,8 +608,25 @@ export function useComposerCommandMenu({
     return [];
   })();
 
+  if (
+    trigger?.kind === "path" &&
+    !pathSearch.isPending &&
+    !pathSearch.truncated &&
+    !threadSearch.isPending &&
+    isSpacedComposerQueryUnmatched(
+      trigger.query,
+      items.map((item) => (item.type === "path" ? item.path : item.label)),
+    )
+  )
+    trigger = null;
+
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
+    if (
+      trigger.kind === "path" &&
+      isSpacedComposerQueryUnmatched(trigger.query, [item.type === "path" ? item.path : item.label])
+    )
+      return;
     if (item.type === "environment") {
       if (!ownerKey || trigger.kind !== "path") return;
       const record = environmentComposerContext(item.environmentId, item.label);
@@ -717,10 +744,12 @@ export function useComposerCommandMenu({
     selection,
     onSelectionChange,
     trigger,
-    items,
+    items: trigger ? items : [],
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "pull-request"
+        ? pullRequestSearch.isPending
+        : pathSearch.isPending || threadSearch.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null
