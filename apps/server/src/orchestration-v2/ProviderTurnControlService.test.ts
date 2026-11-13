@@ -23,6 +23,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -239,6 +240,7 @@ it.effect(
           getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
+          getTranscriptByteFloor: () => Effect.die("unused transcript byte floor"),
           hasPendingDelegatedCompletion: () => Effect.die("unused hasPendingDelegatedCompletion"),
           getSubagentCount: () => Effect.die("unused subagent count"),
           listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
@@ -300,7 +302,13 @@ it.effect(
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(
-        Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
+        Layer.provide(
+          Layer.mergeAll(
+            layerProjection,
+            layerSessionManager,
+            Layer.mock(EventSink.EventSinkV2)({}),
+          ),
+        ),
       );
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {
