@@ -372,11 +372,10 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     // a later request can continue from an earlier snapshot; a re-emitted old snapshot is not later.
     // Only bill the latest request, and require the unseen prefix to be valid usage too. A baseline
     // of unknown age (a scan state cached before every move dated it) cannot order the snapshot.
+    const lowered =
+      previous !== null && CODEX_USAGE_FIELDS.some((key) => cumulative[key] < previous[key]);
     const rewound =
-      previous !== null &&
-      latestCumulativeAtMs !== undefined &&
-      timestampMs > latestCumulativeAtMs &&
-      CODEX_USAGE_FIELDS.some((key) => cumulative[key] < previous[key]);
+      lowered && latestCumulativeAtMs !== undefined && timestampMs > latestCumulativeAtMs;
     const reconciled =
       previous === null || rewound
         ? readCodexTokenUsage(
@@ -387,7 +386,14 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
       const bridged = unreportedRequests(previous, cumulative, last, pending);
       if (bridged === null) {
         // A rejected snapshot from before the baseline's time is a replay, not the next baseline.
-        if (latestCumulativeAtMs !== undefined && timestampMs < latestCumulativeAtMs) {
+        // At the baseline's own time only lower counters are one; zeroed counters still rebase.
+        const replayed =
+          latestCumulativeAtMs !== undefined &&
+          (timestampMs < latestCumulativeAtMs ||
+            (timestampMs === latestCumulativeAtMs &&
+              lowered &&
+              cumulative.input_tokens + cumulative.output_tokens > 0));
+        if (replayed) {
           state.lastCumulativeUsage = previous;
           if (pending !== undefined) state.unreportedRequests = pending;
         }
