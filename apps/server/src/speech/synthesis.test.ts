@@ -114,16 +114,18 @@ it.effect.each(["xai", "openrouter"] as const)(
         if (provider === "openrouter") {
           yield* service.synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
-          upstream.mockResolvedValueOnce(new Response(new Uint8Array([73, 68, 51, 1])));
-          expect([
-            ...(yield* service.synthesize(provider, {
-              ...request,
-              model: "minimax/speech-test:free",
-            })),
-          ]).toEqual([73, 68, 51, 1]);
-          expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).response_format).toBe(
-            "mp3",
-          );
+          for (const model of ["minimax/speech-test:free", "mistralai/voxtral-mini-tts-2603"]) {
+            upstream.mockResolvedValueOnce(new Response(new Uint8Array([73, 68, 51, 1])));
+            expect([
+              ...(yield* service.synthesize(provider, {
+                ...request,
+                model,
+              })),
+            ]).toEqual([73, 68, 51, 1]);
+            expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).response_format).toBe(
+              "mp3",
+            );
+          }
           upstream.mockResolvedValueOnce(
             new Response(new Uint8Array([0, 1]), {
               headers: { "content-type": "audio/pcm;rate=garbage" },
@@ -139,6 +141,28 @@ it.effect.each(["xai", "openrouter"] as const)(
         expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
           reason: "rate-limit",
         });
+        for (const operation of ["catalog", "synthesis"] as const) {
+          let pulls = 0;
+          const cancel = vi.fn();
+          upstream.mockResolvedValueOnce(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  if (++pulls <= 40) controller.enqueue(new Uint8Array(1024 * 1024));
+                  else controller.close();
+                },
+                cancel,
+              }),
+            ),
+          );
+          expect(
+            operation === "catalog"
+              ? yield* Effect.flip(service.synthesisModels(provider))
+              : yield* Effect.flip(service.synthesize(provider, request)),
+          ).toMatchObject({ reason: "unavailable" });
+          expect(pulls).toBeLessThan(40);
+          expect(cancel).toHaveBeenCalledOnce();
+        }
         yield* service.setKey(provider, null);
         const count = upstream.mock.calls.length;
         expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({

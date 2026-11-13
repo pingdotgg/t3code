@@ -23,6 +23,15 @@ export function createReadAloudController(
   let state: State = { id: null, status: "idle" };
   let active: AbortController | null = null;
   let playback: SpeechPlayback | null = null;
+  let paused = false;
+  let starting = false;
+  let resumePending: (() => void) | null = null;
+  const waitForResume = async () => {
+    if (paused)
+      await new Promise<void>((resolve) => {
+        resumePending = resolve;
+      });
+  };
   const listeners = new Set<() => void>();
   const publish = (next: State) => {
     state = next;
@@ -31,6 +40,10 @@ export function createReadAloudController(
   const stop = () => {
     active?.abort();
     active = null;
+    paused = false;
+    starting = false;
+    resumePending?.();
+    resumePending = null;
     playback?.stop();
     playback = null;
     publish({ id: null, status: "idle" });
@@ -45,17 +58,35 @@ export function createReadAloudController(
     },
     stop,
     pause() {
-      if (state.status !== "playing") return;
+      if (state.status !== "playing" && state.status !== "loading") return;
+      paused = true;
       publish({ ...state, status: "paused" });
-      playback?.pause();
+      if (!starting) playback?.pause();
     },
     async resume() {
-      if (state.status !== "paused" || !playback || !active) return;
+      if (state.status !== "paused" || !active) return;
+      paused = false;
+      if (resumePending) {
+        const resume = resumePending;
+        resumePending = null;
+        publish({ ...state, status: "loading" });
+        resume();
+        return;
+      }
+      if (starting || !playback) {
+        publish({ ...state, status: "loading" });
+        return;
+      }
       const owner = active;
       const id = state.id;
       try {
+        starting = true;
         await playback.play();
-        if (active === owner) publish({ ...state, status: "playing" });
+        if (active === owner) {
+          starting = false;
+          if (paused) playback.pause();
+          else publish({ ...state, status: "playing" });
+        }
       } catch {
         if (active === owner) {
           stop();
@@ -72,7 +103,7 @@ export function createReadAloudController(
       active = owner;
       try {
         for (const chunk of chunks) {
-          publish({ id, status: "loading" });
+          publish({ id, status: paused ? "paused" : "loading" });
           const next = await prepare(chunk, settings, owner.signal);
           if (active !== owner) {
             next.stop();
@@ -81,8 +112,19 @@ export function createReadAloudController(
           playback = next;
           // Playback can fail while the platform is still activating its audio session.
           void next.finished.catch(() => {});
-          await next.play();
+          await waitForResume();
           if (active !== owner) return;
+          do {
+            starting = true;
+            await next.play();
+            if (active !== owner) return;
+            starting = false;
+            if (paused) {
+              next.pause();
+              await waitForResume();
+              if (active !== owner) return;
+            } else break;
+          } while (active === owner);
           publish({ id, status: "playing" });
           await next.finished;
           if (active !== owner) return;

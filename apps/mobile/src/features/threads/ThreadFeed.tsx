@@ -2838,17 +2838,18 @@ let lastSplitViewport: { windowWidth: number; width: number; height: number } | 
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const formatMessageTime = useMessageTimeFormatter();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Speech follows the thread rather than virtualized message rows and stops on navigation.
-  useEffect(
-    () => () => {
-      if (
-        readAloudController
-          .getSnapshot()
-          .id?.startsWith(`${props.environmentId}:${props.threadId}:`)
-      )
-        readAloudController.stop();
-    },
-    [props.environmentId, props.threadId],
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        if (
+          readAloudController
+            .getSnapshot()
+            .id?.startsWith(`${props.environmentId}:${props.threadId}:`)
+        )
+          readAloudController.stop();
+      },
+      [props.environmentId, props.threadId],
+    ),
   );
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);

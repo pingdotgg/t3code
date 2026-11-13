@@ -69,3 +69,62 @@ it("pauses without recursive audio-focus callbacks and ignores failures after ca
   await run;
   expect(controller.getSnapshot().status).toBe("idle");
 });
+
+it.each(["prepare", "play"])("keeps a pause requested during %s", async (phase) => {
+  const preparing = deferred<void>();
+  const playing = deferred<void>();
+  const release = deferred<void>();
+  const finished = deferred<void>();
+  const pauseApplied = deferred<void>();
+  const pause = vi.fn(() => pauseApplied.resolve());
+  const play = vi.fn(async () => {
+    playing.resolve();
+    if (phase === "play") await release.promise;
+  });
+  const controller = createReadAloudController(async () => {
+    preparing.resolve();
+    if (phase === "prepare") await release.promise;
+    return { play, pause, stop: () => finished.resolve(), finished: finished.promise };
+  });
+  const run = controller.start("1", "reply", {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await (phase === "prepare" ? preparing.promise : playing.promise);
+  controller.pause();
+  expect(controller.getSnapshot().status).toBe("paused");
+  release.resolve();
+  if (phase === "play") await pauseApplied.promise;
+  await controller.resume();
+  await playing.promise;
+  controller.stop();
+  await run;
+});
+
+it("keeps a pause across chunk boundaries", async () => {
+  const started = deferred<void>();
+  const finished = deferred<void>();
+  const nextPrepared = deferred<void>();
+  const prepare = vi.fn(async () => {
+    if (prepare.mock.calls.length > 1) nextPrepared.resolve();
+    return {
+      play: async () => started.resolve(),
+      pause: () => {},
+      stop: () => {},
+      finished: finished.promise,
+    };
+  });
+  const controller = createReadAloudController(prepare);
+  const run = controller.start("1", "word ".repeat(1000), {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await started.promise;
+  await controller.resume();
+  finished.resolve();
+  controller.pause();
+  await nextPrepared.promise;
+  expect(controller.getSnapshot().status).toBe("paused");
+  controller.stop();
+  await run;
+});
