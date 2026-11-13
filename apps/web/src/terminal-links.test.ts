@@ -125,6 +125,26 @@ describe("extractTerminalLinks", () => {
   });
 
   it.each([
+    ["https://example.com/a(b)c)", "https://example.com/a(b)c"],
+    ["https://example.com/(docs)", "https://example.com/(docs)"],
+    ["https://example.com/((docs)", "https://example.com/((docs)"],
+    ["https://example.com/docs)}])", "https://example.com/docs)"],
+    ["https://example.com/docs).", "https://example.com/docs"],
+    ["https://example.com/docs.)", "https://example.com/docs."],
+    ["https://example.com/docs):", "https://example.com/docs):"],
+    ["/tmp/a[b]c]", "/tmp/a[b]c"],
+    ["/tmp/[docs]", "/tmp/[docs]"],
+    ["/tmp/{docs}", "/tmp/{docs}"],
+    ["/tmp/docs)}])", "/tmp/docs)"],
+    ["/tmp/docs):", "/tmp/docs"],
+    ["/tmp/docs:)", "/tmp/docs:"],
+  ])("preserves delimiter and punctuation rules for %s", (raw, text) => {
+    expect(extractTerminalLinks(`see ${raw}`)).toEqual([
+      { kind: isTerminalUrl(text) ? "url" : "path", text, start: 4, end: 4 + text.length },
+    ]);
+  });
+
+  it.each([
     "src/żółć.ts:12:7",
     "żółć/main.ts:12",
     String.raw`żółć\main.ts:12`,
