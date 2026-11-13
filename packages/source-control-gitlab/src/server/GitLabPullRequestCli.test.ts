@@ -1338,6 +1338,63 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "drops the installation prefix a web path carries when GitLab has no such project",
+      host: "prefixed.example",
+      subfolder: "gitlab",
+      known: ["team/sub/project"],
+      asked: "projects/team%2Fsub%2Fproject?license=false",
+    },
+    {
+      name: "keeps a path GitLab knows as written, whose group is named like the prefix",
+      host: "grouped.example",
+      subfolder: "/gitlab/",
+      known: ["gitlab/team/sub/project", "team/sub/project"],
+      asked: "projects/gitlab%2Fteam%2Fsub%2Fproject?license=false",
+    },
+    {
+      name: "keeps the path on a host served at its root",
+      host: "root.example",
+      subfolder: "",
+      known: [],
+      asked: "projects/gitlab%2Fteam%2Fsub%2Fproject?license=false",
+    },
+  ])("$name", ({ host, subfolder, known, asked }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(({ cwd, args }) => {
+        if (args[0] === "config") return Effect.succeed(output(`${subfolder}\n`));
+        const project = decodeURIComponent(args[1]?.split("/")[1]?.split("?")[0] ?? "");
+        return known.includes(project) || subfolder === ""
+          ? Effect.succeed(output(JSON.stringify({ merge_method: "merge" })))
+          : Effect.fail(
+              new GitLabCli.GitLabCliCommandError({
+                operation: "execute",
+                command: "glab",
+                cwd,
+                cause: new VcsProcessExitError({
+                  operation: "GitLabCli.execute",
+                  command: "glab",
+                  cwd,
+                  exitCode: 1,
+                  detail: "404 Project Not Found",
+                  failureKind: "not-found",
+                }),
+              }),
+            );
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.getProjectMergeCapabilities({
+        cwd: "/w",
+        host,
+        repository: "gitlab/team/sub/project",
+      });
+
+      assert.deepStrictEqual(mockedExecute.mock.calls.at(-1)?.[0].args, ["api", asked]);
+    }),
+  );
+
   it.effect("offers no squash when the project does not say it allows one", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

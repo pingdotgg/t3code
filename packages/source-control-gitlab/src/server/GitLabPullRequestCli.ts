@@ -1,9 +1,12 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -343,6 +346,8 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+const API_PROJECT_TTL = Duration.minutes(5);
+const API_PROJECT_CACHE_CAPACITY = 256;
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestConversationThread>;
@@ -1049,6 +1054,65 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     });
+
+  // A GitLab served below a URL prefix has that prefix in every web path, which is where a linked
+  // merge request's repository comes from, and in no API project path. A path GitLab knows as
+  // written is used as written, so a real group named like the prefix keeps its projects.
+  const apiProjects = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, host, repository] = JSON.parse(key) as [string, string, string];
+      return gitlab
+        .execute({ cwd, host, args: ["config", "get", "subfolder", "--host", host] })
+        .pipe(
+          Effect.map((result) => result.stdout.trim().replace(/^\/+|\/+$/gu, "")),
+          Effect.catchTags({ GitLabCliCommandError: () => Effect.succeed("") }),
+          Effect.flatMap((subfolder) => {
+            const prefix = `${subfolder}/`;
+            if (subfolder === "" || !repository.toLowerCase().startsWith(prefix.toLowerCase())) {
+              return Effect.succeed(repository);
+            }
+            return api({
+              cwd,
+              host,
+              path: `projects/${projectPath(repository)}?license=false`,
+            }).pipe(
+              Effect.as(repository),
+              Effect.catchTags({
+                GitLabCliCommandError: (error) =>
+                  isVcsProcessExitError(error.cause) && error.cause.failureKind === "not-found"
+                    ? Effect.succeed(repository.slice(prefix.length))
+                    : Effect.fail(error),
+              }),
+            );
+          }),
+        );
+    },
+    {
+      capacity: API_PROJECT_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? API_PROJECT_TTL : Duration.zero),
+    },
+  );
+
+  const inApiProject =
+    <
+      I extends {
+        readonly cwd: string;
+        readonly host?: string | undefined;
+        readonly repository: string;
+      },
+      A,
+    >(
+      run: (input: I) => Effect.Effect<A, GitLabPullRequestCliError>,
+    ) =>
+    (input: I): Effect.Effect<A, GitLabPullRequestCliError> => {
+      const repository = input.repository.trim();
+      // A prefixed web path is at least prefix/group/project, and the prefix is set per host.
+      return input.host === undefined || repository.split("/").length < 3
+        ? run(input)
+        : Cache.get(apiProjects, JSON.stringify([input.cwd, input.host, repository])).pipe(
+            Effect.flatMap((apiProject) => run({ ...input, repository: apiProject })),
+          );
+    };
 
   const listPage = (input: {
     readonly cwd: string;
@@ -2050,7 +2114,7 @@ export const make = Effect.gen(function* () {
     return Effect.forEach(
       reads,
       (read) =>
-        mergeRequestStats({ cwd: input.cwd, host: input.host, ...read }).pipe(
+        inApiProject(mergeRequestStats)({ cwd: input.cwd, host: input.host, ...read }).pipe(
           Effect.map((stats) =>
             read.numbers.flatMap((number) => {
               const stat = stats.get(number);
@@ -2180,7 +2244,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  return GitLabPullRequestCli.of({
+  const service = GitLabPullRequestCli.of({
     getViewerUsername: viewerUsername,
 
     listMergeRequests: Effect.fn("GitLabPullRequestCli.listMergeRequests")(function (input) {
@@ -2899,6 +2963,37 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.asVoid);
       },
     ),
+  });
+
+  return GitLabPullRequestCli.of({
+    ...service,
+    listMergeRequests: inApiProject(service.listMergeRequests),
+    getMergeRequestDetail: inApiProject(service.getMergeRequestDetail),
+    getListStates: inApiProject(service.getListStates),
+    getMergeRequestFileStats: inApiProject(service.getMergeRequestFileStats),
+    listNotes: inApiProject(service.listNotes),
+    listReactions: inApiProject(service.listReactions),
+    getFileRevisions: inApiProject(service.getFileRevisions),
+    setReaction: inApiProject(service.setReaction),
+    listCommits: inApiProject(service.listCommits),
+    getMergeRequestDiff: inApiProject(service.getMergeRequestDiff),
+    getMergeRequestDiffFileContents: inApiProject(service.getMergeRequestDiffFileContents),
+    getProjectMergeCapabilities: inApiProject(service.getProjectMergeCapabilities),
+    listProjectLabels: inApiProject(service.listProjectLabels),
+    listLabelCandidates: inApiProject(service.listLabelCandidates),
+    setLabels: inApiProject(service.setLabels),
+    listProjectUsers: inApiProject(service.listProjectUsers),
+    searchProjectReferences: inApiProject(service.searchProjectReferences),
+    listReviewerCandidates: inApiProject(service.listReviewerCandidates),
+    setReviewerRequest: inApiProject(service.setReviewerRequest),
+    runMergeRequestAction: inApiProject(service.runMergeRequestAction),
+    updateMergeRequest: inApiProject(service.updateMergeRequest),
+    commentOnMergeRequest: inApiProject(service.commentOnMergeRequest),
+    updateNote: inApiProject(service.updateNote),
+    listDiscussions: inApiProject(service.listDiscussions),
+    submitReview: inApiProject(service.submitReview),
+    replyToDiscussion: inApiProject(service.replyToDiscussion),
+    setDiscussionResolution: inApiProject(service.setDiscussionResolution),
   });
 });
 
