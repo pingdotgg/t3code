@@ -72,6 +72,11 @@ const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
 );
 const createCommandCount = (code: string) =>
   CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
+// A push, directly or through a stack tool, that can start checks on a linked pull request.
+const PUSH_COMMAND = new RegExp(
+  `${COMMAND_START}(?:git(?:\\s+-[cC]\\s+\\S+)*\\s+push|gh\\s+stack\\s+(?:push|submit)|cafe\\s+stack\\s+submit|jj\\s+git\\s+push)(?=$|[\\s;&|)])`,
+  "u",
+);
 
 // Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
 // `"a "'`b`'" c"`.
@@ -134,6 +139,8 @@ function shellSegments(script: string): ReadonlyArray<string> {
 const shellCode = (script: string) =>
   script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
 
+const isPushCommand = (input: string) => PUSH_COMMAND.test(shellCode(shellScript(input)));
+
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
 
 /**
@@ -182,6 +189,19 @@ interface LinkEntry {
   readonly thread: ProjectionStore.ProjectionThreadPullRequests;
   readonly link: ThreadPullRequestLink;
 }
+
+const referenceOf = ({ thread, link }: LinkEntry) => ({
+  projectId: thread.projectId,
+  host: normalizeThreadPullRequestKey(link).host,
+  repository: link.repository,
+  number: link.number,
+});
+
+/** Pauses and batching both belong to a project's host. */
+const pauseKeyOf = (entry: LinkEntry) => {
+  const { projectId, host } = referenceOf(entry);
+  return `${projectId}\0${host}`;
+};
 
 /** Another layer of the stack `url` belongs to, in its host's canonical shape. */
 function siblingChangeRequestUrl(url: string, number: number): string | null {
@@ -478,12 +498,7 @@ export const make = Effect.gen(function* () {
 
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
-      const ref = {
-        projectId: first.thread.projectId,
-        host: normalizeThreadPullRequestKey(first.link).host,
-        repository: first.link.repository,
-        number: first.link.number,
-      };
+      const ref = referenceOf(first);
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
@@ -612,25 +627,63 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }),
       );
+    const pools = {
+      // Wider than one summary batch, so reads that finish their cache checks at different
+      // times still share batches.
+      batched: { width: 100, reads: yield* Semaphore.make(100) },
+      // One read per pull request, often a CLI process, so these keep the narrower width.
+      unbatched: { width: 25, reads: yield* Semaphore.make(25) },
+    };
+    const isPaused = (pauseKey: string, atMs: number) => (pausedUntil.get(pauseKey) ?? 0) > atMs;
+    // Judged once a slot is free, so a stack retry a sibling flags meanwhile still counts, and
+    // pauses set during the sweep apply at once.
+    const readIfDue = (
+      key: string,
+      entries: ReadonlyArray<LinkEntry>,
+      pauseKey: string,
+      reads: Semaphore.Semaphore,
+    ) =>
+      reads.withPermits(1)(
+        Effect.suspend(() =>
+          isDue(key, entries, nowMs)
+            ? Clock.currentTimeMillis.pipe(
+                Effect.flatMap((startedAtMs) =>
+                  isPaused(pauseKey, startedAtMs) ? Effect.void : readGroup(key, entries, pauseKey),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
+    const groupsByHost = Map.groupBy(
+      Array.from(groups).filter(([key]) => scope === "all" || requested.has(key)),
+      ([, entries]) => pauseKeyOf(entries[0]!),
+    );
     yield* Effect.forEach(
-      groups,
-      ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
+      groupsByHost,
+      ([pauseKey, hostGroups]) => {
+        // A host paused or with nothing due skips the lookup. Stack retries only flag groups on
+        // the flagging group's own host, so nothing on it becomes due this sweep.
+        if (
+          isPaused(pauseKey, nowMs) ||
+          !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs))
+        ) {
           return Effect.void;
         }
-        const first = entries[0]!;
-        const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Check pauses at each read so changes during the sweep apply immediately.
-        return Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
+        return pullRequests.batchesReads(referenceOf(hostGroups[0]![1][0]!)).pipe(
+          Effect.flatMap((batches) => {
+            const { width, reads } = batches ? pools.batched : pools.unbatched;
+            return Effect.forEach(
+              hostGroups,
+              ([key, entries]) => readIfDue(key, entries, pauseKey, reads),
+              {
+                concurrency: width,
+                discard: true,
+              },
+            );
+          }),
         );
       },
-      // Match summary batch width so GitHub reads coalesce into one request.
-      { concurrency: 25, discard: true },
+      { concurrency: "unbounded", discard: true },
     );
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });
@@ -711,6 +764,32 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // A push can start new checks, so the thread's watches forget whether checks were running and
+  // hold the thread until they read the pull request again. The run is still going, so the
+  // thread never shows as done in between.
+  const reopenWatchedChecks = Effect.fn("PullRequestSyncReactor.reopenWatchedChecks")(
+    function* (threadId: ThreadId, item: CommandExecution) {
+      if (isOrchestrationV2WorkActive(item.status) || !isPushCommand(item.input)) return;
+      const threads = yield* projections.getThreadsWithPullRequests(threadId);
+      const answered = threads.some((thread) =>
+        (thread.pullRequests ?? []).some((link) => link.watch?.checksPending !== undefined),
+      );
+      if (!answered) return;
+      yield* engine.dispatch({
+        type: "thread.pull-request-watch.checks-reopen",
+        // Stable per command, so a repeated settlement clears an answer read since only once.
+        commandId: CommandId.make(`server:pr-push-checks:${threadId}:${item.id}`),
+        threadId,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause(
+          logSkipped("reopening a watch's checks after a push failed", { threadId }),
+        ),
+      ),
+  );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
@@ -741,7 +820,10 @@ export const make = Effect.gen(function* () {
           case "turn-item.updated": {
             const item = event.payload;
             if (item.type !== "command_execution") return Effect.void;
-            const linked = linkCreatedChangeRequests(event.threadId, item);
+            const linked = Effect.andThen(
+              linkCreatedChangeRequests(event.threadId, item),
+              reopenWatchedChecks(event.threadId, item),
+            );
             if (!isChangeRequestCloseCommand(item.input)) return linked;
             const ended = closeCommands.get(event.threadId) ?? new Set<string>();
             closeCommands.set(event.threadId, ended);
