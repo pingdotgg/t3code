@@ -42,7 +42,30 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
+  /** The scheme a page on System shows, which Playwright's clear of its override must keep. */
+  readonly systemColorScheme?: () => string;
 }
+
+const withSystemColorScheme = (
+  params: Record<string, unknown>,
+  systemColorScheme: () => string,
+): Record<string, unknown> => {
+  const features = params["features"];
+  if (!Array.isArray(features)) return params;
+  return {
+    ...params,
+    features: features.map((feature: unknown) =>
+      typeof feature === "object" &&
+      feature !== null &&
+      "name" in feature &&
+      feature.name === "prefers-color-scheme" &&
+      "value" in feature &&
+      feature.value === ""
+        ? { ...feature, value: systemColorScheme() }
+        : feature,
+    ),
+  };
+};
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
@@ -323,8 +346,11 @@ export const make = Effect.gen(function* () {
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const { webContents, debugger: debuggee, cookiesCleared, systemColorScheme } = tab.debuggee;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      if (method === "Emulation.setEmulatedMedia" && systemColorScheme) {
+        params = withSystemColorScheme(params, systemColorScheme);
+      }
       const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
