@@ -3804,7 +3804,7 @@ export function ChatComposer(props: ChatComposerProps) {
                         </span>
                       ) : undefined
                     }
-                    placeholderClassName="truncate"
+                    placeholderClassName={offeredPromptSuggestion === null ? "truncate" : ""}
                     narrowPlaceholder={
                       !isComposerApprovalState &&
                       !activePendingProgress &&
