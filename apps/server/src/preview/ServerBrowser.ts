@@ -2865,7 +2865,7 @@ const make = Effect.gen(function* () {
         // Stopping a committed document fires neither `load` nor `requestfailed`.
         if (tab.navigationGeneration !== generation || !tab.loading) return;
         tab.loading = false;
-        await reportLoaded(tab);
+        void reportLoaded(tab);
         return;
       }
       case "probe": {

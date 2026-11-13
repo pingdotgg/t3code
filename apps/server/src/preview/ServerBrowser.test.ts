@@ -1764,8 +1764,14 @@ it.effect("a viewer's stop settles the navigation it cancels", () =>
       // Stopping a committed document fires neither `load` nor `requestfailed`.
       yield* Effect.promise(() => page.goto("https://example.com/slow"));
       page.emit("request", navigation("https://example.com/slow"));
+      // A busy renderer's title read must not hold later viewer input behind the stop.
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
       yield* viewer.input({ type: "stop" });
-      yield* settled("navigated", "https://example.com/slow");
+      yield* viewer.input({ type: "navigate", url: "https://example.com/next" });
+      expect(page.goto).toHaveBeenLastCalledWith("https://example.com/next", expect.anything());
+      heldTitle.resolve("slow");
+      yield* settled("navigated", "https://example.com/next");
     }),
   ).pipe(Effect.provide(layer)),
 );
