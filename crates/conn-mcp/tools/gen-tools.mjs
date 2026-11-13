@@ -8,10 +8,10 @@ import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { monorepoRoot } from "./monorepo.mjs";
+import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const repo = monorepoRoot;
+const repo = monorepo();
 const server = NodePath.join(repo, "apps/server");
 const out = NodePath.join(here, "..", "src", "catalog.jsonl");
 const implemented = NodeFS.readFileSync(NodePath.join(here, "..", "tools.implemented"), "utf8")
@@ -206,15 +206,15 @@ if (process.argv.includes("--check")) {
     const current = NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : "";
     if (current !== content) {
       console.error(
-        `${NodePath.relative(repo, file)} is stale: run gen-tools.mjs and review the diff.`,
+        `${NodePath.relative(repoRoot, file)} is stale: run gen-tools.mjs and review the diff.`,
       );
       process.exit(1);
     }
-    console.log(`${what} match ${NodePath.relative(repo, file)}`);
+    console.log(`${what} match ${NodePath.relative(repoRoot, file)}`);
   }
 } else {
   for (const [file, content, what] of outputs) {
     NodeFS.writeFileSync(file, content);
-    console.log(`wrote ${what} to ${NodePath.relative(repo, file)}`);
+    console.log(`wrote ${what} to ${NodePath.relative(repoRoot, file)}`);
   }
 }

@@ -75,5 +75,10 @@ server crate and an `Engine` method for a page.
 
 - `cargo test -p conn-engine`: commands, streams, restart, families, reads, titles, observer.
 - `tools/client-check.mjs`: the client's own decoders and reducers over
-  `examples/export_turn.rs` output. Needs the Conn monorepo: `CONN_MONOREPO=<path>`, default
-  the checkout this crate sits in.
+  `examples/export_turn.rs` output. Needs the Conn monorepo in `CONN_MONOREPO`. From the
+  repository root:
+
+  ```sh
+  cargo run -p conn-engine --features fake-provider --example export_turn -- /tmp/x.json
+  CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/client-check.mjs /tmp/x.json
+  ```

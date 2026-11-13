@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Same calls on the T3 server and the Conn Server (`examples/replay_server`), on throwaway
-// state; compares outcome, failure code and result shape. One Haiku turn on the T3 server.
-// Usage: parity.mjs <conn-server-binary>. Needs `vp i` in the monorepo (`CONN_MONOREPO`).
+// state; compares outcome, failure code and result shape. One Haiku turn on the T3 server,
+// unless `--no-model`: that skips the thread launch and every step on its thread.
+// Usage: parity.mjs [--no-model] <conn-server-binary>. Needs `vp i` in `CONN_MONOREPO`.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -9,13 +10,16 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
-import { monorepoRoot } from "./monorepo.mjs";
+import { monorepo } from "../../../tools/monorepo.mjs";
 
-const rustBinary = process.argv[2];
+const argv = process.argv.slice(2);
+const noModel = argv.includes("--no-model");
+const rustBinary = argv.find((a) => !a.startsWith("--"));
 if (rustBinary === undefined) {
-  console.error("usage: parity.mjs <conn-server-binary>");
+  console.error("usage: parity.mjs [--no-model] <conn-server-binary>");
   process.exit(2);
 }
+monorepo();
 const implemented = NodeFS.readFileSync(new URL("../tools.implemented", import.meta.url), "utf8")
   .split("\n")
   .map((line) => line.trim())
@@ -85,7 +89,7 @@ async function startTs() {
   const { origin, code } = await start(
     node,
     [
-      NodePath.join(monorepoRoot, "apps/server/src/bin.ts"),
+      NodePath.join(monorepo(), "apps/server/src/bin.ts"),
       "--no-browser",
       "--auto-bootstrap-project-from-cwd",
       "--port",
@@ -262,7 +266,13 @@ const steps = [
   ["task_status", () => ({ taskId: "task:none" })],
   ["task_cancel", () => ({ taskId: "task:none" })],
 ];
-for (const [tool, input, after] of steps) {
+// The steps that launch a thread (a model turn on the T3 server) or act on it.
+const onLaunchedThread = (tool, input) =>
+  tool === "t3_thread_launch" ||
+  input({ threadId: "<t>" }).threadId === "<t>";
+const run = noModel ? steps.filter(([tool, input]) => !onLaunchedThread(tool, input)) : steps;
+if (noModel) console.log(`--no-model: skipped ${steps.length - run.length} steps on a launched thread`);
+for (const [tool, input, after] of run) {
   const results = await Promise.all(
     sessions.map(async (session, i) => {
       const reply = await session.callTool(tool, input(context[i]));

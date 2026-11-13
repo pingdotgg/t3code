@@ -1,8 +1,8 @@
 # Session recordings
 
-Real client sessions against the TypeScript server at the pinned contract commit. They are the
-ground truth for what a Conn client sends and expects, and the first replay input for
-`conn-server`. [CONNECT.md](CONNECT.md) reads them for you.
+Real client sessions against the TypeScript server at the pinned contract commit, and against
+the Conn Server (`rust-*`). They are the ground truth for what a Conn client sends and
+expects, and the first replay input for `conn-server`. [CONNECT.md](CONNECT.md) reads them for you.
 
 ## Files
 
@@ -48,34 +48,53 @@ not on an empty list. `remote` records only the second server's traffic.
 
 ## Rerun
 
-One command, from the repo root, after `vp i`:
+Run the recorder from this repository. `CONN_MONOREPO` names a Conn monorepo checkout after
+`vp i`: the recorder runs its TypeScript server and serves its web build, and takes
+Playwright from its `node_modules`. Build the web client there once:
 
 ```sh
-(cd apps/web && vp build) && node native/conn-server/fixtures/recorder/record.mjs
+export CONN_MONOREPO=/path/to/conn
+(cd "$CONN_MONOREPO/apps/web" && vp build)
+node fixtures/recorder/record.mjs
 ```
 
-`CONN_MONOREPO` names the Conn monorepo (web client, TypeScript server) when the recorder runs
-from elsewhere; `CONN_RECORDER_SHOTS=<dir>` keeps the screenshots after the run.
+`CONN_RECORDER_SHOTS=<dir>` keeps the screenshots after the run. `--out <dir>` writes the
+recordings to `<dir>` instead of `sessions/`, for a proof run that must not change them.
 
-It rewrites every file in `sessions/`. It takes about two minutes and spends four Haiku turns.
-Name scenarios to record only those, in order: `record.mjs pairing turn`. Every scenario after
-`pairing` needs the cookie `pairing` earns, so always name `pairing` first.
+Without scenario names it rewrites every non-`rust-*` file in `sessions/`. It takes about two
+minutes and spends four Haiku turns. Name scenarios to record only those, in order:
+`record.mjs pairing turn`. Every scenario after `pairing` needs the cookie `pairing` earns, so
+always name `pairing` first.
 
 Then check the result:
 
 ```sh
-cargo test --manifest-path native/conn-server/fixtures/decode-check/Cargo.toml -- --nocapture
-node native/conn-server/fixtures/recorder/summarize.mjs turn
-git diff --stat native/conn-server/fixtures/sessions
+cargo test --manifest-path fixtures/decode-check/Cargo.toml -- --nocapture
+node fixtures/recorder/summarize.mjs turn
+git diff --stat fixtures/sessions
 ```
 
-The `rust-*` scenarios (`rust-turn`, `rust-restart`, `rust-permission`, `rust-stop`) run only
-when named, after `pairing`, with `--rust native/conn-server/target/release/conn-server`. They
-record only the Rust server's traffic and always write a screenshot per checkpoint.
-`rust-terminal` runs the `terminal` steps on the Conn Server; `recorder/compare-terminal.mjs
-<recording>` prints either as a timeline. `CONN_MONOREPO` sets the Conn checkout to use.
-`rust-restart` stops and restarts the Rust server on the same state and waits for the client to
-reconnect without a reload. `rust-load` runs 11 turns in three threads, then idles two minutes.
+The `rust-*` scenarios run only when named, after `pairing`, with `--rust <binary>`. They
+record only the Rust server's traffic and always write a screenshot per checkpoint. With
+`--rust target/release/examples/replay_server` the Rust server runs the engine's scripted fake
+provider, so no model is called. These work on it: `rust-turn`, `rust-restart`, `rust-vcs`,
+`rust-files`, `rust-terminal`, `rust-settings`, `rust-search`, `rust-worktree`:
+
+```sh
+cargo build --release --examples
+node fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-vcs rust-files \
+  rust-terminal rust-settings rust-search rust-worktree \
+  --rust target/release/examples/replay_server --out /tmp/conn-recordings
+```
+
+`rust-permission`, `rust-stop`, `rust-mcp`, `rust-attachment` and `rust-subagent` need
+Claude to act (a prompt, a tool call, a subagent): use `--rust target/release/conn-server`,
+which runs the `claude` CLI. `rust-follow-up`, `rust-queue` and `rust-load` were recorded with
+Haiku; they are not yet tried on the fake provider. `rust-terminal` runs the
+`terminal` steps on the Conn Server; `recorder/compare-terminal.mjs <recording>` prints either
+as a timeline. `rust-restart` stops and restarts the Rust server on the same state and waits
+for the client to reconnect without a reload. `rust-load` runs 11 turns in three threads, then
+idles two minutes.
 
 `--rust-url <pairingUrl>` uses a Rust server that already runs (for example on another host,
 through `ssh -L` on the same port) instead of starting one. `--rust-sample <command>` measures
@@ -91,8 +110,9 @@ and a `failure.png`, and the run exits 1. Do not commit partial files.
 
 ### What the recorder does
 
-- Builds `apps/web` first if `apps/web/dist` is missing. The server serves that build.
-- Runs `apps/server/src/bin.ts` from this checkout under `env -i` with only `HOME`, `USER`,
+- Builds `apps/web` in `CONN_MONOREPO` first if `apps/web/dist` is missing. The server serves
+  that build.
+- Runs `apps/server/src/bin.ts` from `CONN_MONOREPO` under `env -i` with only `HOME`, `USER`,
   `PATH` and `T3CODE_HOME` set, on a free port, with its base directory in a new temp folder.
   It never touches `~/.t3` or a running T3 server. It stops the servers it started by their
   PIDs and deletes the temp folders.

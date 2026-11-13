@@ -1,19 +1,17 @@
 // Replays fixtures/sessions/<scenario>.ndjson against a conn-server binary through Effect's
 // RpcClient and checks every answer decodes or is the explicit not-supported defect.
-// From the repo root: node <this file> native/conn-server/target/debug/examples/replay_server
-// [scenario...]. `replay_server` runs the engine's fake provider, so no model is called.
+// With CONN_MONOREPO set: node <this file> target/debug/examples/replay_server [scenario...].
+// `replay_server` runs the engine's fake provider, so no model is called.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
-const repo = new URL("../../../../../", import.meta.url);
-const contracts = new URL("packages/contracts/", repo);
-const resolve = NodeModule.createRequire(new URL("package.json", contracts)).resolve;
-const load = (specifier) => import(NodeURL.pathToFileURL(resolve(specifier)).href);
-const source = (path) => import(new URL(path, repo).href);
+import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+
+// Packages resolve as packages/contracts sees them, so the sources share one `effect`.
+const load = packageImporter("packages/contracts");
+const source = importSource;
 
 const Effect = await load("effect/Effect");
 const Exit = await load("effect/Exit");

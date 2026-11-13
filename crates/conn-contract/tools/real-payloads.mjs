@@ -8,6 +8,8 @@ import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import * as NodeSqlite from "node:sqlite";
 
+import { inMonorepo } from "../../../tools/monorepo.mjs";
+
 const [dbPath, outPath, perTableArg] = process.argv.slice(2);
 if (!dbPath || !outPath) {
   console.error("usage: real-payloads.mjs <statev2.sqlite> <out.json> [perTable]");
@@ -15,8 +17,7 @@ if (!dbPath || !outPath) {
 }
 const perTable = Number(perTableArg ?? 2000);
 
-const crateDir = NodeURL.fileURLToPath(new URL("../", import.meta.url));
-const contractsDir = NodePath.resolve(crateDir, "../../../../packages/contracts");
+const contractsDir = inMonorepo("packages/contracts");
 const resolve = NodeModule.createRequire(NodePath.join(contractsDir, "package.json")).resolve;
 const { Schema } = await import(NodeURL.pathToFileURL(resolve("effect")).href);
 const C = await import(NodeURL.pathToFileURL(NodePath.join(contractsDir, "src/index.ts")).href);

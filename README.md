@@ -1,8 +1,9 @@
 # conn-server
 
-The Conn Server: a Rust server for Conn clients. It speaks the same client contract as `apps/server`, with a far
-smaller memory footprint. This is a spike: we reproduce behaviour at three boundaries only (the
-client contract, `/mcp`, the provider CLI protocols). We do not translate the TypeScript.
+The Conn Server: our own Rust server for Conn clients. It serves the same client contract as
+the T3 server (`apps/server` in the Conn monorepo, TypeScript on Effect) with a far smaller
+memory footprint. We reproduce behaviour at three boundaries (the client contract, `/mcp`, the
+provider protocols). We do not translate the TypeScript.
 
 **Base:** Conn `origin/main` at `b685417bb6157408d3c3b78544dfd5bbc3e67753` (2026-11-13).
 **Contract:** `packages/contracts` last changed in `415dd488bac9dee7f7d2a869595f3c8f1da26863`
@@ -11,10 +12,9 @@ client contract, `/mcp`, the provider CLI protocols). We do not translate the Ty
 ## Run
 
 ```sh
-cd native/conn-server
 cargo build --release
 ./target/release/conn-server serve --host 127.0.0.1 --port 3773 --base-dir /tmp/conn-home
-./target/release/conn-server --state-dir /tmp/conn-state --project ~/code/my-repo   # the spike's form
+./target/release/conn-server --state-dir /tmp/conn-state --project ~/code/my-repo   # short form
 ```
 
 The command line follows the T3 server's (`t3 serve`, `t3 pair`, `t3 auth …`,
@@ -27,20 +27,22 @@ every command.
 | `--host`, `--port` (`T3CODE_HOST`, `_PORT`) | `127.0.0.1`, first free from 3773                      | Listen address; `--listen <host:port>` sets both                   |
 | `--base-dir` (`T3CODE_HOME`)                | `~/.t3`                                                | T3 home; state lives in `<home>/userdata`, shared with T3's format |
 | `--state-dir`                               | `<home>/userdata`                                      | The state directory itself (`$CONN_SERVER_HOME` still works)       |
-| `--project <dir>` (repeatable)              | the current folder in the bare form; none with `serve` | Folders offered as projects, plus `projects.json` (`project add`)  |
+| `--project <dir>` (repeatable)              | the current folder in the short form; none with `serve` | Folders offered as projects, plus `projects.json` (`project add`)  |
 | `--label <name>`                            | the host name                                          | Environment label in clients                                       |
 | `--mode desktop`, `--bootstrap-fd <fd>`     | web                                                    | Conn desktop's start: reads its bootstrap line, accepts its token  |
 
+The default home is `~/.t3`, the T3 server's. To try the server next to a running T3 server,
+always pass `--base-dir` or `--state-dir` with a folder of its own.
+
 At start it takes the home's ownership lock (exit 78 when another server holds it), prints the
 address, the environment id, the method coverage and a `pairingUrl`, and writes
-`server-runtime.json`. SIGTERM or SIGINT stops it cleanly.
-Turns run the `claude` CLI from `PATH` with the user's own Claude settings, as `apps/server`
-does. Stop the server with SIGTERM. A turn that was running when the server stopped continues on
-the next start in the same provider thread (at most 3 restarts in a row within 5 minutes).
+`server-runtime.json`. SIGTERM or SIGINT stops it cleanly. A turn that was running when the
+server stopped continues on the next start in the same provider thread (at most 3 restarts in
+a row within 5 minutes).
 
 ## Pair a client
 
-The server speaks the remote-environment path: bearer token plus WebSocket ticket. In Conn,
+The server serves the remote-environment path: bearer token plus WebSocket ticket. In Conn,
 open **Settings › Connections › Add environment › Remote link** and paste the `pairingUrl`
 (`http://<host>:<port>/pair#token=<code>`). The code is single use and valid 24 hours; each
 start prints a new one, and `conn-server pair` or `auth pairing create` issue more while it
@@ -49,32 +51,61 @@ reconnects after a restart without pairing again; **Settings › Sharing & acces
 revokes them. There are no browser cookie sessions, so the server's own origin (`/pair` in a
 browser) does not work; use Connections.
 
-## Tests
+## Checks
 
-From `native/conn-server`:
+Run every check from this repository. One command runs all checks that need no model:
 
 ```sh
-cargo test --workspace            # all crates, offline
-cargo clippy --workspace --all-targets
-cargo fmt --check
-cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1   # real CLI, Haiku
+CONN_MONOREPO=/path/to/conn tools/check.sh
 ```
 
-From the repo root, after `vp i` and `cargo build --release --examples` in this folder:
+`CONN_MONOREPO` names a Conn monorepo checkout at the pinned commit, after `vp i`. It holds the
+contract, the client code and the TypeScript server that the Node tools load; they resolve
+`effect`, `@t3tools/*` and Playwright from its `node_modules`. This repository has no
+`node_modules` of its own. There is no default: a tool that needs the monorepo stops with one
+line when the variable is missing. Without it, `tools/check.sh` runs the Rust checks and
+`orbit-flow.mjs`, and lists what it skipped.
 
-| Check               | Command                                                                                                                                                                                                             | Proves                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Effect client       | `node native/conn-server/crates/conn-server/tools/effect-client.mjs native/conn-server/target/release/conn-server`                                                                                                  | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                                            |
-| Ack window          | same, with `native/conn-server/target/release/examples/effect_fixture --fixture`                                                                                                                                    | Ack window and `Interrupt`                                                                                                 |
-| Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- /tmp/x.json` then `node native/conn-server/crates/conn-engine/tools/client-check.mjs /tmp/x.json`                                       | Shell and thread streams rebuild the right state in the client's reducers                                                  |
-| Replay              | `node native/conn-server/crates/conn-server/tools/replay.mjs native/conn-server/target/release/examples/replay_server`                                                                                              | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect                       |
-| Recordings decode   | `cargo test --manifest-path native/conn-server/fixtures/decode-check/Cargo.toml`                                                                                                                                    | Every recorded frame decodes with `conn_wire`                                                                              |
-| Contract current    | `node native/conn-server/crates/conn-contract/tools/gen-contract.mjs --check`                                                                                                                                       | Generated types match `packages/contracts`                                                                                 |
-| Real web client     | `(cd apps/web && vp build)` then `node native/conn-server/fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-permission rust-stop rust-settings --rust native/conn-server/target/release/conn-server` | Pair, turn, restart, approval, stop, a settings change and a client revoked in headless Chromium; see `fixtures/README.md` |
-| Keybinding defaults | `node native/conn-server/crates/conn-server/tools/gen-keybindings.mjs --check`                                                                                                                                      | The compiled-in defaults match `packages/shared`                                                                           |
+`tools/check.sh` runs, in order:
 
-`replay_server` is `conn-server` with the engine's scripted fake provider, so the replay calls
-no model. The `rust-*` scenarios spend about five Haiku turns.
+| Check               | Command                                                                                                                         | Proves                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Format, lint, tests | `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`                          | All crates, offline                                                                                  |
+| Release build       | `cargo build --release --workspace --bins --examples`                                                                           | The binaries below build                                                                             |
+| Recordings decode   | `cargo test --manifest-path fixtures/decode-check/Cargo.toml`                                                                   | Every recorded frame decodes with `conn_wire`                                                        |
+| Contract current    | `node crates/conn-contract/tools/gen-contract.mjs --check`                                                                      | Generated types match `packages/contracts`                                                           |
+| MCP tools current   | `node crates/conn-mcp/tools/gen-tools.mjs --check`                                                                              | Served tool definitions match `apps/server`                                                          |
+| Keybinding defaults | `node crates/conn-server/tools/gen-keybindings.mjs --check`                                                                     | The compiled-in defaults match `packages/shared`                                                     |
+| Effect client       | `node crates/conn-server/tools/effect-client.mjs target/release/conn-server`                                                    | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                      |
+| Ack window          | same, with `target/release/examples/effect_fixture --fixture`                                                                   | Ack window and `Interrupt`                                                                           |
+| Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- x.json`, then `crates/conn-engine/tools/client-check.mjs x.json` | Shell and thread streams rebuild the right state in the client's reducers                            |
+| Replay              | `node crates/conn-server/tools/replay.mjs target/release/examples/replay_server`                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
+| MCP parity          | `node crates/conn-mcp/tools/parity.mjs --no-model target/release/examples/replay_server`                                        | `/mcp` answers as the T3 server's does, on the same calls                                            |
+| Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop   |
+
+`replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
+no model. Each server they start gets a temp state folder; `parity.mjs` gives the T3 server a
+temp `T3CODE_HOME` and a free port.
+
+Checks that call a model are not in `tools/check.sh`:
+
+- `cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1` (real CLI, Haiku),
+  and the same for `conn-provider-codex`.
+- `parity.mjs` without `--no-model`: one Haiku turn on the T3 server.
+- `orbit-flow.mjs target/release/conn-server`: one Haiku turn.
+- The recorder with `--rust target/release/conn-server`.
+
+**Real web client.** The recorder (`fixtures/recorder`) drives the web client built in
+`CONN_MONOREPO` in headless Chromium. On the fake provider:
+
+```sh
+(cd "$CONN_MONOREPO/apps/web" && vp build)
+node fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-vcs rust-files \
+  rust-terminal rust-settings rust-search rust-worktree \
+  --rust target/release/examples/replay_server --out /tmp/conn-recordings
+```
+
+See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need a model.
 
 ## Crates
 
@@ -84,10 +115,11 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-contract`         | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
 | `conn-engine`           | `Engine` trait; SQLite event store, projections, streams, turn runner |
 | `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
-| `conn-provider-claude`  | The Claude provider over the `claude` CLI's stdio                     |
+| `conn-provider-claude`  | The Claude provider (see [Claude](#claude))                           |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
 | `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
+| `conn-vcs`              | Git status, refs, review diffs, worktrees and their setup             |
 | `conn-files`            | Project files, search, asset URLs, attachments                        |
 | `conn-terminal`         | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
@@ -230,7 +262,7 @@ T3 adds on top (`apps/server/src/ws.ts`): the `/ws` URL must carry `orchestratio
 - **serde / serde_json** for all wire and contract values.
 - Release profile: `opt-level = "z"`, thin LTO, one codegen unit, `panic = "abort"`,
   stripped. See [Status](#status) for its memory.
-- **rusqlite** with `bundled` SQLite for the event store; `tokio::process` for the `claude` CLI;
+- **rusqlite** with `bundled` SQLite for the event store; `tokio::process` for provider CLIs;
   `getrandom` and `sha2` for credentials.
 - No `async-trait`, no `futures`: traits return `BoxFuture`, streams are `tokio::sync::mpsc`.
 
@@ -265,7 +297,7 @@ No DPoP: it is only used on the T3 Connect relay path (`authorization/service.ts
 
 The token format is ours to choose; the client treats it as opaque. To stay paired across
 restarts, persist the environment id, the signing key and the sessions (with scopes and
-revocation). Not needed for the spike: browser cookie sessions, `/api/auth/session` (SSH only),
+revocation). Not served: browser cookie sessions, `/api/auth/session` (SSH only),
 access-management endpoints, MCP OAuth, relay, DPoP.
 
 ### Calls a client makes, and what a failure does
@@ -350,7 +382,8 @@ SIGTERM and SIGINT stop terminals and close every provider session before the se
 **Proven with the real web client** (headless Chromium; `fixtures/README.md`): pairing, a turn,
 a restart with reconnect, an approved prompt, Stop during a tool call, settings and access,
 search, VCS views and the diff, files and uploads, terminals, a launch into a new worktree, and
-a turn that calls `/mcp`. `tools/orbit-flow.mjs` runs Orbit's container flow against a binary.
+a turn that calls `/mcp`. `crates/conn-server/tools/orbit-flow.mjs` runs Orbit's container
+flow against a binary.
 
 **Memory on Linux** (x86_64, Ubuntu, kernel 7.0; the Orbit container host). Read with
 `smaps_rollup`, the server process only, in MiB. One client, real Claude Haiku turns from the web
@@ -398,3 +431,7 @@ What a real Conn session hits that this server does not do:
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
   spawns the T3 server (`DROP-IN.md` §2).
 - **Each start prints a new pairing code**; unspent ones expire after 24 hours.
+
+## Claude
+
+Claude will go through the official Claude Agent SDK in a Node helper.

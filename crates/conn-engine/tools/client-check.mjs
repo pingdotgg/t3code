@@ -1,21 +1,20 @@
 // Decodes the engine's stream output as the RPC client does, applies it with the client's
 // reducers, and checks the resulting state. Input: `examples/export_turn.rs` output.
-// Run: node native/conn-server/crates/conn-engine/tools/client-check.mjs <export.json>
+// Run: CONN_MONOREPO=<conn checkout> node crates/conn-engine/tools/client-check.mjs <export.json>
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+
+import { monorepo } from "../../../tools/monorepo.mjs";
 
 const assert = NodeAssert.strict;
 const fs = NodeFS;
 const path = NodePath;
 const { fileURLToPath, pathToFileURL } = NodeURL;
 
-// The Conn monorepo holds the contract and the client code under test. CONN_MONOREPO names it;
-// the default is the checkout this file sits in.
-const repo =
-  process.env.CONN_MONOREPO ??
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../..");
+// The Conn monorepo holds the contract and the client code under test.
+const repo = monorepo();
 const load = (file) => import(pathToFileURL(path.join(repo, file)).href);
 // The workspace's own `effect`, so schemas and the code under test share one instance.
 const effect = fs.realpathSync(path.join(repo, "packages/client-runtime/node_modules/effect"));

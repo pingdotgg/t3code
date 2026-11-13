@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Regenerates testdata/cli and testdata/ts from the Conn monorepo at CONN_MONOREPO
-// (default /Users/nckrtl/apps/conn, after `vp i`): `node tools/capture-ts-events.mjs [name ...]`.
-// It adds one temporary test to apps/server/src/orchestration-v2/testkit and deletes it.
+// Regenerates testdata/cli and testdata/ts from the Conn monorepo at CONN_MONOREPO (after
+// `vp i`): `node crates/conn-provider-codex/tools/capture-ts-events.mjs [name ...]`. Offline: it
+// replays recorded transcripts, no model is called. It adds one temporary test to
+// apps/server/src/orchestration-v2/testkit and deletes it.
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -9,7 +10,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-const MONOREPO = process.env.CONN_MONOREPO ?? "/Users/nckrtl/apps/conn";
+import { monorepo } from "../../../tools/monorepo.mjs";
+
+const MONOREPO = monorepo();
 const CRATE = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
 const FIXTURES = [
   "simple",

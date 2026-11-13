@@ -24,7 +24,8 @@ crates.io and the source repositories on that date. Cost figures were measured, 
 
 ## Method
 
-- A scratch copy of `native/conn-server` sat outside the repo. For each candidate, a probe
+- A scratch copy of the workspace (then `native/conn-server` in the Conn monorepo) sat
+  outside the repo. For each candidate, a probe
   module used the crate's real API on a path that runs only when an environment variable is
   set, so LTO could not strip it. Crates that hold state at run time ran in the idle
   server: the allocator, the logger, the `notify` watcher, and `rmcp` mounted at `/mcp` in
@@ -259,8 +260,9 @@ By crate: `conn-provider-claude` 317, `conn-server` 146, `conn-engine` 104, `con
 
 ## A separate repository
 
-`conn-server` gets its own repo. These checks keep it healthy, with the tool I recommend for
-each. Recall records an earlier decision (2026-11-04/05) of "no Rust CI for now" for the
+`conn-server` now has its own repo. `tools/check.sh` runs every check that needs no model;
+the Node tools take the Conn monorepo from `CONN_MONOREPO` (`tools/monorepo.mjs`). These
+checks keep the repo healthy, with the tool I recommend for each. Recall records an earlier decision (2026-11-04/05) of "no Rust CI for now" for the
 monorepo. A separate repo changes that context, so this needs Nick's call.
 
 | Need | Tool | Notes |
@@ -271,7 +273,7 @@ monorepo. A separate repo changes that context, so this needs Nick's call.
 | Size and memory gate | A CI step that builds the musl release binary and fails if it grows more than 3% over a baseline file; `cargo-bloat` to find the cause | Size is the cheap proxy. The memory figures in the README stay a manual Linux run |
 | Dependency updates | **Dependabot** (`cargo` weekly, grouped minor/patch; `github-actions` monthly) | Native to GitHub, nothing to host. Renovate is the alternative if one tool should also bump the Conn pin through a custom regex manager |
 | Release builds | Tag-triggered workflow: `x86_64-unknown-linux-musl` on `ubuntu-latest` with `musl-tools` (`musl-gcc` builds bundled SQLite), `aarch64-apple-darwin` on `macos-latest`; upload to GitHub Releases with `actions/attest-build-provenance` | `cargo-zigbuild` only if Linux must be built from macOS. Skip `cross` (Docker) and `cargo-dist` (more machinery than two targets need) |
-| Pinned Conn commit | Keep `crates/conn-contract/methods.json` as the **one** pin (it already records the contract commit). A `tools/conn-checkout` script does a blobless, sparse clone at that SHA (`packages/contracts`, `packages/shared`, `packages/provider-core`, `apps/web`, the lockfile), then `vp i` | Not a git submodule: the monorepo is large, and the tools need its `node_modules` anyway. The nightly bot bumps the pin to Conn `main`, runs `gen-contract.mjs`, the decode-check, `effect-client.mjs` and `replay.mjs`, and opens a PR with the `generated.rs` and `methods.json` diff. `nckrtl/conn` access needs a read token in the repo secrets if it is private |
+| Pinned Conn commit | Keep `crates/conn-contract/methods.json` as the **one** pin (it already records the contract commit). A `tools/conn-checkout` script (not written yet) would do a blobless, sparse clone at that SHA (`packages/contracts`, `packages/shared`, `packages/provider-core`, `apps/web`, the lockfile), then `vp i`, and set `CONN_MONOREPO` to it | Not a git submodule: the monorepo is large, and the tools need its `node_modules` anyway. The nightly bot bumps the pin to Conn `main`, runs `gen-contract.mjs`, the decode-check, `effect-client.mjs` and `replay.mjs`, and opens a PR with the `generated.rs` and `methods.json` diff. `nckrtl/conn` access needs a read token in the repo secrets if it is private |
 
 ## Not measured
 

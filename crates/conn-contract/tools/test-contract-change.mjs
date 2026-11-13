@@ -6,9 +6,11 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
+
 const crateDir = NodeURL.fileURLToPath(new URL("../", import.meta.url));
-const workspaceDir = NodePath.resolve(crateDir, "../..");
-const repoDir = NodePath.resolve(workspaceDir, "../..");
+const workspaceDir = repoRoot;
+const repoDir = monorepo();
 const work = NodePath.join(workspaceDir, "target/contract-change");
 const contracts = NodePath.join(work, "contracts");
 const crateCopy = NodePath.join(work, "conn-contract");
