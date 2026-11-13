@@ -1194,10 +1194,19 @@ function stripStringTerminator(value: string): string {
   return value;
 }
 
-function findStringTerminatorIndex(input: string, start: number): number | null {
+// BEL ends only OSC; inside DCS, PM and APC it is payload.
+function findStringTerminatorIndex(
+  input: string,
+  start: number,
+  belTerminates: boolean,
+): number | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
-    if (codePoint === 0x07 || codePoint === 0x9c || isControlSequenceCancel(codePoint)) {
+    if (
+      (belTerminates && codePoint === 0x07) ||
+      codePoint === 0x9c ||
+      isControlSequenceCancel(codePoint)
+    ) {
       return index + 1;
     }
     // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
@@ -1265,16 +1274,29 @@ function sanitizeTerminalHistoryChunk(
 
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
+        // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
+        // print in ground state. None join the parameters; only executed ones survive a strip.
+        let body = "";
+        let executedControls = "";
         while (cursor < input.length) {
-          const cancelled = isControlSequenceCancel(input.charCodeAt(cursor));
-          if (cancelled || isCsiFinalByte(input.charCodeAt(cursor))) {
-            const sequence = input.slice(index, cursor + 1);
-            const body = input.slice(index + 2, cursor);
+          const cursorCodePoint = input.charCodeAt(cursor);
+          const cancelled = isControlSequenceCancel(cursorCodePoint);
+          if (cancelled || isCsiFinalByte(cursorCodePoint)) {
             if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
-              append(sequence);
+              append(input.slice(index, cursor + 1));
+            } else {
+              append(executedControls);
             }
             index = cursor + 1;
             break;
+          }
+          if (cursorCodePoint < 0x10) {
+            executedControls += input[cursor];
+          } else if (
+            (cursorCodePoint >= 0x20 || cursorCodePoint === 0x1b) &&
+            cursorCodePoint !== 0x7f
+          ) {
+            body += input[cursor];
           }
           cursor += 1;
         }
@@ -1293,6 +1315,7 @@ function sanitizeTerminalHistoryChunk(
         const terminatorIndex = findStringTerminatorIndex(
           input,
           Math.max(index + 2, pendingScanStart),
+          nextCodePoint === 0x5d,
         );
         if (terminatorIndex === null) {
           return { visibleText, pendingControlSequence: input.slice(index) };
@@ -1313,7 +1336,10 @@ function sanitizeTerminalHistoryChunk(
       if (escapeSequenceEndIndex === null) {
         return { visibleText, pendingControlSequence: input.slice(index) };
       }
-      append(input.slice(index, escapeSequenceEndIndex));
+      // ESC Z (DECID) is the legacy primary device attributes query.
+      if (nextCodePoint !== 0x5a) {
+        append(input.slice(index, escapeSequenceEndIndex));
+      }
       index = escapeSequenceEndIndex;
       continue;
     }
