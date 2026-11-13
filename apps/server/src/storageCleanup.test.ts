@@ -2332,6 +2332,28 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect("removes an idle No project thread's scratch folder past the retention", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        const scratchRoot = `${fixture.config.baseDir}/scratch`;
+        const folder = `${scratchRoot}/quiet-otter`;
+        yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+        fixture.setProjectRoots([scratchRoot]);
+        fixture.setStoredWorktreePaths([]);
+        fixture.setThreads([
+          shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: folder, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(folder)).toBe(false);
+      }),
+    ),
+  );
   it.effect("keeps a thread's worktree folder that lost its .git link", () =>
     runCleanupTest(
       Effect.gen(function* () {
