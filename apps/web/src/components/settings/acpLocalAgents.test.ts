@@ -8,6 +8,15 @@ import {
 
 const ohMyPi = ACP_LOCAL_AGENT_PRESETS[0]!;
 
+it("ships the product logo for the preset", () => {
+  expect(ohMyPi.icon?.viewBox).toBe("0 0 64 64");
+  expect(ohMyPi.icon?.paths[0]?.gradient?.stops.map((stop) => stop.color)).toEqual([
+    "#ed4abf",
+    "#9b4dff",
+    "#5ad8e6",
+  ]);
+});
+
 describe("matchAcpLocalAgentPresets", () => {
   it("matches the name, id, executable, and keywords without case sensitivity", () => {
     for (const query of ["Oh My Pi", "oh-my-pi", "omp", "OMP", "pi"]) {

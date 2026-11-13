@@ -31,6 +31,7 @@ import {
 } from "./acpLocalAgents";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { providerClients } from "./providerDriverMeta";
 
 function errorMessage(error: unknown): string {
@@ -351,11 +352,19 @@ function AcpLocalAgentRow({
       }
       description={preset.description}
       icon={
-        <ProviderInstanceIcon
-          driverKind={ProviderDriverKind.make("acpRegistry")}
-          displayName={preset.name}
-          iconClassName="size-6 rounded-md text-muted-foreground"
-        />
+        preset.icon ? (
+          <ProviderPackageIcon
+            aria-hidden
+            className="size-6 shrink-0 rounded-md"
+            icon={preset.icon}
+          />
+        ) : (
+          <ProviderInstanceIcon
+            driverKind={ProviderDriverKind.make("acpRegistry")}
+            displayName={preset.name}
+            iconClassName="size-6 rounded-md text-muted-foreground"
+          />
+        )
       }
       name={preset.name}
     />

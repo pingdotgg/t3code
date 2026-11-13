@@ -1,3 +1,5 @@
+import type { ProviderIcon } from "@t3tools/provider-core/client";
+
 /**
  * ACP agents T3 knows how to launch from a local executable. A preset only
  * fills in the local command fields; the agent itself still speaks ACP.
@@ -10,6 +12,7 @@ export interface AcpLocalAgentPreset {
   readonly args: readonly string[];
   readonly website: string;
   readonly keywords?: readonly string[];
+  readonly icon?: ProviderIcon;
 }
 
 export const ACP_LOCAL_AGENT_PRESETS: readonly AcpLocalAgentPreset[] = [
@@ -21,6 +24,26 @@ export const ACP_LOCAL_AGENT_PRESETS: readonly AcpLocalAgentPreset[] = [
     args: ["acp"],
     website: "https://omp.sh/",
     keywords: ["pi", "omp"],
+    icon: {
+      viewBox: "0 0 64 64",
+      fill: { light: "#0F0A14", dark: "#0F0A14" },
+      paths: [
+        {
+          d: "M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z",
+          gradient: {
+            x1: 0,
+            y1: 0,
+            x2: 64,
+            y2: 64,
+            stops: [
+              { offset: 0, color: "#ed4abf" },
+              { offset: 0.5, color: "#9b4dff" },
+              { offset: 1, color: "#5ad8e6" },
+            ],
+          },
+        },
+      ],
+    },
   },
 ];
 

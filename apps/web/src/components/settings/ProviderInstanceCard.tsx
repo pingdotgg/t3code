@@ -64,6 +64,7 @@ import {
 } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ACP_LOCAL_AGENT_PRESETS } from "./acpLocalAgents";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -921,6 +922,11 @@ export function ProviderInstanceCard({
       driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
+      iconOverride={
+        ACP_LOCAL_AGENT_PRESETS.find(
+          (preset) => preset.id === readConfigString(instance.config, "localPresetId"),
+        )?.icon
+      }
       acpRegistryAgentId={
         readConfigString(instance.config, "source") === "local"
           ? undefined
