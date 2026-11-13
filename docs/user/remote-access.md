@@ -324,7 +324,11 @@ the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
 Linked environments is a beta. Turn it on for both machines in **Settings →
-Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+Labs**; on mobile, **Settings → Labs** lists each connected machine. On a
+headless server, open its address in a browser and pair to reach its **Settings
+→ Labs**, or add `"linkedEnvironmentsEnabled": true` to `settings.json` in its
+`userdata` directory, such as `~/.t3/userdata/settings.json`; a running server
+picks it up. While it is
 off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.

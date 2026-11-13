@@ -1,4 +1,9 @@
-import { AuthMcpClientAccess, EnvironmentId, type PeerLinkSummary } from "@t3tools/contracts";
+import {
+  AuthMcpClientAccess,
+  EnvironmentId,
+  PeerLinkError,
+  type PeerLinkSummary,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Argument from "effect/cli/Argument";
+import * as CliError from "effect/cli/CliError";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as GlobalFlag from "effect/cli/GlobalFlag";
@@ -33,6 +39,10 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
   const config = yield* resolveCliAuthConfig(flags, logLevel, options);
   return yield* PeerLinks.PeerLinks.pipe(
     Effect.flatMap(run),
+    // A refused or unreachable link is an expected outcome: print its message, not a stack.
+    Effect.catchIf(Schema.is(PeerLinkError), (error) =>
+      Effect.fail(new CliError.UserError({ cause: error, userMessage: error.message })),
+    ),
     Effect.provide(
       PeerLinks.layer.pipe(
         Layer.provide(
