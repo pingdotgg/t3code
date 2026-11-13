@@ -97,6 +97,7 @@ function makeEnvironmentLinks(
     getForUser: () => Effect.succeed(null),
     findActiveManagedForEnvironment: () => Effect.succeed([]),
     setHoldWebhooksWhileOffline: () => Effect.void,
+    setLabelForUser: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
     ...overrides,
   };

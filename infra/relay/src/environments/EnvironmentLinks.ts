@@ -145,6 +145,12 @@ export class EnvironmentLinks extends Context.Service<
       readonly environmentPublicKey: string;
       readonly holdWebhooksWhileOffline: boolean;
     }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
+    readonly setLabelForUser: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly label: string;
+    }) => Effect.Effect<void, EnvironmentLinkLookupPersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -438,6 +444,31 @@ const make = Effect.gen(function* () {
           Effect.mapError(
             (cause) =>
               new EnvironmentLinkEnvironmentLookupPersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    setLabelForUser: Effect.fn("relay.environment_links.set_label_for_user")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      yield* db
+        .update(relayEnvironmentLinks)
+        .set({ environmentLabel: input.label })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkLookupPersistenceError({
+                userId: input.userId,
                 environmentId: input.environmentId,
                 cause,
               }),

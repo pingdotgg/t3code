@@ -573,6 +573,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           cloudUserId: "user-123",
           tunnelId: "existing-tunnel",
           origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          environmentLabel: "Test environment",
         });
       }
       expect(applyConfigCalls).toHaveLength(1);

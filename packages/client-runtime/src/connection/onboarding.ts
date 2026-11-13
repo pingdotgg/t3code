@@ -119,6 +119,7 @@ export const preparePairingRegistration = Effect.fn(
       environmentId: descriptor.environmentId,
       label: descriptor.label,
       connectionId,
+      followsServerLabel: true,
     }),
     profile: new BearerConnectionProfile({
       connectionId,
@@ -241,13 +242,14 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       }),
   });
   const connectionId = entry.target.connectionId;
-  const renamed = entry.target.customLabel === true || label !== entry.target.label;
+  const followsServerLabel =
+    entry.target.followsServerLabel === true && label === entry.target.label;
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
       environmentId: options.input.environmentId,
       label,
       connectionId,
-      ...(renamed ? { customLabel: true as const } : {}),
+      ...(followsServerLabel ? { followsServerLabel: true as const } : {}),
     }),
     profile: new BearerConnectionProfile({
       connectionId,
@@ -274,7 +276,7 @@ export const prepareSshRegistration = Effect.fn(
       environmentId: provisioned.environmentId,
       label,
       connectionId,
-      ...(typedLabel ? { customLabel: true as const } : {}),
+      ...(typedLabel ? {} : { followsServerLabel: true as const }),
     }),
     profile: new SshConnectionProfile({
       connectionId,

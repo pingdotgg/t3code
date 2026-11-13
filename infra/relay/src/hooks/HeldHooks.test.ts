@@ -80,6 +80,7 @@ const withService = <A, E>(
           ),
         ),
       setHoldWebhooksWhileOffline: () => Effect.void,
+      setLabelForUser: () => Effect.void,
     }),
     Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {
       get: (input) =>

@@ -1034,6 +1034,7 @@ const make = Effect.gen(function* () {
         tunnelId: config.tunnelId,
         origin,
         proof,
+        environmentLabel: (yield* environment.getDescriptor).label,
       },
       schema: RelayManagedEndpointRecoveryRegistrationResponse,
     }).pipe(

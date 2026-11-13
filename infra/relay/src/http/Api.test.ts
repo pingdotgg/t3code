@@ -512,6 +512,7 @@ function layerRelayUnlinkTest(input?: {
   readonly withTransaction?: RelayDb.RelayTransactions["Service"]["withTransaction"];
   readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
   readonly revokeForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["revokeForUser"];
+  readonly setLabelForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["setLabelForUser"];
   readonly revokeCredential?: EnvironmentCredentials.EnvironmentCredentials["Service"]["revokeForEnvironmentPublicKey"];
   readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
@@ -539,6 +540,7 @@ function layerRelayUnlinkTest(input?: {
         getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
         findActiveManagedForEnvironment: () => Effect.die("unused findActiveManagedForEnvironment"),
         setHoldWebhooksWhileOffline: () => Effect.die("unused setHoldWebhooksWhileOffline"),
+        setLabelForUser: input?.setLabelForUser ?? (() => Effect.die("unused setLabelForUser")),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
       }),
     ),
@@ -696,16 +698,24 @@ describe("relay managed tunnel recovery", () => {
       readonly origin: { readonly localHttpHost: string; readonly localHttpPort: number };
     } | null = null;
 
+    const labels: Array<string> = [];
+    const register = (environmentLabel?: string) =>
+      registerEnvironmentTunnelRecovery({
+        userId: "user-1",
+        environmentId: "environment-1",
+        environmentPublicKey: "public-key",
+        tunnelId: "existing-tunnel",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        ...(environmentLabel === undefined ? {} : { environmentLabel }),
+      });
+
     return Effect.gen(function* () {
-      expect(
-        yield* registerEnvironmentTunnelRecovery({
-          userId: "user-1",
-          environmentId: "environment-1",
-          environmentPublicKey: "public-key",
-          tunnelId: "existing-tunnel",
-          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-        }),
-      ).toEqual({ status: "ready" });
+      // An older host sends no name, and an unchanged name is not written again.
+      expect(yield* register()).toEqual({ status: "ready" });
+      expect(yield* register(linkedEnvironmentRecord.label)).toEqual({ status: "ready" });
+      expect(labels).toEqual([]);
+      expect(yield* register("Renamed host")).toEqual({ status: "ready" });
+      expect(labels).toEqual(["Renamed host"]);
       expect(recoveryEnabledFor).toEqual({
         userId: "user-1",
         environmentId: "environment-1",
@@ -718,6 +728,7 @@ describe("relay managed tunnel recovery", () => {
         Layer.merge(
           layerRelayUnlinkTest({
             getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+            setLabelForUser: ({ label }) => Effect.sync(() => void labels.push(label)),
             provision: () => Effect.die("registration must not provision a tunnel"),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({

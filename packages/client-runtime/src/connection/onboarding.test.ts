@@ -300,6 +300,7 @@ describe("connection onboarding", () => {
           environmentId,
           connectionId: PAIRED_PROFILE.connectionId,
           label: PAIRED_PROFILE.label,
+          followsServerLabel: true,
         }),
       );
     }).pipe(Effect.provide(layerPairingOnboarding())),
@@ -599,18 +600,28 @@ describe("connection onboarding", () => {
         input: { environmentId, label: "  Renamed environment  ", httpBaseUrl },
         ...saved,
       });
-      const addressOnly = yield* prepareBearerConnectionUpdate({
-        input: { environmentId, label: "Old label", httpBaseUrl },
-        ...saved,
-      });
-      expect(addressOnly.target.customLabel).toBeUndefined();
+      // Only a label that came from the server and was left as it is keeps following the server.
+      const followsServer = (label: string, followsServerLabel: boolean) =>
+        prepareBearerConnectionUpdate({
+          input: { environmentId, label, httpBaseUrl },
+          credential: saved.credential,
+          entry: Option.map(saved.entry, (entry) => ({
+            ...entry,
+            target: new BearerConnectionTarget({
+              ...entry.target,
+              ...(followsServerLabel ? { followsServerLabel: true as const } : {}),
+            }),
+          })),
+        }).pipe(Effect.map((updated) => updated.target.followsServerLabel === true));
+      expect(yield* followsServer("Old label", true)).toBe(true);
+      expect(yield* followsServer("Renamed environment", true)).toBe(false);
+      expect(yield* followsServer("Old label", false)).toBe(false);
 
       expect(registration).toMatchObject({
         target: {
           environmentId,
           label: "Renamed environment",
           connectionId: "bearer:environment-paired",
-          customLabel: true,
         },
         profile: {
           environmentId,

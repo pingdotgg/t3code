@@ -3,7 +3,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -51,7 +50,6 @@ import {
   entryWithRoutes,
   findRouteToSameAddress,
   hasSavedBearerRoute,
-  hasUnmarkedPairedRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
   routesWithReportedLabel,
@@ -268,21 +266,6 @@ export const make = Effect.gen(function* () {
       }),
       { concurrency: "unbounded" },
     ),
-  );
-  // The label each server last reported, for `routesWithReportedLabel`; null when it could not be
-  // read. Read now because a connection replaces the cached configuration with the next report.
-  const cachedLabels = yield* Effect.forEach(
-    [...initialEntries.values()].filter(hasUnmarkedPairedRoute),
-    ({ target: { environmentId } }) =>
-      cache.loadServerConfig(environmentId).pipe(
-        Effect.map((config) => Option.getOrUndefined(config)?.environment.label),
-        Effect.orElseSucceed(() => null),
-        Effect.map((label) => [environmentId, label] as const),
-      ),
-    { concurrency: "unbounded" },
-  ).pipe(
-    Effect.map((labels) => new Map<EnvironmentId, string | null | undefined>(labels)),
-    Effect.forkIn(registryScope),
   );
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
@@ -1018,11 +1001,7 @@ export const make = Effect.gen(function* () {
         }
         const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
         if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
-        const reportedLabels = yield* Fiber.join(cachedLabels);
-        const lastReported = reportedLabels.get(environmentId);
-        if (lastReported === null) return Option.none<ConnectionCatalogEntry>();
-        reportedLabels.set(environmentId, label);
-        const routes = routesWithReportedLabel(entry, label, lastReported);
+        const routes = routesWithReportedLabel(entry, label);
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         return Option.some(yield* saveRoutesInPlaceLocked(entry, routes));
       }),

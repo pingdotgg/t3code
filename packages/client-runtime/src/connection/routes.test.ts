@@ -147,71 +147,40 @@ describe("reported label", () => {
     entryWithRoutes({ target: RELAY.target, profile: RELAY.profile, enabled: true }, routes);
   const labels = (routes: ReadonlyArray<ConnectionRoute> | null) =>
     routes?.map((route) => [route.target.label, Option.getOrNull(route.profile)?.label ?? null]);
+  const paired: ConnectionRoute = {
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Desk",
+      connectionId: "public",
+      followsServerLabel: true,
+    }),
+    profile: PUBLIC.profile,
+  };
 
-  it("renames every saved route and keeps what else the route records", () => {
+  it("renames the routes labelled by the server and keeps a name the user may have typed", () => {
     const routes = routesWithReportedLabel(
-      entry([learned("learned:lan", "http://192.168.1.10:3773/"), TAILNET, RELAY]),
+      entry([learned("learned:lan", "http://192.168.1.10:3773/"), TAILNET, paired, RELAY]),
       "Laptop",
     );
     expect(labels(routes)).toEqual([
       ["Laptop", "Laptop"],
+      ["Desk", "Desk"],
       ["Laptop", "Laptop"],
       ["Laptop", null],
     ]);
-    expect(routes?.map(isLearned)).toEqual([true, false, false]);
+    expect(routes?.[1]).toBe(TAILNET);
+    expect(routes?.map(isLearned)).toEqual([true, false, false, false]);
     expect(routes?.map((route) => connectionRouteId(route.target))).toEqual([
       "learned:lan",
       "tailnet",
+      "public",
       "relay",
     ]);
     expect(routesWithReportedLabel(entry(routes!), "Laptop")).toBeNull();
   });
 
-  it("leaves an environment the user named alone, even where a route shares the old label", () => {
-    const named: ConnectionRoute = {
-      target: new BearerConnectionTarget({
-        environmentId: ENVIRONMENT_ID,
-        label: "Desk",
-        connectionId: "tailnet",
-        customLabel: true,
-      }),
-      profile: TAILNET.profile,
-    };
-    expect(
-      routesWithReportedLabel(
-        entry([learned("learned:lan", "http://192.168.1.10:3773/"), named, RELAY]),
-        "Laptop",
-      ),
-    ).toBeNull();
-  });
-
-  it("keeps a paired name that differs from the label the server last reported", () => {
-    const saved = entry([learned("learned:lan", "http://192.168.1.10:3773/"), TAILNET, RELAY]);
-    expect(labels(routesWithReportedLabel(saved, "Laptop", "Desk"))?.[1]).toEqual([
-      "Laptop",
-      "Laptop",
-    ]);
-    const kept = routesWithReportedLabel(saved, "Laptop", "Laptop");
-    expect(labels(kept)).toEqual([
-      ["Desk", "Desk"],
-      ["Desk", "Desk"],
-      ["Desk", null],
-    ]);
-    expect(kept?.map((route) => "customLabel" in route.target)).toEqual([false, true, false]);
-    expect(routesWithReportedLabel(entry(kept!), "Phone", "Laptop")).toBeNull();
-    // Only learned and T3 Connect routes: none of them can carry a typed name.
-    expect(
-      labels(
-        routesWithReportedLabel(
-          entry([learned("learned:lan", "http://192.168.1.10:3773/"), RELAY]),
-          "Laptop",
-          "Laptop",
-        ),
-      ),
-    ).toEqual([
-      ["Laptop", "Laptop"],
-      ["Laptop", null],
-    ]);
+  it("changes nothing when no route was labelled by the server", () => {
+    expect(routesWithReportedLabel(entry([LAN, TAILNET]), "Laptop")).toBeNull();
   });
 });
 

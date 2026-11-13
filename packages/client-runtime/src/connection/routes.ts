@@ -16,7 +16,6 @@ import {
 import {
   BearerConnectionTarget,
   type ConnectionTarget,
-  PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "./model.ts";
@@ -66,62 +65,36 @@ export function entryWithRoutes(
 }
 
 /**
- * The saved routes renamed to the label the server reports, or null when nothing changes. A
- * label the user typed names the whole environment. A paired route not saved under `lastReported`,
- * the label before this connection, may be a name typed before `customLabel`: it is marked and kept.
+ * The saved routes renamed to the label the server reports, or null when nothing changes. Only a
+ * route whose label came from the server follows it: T3 Connect, a learned route, or a paired
+ * route marked `followsServerLabel`. Any other name may have been typed by the user and is kept.
  */
 export function routesWithReportedLabel(
   entry: ConnectionCatalogEntry,
   label: string,
-  lastReported?: string,
 ): ReadonlyArray<ConnectionRoute> | null {
   const routes = connectionRoutes(entry);
-  if (routes.some((route) => namedTarget(route)?.customLabel === true)) return null;
-  const keepsItsName = (route: ConnectionRoute) =>
-    lastReported !== undefined &&
-    namedTarget(route) !== undefined &&
-    !isLearned(route) &&
-    route.target.label !== lastReported;
-  if (routes.some(keepsItsName)) {
-    return routes.map((route) => {
-      const target = namedTarget(route);
-      if (target === undefined || !keepsItsName(route)) return route;
-      return {
-        target:
-          target._tag === "BearerConnectionTarget"
-            ? new BearerConnectionTarget({ ...target, customLabel: true })
-            : new SshConnectionTarget({ ...target, customLabel: true }),
-        profile: route.profile,
-      };
-    });
+  const next = routes.map((route) => (followsServerLabel(route) ? withLabel(route, label) : route));
+  return next.every((route, index) => route === routes[index]) ? null : next;
+}
+
+function followsServerLabel(route: ConnectionRoute): boolean {
+  const { target } = route;
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return false;
+    case "RelayConnectionTarget":
+      return true;
+    case "BearerConnectionTarget":
+    case "SshConnectionTarget":
+      return target.followsServerLabel === true || isLearned(route);
   }
-  if (routes.every((route) => routeLabels(route).every((saved) => saved === label))) return null;
-  return routes.map((route) => withLabel(route, label));
-}
-
-/** The target of a route whose label a user can type. */
-function namedTarget({ target }: ConnectionRoute) {
-  return target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-    ? target
-    : undefined;
-}
-
-/** Whether connecting must know the label the server last reported before it may rename. */
-export function hasUnmarkedPairedRoute(entry: ConnectionCatalogEntry): boolean {
-  return connectionRoutes(entry).some(
-    (route) =>
-      namedTarget(route) !== undefined &&
-      namedTarget(route)?.customLabel !== true &&
-      !isLearned(route),
-  );
-}
-
-function routeLabels(route: ConnectionRoute): ReadonlyArray<string> {
-  return [route.target.label, ...Option.toArray(route.profile).map((profile) => profile.label)];
 }
 
 function withLabel(route: ConnectionRoute, label: string): ConnectionRoute {
   const { target } = route;
+  const saved = Option.getOrUndefined(route.profile);
+  if (target.label === label && (saved === undefined || saved.label === label)) return route;
   const profile = Option.map(route.profile, (saved) =>
     saved._tag === "BearerConnectionProfile"
       ? new BearerConnectionProfile({ ...saved, label })
@@ -129,7 +102,7 @@ function withLabel(route: ConnectionRoute, label: string): ConnectionRoute {
   );
   switch (target._tag) {
     case "PrimaryConnectionTarget":
-      return { target: new PrimaryConnectionTarget({ ...target, label }), profile };
+      return route;
     case "RelayConnectionTarget":
       return { target: new RelayConnectionTarget({ ...target, label }), profile };
     case "BearerConnectionTarget":

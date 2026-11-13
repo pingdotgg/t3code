@@ -195,6 +195,8 @@ export const RelayManagedEndpointRecoveryRegistrationRequest = Schema.Struct({
   tunnelId: TrimmedNonEmptyString,
   origin: RelayManagedEndpointOrigin,
   proof: TrimmedNonEmptyString,
+  /** The host's current name. A link keeps the label it was created with until this replaces it. */
+  environmentLabel: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RelayManagedEndpointRecoveryRegistrationRequest =
   typeof RelayManagedEndpointRecoveryRegistrationRequest.Type;

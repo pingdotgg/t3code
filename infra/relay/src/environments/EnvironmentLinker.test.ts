@@ -131,6 +131,7 @@ function layerTest(input?: {
           getForUser: () => Effect.succeed(null),
           findActiveManagedForEnvironment: () => Effect.succeed([]),
           setHoldWebhooksWhileOffline: () => Effect.void,
+          setLabelForUser: () => Effect.void,
           revokeForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {

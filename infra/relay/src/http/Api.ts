@@ -624,6 +624,7 @@ export const registerEnvironmentTunnelRecovery = Effect.fn(
   readonly environmentPublicKey: string;
   readonly tunnelId: string;
   readonly origin: RelayManagedEndpointOrigin;
+  readonly environmentLabel?: string;
 }) {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
@@ -639,6 +640,15 @@ export const registerEnvironmentTunnelRecovery = Effect.fn(
   ) {
     return yield* new HttpApiError.Unauthorized({});
   }
+  // A host registers on every start, so this is where a renamed host's link learns its new name.
+  if (input.environmentLabel !== undefined && input.environmentLabel !== link.label) {
+    yield* links.setLabelForUser({
+      userId: input.userId,
+      environmentId: input.environmentId,
+      environmentPublicKey: input.environmentPublicKey,
+      label: input.environmentLabel,
+    });
+  }
   const status = yield* managedEndpointProvider.reconcileOrigin({
     userId: input.userId,
     environmentId: input.environmentId,
@@ -649,7 +659,8 @@ export const registerEnvironmentTunnelRecovery = Effect.fn(
   if (status === "recovery_required") {
     return { status };
   }
-  if (!(yield* allocations.enableRecovery(input))) {
+  const { environmentLabel: _label, ...allocation } = input;
+  if (!(yield* allocations.enableRecovery(allocation))) {
     return yield* new HttpApiError.Unauthorized({});
   }
   return { status };
@@ -1361,6 +1372,9 @@ export const layerServerApi = HttpApiBuilder.group(
               environmentPublicKey: principal.environmentPublicKey,
               tunnelId: payload.tunnelId,
               origin: payload.origin,
+              ...(payload.environmentLabel === undefined
+                ? {}
+                : { environmentLabel: payload.environmentLabel }),
             });
           },
           Effect.tapError(appendCloudflareRetryAfter),
