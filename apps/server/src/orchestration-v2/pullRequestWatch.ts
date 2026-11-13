@@ -175,6 +175,8 @@ export function evaluatePullRequestWatch(
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
       checksAwaitedSince = null;
       checksPending = false;
+    } else if (checksAwaitedSince !== null) {
+      checksPending = true;
     }
   }
 

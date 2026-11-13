@@ -4354,7 +4354,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
         yield* reactor.sweep;
-        assert.deepEqual(yield* summaries, ["#17: checks failed"]);
+        assert.deepEqual(yield* summaries, []);
         assert.isTrue(yield* checksPending);
         const reopen = (id: string) =>
           orchestrator.dispatch({
@@ -4369,7 +4369,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         e2e = "success";
         yield* TestClock.adjust("10 minutes");
         yield* reactor.sweep;
-        assert.deepEqual(yield* summaries, ["#17: checks failed"]);
+        assert.deepEqual(yield* summaries, []);
         assert.isFalse(yield* checksPending);
 
         // A push clears the answer while a read with news is in flight. That read's answer is the
@@ -4398,7 +4398,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         gate = null;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(inFlight);
-        assert.deepEqual(yield* summaries, ["#17: checks failed", "#17: new comments"]);
+        assert.deepEqual(yield* summaries, ["#17: new comments"]);
         assert.isUndefined(yield* checksPending);
 
         // The next sweep reads it again though nothing on the host changed.

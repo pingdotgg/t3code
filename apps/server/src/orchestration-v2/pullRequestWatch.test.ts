@@ -217,6 +217,7 @@ describe("evaluatePullRequestWatch", () => {
       );
       assert.deepEqual(empty.changes, []);
       assert.isUndefined(empty.next.awaitingBaseline);
+      assert.isTrue(empty.next.checksPending);
       assert.deepEqual(
         evaluatePullRequestWatch(empty.next, detail({ checks: [check("test", status)] }), noRemarks)
           .changes,
