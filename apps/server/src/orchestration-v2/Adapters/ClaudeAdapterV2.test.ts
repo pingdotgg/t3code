@@ -7852,13 +7852,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     {
       laterReply: false,
+      steers: 1,
       title: "a thinking-only reply to an accepted steer resumes after the steer",
     },
     {
       laterReply: true,
+      steers: 1,
       title: "a later thinking-only frame echoing the same steer keeps the newer cursor",
     },
-  ] as const)("$title", ({ laterReply }) =>
+    {
+      laterReply: true,
+      steers: 2,
+      title: "a later thinking-only frame echoing two steers keeps the newer cursor",
+    },
+  ] as const)("$title", ({ laterReply, steers }) =>
     Effect.gen(function* () {
       const harness = yield* makeRollbackHarness;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -7903,28 +7910,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         }),
       );
-      yield* harness.runtime.steerTurn({
-        threadId: harness.threadId,
-        runId: turnInput.runId,
-        providerThread: harness.providerThread,
-        providerTurnId,
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("cursor-steer"),
-          text: "Also end with KIWI.",
-          attachments: [],
-        },
-      });
-      const steerUuid = harness.offeredMessages.at(-1)?.uuid;
-      assert.isDefined(steerUuid);
+      const steerUuids: Array<string> = [];
+      for (let index = 0; index < steers; index++) {
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: turnInput.runId,
+          providerThread: harness.providerThread,
+          providerTurnId,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`cursor-steer-${index}`),
+            text: `Also end with KIWI-${index}.`,
+            attachments: [],
+          },
+        });
+        const steerUuid = harness.offeredMessages.at(-1)?.uuid;
+        assert.isDefined(steerUuid);
+        steerUuids.push(steerUuid);
+      }
       const thinkingOnly = (uuid: string) =>
         claudeSdkFrame({
           type: "assistant",
           uuid,
           session_id: WAKE_NATIVE_SESSION,
           parent_tool_use_id: null,
-          user_message_uuids: [steerUuid],
+          user_message_uuids: steerUuids,
           message: {
             id: `msg_${uuid}`,
             model: "claude-sonnet-4-6",
@@ -7945,7 +7956,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.take(harness.terminalReceipts);
       assert.equal(
         lastProviderTurn(harness.events).nativeTurnRef?.nativeId,
-        laterReply ? "00000000-0000-4000-8000-000000000674" : steerUuid,
+        laterReply ? "00000000-0000-4000-8000-000000000674" : steerUuids[0],
       );
     }).pipe(
       Effect.scoped,

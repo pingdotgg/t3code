@@ -10261,13 +10261,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.replayed !== true
           ) {
             // The first reply to an accepted steer echoes its uuid, the root entry that reply follows.
-            const steerUuid = claudeEchoedPromptUuids(message).find(
+            const echoedSteers = claudeEchoedPromptUuids(message).filter(
               (uuid) => context.steerUuids.has(uuid) && !context.steersInTranscript.has(uuid),
             );
-            if (steerUuid !== undefined) {
-              context.steersInTranscript.add(steerUuid);
-              context.nativeTranscriptTail = steerUuid;
-            }
+            for (const uuid of echoedSteers) context.steersInTranscript.add(uuid);
+            if (echoedSteers[0] !== undefined) context.nativeTranscriptTail = echoedSteers[0];
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
