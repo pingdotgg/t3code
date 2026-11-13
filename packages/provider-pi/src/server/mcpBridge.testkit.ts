@@ -49,11 +49,19 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    /** Issue MCP session ids and answer an unknown one with 404, as T3's server does. */
+    readonly sessions?: boolean;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
   const tools: RegisteredTool[] = [];
-  const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
+  const requests: Array<{
+    readonly method: string;
+    readonly params?: unknown;
+    readonly session: string | undefined;
+  }> = [];
+  let activeSession: string | undefined;
+  let issuedSessions = 0;
   let activeTools = ["read"];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
   const transports: Array<{
@@ -114,7 +122,19 @@ export async function loadMcpBridge(
         method: string;
         params?: unknown;
       };
-      requests.push(request);
+      const session = transport.headers["mcp-session-id"];
+      requests.push({ ...request, session });
+      if (options.sessions) {
+        if (request.method === "initialize" && session === undefined) {
+          activeSession = `session-${++issuedSessions}`;
+          return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }), {
+            headers: { "content-type": "application/json", "mcp-session-id": activeSession },
+          });
+        }
+        if (activeSession === undefined || session !== activeSession) {
+          return new Response("unknown session", { status: 404 });
+        }
+      }
       const result =
         request.method === "tools/list"
           ? { tools: catalog }
@@ -165,6 +185,9 @@ export async function loadMcpBridge(
     servers,
     transports,
     getActiveTools: () => activeTools,
+    expireSession: () => {
+      activeSession = undefined;
+    },
     restoreActiveTools: (names: string[]) => {
       activeTools = names;
     },

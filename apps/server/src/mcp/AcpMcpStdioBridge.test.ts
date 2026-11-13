@@ -40,6 +40,35 @@ function pendingFetch(started: Deferred.Deferred<AbortSignal | undefined>) {
   };
 }
 
+function expiringSessionServer() {
+  let active: string | undefined;
+  let issued = 0;
+  const sessions: Array<{ readonly method: string; readonly session: string | null }> = [];
+  const fetchImplementation = async (_url: string, init?: RequestInit): Promise<Response> => {
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    const session = new Headers(init?.headers).get("mcp-session-id");
+    const message = JSON.parse(String(init?.body)) as { id?: unknown; method: string };
+    sessions.push({ method: message.method, session });
+    if (message.method === "initialize" && session === null) {
+      active = `session-${++issued}`;
+      return Response.json(
+        { jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18" } },
+        { headers: { "mcp-session-id": active } },
+      );
+    }
+    if (active === undefined || session !== active) return new Response(null, { status: 404 });
+    if (message.id === undefined) return new Response(null, { status: 202 });
+    return Response.json({ jsonrpc: "2.0", id: message.id, result: { content: [] } });
+  };
+  return {
+    sessions,
+    fetchImplementation,
+    expire: () => {
+      active = undefined;
+    },
+  };
+}
+
 describe("AcpMcpStdioBridge", () => {
   it("prints structured results once in the terminal while retaining other content and errors", async () => {
     const originalEnvironment = process.env;
@@ -369,6 +398,73 @@ describe("AcpMcpStdioBridge", () => {
 
       expect(methods).toEqual(["tools/call", "notifications/cancelled"]);
       expect(JSON.parse(written[0]!)).toMatchObject({ id: 7, result: {} });
+    }),
+  );
+
+  it.effect("starts a new MCP session after the server forgets the old one", () =>
+    Effect.gen(function* () {
+      const server = expiringSessionServer();
+      const outcomes = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-code-acp-cli",
+        fetchImplementation: server.fetchImplementation,
+      }).pipe(
+        Effect.flatMap((session) =>
+          Effect.gen(function* () {
+            yield* session.call("probe", {});
+            server.expire();
+            const first = yield* Effect.exit(session.call("probe", {}));
+            const second = yield* Effect.exit(session.call("probe", {}));
+            return [first._tag, second._tag];
+          }),
+        ),
+        Effect.scoped,
+      );
+
+      // Replaying the call that met the 404 is optional; the next one must recover.
+      expect(outcomes[1]).toBe("Success");
+      expect(server.sessions).toContainEqual({ method: "initialize", session: null });
+      expect(server.sessions.filter((entry) => entry.method === "initialize")).toHaveLength(2);
+    }),
+  );
+
+  it.effect("stdio bridge starts a new MCP session after the server forgets the old one", () =>
+    Effect.gen(function* () {
+      const server = expiringSessionServer();
+      const input = new NodeStream.PassThrough();
+      const replies: Array<{ id?: number; error?: unknown }> = [];
+      const send = (message: object) =>
+        input.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+      const call = (id: number) =>
+        send({ id, method: "tools/call", params: { name: "probe", arguments: {} } });
+      const bridge = runAcpMcpStdioBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        input,
+        fetchImplementation: server.fetchImplementation,
+        output: {
+          write: (line: string) => {
+            const reply = JSON.parse(line) as { id?: number; error?: unknown };
+            replies.push(reply);
+            if (reply.id === 1) {
+              send({ method: "notifications/initialized" });
+              call(2);
+            } else if (reply.id === 2) {
+              server.expire();
+              call(3);
+            } else if (reply.id === 3) call(4);
+            else input.end();
+          },
+        },
+      });
+      const fiber = yield* Effect.forkChild(bridge);
+      send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } });
+      yield* Fiber.join(fiber);
+
+      expect(replies.find((reply) => reply.id === 2)?.error).toBeUndefined();
+      // Replaying the call that met the 404 is optional; the next one must recover.
+      expect(replies.find((reply) => reply.id === 4)?.error).toBeUndefined();
     }),
   );
 

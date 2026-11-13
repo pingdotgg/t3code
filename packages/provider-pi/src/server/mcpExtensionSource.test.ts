@@ -153,6 +153,23 @@ describe("Pi MCP tool results", () => {
     },
   );
 
+  it("starts a new MCP session after the server forgets the old one", async () => {
+    const bridge = await loadMcpBridge({ sessions: true });
+    const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot")!;
+    await tool.execute("before", {});
+    bridge.expireSession();
+
+    // Replaying the call that met the 404 is optional; the next one must recover.
+    await tool.execute("expired", {}).catch(() => undefined);
+    const output = await tool.execute("recovered", {});
+    assert.deepEqual(output.content, [{ type: "text", text: "browser snapshot" }]);
+    const initializes = bridge.requests.filter((request) => request.method === "initialize");
+    assert.deepEqual(
+      initializes.map((request) => request.session),
+      [undefined, undefined],
+    );
+  });
+
   it("uses structured output as model text when content is empty", async () => {
     const result = { content: [], structuredContent: { count: 2 } };
     const bridge = await loadMcpBridge({ result });
