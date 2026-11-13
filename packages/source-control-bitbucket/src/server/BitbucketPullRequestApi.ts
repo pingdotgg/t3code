@@ -32,6 +32,7 @@ import {
   decodeCommentsJson,
   decodeCommitsJson,
   decodeConflictsJson,
+  decodeMergeTaskJson,
   decodeDiffstatJson,
   decodePullRequestJson,
   decodePullRequestPageJson,
@@ -127,6 +128,9 @@ const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 /** Must expire before the caller's version cache so refreshes reach Bitbucket. */
 const REVISION_PATCH_TTL = Duration.seconds(5);
 const REVISION_PATCH_CAPACITY = 16;
+const MERGE_TASK_POLL_INTERVAL = Duration.seconds(2);
+/** A task still pending after this many reads is left to the caller's confirmation re-read. */
+const MERGE_TASK_POLLS = 60;
 const encodeRevisionKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Number])),
 );
@@ -425,6 +429,21 @@ export const make = Effect.gen(function* () {
               }),
             );
       }),
+    );
+
+  /** Bitbucket fails the task-status read with the merge's own error once the task fails. */
+  const followMergeTask = (
+    url: string,
+    poll: number,
+  ): Effect.Effect<BitbucketPullRequest | undefined, BitbucketPullRequestApiError> =>
+    readPage({ operation: "mergeTask", url, decode: decodeMergeTaskJson }).pipe(
+      Effect.flatMap((task) =>
+        task.pending && poll < MERGE_TASK_POLLS
+          ? Effect.sleep(MERGE_TASK_POLL_INTERVAL).pipe(
+              Effect.andThen(followMergeTask(url, poll + 1)),
+            )
+          : Effect.succeed(task.pullRequest),
+      ),
     );
 
   /** Replies and parents can span pages; assemble threads after pagination. */
@@ -757,7 +776,13 @@ export const make = Effect.gen(function* () {
               url: `${pullRequest}/merge`,
               body: JSON.stringify({ merge_strategy: mergeStrategy(input.mergeMethod) }),
             })
-            .pipe(reply);
+            .pipe(
+              Effect.flatMap((response) =>
+                response.acceptedTask === undefined
+                  ? Effect.succeed(response).pipe(reply)
+                  : followMergeTask(response.acceptedTask, 1),
+              ),
+            );
         }
         return bitbucket.request({ method: "POST", url: `${pullRequest}/decline` }).pipe(reply);
       });
