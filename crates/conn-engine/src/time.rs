@@ -24,19 +24,68 @@ pub(crate) fn iso_from_millis(millis: i64) -> String {
     )
 }
 
-/// Milliseconds since the epoch of an ISO-8601 UTC time (`2026-11-13T08:49:41.123Z`, with or
-/// without fraction). `None` when it does not parse.
+/// Milliseconds since the epoch of an RFC 3339 time: `2026-11-13T08:49:41.123Z`, any number of
+/// fraction digits or none, `Z` or a `±HH:MM` offset. `None` when it does not parse or names a
+/// time that does not exist.
 pub(crate) fn millis_from_iso(text: &str) -> Option<i64> {
-    let text = text.strip_suffix('Z')?;
-    let (date, time) = text.split_once('T')?;
-    let mut date = date.split('-').map(|p| p.parse::<i64>().ok());
-    let (y, m, d) = (date.next()??, date.next()??, date.next()??);
-    let (hms, frac) = time.split_once('.').unwrap_or((time, "0"));
-    let mut hms = hms.split(':').map(|p| p.parse::<i64>().ok());
-    let (h, mi, s) = (hms.next()??, hms.next()??, hms.next()??);
-    let ms: i64 = format!("{frac:0<3}").get(..3)?.parse().ok()?;
+    let bytes = text.as_bytes();
+    let digits = |from: usize, len: usize| -> Option<i64> {
+        let part = bytes.get(from..from + len)?;
+        part.iter().try_fold(0i64, |n, b| {
+            b.is_ascii_digit().then(|| n * 10 + i64::from(b - b'0'))
+        })
+    };
+    let at = |i: usize, expected: &[u8]| bytes.get(i).is_some_and(|b| expected.contains(b));
+    if !(at(4, b"-") && at(7, b"-") && at(10, b"Tt") && at(13, b":") && at(16, b":")) {
+        return None;
+    }
+    let (y, m, d) = (digits(0, 4)?, digits(5, 2)?, digits(8, 2)?);
+    let (h, mi, s) = (digits(11, 2)?, digits(14, 2)?, digits(17, 2)?);
+    if !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m) || h > 23 || mi > 59 || s > 59 {
+        return None;
+    }
+    let mut i = 19;
+    let mut ms = 0;
+    if at(i, b".") {
+        let start = i + 1;
+        i = start;
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+        // The first three digits are milliseconds; the rest are below what the wire keeps.
+        let kept = (i - start).min(3);
+        ms = digits(start, kept)? * 10_i64.pow(3 - kept as u32);
+    }
+    let offset_minutes = match bytes.get(i..)? {
+        b"Z" | b"z" => 0,
+        [sign @ (b'+' | b'-'), _, _, b':', _, _] => {
+            let (oh, om) = (digits(i + 1, 2)?, digits(i + 4, 2)?);
+            if oh > 23 || om > 59 {
+                return None;
+            }
+            let minutes = oh * 60 + om;
+            if *sign == b'-' { -minutes } else { minutes }
+        }
+        _ => return None,
+    };
     let days = days_from_civil(y, m, d);
-    Some(((days * 24 + h) * 60 + mi) * 60_000 + s * 1000 + ms)
+    let minutes = days
+        .checked_mul(1440)?
+        .checked_add(h * 60 + mi)?
+        .checked_sub(offset_minutes)?;
+    minutes.checked_mul(60_000)?.checked_add(s * 1000 + ms)
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 /// Howard Hinnant's `days_from_civil`.
@@ -95,5 +144,40 @@ mod tests {
             Some(1_794_559_781_000)
         );
         assert_eq!(millis_from_iso("yesterday"), None);
+    }
+
+    #[test]
+    fn parses_rfc_3339_offsets_and_rejects_impossible_times() {
+        let utc = Some(1_794_559_781_123);
+        assert_eq!(millis_from_iso("2026-11-13T08:49:41.123Z"), utc);
+        assert_eq!(millis_from_iso("2026-11-13T08:49:41.123z"), utc);
+        assert_eq!(millis_from_iso("2026-11-13T08:49:41.123+00:00"), utc);
+        assert_eq!(millis_from_iso("2026-11-13T10:49:41.123+02:00"), utc);
+        assert_eq!(millis_from_iso("2026-11-13T03:19:41.123-05:30"), utc);
+        assert_eq!(millis_from_iso("2026-11-13t08:49:41.123456Z"), utc);
+        for bad in [
+            "2026-99-99T99:99:99Z",
+            "2026-02-29T00:00:00Z",
+            "2026-02-31T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+            "2026-11-13T24:00:00Z",
+            "2026-11-13T08:60:00Z",
+            "2026-11-13T08:49:60Z",
+            "2026-11-13T08:49:41+24:00",
+            "2026-11-13T08:49:41+02",
+            "2026-11-13T08:49:41",
+            "2026-11-13T08:49:41.Z",
+            "2026-11-13T08:49Z",
+            "+026-11-13T08:49:41Z",
+            "2026-1-13T08:49:41Z",
+            "9999999999999999-01-01T00:00:00Z",
+            "",
+        ] {
+            assert_eq!(millis_from_iso(bad), None, "{bad}");
+        }
+        assert_eq!(
+            millis_from_iso("2024-02-29T00:00:00Z"),
+            Some(1_709_164_800_000)
+        );
     }
 }

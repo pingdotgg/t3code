@@ -1400,26 +1400,53 @@ fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     })
 }
 
+/// `thread.snooze` as `Orchestrator.ts`: the wake time must parse and be in the future, a
+/// pending approval refuses it, and only queued runs a person asked for block it. The wake time
+/// is stored as UTC in the wire form.
 fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
-    let until = command["snoozedUntil"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    if crate::time::millis_from_iso(&until).is_none() {
-        return reject(format!("snoozedUntil `{until}` is not a time."));
-    }
-    if !queued_runs(tx, &thread_id)?.is_empty() {
+    let requested = command["snoozedUntil"].as_str().unwrap_or_default();
+    let now = crate::time::millis_from_iso(tx.now()).unwrap_or(0);
+    let Some(until) = crate::time::millis_from_iso(requested).filter(|at| *at > now) else {
         return reject(format!(
-            "Thread {thread_id} has a queued run and cannot be snoozed."
+            "Thread {thread_id} snooze wake time {requested} is not in the future."
+        ));
+    };
+    let pending_approval = tx
+        .entities_where(&thread_id, "runtimeRequests", "status", "pending")?
+        .iter()
+        .any(|request| request["kind"] != "user_input");
+    if pending_approval {
+        return reject(format!(
+            "Thread {thread_id} has a pending approval and cannot be snoozed."
         ));
     }
+    for run in queued_runs(tx, &thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let message = tx.entity(&thread_id, "messages", message_id)?;
+        if !message.as_ref().is_some_and(is_automatic) {
+            return reject(format!(
+                "Thread {thread_id} has a queued run and cannot be snoozed."
+            ));
+        }
+    }
+    let until = crate::time::iso_from_millis(until);
     thread_patch(tx, &command, "thread.snoozed", |t, now| {
         t["snoozedUntil"] = json!(until);
         t["snoozedAt"] = json!(now);
         t["updatedAt"] = json!(now);
         Ok(())
     })
+}
+
+/// A message the server queued by itself: a notification or a delegated-task completion. This
+/// engine marks its completion wakes by their id (`families::deliver`).
+fn is_automatic(message: &Value) -> bool {
+    !is_null(message, "notification")
+        || !is_null(message, "delegatedCompletion")
+        || message["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("message:delegated-completion:"))
 }
 
 fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {

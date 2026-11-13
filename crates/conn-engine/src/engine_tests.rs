@@ -2524,3 +2524,95 @@ async fn live_command_output_reaches_subscribers() {
         "the hub drops a thread's commands when its run ends"
     );
 }
+
+fn snooze(command: &str, thread: &str, until: &str) -> Value {
+    json!({"type": "thread.snooze", "commandId": command, "threadId": thread, "snoozedUntil": until})
+}
+
+async fn refused(engine: &SqliteEngine, command: Value) -> String {
+    match engine.dispatch(from_json(command).unwrap()).await {
+        Err(EngineError::Rejected(e)) => to_json(&e)["message"].as_str().unwrap_or("").to_owned(),
+        Ok(_) => panic!("expected a refusal"),
+        Err(EngineError::Internal(e)) => panic!("internal: {e}"),
+    }
+}
+
+/// `thread.snooze` as `Orchestrator.ts`: the wake time must be in the future, is stored as UTC,
+/// a pending approval refuses it, and a queued delegated-completion wake does not block it
+/// while a queued user message does.
+#[tokio::test(flavor = "current_thread")]
+async fn snooze_follows_the_upstream_rules() {
+    let db = TempDb::new("snooze-rules");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let shell_row = |shell: &Value, id: &str| {
+        shell["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id)
+            .cloned()
+            .unwrap()
+    };
+
+    let past = refused(&engine, snooze("s1", "t1", "2020-01-01T00:00:00.000Z")).await;
+    assert!(past.contains("not in the future"), "{past}");
+    let bad = refused(&engine, snooze("s2", "t1", "2030-02-31T00:00:00.000Z")).await;
+    assert!(bad.contains("not in the future"), "{bad}");
+    dispatch(&engine, snooze("s3", "t1", "2030-01-01T02:00:00+02:00")).await;
+    let r = shell_row(&engine.shell_snapshot().await.unwrap(), "t1");
+    assert_eq!(r["snoozedUntil"], "2030-01-01T00:00:00.000Z");
+
+    // A pending approval refuses a snooze.
+    dispatch(&engine, create("t2", "c2")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t2", "c3", "ask")).await;
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "runtime-request.updated" {
+            break;
+        }
+    }
+    let pending = refused(&engine, snooze("s4", "t2", "2030-01-01T00:00:00Z")).await;
+    assert!(pending.contains("pending approval"), "{pending}");
+
+    // A busy parent with a queued delegated-completion wake can snooze; a queued user message
+    // blocks it.
+    dispatch(&engine, create("t3", "c4")).await;
+    let mut parent = engine
+        .subscribe_thread(from_json(json!({"threadId": "t3"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut parent).await;
+    dispatch(&engine, message("t3", "c5", "hang")).await;
+    until_provider_turn(&mut parent).await;
+    let mut task = delegate("d1", "look", Some("always"));
+    task["parentThreadId"] = json!("t3");
+    task["parentRunId"] = json!("run:t3:1");
+    task["parentNodeId"] = json!("node:run:t3:1:root");
+    dispatch(&engine, task).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    assert_eq!(
+        projection(&engine, "t3").await["runs"][1]["status"],
+        "queued"
+    );
+    dispatch(&engine, snooze("s5", "t3", "2030-01-01T00:00:00Z")).await;
+    dispatch(
+        &engine,
+        message_with(
+            "t3",
+            "c6",
+            "later",
+            json!({"type": "queue_after_active"}),
+            None,
+        ),
+    )
+    .await;
+    let queued = refused(&engine, snooze("s6", "t3", "2031-01-01T00:00:00Z")).await;
+    assert!(queued.contains("queued run"), "{queued}");
+}
