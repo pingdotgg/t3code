@@ -1357,11 +1357,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
-        });
+        for (const ref of [input.checkpointRef, input.alsoRef]) {
+          if (ref === undefined) continue;
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [...durableWrite, "update-ref", ref, commitOid],
+          });
+        }
       }).pipe(Effect.ensuring(cleanupTempIndex));
     }),
 

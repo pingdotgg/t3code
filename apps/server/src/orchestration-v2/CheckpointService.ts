@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -266,6 +267,8 @@ export const layer: Layer.Layer<
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
+    // A snapshot that outran the baseline budget will again, so later turns stop waiting for one.
+    const slowWorkspaces = new Set<string>();
 
     // A failed probe is an operational error, not proof that the workspace has no repository.
     const probeRepository = (scope: OrchestrationV2CheckpointScope) =>
@@ -289,32 +292,46 @@ export const layer: Layer.Layer<
             return;
           }
 
-          // A retried attempt keeps the refs its run's first attempt wrote.
-          const captureIfAbsent = Effect.fnUntraced(function* (checkpointRef: CheckpointRef) {
-            const exists = yield* checkpointStore.hasCheckpointRef({
-              cwd: input.scope.cwd,
-              checkpointRef,
-            });
-            if (!exists) {
-              yield* checkpointStore.captureCheckpoint({ cwd: input.scope.cwd, checkpointRef });
-            }
-          });
+          const { cwd } = input.scope;
           const baselineRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          yield* captureIfAbsent(baselineRef).pipe(
-            Effect.andThen(
-              turnStartRefFor({
+          const turnStartRef = yield* turnStartRefFor({
+            scopeId: input.scope.id,
+            ordinalWithinScope: input.ordinalWithinScope + 1,
+          });
+          const snapshot = (refs: Omit<CheckpointStore.CaptureCheckpointInput, "cwd">) =>
+            checkpointStore.captureCheckpoint({ cwd, ...refs }).pipe(
+              Effect.timeout(BASELINE_CAPTURE_BUDGET),
+              Effect.tapError((error) =>
+                Effect.sync(() => {
+                  if (Cause.isTimeoutError(error)) slowWorkspaces.add(cwd);
+                }),
+              ),
+              Effect.catchTags({
+                VcsUnsupportedOperationError: () => Effect.void,
+              }),
+            );
+
+          if (!(yield* checkpointStore.hasCheckpointRef({ cwd, checkpointRef: baselineRef }))) {
+            // The turn starts from this snapshot, so its turn-start ref is the same commit.
+            return yield* snapshot({ checkpointRef: baselineRef, alsoRef: turnStartRef });
+          }
+          // A retried attempt keeps the turn-start ref its run's first attempt wrote.
+          if (
+            slowWorkspaces.has(cwd) ||
+            (yield* checkpointStore.hasCheckpointRef({ cwd, checkpointRef: turnStartRef }))
+          ) {
+            return;
+          }
+          // The baseline exists, so a turn without a turn-start ref is measured from it instead.
+          yield* snapshot({ checkpointRef: turnStartRef }).pipe(
+            Effect.catchIf(Cause.isTimeoutError, () =>
+              Effect.logWarning("orchestration V2 turn-start snapshot exceeded its budget", {
                 scopeId: input.scope.id,
-                ordinalWithinScope: input.ordinalWithinScope + 1,
               }),
             ),
-            Effect.flatMap(captureIfAbsent),
-            Effect.timeout(BASELINE_CAPTURE_BUDGET),
-            Effect.catchTags({
-              VcsUnsupportedOperationError: () => Effect.void,
-            }),
           );
         }),
       ).pipe(

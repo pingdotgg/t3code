@@ -169,9 +169,12 @@ it.effect(
           .pipe(Effect.result, Effect.forkChild);
         yield* TestClock.adjust("10 seconds");
         assert.strictEqual((yield* Fiber.join(postTurn)).status, "ready");
-        // The waiting baseline reuses that ref, so its one snapshot is the next turn's start.
+        // The waiting baseline reuses that ref; its turn-start snapshot runs out of budget.
         yield* TestClock.adjust("5 seconds");
-        assert.strictEqual((yield* Fiber.join(waitingBaseline))._tag, "Failure");
+        assert.strictEqual((yield* Fiber.join(waitingBaseline))._tag, "Success");
+        assert.strictEqual(yield* Ref.get(snapshots), 2);
+        // Later turns in the slow workspace start without waiting for a turn-start snapshot.
+        yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 1 });
         assert.strictEqual(yield* Ref.get(snapshots), 2);
 
         const slowBaseline = yield* checkpoints
@@ -288,6 +291,16 @@ it.effect("a turn's changed files leave out edits another thread made while it w
       );
 
     assert.deepEqual((yield* runTurn(1)).files, []);
+    // The first turn's baseline and turn start are one snapshot under two refs.
+    const firstTurnRefs = yield* git(
+      "for-each-ref",
+      "--format=%(objectname)",
+      "refs/t3/**/ordinal/0",
+      "refs/t3/**/turn-start/1",
+    );
+    const firstTurnCommits = firstTurnRefs.stdout.trim().split("\n");
+    assert.strictEqual(firstTurnCommits.length, 2);
+    assert.strictEqual(new Set(firstTurnCommits).size, 1);
     // Another thread working in the same checkout edits a file between this thread's turns.
     yield* fileSystem.writeFileString(NodePath.join(cwd, "other-thread.txt"), "one\ntwo\n");
     const second = yield* runTurn(2);

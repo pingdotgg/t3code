@@ -14,6 +14,8 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** A second ref for the same snapshot. */
+  readonly alsoRef?: CheckpointRef;
 }
 
 export interface VcsRestoreCheckpointInput {
