@@ -829,6 +829,44 @@ for (const { platform, installPath, onPath } of [
   );
 }
 
+// Toolbox names a second install's script idea1; uninstalling the first leaves only that one.
+for (const { platform, scriptPath } of [
+  { platform: "linux", scriptPath: "share/JetBrains/Toolbox/scripts/idea1" },
+  { platform: "win32", scriptPath: "JetBrains/Toolbox/scripts/idea1.cmd" },
+] as const) {
+  it.effect.skipIf(windowsHost && platform !== "win32")(
+    `discovers IntelliJ IDEA from a Toolbox idea1 script on ${platform}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-idea1-" });
+        const script = path.join(home, scriptPath);
+        yield* fs.makeDirectory(path.dirname(script), { recursive: true });
+        yield* fs.writeFileString(script, "#!/bin/sh\n");
+        yield* fs.chmod(script, 0o755);
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          return yield* launcher.resolveAvailableEditors();
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform,
+              env: {
+                HOME: home,
+                LOCALAPPDATA: home,
+                XDG_DATA_HOME: path.join(home, "share"),
+                PATH: path.dirname(script),
+                PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              },
+            }),
+          ),
+        );
+        assert.include(editors, "idea");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launchers first", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
