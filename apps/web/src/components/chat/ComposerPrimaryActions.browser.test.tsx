@@ -35,13 +35,33 @@ function setup() {
   } satisfies ComponentProps<typeof ComposerPrimaryActions>;
 }
 
-it.each([false, true])(
-  "keeps repeat Stop clicks from reaching Resume or Send (draft: %s)",
-  async (draft) => {
+it.each(["resume", "draft", "question"] as const)(
+  "keeps repeat Stop clicks from reaching the action that replaces it (%s)",
+  async (mode) => {
     const props = setup();
-    const container = document.createElement("div");
-    Object.assign(container.style, { display: "flex", justifyContent: "flex-end", width: "400px" });
-    await using screen = await render(<ComposerPrimaryActions {...props} />, { container });
+    const submit = vi.fn();
+    const pendingAction =
+      mode === "question"
+        ? {
+            questionIndex: 0,
+            isLastQuestion: true,
+            canAdvance: true,
+            isResponding: false,
+            isComplete: true,
+          }
+        : null;
+    const view = (overrides: Partial<ComponentProps<typeof ComposerPrimaryActions>> = {}) => (
+      <form
+        style={{ display: "flex", justifyContent: "flex-end", width: "400px" }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        <ComposerPrimaryActions {...props} pendingAction={pendingAction} {...overrides} />
+      </form>
+    );
+    await using screen = await render(view());
     using _timers = fakeTimers();
     const stop = screen
       .getByRole("button", { name: "Stop generation" })
@@ -58,17 +78,16 @@ it.each([false, true])(
     expect(screen.getByRole("button", { name: "Stopping", exact: true }).element()).toBeDisabled();
     expect(props.onInterrupt).toHaveBeenCalledTimes(1);
     await screen.rerender(
-      <ComposerPrimaryActions
-        {...props}
-        isRunning={false}
-        canInterrupt={false}
-        canResume
-        hasSendableContent={draft}
-      />,
+      view({
+        isRunning: false,
+        canInterrupt: false,
+        canResume: true,
+        hasSendableContent: mode === "draft",
+      }),
     );
-    const action = draft ? "Submit message" : "Resume thread";
+    const action = { resume: "Resume thread", draft: "Submit message", question: "Submit" }[mode];
     expect(screen.getByRole("button", { name: "Stop generation" }).query()).toBeNull();
-    expect(target()).toHaveAttribute("aria-label", action);
+    expect(target()).toBe(screen.getByRole("button", { name: action, exact: true }).element());
     await act(() => {
       for (let i = 0; i < 20; i++) target()?.click();
     });
@@ -76,10 +95,13 @@ it.each([false, true])(
     await act(() => target()?.click());
     expect(props.onResume).not.toHaveBeenCalled();
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
     await act(() => vi.advanceTimersByTime(1));
     await act(() => target()?.click());
-    expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);
-    await screen.rerender(<ComposerPrimaryActions {...props} />);
+    expect(
+      { resume: props.onResume, draft: props.onSubmitMessage, question: submit }[mode],
+    ).toHaveBeenCalledTimes(1);
+    await screen.rerender(view());
     expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
   },
 );

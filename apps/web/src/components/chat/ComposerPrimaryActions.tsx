@@ -320,6 +320,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           className={cn(messageActionPillClassName, "h-8 sm:h-7", compact ? "px-3" : "px-4")}
           {...pointerFocusProps}
+          onClick={(event) => {
+            if (stopPhase === "landed") event.preventDefault();
+          }}
           disabled={
             !canOperateThread ||
             isEnvironmentUnavailable ||
