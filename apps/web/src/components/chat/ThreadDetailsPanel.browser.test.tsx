@@ -163,8 +163,9 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         isGitRepo={false}
         envLocked
         availableEnvironments={[]}
-        onEnvModeChange={noop}
+        onWorkspaceModeChange={noop}
         envMode="local"
+        checkoutBranch={false}
         startFromOrigin={false}
         onStartFromOriginChange={noop}
         onComposerFocusRequest={noop}

@@ -146,6 +146,14 @@ export function useThreadShellsForProjectRefs(
   return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
 }
 
+/** Re-renders only when `select`'s result changes, not on every streamed shell update. */
+export function useSelectThreadShellsForProjectRefs<A>(
+  refs: ReadonlyArray<ScopedProjectRef>,
+  select: (threads: ReadonlyArray<EnvironmentThreadShell>) => A,
+): A {
+  return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs), select);
+}
+
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {
   return useAtomValue(ref === null ? EMPTY_PROJECT_ATOM : environmentProjects.projectAtom(ref));
 }

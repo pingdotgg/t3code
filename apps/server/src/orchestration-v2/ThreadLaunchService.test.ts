@@ -25,6 +25,7 @@ import {
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  type VcsRef,
   TextGenerationError,
   ServerSettingsError,
 } from "@t3tools/contracts";
@@ -1311,6 +1312,206 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
+const checkoutExistingHarness = (
+  localBranches: ReadonlyArray<VcsRef>,
+  remoteBranches: ReadonlyArray<VcsRef> = [],
+) =>
+  makeHarness({
+    git: {
+      listRefs: ({ query, refKind }) =>
+        Effect.succeed({
+          refs: (refKind === "remote" ? remoteBranches : localBranches).filter(
+            (ref) => ref.name === query,
+          ),
+          isRepo: true,
+          hasPrimaryRemote: true,
+          nextCursor: null,
+          totalCount: 1,
+        }),
+    },
+    createWorktree: (input) =>
+      Effect.succeed({
+        worktree: {
+          path: "/repo-worktrees/feature-login",
+          refName: input.newRefName ?? input.refName,
+          headSha: "abc",
+        },
+      } as never),
+  });
+
+const localBranch = (name: string, worktreePath: string | null = null): VcsRef => ({
+  name,
+  current: false,
+  isDefault: false,
+  worktreePath,
+});
+
+const originBranch = (name: string): VcsRef => ({
+  name: `origin/${name}`,
+  isRemote: true,
+  remoteName: "origin",
+  current: false,
+  isDefault: false,
+  worktreePath: null,
+});
+
+const launchCheckoutExisting = (baseRef: string, key: string) =>
+  Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    return yield* launches.launch(
+      launchInput({
+        command: `command:launch:checkout-existing:${key}`,
+        thread: `thread:launch:checkout-existing:${key}`,
+        message: "Keep working on login",
+        workspace: { type: "worktree", baseRef, checkoutExisting: true, startFromOrigin: true },
+      }),
+    );
+  });
+
+it.effect.each([
+  {
+    name: "checks out an existing local branch without creating one",
+    baseRef: "feature/login",
+    localBranches: [localBranch("feature/login")],
+    expected: { refName: "feature/login" },
+  },
+  {
+    name: "creates a local tracking branch for a remote-only branch",
+    baseRef: "origin/feature/login",
+    localBranches: [],
+    remoteBranches: [originBranch("feature/login")],
+    expected: { refName: "origin/feature/login", newRefName: "feature/login" },
+  },
+  {
+    name: "prefers the local branch over its remote-tracking ref",
+    baseRef: "origin/feature/login",
+    localBranches: [localBranch("feature/login")],
+    remoteBranches: [originBranch("feature/login")],
+    expected: { refName: "feature/login" },
+  },
+  {
+    name: "keeps an existing temporary-named branch's name",
+    baseRef: "t3/1234abcd",
+    localBranches: [localBranch("t3/1234abcd")],
+    expected: { refName: "t3/1234abcd" },
+  },
+  {
+    name: "keeps a branch folder that is not a remote",
+    baseRef: "feature/login",
+    localBranches: [localBranch("login", "/repo-worktrees/login")],
+    expected: { refName: "feature/login", newRefName: "feature/login" },
+  },
+])("$name in a new worktree", ({ name, baseRef, localBranches, remoteBranches, expected }) => {
+  const harness = checkoutExistingHarness(localBranches, remoteBranches);
+  return Effect.gen(function* () {
+    const launched = yield* launchCheckoutExisting(baseRef, name);
+    const settled = yield* preparationSettled(launched.threadId);
+    assert.deepEqual(harness.createWorktree.mock.calls[0]?.[0], {
+      cwd: project.workspaceRoot,
+      path: null,
+      ...expected,
+    });
+    assert.equal(settled.thread.branch, expected.newRefName ?? expected.refName);
+    assert.equal(settled.thread.worktreePath, "/repo-worktrees/feature-login");
+    assert.equal(harness.generateBranchName.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each(["feature/login", "t3/1234abcd"])(
+  "joins the worktree that already has %s checked out and keeps its name",
+  (branch) => {
+    const harness = checkoutExistingHarness([
+      localBranch(branch, "/repo-worktrees/existing-login"),
+    ]);
+    return Effect.gen(function* () {
+      const launched = yield* launchCheckoutExisting(branch, `join:${branch}`);
+      const settled = yield* preparationSettled(launched.threadId);
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(settled.thread.worktreePath, "/repo-worktrees/existing-login");
+      assert.equal(settled.thread.branch, branch);
+      assert.equal(harness.generateBranchName.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("replays a joined launch after its branch moves to the project folder", () => {
+  let worktreePath = "/repo-worktrees/existing-login";
+  const harness = makeHarness({
+    git: {
+      listRefs: ({ query }) =>
+        Effect.succeed({
+          refs: [localBranch("feature/login", worktreePath)].filter((ref) => ref.name === query),
+          isRepo: true,
+          hasPrimaryRemote: true,
+          nextCursor: null,
+          totalCount: 1,
+        }),
+    },
+  });
+  return Effect.gen(function* () {
+    const launched = yield* launchCheckoutExisting("feature/login", "replay-join");
+    yield* preparationSettled(launched.threadId);
+    worktreePath = project.workspaceRoot;
+    const retry = yield* launchCheckoutExisting("feature/login", "replay-join");
+    assert.isTrue(retry.resumed);
+    assert.equal(retry.projection.thread.worktreePath, "/repo-worktrees/existing-login");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("refuses to join a worktree another launch is creating or failed to remove", () =>
+  Effect.gen(function* () {
+    const claimed = yield* Deferred.make<void>();
+    let checkedOutAt: string | null = null;
+    const harness = makeHarness({
+      git: {
+        listRefs: ({ query }) =>
+          Effect.succeed({
+            refs: [localBranch("feature/login", checkedOutAt)].filter((ref) => ref.name === query),
+            isRepo: true,
+            hasPrimaryRemote: true,
+            nextCursor: null,
+            totalCount: 1,
+          }),
+        removeWorktree: () => Effect.fail(new Error("worktree is locked") as never),
+      },
+      createWorktree: (_input, options) =>
+        (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/feature") ?? Effect.void).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              checkedOutAt = "/repo-worktrees/feature";
+            }),
+          ),
+          Effect.andThen(Deferred.succeed(claimed, undefined)),
+          Effect.andThen(Effect.never),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const first = yield* launchCheckoutExisting("feature/login", "provisional-first");
+      yield* Deferred.await(claimed);
+      const joinWhileCreating = launchCheckoutExisting("feature/login", "provisional-second").pipe(
+        Effect.flip,
+      );
+      assert.include(String((yield* joinWhileCreating).cause), "still being set up");
+      assert.isTrue(yield* tracker.cancel(first.threadId));
+      const joinAfterFailedRemoval = launchCheckoutExisting("feature/login", "provisional-third");
+      assert.include(
+        String((yield* Effect.flip(joinAfterFailedRemoval)).cause),
+        "still being set up",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("refuses to open the project folder's branch in a separate worktree", () => {
+  const harness = checkoutExistingHarness([localBranch("main", project.workspaceRoot)]);
+  return Effect.gen(function* () {
+    const error = yield* launchCheckoutExisting("main", "root").pipe(Effect.flip);
+    assert.include(String(error.cause), "main is checked out in the project folder");
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
@@ -2406,12 +2607,33 @@ it.effect("cancels tracked setup before provider work is released", () =>
   }),
 );
 
-it.effect(
-  "deletes a claimed worktree's branch when setup is cancelled before checkout returns",
-  () =>
+it.effect.each([
+  {
+    name: "deletes a claimed worktree's new branch",
+    workspace: { type: "worktree", baseRef: "main" },
+    deletesBranch: true,
+  },
+  {
+    name: "keeps an existing branch opened in the claimed worktree",
+    workspace: { type: "worktree", baseRef: "feature/login", checkoutExisting: true },
+    deletesBranch: false,
+  },
+] as const)(
+  "$name when setup is cancelled before checkout returns",
+  ({ name, workspace, deletesBranch }) =>
     Effect.gen(function* () {
       const claimed = yield* Deferred.make<void>();
       const harness = makeHarness({
+        git: {
+          listRefs: ({ query }) =>
+            Effect.succeed({
+              refs: [localBranch("feature/login")].filter((ref) => ref.name === query),
+              isRepo: true,
+              hasPrimaryRemote: true,
+              nextCursor: null,
+              totalCount: 1,
+            }),
+        },
         createWorktree: (_input, options) =>
           (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/feature") ?? Effect.void).pipe(
             Effect.andThen(Deferred.succeed(claimed, undefined)),
@@ -2423,18 +2645,18 @@ it.effect(
         const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
         const launched = yield* launches.launch(
           launchInput({
-            command: "launch:cancel-claimed",
-            thread: "thread:cancel-claimed",
+            command: `launch:cancel-claimed:${name}`,
+            thread: `thread:cancel-claimed:${name}`,
             message: "Start",
-            workspace: { type: "worktree", baseRef: "main" },
+            workspace,
           }),
         );
         yield* Deferred.await(claimed);
         assert.isTrue(yield* tracker.cancel(launched.threadId));
         assert.equal(harness.removeWorktree.mock.calls[0]?.[0].path, "/repo-worktrees/feature");
-        assert.equal(
-          harness.deleteLocalBranch.mock.calls[0]?.[0].refName,
-          harness.createWorktree.mock.calls[0]?.[0].newRefName,
+        assert.deepEqual(
+          harness.deleteLocalBranch.mock.calls.map(([input]) => input.refName),
+          deletesBranch ? [harness.createWorktree.mock.calls[0]?.[0].newRefName] : [],
         );
       }).pipe(Effect.provide(harness.layer));
     }),

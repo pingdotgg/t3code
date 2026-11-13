@@ -12,7 +12,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
-import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
+import { type EnvMode, type EnvironmentOption, type WorkspaceMode } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
@@ -74,8 +74,9 @@ interface ThreadDetailsPanelProps extends Pick<
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
-  onEnvModeChange: (mode: EnvMode) => void;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   envMode: EnvMode;
+  checkoutBranch: boolean;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   startFromOrigin: boolean;
@@ -118,7 +119,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     worktreePath: props.worktreePath,
     isServerThread: props.isServerThread,
     ...(props.draftId ? { draftId: props.draftId } : {}),
-    onEnvModeChange: props.onEnvModeChange,
+    onWorkspaceModeChange: props.onWorkspaceModeChange,
+    checkoutBranch: props.checkoutBranch,
     startFromOrigin: props.startFromOrigin,
     onStartFromOriginChange: props.onStartFromOriginChange,
     envMode: props.envMode,
