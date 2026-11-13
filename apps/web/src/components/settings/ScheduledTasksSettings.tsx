@@ -2052,9 +2052,9 @@ function ScheduledTaskEditorForm({
                     }
                     className="w-32"
                     value={draft.timeOfDay}
-                    onChange={(timeOfDay) =>
-                      setDraft((current) => ({ ...current, timeOfDay: timeOfDay ?? "" }))
-                    }
+                    onChange={(timeOfDay) => {
+                      if (timeOfDay !== null) setDraft((current) => ({ ...current, timeOfDay }));
+                    }}
                   />
                   {runAtZone === undefined ? null : (
                     <span id="scheduled-task-time-zone" className="text-xs text-muted-foreground">
