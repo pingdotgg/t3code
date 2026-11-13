@@ -33,7 +33,8 @@ Engine, method table), the wire, and the checks. Each crate has its own `README.
    monorepo or test it against the monorepo. Do not copy a list, a text or a default by hand
    when a generator or a check can hold it.
 8. **Checks stay green.** Run `tools/check.sh` before you say that work is done.
-9. **Commit locally.** Push or open a pull request only when Nick asks.
+9. **Commit locally.** The remote is `hardimpactdev/conn-server` (private). Push or open a
+   pull request only when Nick asks.
 
 ## Providers
 
