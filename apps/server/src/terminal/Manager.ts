@@ -1187,8 +1187,7 @@ function stripStringTerminator(value: string): string {
   if (value.endsWith("\u001b\\")) {
     return value.slice(0, -2);
   }
-  const lastCharacter = value.at(-1);
-  if (lastCharacter === "\u0007" || lastCharacter === "\u009c") {
+  if (value.endsWith("\u0007")) {
     return value.slice(0, -1);
   }
   return value;
@@ -1197,7 +1196,8 @@ function stripStringTerminator(value: string): string {
 function findStringTerminatorIndex(input: string, start: number): number | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
-    if (codePoint === 0x07 || codePoint === 0x9c || isControlSequenceCancel(codePoint)) {
+    // libghostty reads a decoded U+009C as UTF-8 payload, not ST.
+    if (codePoint === 0x07 || isControlSequenceCancel(codePoint)) {
       return index + 1;
     }
     // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
