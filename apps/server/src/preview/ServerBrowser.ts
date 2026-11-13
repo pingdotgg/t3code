@@ -33,6 +33,7 @@ import {
   type PreviewAutomationScrollInput,
   type PreviewAutomationSelectInput,
   type PreviewAutomationSetColorSchemeInput,
+  type PreviewAutomationSnapshot,
   type PreviewAutomationSnapshotInput,
   type PreviewAutomationStatus,
   type PreviewAutomationTypeInput,
@@ -85,6 +86,8 @@ import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as PreviewManager from "./Manager.ts";
@@ -523,6 +526,8 @@ const make = Effect.gen(function* () {
   const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const secrets = yield* SecretRequests.SecretRequests;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
@@ -2202,7 +2207,10 @@ const make = Effect.gen(function* () {
       (cause: unknown) => {
         event.status = "failed";
         event.completedAt = new Date().toISOString();
-        event.error = cause instanceof Error ? cause.message.split("\n")[0] : String(cause);
+        event.error = ServerBrowserPage.redactSecrets(
+          tab.page,
+          cause instanceof Error ? cause.message.split("\n")[0] : String(cause),
+        );
         throw cause;
       },
     );
@@ -2603,10 +2611,51 @@ const make = Effect.gen(function* () {
         return recordAction(tab, "upload", () =>
           uploadFiles(tab, input as PreviewAutomationUploadInput),
         );
-      case "type":
-        return recordAction(tab, "type", () =>
-          ServerBrowserPage.type(tab.page, input as PreviewAutomationTypeInput),
-        );
+      case "type": {
+        const typeInput = input as PreviewAutomationTypeInput;
+        if (typeInput.secretRef !== undefined) {
+          if (
+            !request.tabId ||
+            (!typeInput.locator && !typeInput.selector) ||
+            typeInput.text !== undefined
+          ) {
+            throw new ServerBrowserPage.ServerBrowserOperationError({
+              tag: "PreviewAutomationTargetNotEditableError",
+              message: "Secure filling needs a tabId and an explicit password field without text.",
+            });
+          }
+          const generation = tab.control.generation;
+          const assertActive = () => {
+            if (
+              performance.now() >= deadlineMs ||
+              tab.control.generation !== generation ||
+              !tab.control.agentCanActNow(request.agentSessionId ?? "")
+            ) {
+              throw new ServerBrowserPage.ServerBrowserOperationError({
+                tag: "PreviewAutomationControlInterruptedError",
+                message: "The secure fill expired or browser control changed.",
+              });
+            }
+          };
+          return recordAction(tab, "type", () =>
+            ServerBrowserPage.fillSecret(
+              tab.page,
+              typeInput,
+              async () => {
+                const thread = await runPromise(threads.getThreadShell(request.threadId));
+                if (thread === null || thread.deletedAt !== null)
+                  throw new Error("The calling thread was not found.");
+                assertActive();
+                return runPromise(
+                  secrets.consume({ ref: typeInput.secretRef!, projectId: thread.projectId }),
+                );
+              },
+              assertActive,
+            ),
+          );
+        }
+        return recordAction(tab, "type", () => ServerBrowserPage.type(tab.page, typeInput));
+      }
       case "press":
         return recordAction(tab, "press", () =>
           ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),
@@ -2630,6 +2679,28 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const redactResponse = <A>(request: PreviewAutomationRequest, value: A): A => {
+    let redacted = value;
+    for (const tab of tabs.values()) {
+      if (tab.threadId === request.threadId)
+        redacted = ServerBrowserPage.redactSecrets(tab.page, redacted);
+    }
+    return redacted;
+  };
+
+  const redactResult = (request: PreviewAutomationRequest, result: unknown) => {
+    if (request.operation === "snapshot" && typeof result === "object" && result !== null) {
+      // Binary image data can coincidentally contain a short password as base64 text.
+      const { screenshot, fullScreenshot, ...text } = result as PreviewAutomationSnapshot;
+      return {
+        ...redactResponse(request, text),
+        screenshot,
+        ...(fullScreenshot === undefined ? {} : { fullScreenshot }),
+      };
+    }
+    return redactResponse(request, result);
+  };
+
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
       try: () =>
@@ -2639,14 +2710,14 @@ const make = Effect.gen(function* () {
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       Effect.match({
-        onSuccess: (result) => ({ ok: true as const, result }),
+        onSuccess: (result) => ({ ok: true as const, result: redactResult(request, result) }),
         onFailure: (error) => ({
           ok: false as const,
-          error: {
+          error: redactResponse(request, {
             _tag: error.tag,
             message: error.message,
             ...(error.detail === undefined ? {} : { detail: error.detail }),
-          },
+          }),
         }),
       }),
       Effect.flatMap((outcome) =>

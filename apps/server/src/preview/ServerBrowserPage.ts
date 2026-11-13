@@ -172,6 +172,7 @@ const SNAPSHOT_SCRIPT = `(() => {
 })()`;
 
 const MASKED_VALUE = "••••••••";
+const filledSecrets = new WeakMap<Page, Set<string>>();
 
 /**
  * A `data:` URL carries its content, which can be a whole file, and URLs and diagnostics
@@ -404,6 +405,25 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
   return pattern;
 };
 
+export const redactSecrets = <A>(page: Page, value: A): A => {
+  const pattern = dottedPattern([...(filledSecrets.get(page) ?? [])]);
+  if (!pattern) return value;
+  const redact = (current: unknown): unknown => {
+    if (typeof current === "string") return current.replace(pattern, MASKED_VALUE);
+    if (Array.isArray(current)) return current.map(redact);
+    if (current !== null && typeof current === "object") {
+      return Object.fromEntries(
+        Object.entries(current).map(([key, entry]) => [
+          key.replace(pattern, MASKED_VALUE),
+          redact(entry),
+        ]),
+      );
+    }
+    return current;
+  };
+  return redact(value) as A;
+};
+
 // Playwright single-quotes keys containing ': ' and leaves /.../ names unquoted. Recognize only its attributes so name text cannot spoof them.
 const TREE_LINE =
   /^(\s*- '?[^\s"':]+)( "(?:[^"\\]|\\.)*"| \/(?:.*?\/)?)?((?: \[(?:active|checked(?:=mixed)?|disabled|expanded|level=\d+|pressed(?:=mixed)?|selected|ref=(?:f\d+)?e\d+|cursor=pointer|box=-?\d+,-?\d+,\d+,\d+)\])*'?)(:.*)?$/;
@@ -618,7 +638,10 @@ const capture = async (
   // A value that changed meanwhile may be in the tree under neither reading.
   if (after.some((values, i) => values && JSON.stringify(values) !== JSON.stringify(before[i])))
     throw pageChanged();
-  const dotted = dottedPattern(after.flatMap((values) => values ?? []));
+  const dotted = dottedPattern([
+    ...after.flatMap((values) => values ?? []),
+    ...(filledSecrets.get(input.page) ?? []),
+  ]);
   // Unread frames can expose values only if their content appears in the tree.
   const unread = readers.flatMap((reader, i) => (after[i] ? [] : reader.frames));
   const filled = /^\s*- iframe (?:\[active\] )?\[ref=(\S+?)\].*:$/gm;
@@ -644,13 +667,25 @@ const capture = async (
     });
   return {
     ...page,
-    url: withoutDataPayload(page.url),
+    url: mask(withoutDataPayload(page.url)),
+    title: mask(page.title),
     // Mask text before truncating so a value crossing the cut cannot leak its prefix.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
-    consoleEntries: [...input.consoleEntries],
-    networkEntries: [...input.networkEntries],
-    actionTimeline: [...input.actionTimeline],
+    consoleEntries: input.consoleEntries.map((entry) => ({
+      ...entry,
+      text: mask(entry.text),
+      ...(entry.source === undefined ? {} : { source: mask(entry.source) }),
+    })),
+    networkEntries: input.networkEntries.map((entry) => ({
+      ...entry,
+      url: mask(entry.url),
+      ...(entry.errorText === undefined ? {} : { errorText: mask(entry.errorText) }),
+    })),
+    actionTimeline: input.actionTimeline.map((entry) => ({
+      ...entry,
+      ...(entry.error === undefined ? {} : { error: mask(entry.error) }),
+    })),
     screenshot: {
       mimeType: "image/png",
       data,
@@ -768,7 +803,85 @@ const clickTarget = async (
   return point;
 };
 
+export const fillSecret = async (
+  page: Page,
+  input: Pick<PreviewAutomationTypeInput, "locator" | "selector" | "timeoutMs">,
+  consume: () => Promise<string>,
+  assertActive: () => void = constVoid,
+) => {
+  const locator = targetLocator(page, input);
+  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const target = await locator?.elementHandle({ timeout });
+  if (!target) {
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationTargetNotEditableError",
+      message: "Secure filling needs an explicit, enabled password field.",
+    });
+  }
+  const passwordState = () =>
+    target.evaluate((element) => {
+      const field = element as unknown as {
+        tagName: string;
+        type: string;
+        disabled: boolean;
+        readOnly: boolean;
+        isConnected: boolean;
+        ownerDocument: { URL: string };
+      };
+      return {
+        editable:
+          field.tagName === "INPUT" &&
+          field.type === "password" &&
+          !field.disabled &&
+          !field.readOnly &&
+          field.isConnected,
+        documentUrl: field.ownerDocument.URL,
+      };
+    });
+  try {
+    const initial = await passwordState();
+    if (!initial.editable) {
+      throw new ServerBrowserOperationError({
+        tag: "PreviewAutomationTargetNotEditableError",
+        message: "Secure filling needs an explicit, enabled password field.",
+      });
+    }
+    const pageUrl = page.url();
+    try {
+      assertActive();
+      const value = await consume();
+      const current = await passwordState();
+      if (
+        !current.editable ||
+        current.documentUrl !== initial.documentUrl ||
+        page.url() !== pageUrl
+      ) {
+        throw new Error("The password target changed.");
+      }
+      const remembered = filledSecrets.get(page) ?? new Set<string>();
+      remembered.add(value);
+      filledSecrets.set(page, remembered);
+      assertActive();
+      await target.fill(value, { timeout });
+      return { filled: true };
+    } catch {
+      throw new ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: "The password could not be filled. The secret may already have been consumed.",
+      });
+    }
+  } finally {
+    await target.dispose().catch(constVoid);
+  }
+};
+
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
+  if (input.text === undefined) {
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationExecutionError",
+      message: "Typing needs text or a supported secure fill request.",
+    });
+  }
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {

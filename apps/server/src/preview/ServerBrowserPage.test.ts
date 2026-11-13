@@ -202,6 +202,57 @@ describe("server browser element refs", () => {
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
   });
 
+  it("fills a secret only into a password and keeps its snapshot text hidden after navigation", async () => {
+    const password = "private-capture-password";
+    await page.setContent('<input id="password" type="password"><input id="username">');
+    const consume = vi.fn(async () => password);
+    await expect(
+      ServerBrowserPage.fillSecret(page, { locator: "#username" }, consume),
+    ).rejects.toThrow();
+    expect(consume).not.toHaveBeenCalled();
+    const refuse = () => {
+      throw new Error("Control changed");
+    };
+    await expect(
+      ServerBrowserPage.fillSecret(page, { locator: "#password" }, consume, refuse),
+    ).rejects.toThrow();
+    expect(consume).not.toHaveBeenCalled();
+    const changedAfterConsume = vi
+      .fn<() => void>()
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(refuse);
+    await expect(
+      ServerBrowserPage.fillSecret(page, { locator: "#password" }, consume, changedAfterConsume),
+    ).rejects.toThrow();
+    expect(await page.locator("#password").inputValue()).toBe("");
+    expect(consume).toHaveBeenCalledOnce();
+    consume.mockClear();
+    await ServerBrowserPage.fillSecret(page, { locator: "#password" }, consume);
+    expect(await page.locator("#password").inputValue()).toBe(password);
+    expect(consume).toHaveBeenCalledOnce();
+    await page.goto(
+      "data:text/html,<title>private-capture-password</title><p>private-capture-password</p>",
+    );
+    const snapshot = await ServerBrowserPage.snapshot({
+      page,
+      cdp,
+      renderScale: 1,
+      consoleEntries: [{ level: "log", text: password, timestamp: "2026-01-01T00:00:00Z" }],
+      networkEntries: [
+        {
+          url: `https://example.com/${password}`,
+          method: "GET",
+          failed: false,
+          status: 200,
+          timestamp: "2026-01-01T00:00:00Z",
+        },
+      ],
+      actionTimeline: [],
+    });
+    const { screenshot: _screenshot, ...text } = snapshot;
+    expect(JSON.stringify(text)).not.toContain(password);
+  });
+
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
     await page.setContent(`
       <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
