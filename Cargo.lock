@@ -154,6 +154,7 @@ dependencies = [
  "conn-engine",
  "conn-provider",
  "conn-provider-claude",
+ "conn-terminal",
  "conn-wire",
  "getrandom",
  "serde",
