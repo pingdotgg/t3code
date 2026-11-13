@@ -969,6 +969,73 @@ it.effect("loads Forgejo pull request references from files and commits views", 
   ),
 );
 
+// Gitea ignores `head=` on the pull request list, so each page holds every branch's pull requests.
+it.effect("reads a Gitea pull request list at most once for branches that have none", () => {
+  const listPages: Array<string> = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    for (const headSelector of ["first-without-pr", "second-without-pr"]) {
+      const found = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector,
+        state: "all",
+      });
+      assert.deepStrictEqual(found, []);
+    }
+    assert.isAtMost(listPages.length, 4);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer({ process: {} }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            if (!input.path.startsWith("repos/maria/project/pulls?"))
+              return Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "tea",
+                  cwd: input.cwd,
+                  httpStatus: 404,
+                  detail: "Forgejo API request failed (HTTP 404): Not Found",
+                }),
+              );
+            listPages.push(input.path);
+            const repo = { full_name: "maria/project", owner: { login: "maria" } };
+            const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+            const items =
+              page > 3
+                ? []
+                : Array.from({ length: 50 }, (_, index) => {
+                    const number = 200 - (page - 1) * 50 - index;
+                    return {
+                      number,
+                      title: `PR ${number}`,
+                      html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+                      state: "open",
+                      merged: false,
+                      base: { ref: "main", label: "main", sha: "base", repo },
+                      head: {
+                        ref: `feature-${number}`,
+                        label: `feature-${number}`,
+                        sha: "h",
+                        repo,
+                      },
+                    };
+                  });
+            return encodeJsonEffect(items).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect("finds a merged Forgejo pull request whose head branch was deleted", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
