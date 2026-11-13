@@ -122,6 +122,13 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(terminalNavigationShortcutData(event, "Win32") ?? core.encodeKey(event)).toBe(expected);
   });
 
+  it("keeps a leading U+FEFF in an unbracketed paste", async () => {
+    const core = await createCore();
+    core.write("\x1b[?2004l");
+
+    expect(core.encodePaste("\ufeffsample")).toBe("\ufeffsample");
+  });
+
   it.each([
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },
@@ -405,5 +412,30 @@ describe("GhosttyTerminalCore snapshots", () => {
     writeTerminalOutputUpdate(core, reattached);
     reference.resetAndWrite("hello");
     expect(core.snapshot()).toEqual(reference.snapshot());
+  });
+});
+
+describe("GhosttyTerminalCore scrollback", () => {
+  it("retains thousands of rows of scrollback", async () => {
+    const core = await GhosttyTerminalCore.create(
+      80,
+      10,
+      8,
+      16,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    try {
+      core.write(Array.from({ length: 1_200 }, (_, index) => `${index}\r\n`).join(""));
+      const scrollbar = core.scrollbarState();
+      // max_scrollback is a byte budget in the pinned ABI, not a row count.
+      expect(scrollbar!.total - scrollbar!.len).toBeGreaterThan(1_000);
+    } finally {
+      core.dispose();
+    }
   });
 });
