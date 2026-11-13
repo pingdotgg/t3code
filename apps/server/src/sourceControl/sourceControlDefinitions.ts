@@ -43,15 +43,17 @@ export function changeRequestsClosedBy(command: string): ReadonlySet<number> | "
     for (const match of command.matchAll(new RegExp(close.source, `${close.flags}g`))) {
       // From the match's start, since Azure's match runs through `--id` to `--status`.
       const args = command.slice(match.index).split(/[;&|\n]/u, 1)[0] ?? "";
-      const numbers: Array<number> = [];
+      // Every host's merge and close takes one change request, so any later one is option text.
+      let target: string | undefined;
       for (const [, double, single, bare] of args.matchAll(SHELL_WORD)) {
         // A comment ends the command.
         if (bare !== undefined && /^#(?!\d+$)/u.test(bare)) break;
         const [, number, url] = NAMED_CHANGE_REQUEST.exec(double ?? single ?? bare ?? "") ?? [];
-        if (number !== undefined || url !== undefined) numbers.push(Number(number ?? url));
+        target = number ?? url;
+        if (target !== undefined) break;
       }
-      if (numbers.length === 0) return "any";
-      for (const number of numbers) named.add(number);
+      if (target === undefined) return "any";
+      named.add(Number(target));
     }
   }
   return named.size === 0 ? "any" : named;
