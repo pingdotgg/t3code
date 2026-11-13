@@ -5,7 +5,7 @@ import {
   toggleDraft,
   type SelectionDraft,
 } from "@t3tools/client-runtime/pull-request-selection";
-import { useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -82,6 +82,21 @@ export function PullRequestCandidatePicker<T>({
     selected: isSelected(candidate),
     candidate,
   }));
+  const changes = () => {
+    const { add, remove } = draftChanges(draft, selections);
+    return add.length === 0 && remove.length === 0
+      ? null
+      : {
+          add: add.map((selection) => selection.candidate),
+          remove: remove.map((selection) => selection.candidate),
+        };
+  };
+  const sendOnUnmount = useEffectEvent(() => {
+    const pending = allowed && !sending ? changes() : null;
+    if (pending) void onCommit(pending);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaving the page with the picker open still sends the picks
+  useEffect(() => () => sendOnUnmount(), []);
 
   if (!allowed) {
     return (
@@ -104,17 +119,14 @@ export function PullRequestCandidatePicker<T>({
   const keys = shown.map((selection) => selection.key);
 
   const commit = async () => {
-    const changes = draftChanges(draft, selections);
+    const pending = changes();
     setPicked(new Map());
-    if (changes.add.length === 0 && changes.remove.length === 0) {
+    if (!pending) {
       setDraft(new Map());
       return;
     }
     setSending(true);
-    await onCommit({
-      add: changes.add.map((selection) => selection.candidate),
-      remove: changes.remove.map((selection) => selection.candidate),
-    });
+    await onCommit(pending);
     setSending(false);
     setDraft(new Map());
   };
