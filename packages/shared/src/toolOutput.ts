@@ -232,17 +232,21 @@ export function mcpAppFromToolItem(item: {
     : undefined;
 }
 
+// A superset of every needle below, so most outputs are rejected by this single scan.
+const FAILURE_HINT =
+  /enoent|no such|no files found|not found|commandnotfound|not recognized|cannot (?:find path|be found)|exit/i;
+
 /** Some providers report completion even when command output describes a failure. */
 export function toolOutputIndicatesFailure(text: string): boolean {
   return (
-    /file not found|no files found|enoent|no such file|commandnotfoundexception|command not found|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i.test(
+    FAILURE_HINT.test(text) &&
+    (/file not found|no files found|enoent|no such file|commandnotfoundexception|command not found|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i.test(
       text,
     ) ||
-    (/cannot find path/i.test(text) && /because it does not exist/i.test(text)) ||
-    (/is not recognized/i.test(text) && /the term '/i.test(text)) ||
-    /<exited with exit code\s+[1-9]\d*\s*>/i.test(text) ||
-    /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
-    /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)
+      (/cannot find path/i.test(text) && /because it does not exist/i.test(text)) ||
+      (/is not recognized/i.test(text) && /the term '/i.test(text)) ||
+      /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
+      /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text))
   );
 }
 
@@ -295,10 +299,15 @@ export function mcpToolResultOutput(result: {
   readonly content?: unknown;
   readonly structuredContent?: unknown;
 }): unknown {
-  if (result.structuredContent != null && toolOutputImages(result.content).length > 0) {
-    return { content: result.content, structuredContent: result.structuredContent };
+  const structuredContent =
+    (Array.isArray(result.structuredContent) || Predicate.isObject(result.structuredContent)) &&
+    Object.keys(result.structuredContent).length === 0
+      ? undefined
+      : result.structuredContent;
+  if (structuredContent != null && toolOutputImages(result.content).length > 0) {
+    return { content: result.content, structuredContent };
   }
-  return result.structuredContent ?? result.content;
+  return structuredContent ?? result.content;
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {
