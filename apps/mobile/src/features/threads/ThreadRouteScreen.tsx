@@ -566,7 +566,12 @@ function ThreadRouteContent(
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   };
-  const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
+  const gitActionProgress = useGitActionProgress(
+    gitActionProgressTarget,
+    selectedThread === null
+      ? null
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+  );
 
   const handleOpenGitInspector = () => {
     navigation.setParams({ inspector: undefined });

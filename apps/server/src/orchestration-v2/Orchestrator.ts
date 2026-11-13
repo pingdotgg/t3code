@@ -4789,8 +4789,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 };
             const branch = thread.branchPullRequest;
             const branchKey = branch ? legacyThreadPullRequestKey(branch) : null;
+            // A link hides the branch pull request, so the first one keeps it: always when the
+            // user links, and for one opened here when it is in another repository, such as a
+            // tracked one.
+            const keepsBranchPullRequest =
+              command.source === "manual" ||
+              (command.source === "created" &&
+                branchKey !== null &&
+                (branchKey.host !== key.host || branchKey.repository !== key.repository));
             pullRequests = [
-              ...(command.source === "manual" &&
+              ...(keepsBranchPullRequest &&
               branch &&
               branchKey &&
               visibleThreadPullRequests(links).length === 0 &&

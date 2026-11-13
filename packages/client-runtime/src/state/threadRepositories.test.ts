@@ -14,10 +14,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveThreadCheckpointSummaries } from "./threadCheckpoints.ts";
 import {
   deriveTurnRepositoryChanges,
+  pinnableThreadRepositories,
+  pinThreadRepository,
   repositoryCheckpointScopeIds,
   repositoryFilePath,
   repositorySectionForPath,
+  THREAD_REPOSITORY_SECTIONS_VISIBLE,
+  threadChangedRepositories,
   threadRepositoryScopes,
+  threadRepositorySections,
+  unpinThreadRepository,
   turnChanges,
   turnDiffSections,
   turnHasChanges,
@@ -133,6 +139,95 @@ describe("threadRepositoryScopes", () => {
         checkpointScopes: [scope("scope-root", "C:\\work"), scope("scope-api", "D:\\api", {})],
       })[0],
     ).not.toHaveProperty("relativePath");
+  });
+});
+
+describe("threadRepositorySections", () => {
+  const changed = threadChangedRepositories({ checkpoints, checkpointScopes: scopes });
+
+  it("orders changed repositories by their latest turn, newest first", () => {
+    expect(changed.map((entry) => entry.cwd)).toEqual([
+      "/work/shared",
+      "/work/wrapper/web",
+      "/work/wrapper/services/api",
+    ]);
+    // A baseline alone is no change: without a turn the repository sorts last, by name.
+    expect(
+      threadChangedRepositories({
+        checkpoints: [
+          checkpoint("web-0", "scope-web", 0, { runId: null }),
+          checkpoint("api-1", "scope-api", 1),
+        ],
+        checkpointScopes: scopes,
+      }).map((entry) => entry.cwd),
+    ).toEqual(["/work/wrapper/services/api", "/work/shared", "/work/wrapper/web"]);
+  });
+
+  it("puts pins first, drops the thread's own folder, and folds the rest away", () => {
+    const pinned = [
+      { repositoryPath: "/work/wrapper/docs", name: "docs" },
+      { repositoryPath: "/work/wrapper/web", name: "web" },
+      { repositoryPath: "/work/wrapper", name: "wrapper" },
+    ];
+    const sections = threadRepositorySections({
+      changed,
+      pinned,
+      threadCwd: "/work/wrapper",
+      showAll: false,
+    });
+    expect(sections.visible.map((section) => [section.key, section.origin])).toEqual([
+      ["/work/wrapper/docs", "pinned"],
+      ["/work/wrapper/web", "pinned"],
+      ["/work/shared", "changed"],
+      ["/work/wrapper/services/api", "changed"],
+    ]);
+    expect(sections.hidden).toEqual([]);
+
+    const many = Array.from({ length: THREAD_REPOSITORY_SECTIONS_VISIBLE + 2 }, (_, index) => ({
+      repositoryPath: `/work/extra-${index}`,
+      name: `extra-${index}`,
+    }));
+    const folded = threadRepositorySections({
+      changed: [],
+      pinned: many,
+      threadCwd: null,
+      showAll: false,
+    });
+    expect(folded.visible).toHaveLength(THREAD_REPOSITORY_SECTIONS_VISIBLE);
+    expect(folded.hidden.map((section) => section.name)).toEqual(["extra-4", "extra-5"]);
+    expect(
+      threadRepositorySections({ changed: [], pinned: many, threadCwd: null, showAll: true })
+        .visible,
+    ).toHaveLength(many.length);
+  });
+
+  it("pins once, unpins, and offers only Git folders that are not shown", () => {
+    const docs = { repositoryPath: "/work/wrapper/docs", name: "docs" };
+    const pinned = pinThreadRepository([], docs);
+    expect(pinThreadRepository(pinned, { ...docs, name: "renamed" })).toBe(pinned);
+    expect(unpinThreadRepository(pinned, "/work/elsewhere")).toBe(pinned);
+    expect(unpinThreadRepository(pinned, docs.repositoryPath)).toEqual([]);
+
+    const sections = threadRepositorySections({
+      changed,
+      pinned,
+      threadCwd: "/work/wrapper",
+      showAll: false,
+    });
+    expect(
+      pinnableThreadRepositories({
+        sections,
+        threadCwd: "/work/wrapper",
+        folders: [
+          { path: "/work/wrapper", name: "wrapper", state: "git" },
+          { path: "/work/wrapper/docs", name: "docs", state: "git" },
+          { path: "/work/wrapper/web", name: "web", state: "git" },
+          { path: "/work/wrapper/notes", name: "notes", state: "plain" },
+          { path: "/work/wrapper/gone", name: "gone", state: "missing" },
+          { path: "/work/wrapper/cli", name: "cli", state: "git" },
+        ],
+      }),
+    ).toEqual([{ repositoryPath: "/work/wrapper/cli", name: "cli" }]);
   });
 });
 

@@ -367,7 +367,11 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         subtitle:
           props.hasThread === false
             ? "Available after the first message"
-            : "Commit, files, branches",
+            : repositoriesOnly
+              ? "Repositories"
+              : props.tracksRepositories === true
+                ? "Commit, branches, repositories"
+                : "Commit, files, branches",
         onPress: model.openGitInspector,
       },
     ],

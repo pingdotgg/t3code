@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { useSyncExternalStore } from "react";
@@ -10,6 +11,21 @@ import { vcsActionManager } from "./vcs";
 
 export function useVcsActionState(target: VcsActionTarget): VcsActionState {
   return useAtomValue(vcsActionManager.stateAtom(target));
+}
+
+interface RepositoryGitAction {
+  readonly threadRef: ScopedThreadRef;
+  readonly cwd: string;
+}
+
+// The tracked repository a thread last ran an action in, so the thread can show its progress.
+const repositoryGitActionAtom = Atom.make<RepositoryGitAction | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:repository-git-action"),
+);
+
+export function noteRepositoryGitAction(action: RepositoryGitAction): void {
+  appAtomRegistry.set(repositoryGitActionAtom, action);
 }
 
 export interface GitActionResultNotification {
@@ -84,8 +100,25 @@ function formatElapsedSeconds(ms: number | null, nowMs: number): string | null {
   return `Running for ${elapsed}s`;
 }
 
-export function useGitActionProgress(target: VcsActionTarget): GitActionProgress {
-  const actionState = useVcsActionState(target);
+/** Progress in the thread's own folder, or in the repository the thread last acted on. */
+export function useGitActionProgress(
+  target: VcsActionTarget,
+  threadRef: ScopedThreadRef | null,
+): GitActionProgress {
+  const threadFolderState = useVcsActionState(target);
+  const repositoryCwd = useAtomValue(repositoryGitActionAtom, (action) =>
+    action !== null &&
+    threadRef !== null &&
+    action.threadRef.environmentId === threadRef.environmentId &&
+    action.threadRef.threadId === threadRef.threadId
+      ? action.cwd
+      : null,
+  );
+  const repositoryState = useVcsActionState({
+    environmentId: threadRef?.environmentId ?? null,
+    cwd: repositoryCwd,
+  });
+  const actionState = repositoryState.isRunning ? repositoryState : threadFolderState;
   const { result } = useGitActionResultNotification();
 
   // Only a running action shows elapsed time, so only it subscribes to the second tick.

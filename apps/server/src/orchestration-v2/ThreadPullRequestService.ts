@@ -31,6 +31,10 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
+import {
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+} from "../sourceControl/threadPullRequests.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -106,6 +110,7 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const REPOSITORY_LOOKUP_CONCURRENCY = 4;
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -142,6 +147,74 @@ export const make = Effect.gen(function* () {
     orchestrator.getPullRequestSnapshot(
       threadId === null ? { unsettledOnly: !(backfill || pendingBackfill.size > 0) } : { threadId },
     );
+
+  // The tracked repositories a thread changed each have their own branch, so an open pull
+  // request there is linked like one the thread opened. Only a thread's own events ask: the
+  // sweep would query the host for every repository of every thread each minute.
+  const linkRepositoryPullRequests = Effect.fn(
+    "ThreadPullRequestServiceV2.linkRepositoryPullRequests",
+  )(function* (
+    thread: Pick<
+      OrchestrationV2ThreadShell,
+      "id" | "worktreePath" | "archivedAt" | "pullRequests" | "linkedPullRequest"
+    >,
+    project: OrchestrationProjectShell,
+    refresh: boolean,
+  ) {
+    const tracked = new Set((project.trackedFolders ?? []).map((folder) => folder.path));
+    if (tracked.size === 0 || thread.worktreePath !== null || thread.archivedAt !== null) return;
+    const { checkpointScopes } = yield* orchestrator.getCheckpointContext(thread.id);
+    const cwds = new Set(
+      checkpointScopes.flatMap((scope) =>
+        typeof scope.repositoryPath === "string" && tracked.has(scope.repositoryPath)
+          ? [scope.cwd]
+          : [],
+      ),
+    );
+    yield* Effect.forEach(
+      cwds,
+      (cwd) =>
+        Effect.gen(function* () {
+          const local = yield* git.localStatus({ cwd });
+          if (!local.isRepo || local.refName === null || local.isDefaultRef) return;
+          const detected = yield* git.branchPullRequest(
+            { cwd, branch: local.refName },
+            { refresh, confirmTerminal: false },
+          );
+          if (detected === null || detected.state !== "open") return;
+          const key = sourceControlDefinitions.parseChangeRequestUrl(detected.url)?.link;
+          // A link the user removed from a stack stays as a tombstone and is not added back.
+          if (
+            key === undefined ||
+            threadPullRequestsOf(thread).some((link) => threadPullRequestKeysEqual(link, key))
+          ) {
+            return;
+          }
+          const uuid = yield* random.uuidV4();
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`server:thread-repository-pull-request:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            host: key.host,
+            repository: key.repository,
+            number: key.number,
+            url: detected.url,
+            source: "created",
+          });
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("repository pull request lookup failed", {
+                threadId: thread.id,
+                cwd,
+                cause: Cause.pretty(cause),
+              }),
+          ),
+        ),
+      { concurrency: REPOSITORY_LOOKUP_CONCURRENCY, discard: true },
+    );
+  });
 
   const synchronize = Effect.fn("ThreadPullRequestServiceV2.synchronize")(function* (
     request: RefreshRequest,
@@ -400,6 +473,25 @@ export const make = Effect.gen(function* () {
       // Batch concurrent branch lookups into one GitHub GraphQL document.
       { concurrency: 32, discard: true },
     );
+
+    const requested =
+      request.threadId === null
+        ? undefined
+        : snapshotThreads.find((thread) => thread.id === request.threadId);
+    const requestedProject =
+      requested === undefined ? undefined : projects.get(requested.projectId);
+    if (requested !== undefined && requestedProject !== undefined) {
+      yield* linkRepositoryPullRequests(requested, requestedProject, request.refresh).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("repository pull request discovery failed", {
+              threadId: requested.id,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      );
+    }
     if (request.threadId === null) noPullRequestRechecks.retain(groups);
   });
 
