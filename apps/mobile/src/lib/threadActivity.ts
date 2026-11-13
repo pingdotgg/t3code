@@ -1711,6 +1711,7 @@ function groupConsecutiveNotificationRows(
     ) {
       const activities = members.map((member) => member.activities[0]!);
       const icons = new Set(activities.map((activity) => activity.icon));
+      const notifications = members.map((member) => notificationRowItem(member)!);
       const toggle: ThreadFeedEntry = {
         type: "work-toggle",
         id: `work-toggle:${groupId}`,
@@ -1719,10 +1720,10 @@ function groupConsecutiveNotificationRows(
         groupId,
         hiddenCount: activities.length,
         expanded,
-        summary: notificationGroupSummary(members.map((member) => notificationRowItem(member)!)),
+        summary: notificationGroupSummary(notifications),
         summaryKind: "other",
         notificationIcon: icons.size === 1 ? activities[0]!.icon : "zap",
-        hasFailure: false,
+        hasFailure: notifications.some((notification) => notification.outcome === "failed"),
         live: false,
         shimmer: false,
       };

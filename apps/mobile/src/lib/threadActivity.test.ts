@@ -1897,6 +1897,7 @@ describe("wake notification groups", () => {
       expanded: false,
       summary: "3 delegated tasks: 2 finished, 1 failed",
       notificationIcon: "hammer",
+      hasFailure: true,
     });
 
     const expanded = deriveThreadFeedPresentation(

@@ -1340,7 +1340,9 @@ export function ThreadWorkGroupToggle(props: {
   readonly trailing?: ReactNode;
   readonly onToggle: () => void;
 }) {
-  const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
+  const statusLabel = props.hasFailure
+    ? `${props.summary}, ${props.notificationIcon ? "notification" : "tool call"} failed`
+    : props.summary;
   const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
   const icon =
     props.summaryToolIcon ??
