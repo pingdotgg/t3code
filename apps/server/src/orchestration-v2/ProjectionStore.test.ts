@@ -4147,6 +4147,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           );
         }
         const rowReads = pageStatements.filter((statement) => !countsPositions(statement));
+        // A range over the thread's run index walks every item of the thread.
+        for (const [query, params] of rowReads) {
+          const plan = copy
+            .prepare(`EXPLAIN QUERY PLAN ${query}`)
+            .all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>))
+            .map((row) => String(row.detail));
+          assert.isFalse(
+            plan.some((detail) => detail.includes("thread_run_idx (thread_id=? AND run_id>?)")),
+            `${query}\n${plan.join("\n")}`,
+          );
+        }
         const rowReadSteps = () =>
           rowReads.reduce((steps, [query, params]) => {
             const statement = copy.prepare(query);
@@ -4632,11 +4643,32 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
             return steps + statement.stat("vmStep");
           }, 0);
+        // Settled runs below the window, each with an attempt, a provider turn and a checkpoint.
+        copy.exec(`
+          INSERT INTO orchestration_v2_projection_run_attempts (attempt_id, thread_id, run_id,
+            attempt_ordinal, root_node_id, provider, provider_thread_id, status, payload_json)
+          SELECT 'attempt:' || run_id, thread_id, run_id, 1, 'node:' || run_id, provider,
+            'provider-thread', 'completed', '{}' FROM orchestration_v2_projection_runs
+            WHERE thread_id = '${threadId}';
+          INSERT INTO orchestration_v2_projection_provider_turns (provider_turn_id, thread_id,
+            provider_thread_id, node_id, run_attempt_id, ordinal, status, payload_json)
+          SELECT 'turn:' || run_id, thread_id, 'provider-thread', 'node:' || run_id,
+            'attempt:' || run_id, ordinal, 'completed', '{}' FROM orchestration_v2_projection_runs
+            WHERE thread_id = '${threadId}';
+          INSERT INTO orchestration_v2_projection_checkpoints (checkpoint_id, thread_id, scope_id,
+            run_id, node_id, ordinal_within_scope, app_run_ordinal, status, captured_at, payload_json)
+          SELECT 'checkpoint:' || run_id, thread_id, 'scope', run_id, 'node:' || run_id, ordinal,
+            ordinal, 'ready', '', '{}' FROM orchestration_v2_projection_runs
+            WHERE thread_id = '${threadId}';`);
         const fullSteps = windowSteps();
         assert.isAbove(fullSteps, 0);
-        copy.exec(
-          "DELETE FROM orchestration_v2_projection_turn_items WHERE ordinal BETWEEN 2 AND 498",
-        );
+        copy.exec(`
+          DELETE FROM orchestration_v2_projection_turn_items WHERE ordinal BETWEEN 2 AND 498;
+          DELETE FROM orchestration_v2_projection_run_attempts WHERE run_id IN (
+            SELECT run_id FROM orchestration_v2_projection_runs WHERE ordinal BETWEEN 2 AND 498);
+          DELETE FROM orchestration_v2_projection_provider_turns WHERE ordinal BETWEEN 2 AND 498;
+          DELETE FROM orchestration_v2_projection_checkpoints WHERE app_run_ordinal BETWEEN 2 AND 498;
+          DELETE FROM orchestration_v2_projection_runs WHERE ordinal BETWEEN 2 AND 498;`);
         assert.isAtMost(fullSteps, windowSteps() * 1.1);
       }
       assert.deepEqual(
@@ -5592,6 +5624,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         wholeThreadReads(history.statements),
         1,
         `getThreadHistoryPage read the whole thread on each of ${historyPages} pages`,
+      );
+      // The same holds for the thread's runs and attempts: a page needs only those it spans.
+      const wholeThreadRunReads = history.statements.filter(
+        (statement) =>
+          /FROM orchestration_v2_projection_(runs|run_attempts)\s+WHERE thread_id = \?\s*(ORDER BY|$)/.test(
+            statement,
+          ) && !/\bLIMIT\b/.test(statement),
+      ).length;
+      assert.isAtMost(
+        wholeThreadRunReads,
+        2,
+        `getThreadHistoryPage re-read every run and attempt across ${historyPages} pages`,
       );
       assert.isAtMost(
         wholeThreadReads(timeline.statements),
