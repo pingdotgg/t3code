@@ -26,6 +26,8 @@ import {
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
   type ReviewBranchCommitsInput,
+  type ReviewRepositoriesInput,
+  type ReviewRepositoriesResult,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
@@ -3607,6 +3609,108 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const getReviewRepositories = Effect.fn("getReviewRepositories")(function* (
+    input: ReviewRepositoriesInput,
+  ) {
+    const root = yield* resolveRepositoryPathsUncached(input.cwd);
+    if (!root?.worktreeRoot) return { repositories: [], truncated: false };
+    const canonicalRoot = yield* fileSystem
+      .realPath(root.worktreeRoot)
+      .pipe(Effect.orElseSucceed(() => root.worktreeRoot!));
+    const canonicalWorkspace = yield* fileSystem
+      .realPath(input.cwd)
+      .pipe(Effect.orElseSucceed(() => path.resolve(input.cwd)));
+    const withinRoot = (candidate: string) => {
+      const relative = path.relative(canonicalWorkspace, candidate);
+      return (
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+      );
+    };
+    const repositories: Array<ReviewRepositoriesResult["repositories"][number]> = [];
+    const seen = new Set<string>();
+    let pending = [canonicalRoot];
+    let truncated = false;
+    // Discovery is separate from diff/status refreshes and bounded for large umbrellas.
+    while (pending.length > 0) {
+      const batch = pending.splice(0, 8);
+      const found = yield* Effect.forEach(
+        batch,
+        (candidate) =>
+          Effect.gen(function* () {
+            const real = yield* fileSystem
+              .realPath(candidate)
+              .pipe(Effect.orElseSucceed(() => null));
+            if (!real || (real !== canonicalRoot && !withinRoot(real)) || seen.has(real))
+              return null;
+            seen.add(real);
+            const stat = yield* fileSystem.stat(real).pipe(Effect.orElseSucceed(() => null));
+            if (stat?.type !== "Directory") return null;
+            const repo = yield* resolveRepositoryPathsUncached(real);
+            if (!repo?.worktreeRoot) return null;
+            const actualRoot = yield* fileSystem
+              .realPath(repo.worktreeRoot)
+              .pipe(Effect.orElseSucceed(() => null));
+            // Git otherwise walks out of an uninitialized module into its parent repository.
+            if (actualRoot !== real) return null;
+            const manifest = yield* executeGit(
+              "GitVcsDriver.review.repositories",
+              real,
+              ["config", "-z", "--file=.gitmodules", "--get-regexp", "^submodule\\..*\\.path$"],
+              { allowNonZeroExit: true, maxOutputBytes: 1024 * 1024 },
+            );
+            const children =
+              manifest.exitCode === 0
+                ? manifest.stdout.split("\0").flatMap((record) => {
+                    const separator = record.indexOf("\n");
+                    if (separator < 0) return [];
+                    const relative = record.slice(separator + 1);
+                    if (!relative || path.isAbsolute(relative)) return [];
+                    const child = path.resolve(real, relative);
+                    const local = path.relative(real, child);
+                    return local &&
+                      local !== ".." &&
+                      !local.startsWith(`..${path.sep}`) &&
+                      withinRoot(child)
+                      ? [child]
+                      : [];
+                  })
+                : [];
+            return {
+              repository: {
+                cwd:
+                  real === canonicalRoot
+                    ? input.cwd
+                    : path.resolve(input.cwd, path.relative(canonicalWorkspace, real)),
+                path:
+                  real === canonicalRoot
+                    ? ""
+                    : path.relative(canonicalWorkspace, real).split(path.sep).join("/"),
+                name: path.basename(real) || "Repository",
+                branch: repo.currentBranch,
+              },
+              children,
+            };
+          }).pipe(
+            Effect.catchCause((cause) =>
+              candidate === canonicalRoot ? Effect.failCause(cause) : Effect.succeed(null),
+            ),
+          ),
+        { concurrency: 8 },
+      );
+      for (const item of found) {
+        if (!item) continue;
+        repositories.push(item.repository);
+        pending.push(...new Set(item.children.filter((child) => !seen.has(child))));
+      }
+      if (seen.size + pending.length > 256) {
+        pending = pending.slice(0, Math.max(0, 256 - seen.size));
+        truncated = true;
+      }
+    }
+    return { repositories: repositories.sort((a, b) => a.path.localeCompare(b.path)), truncated };
+  });
+
   const getReviewBranchCommits = Effect.fn("getReviewBranchCommits")(function* (
     input: ReviewBranchCommitsInput,
   ) {
@@ -5495,6 +5599,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* withListRefsInvalidation(cwd, pullCurrentBranch(cwd));
     }),
     readRangeContext,
+    getReviewRepositories,
     getReviewBranchCommits,
     getReviewDiffPreview,
     getReviewDiffFileContents,

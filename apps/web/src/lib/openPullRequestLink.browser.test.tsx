@@ -75,6 +75,7 @@ function setup() {
   });
   useDiffPanelStore.setState({
     byThreadKey: {},
+    repositoryCwdByThreadKey: {},
     branchBaseRefByThreadKey: {},
   });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
@@ -139,21 +140,48 @@ it.each(["system", "app"] as const)(
   },
 );
 
-it("opens an available commit in the closed Diff pane without the pane resetting it", async () => {
-  setup();
-  const sha = "a".repeat(40);
-  state.preview.mockResolvedValue(
-    AsyncResult.success({ sources: [{ kind: "commit", headRef: sha }] }),
-  );
-  await using screen = await render(
-    <AppAtomRegistryProvider>
-      <CommitLink />
-    </AppAtomRegistryProvider>,
-  );
-  await screen.getByRole("link", { name: "Commit" }).click();
-  await vi.waitFor(() =>
-    expect(useDiffPanelStore.getState().byThreadKey).toEqual({
-      [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
-    }),
-  );
-});
+it.each(
+  [false, true].flatMap((diffOpen) =>
+    ["child", "parent", "default"].map((repository) => ({ diffOpen, repository })),
+  ),
+)(
+  "opens a linked parent commit with $repository selected and diffOpen=$diffOpen",
+  async ({ diffOpen, repository }) => {
+    setup();
+    if (repository !== "default")
+      useDiffPanelStore
+        .getState()
+        .selectRepository(threadRef, repository === "child" ? "/repo/auth" : "/repo");
+    const expectedBase = repository === "child" ? null : "origin/develop";
+    useDiffPanelStore
+      .getState()
+      .selectBranchBaseRef(
+        threadRef,
+        repository === "child" ? "child-only-branch" : "origin/develop",
+      );
+    if (diffOpen) useRightPanelStore.getState().open(threadRef, "diff");
+    const sha = "a".repeat(40);
+    state.preview.mockResolvedValue(
+      AsyncResult.success({ sources: [{ kind: "commit", headRef: sha }] }),
+    );
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <CommitLink />
+      </AppAtomRegistryProvider>,
+    );
+    await screen.getByRole("link", { name: "Commit" }).click();
+    await vi.waitFor(() =>
+      expect(useDiffPanelStore.getState().byThreadKey).toEqual({
+        [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: expectedBase },
+      }),
+    );
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(threadRef)]).toBe(
+      repository === "parent" ? "/repo" : undefined,
+    );
+    useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
+    expect(useDiffPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]).toEqual({
+      kind: "branch",
+      baseRef: expectedBase,
+    });
+  },
+);

@@ -20,6 +20,17 @@ commit links follow your **Open links in** setting; on web, when that opens a ne
 shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
 setting in **Settings → Diffs**.
 
+## Review a submodule
+
+The Diff pane starts with the thread's repository. Its changes include submodule commit
+pointers, as in Git. Use the repository picker to review an initialized submodule, including
+nested submodules, without opening another project. Detached checkouts appear as HEAD.
+
+Changes, Uncommitted, commit lists and comparison branches use the selected repository.
+Switching repositories resets the comparison branch to Automatic. File paths are relative to
+the selected repository. Turn diffs still show the thread's checkpoints and do not capture
+uncommitted contents inside submodules. Initialize a submodule with Git before selecting it.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

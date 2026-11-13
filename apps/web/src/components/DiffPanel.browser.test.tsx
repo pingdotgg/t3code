@@ -7,6 +7,7 @@ import {
   ThreadId,
   type ClientSettings,
   type ReviewBranchCommitsResult,
+  type ReviewRepositoriesResult,
   type ReviewDiffPreviewResult,
   type ReviewDiffPreviewSource,
   type ScopedThreadRef,
@@ -34,6 +35,7 @@ const state = vi.hoisted(() => ({
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
+  repositories: null as unknown as ResultAtom<ReviewRepositoriesResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
 }));
 
@@ -44,6 +46,7 @@ vi.mock("~/state/review", () => ({
   reviewEnvironment: {
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>
       state.previews.get(input.baseRef ?? null)!,
+    repositories: () => state.repositories,
     branchCommits: () => state.commits,
     diffFilePatch: () => state.patch,
     diffFileContents: {},
@@ -121,6 +124,7 @@ function setup(failedBaseRef: string | null) {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      repositoryCwdByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   };
@@ -145,6 +149,7 @@ function setup(failedBaseRef: string | null) {
   state.previews.set(null, Atom.make(AsyncResult.success(preview())));
   state.previews.set("main", Atom.make(AsyncResult.success(preview())));
   state.previews.set(failedBaseRef, Atom.make(AsyncResult.fail(new Error(errorMessage))));
+  state.repositories = Atom.make(AsyncResult.success({ repositories: [], truncated: false }));
   state.config = Atom.make(null);
   state.status = Atom.make(
     AsyncResult.success({
@@ -267,3 +272,34 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("keeps the loading state while a saved repository is still being discovered", async () => {
+  using context = setup(null);
+  state.repositories = Atom.make(AsyncResult.initial(true));
+  useDiffPanelStore.getState().selectRepository(context.threadRef, `${cwd}/packages/auth`);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByRole("status", { name: "Loading changes..." })).toBeVisible();
+});
+
+it("shows a failed repository discovery instead of the workspace diff", async () => {
+  using context = setup(null);
+  state.repositories = Atom.make(AsyncResult.fail(new Error("discovery failed")));
+  useDiffPanelStore.getState().selectRepository(context.threadRef, `${cwd}/packages/auth`);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText("discovery failed", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Review the thread's repository" }));
+  await expect
+    .element(screen.getByText("discovery failed", { exact: true }))
+    .not.toBeInTheDocument();
+  expect(
+    useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(context.threadRef)],
+  ).toBeUndefined();
+});

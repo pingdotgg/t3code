@@ -79,11 +79,13 @@ function view(
   files: ReturnType<typeof file>[],
   codeViewKey = "initial",
   pendingFiles: FileDiffMetadata[] = [],
+  filePathPrefix = "",
 ) {
   return (
     <StrictMode>
       <AnnotatableCodeView
         codeViewKey={codeViewKey}
+        filePathPrefix={filePathPrefix}
         files={files}
         pendingFiles={pendingFiles}
         sectionId="unstaged"
@@ -130,34 +132,47 @@ function setup(): Disposable {
 }
 
 describe("diff comment drafts", () => {
-  it("keeps the text and selected line through refresh and a provisional lazy patch", async () => {
-    using _drafts = setup();
-    const original = file("shared.ts", 1, "rename-pure", "old.ts");
-    await using screen = await render(view([original]), { container });
-    await click("Comment on shared.ts");
-    await typeComment("Keep this draft");
-    const refreshed = file("shared.ts", 2, "rename-pure", "old.ts");
-    await screen.rerender(view([refreshed], "refreshed"));
-    expect(editor().value).toBe("Keep this draft");
-    expect(container.querySelector("mark")?.textContent).toBe("Line 1");
+  it.each(["", "packages/auth"])(
+    "keeps a comment through lazy refresh with repository prefix %j",
+    async (prefix) => {
+      using _drafts = setup();
+      const original = file("shared.ts", 1, "rename-pure", "old.ts");
+      await using screen = await render(view([original], "initial", [], prefix), { container });
+      await click("Comment on shared.ts");
+      await typeComment("Keep this draft");
+      const refreshed = file("shared.ts", 2, "rename-pure", "old.ts");
+      await screen.rerender(view([refreshed], "refreshed", [], prefix));
+      expect(editor().value).toBe("Keep this draft");
+      expect(container.querySelector("mark")?.textContent).toBe("Line 1");
 
-    await screen.rerender(
-      view([], "loading", [
-        { ...refreshed.fileDiff, type: "rename-changed", hunks: [], cacheKey: "shared:pending" },
-      ]),
-    );
-    expect(container.querySelector("textarea")).toBeNull();
-    await screen.rerender(view([refreshed], "loaded"));
-    expect(editor().value).toBe("Keep this draft");
-    expect(container.querySelector("mark")?.textContent).toBe("Line 1");
-    await click("Comment");
-    expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
-      expect.objectContaining({
-        filePath: "shared.ts",
-        text: "Keep this draft",
-        selection: { ...range, endSide: "additions" },
-      }),
-    ]);
-    expect(container.querySelector("p")?.textContent).toBe("Keep this draft");
-  });
+      await screen.rerender(
+        view(
+          [],
+          "loading",
+          [
+            {
+              ...refreshed.fileDiff,
+              type: "rename-changed",
+              hunks: [],
+              cacheKey: "shared:pending",
+            },
+          ],
+          prefix,
+        ),
+      );
+      expect(container.querySelector("textarea")).toBeNull();
+      await screen.rerender(view([refreshed], "loaded", [], prefix));
+      expect(editor().value).toBe("Keep this draft");
+      expect(container.querySelector("mark")?.textContent).toBe("Line 1");
+      await click("Comment");
+      expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
+        expect.objectContaining({
+          filePath: prefix ? prefix + "/shared.ts" : "shared.ts",
+          text: "Keep this draft",
+          selection: { ...range, endSide: "additions" },
+        }),
+      ]);
+      expect(container.querySelector("p")?.textContent).toBe("Keep this draft");
+    },
+  );
 });

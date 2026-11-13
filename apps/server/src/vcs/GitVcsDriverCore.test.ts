@@ -2485,6 +2485,132 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("lists initialized repositories and keeps each review inside its repository", () =>
+      withGitFileProtocol(
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const upstream = yield* makeTmpDir();
+          const nested = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* initRepoWithCommit(upstream);
+          yield* initRepoWithCommit(nested);
+          yield* git(upstream, ["submodule", "add", nested, "vendor/schema"]);
+          yield* git(upstream, ["commit", "-am", "Add schema"]);
+          yield* git(cwd, ["submodule", "add", upstream, "packages/auth service"]);
+          yield* git(cwd, ["submodule", "add", nested, "uninitialized"]);
+          yield* git(cwd, ["commit", "-am", "Add modules"]);
+          yield* git(cwd, ["submodule", "update", "--init", "--recursive"]);
+          yield* git(cwd, ["submodule", "deinit", "-f", "--", "uninitialized"]);
+          const child = NodePath.join(cwd, "packages/auth service");
+          yield* git(child, ["config", "user.email", "test@test.com"]);
+          yield* git(child, ["config", "user.name", "Test"]);
+          yield* writeTextFile(child, "committed.txt", "child commit\n");
+          yield* git(child, ["add", "committed.txt"]);
+          yield* git(child, ["commit", "-m", "Child change"]);
+          yield* git(child, ["checkout", "-b", "feature/auth"]);
+          yield* writeTextFile(child, "README.md", "# changed auth\n");
+          yield* writeTextFile(cwd, "README.md", "# changed parent\n");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const repos = yield* driver.getReviewRepositories({ cwd });
+          assert.deepStrictEqual(
+            repos.repositories.map(({ path, branch }) => ({ path, branch })),
+            [
+              { path: "", branch: initialBranch },
+              { path: "packages/auth service", branch: "feature/auth" },
+              { path: "packages/auth service/vendor/schema", branch: null },
+            ],
+          );
+          assert.isFalse(repos.truncated);
+          yield* git(cwd, [
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.duplicate.path",
+            "./packages/auth service",
+          ]);
+          yield* git(cwd, [
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.trailing.path",
+            "packages/auth service/",
+          ]);
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
+          const subdirectory = NodePath.join(cwd, "packages");
+          const scoped = yield* driver.getReviewRepositories({ cwd: subdirectory });
+          assert.equal(scoped.repositories[0]!.cwd, subdirectory);
+          assert.deepStrictEqual(
+            scoped.repositories.map((repo) => repo.path),
+            ["", "auth service", "auth service/vendor/schema"],
+          );
+          yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.file.path", "README.md"]);
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
+          const commits = yield* driver.getReviewBranchCommits({ cwd: child, baseRef: "HEAD~1" });
+          assert.equal(commits.commits.length, 1);
+          assert.equal(commits.commits[0]!.subject, "Child change");
+          const committed = (yield* driver.getReviewDiffPreview({
+            cwd: child,
+            commitSha: commits.commits[0]!.sha,
+          })).sources[0]!;
+          assert.deepStrictEqual(
+            committed.files?.map((file) => file.path),
+            ["committed.txt"],
+          );
+          assert.include(committed.diff, "+child commit");
+          const parent = (yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" }))
+            .sources[0]!;
+          assert.include(parent.diff, "Subproject commit");
+          assert.notInclude(parent.diff, "changed auth");
+          const auth = (yield* driver.getReviewDiffPreview({
+            cwd: child,
+            sourceKind: "working-tree",
+          })).sources[0]!;
+          assert.include(auth.diff, "+# changed auth");
+          assert.notInclude(auth.diff, "changed parent");
+          assert.deepStrictEqual(
+            auth.files?.map((file) => file.path),
+            ["README.md"],
+          );
+          const file = yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(child),
+          );
+          assert.equal(file.newContents, "# changed auth\n");
+          const fs = yield* FileSystem.FileSystem;
+          if ((yield* HostProcess.Platform) !== "win32") {
+            const locked = NodePath.join(cwd, "locked");
+            yield* fs.makeDirectory(locked);
+            yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.locked.path", "locked"]);
+            yield* fs.chmod(locked, 0);
+            const result = yield* driver
+              .getReviewRepositories({ cwd })
+              .pipe(Effect.ensuring(fs.chmod(locked, 0o755).pipe(Effect.orDie)));
+            assert.deepStrictEqual(result.repositories, repos.repositories);
+          }
+          // A hostile manifest must not turn discovery into an arbitrary filesystem scan.
+          yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.escape.path", upstream]);
+          yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.parent.path", ".."]);
+          if (symlinksSupported) {
+            const alias = NodePath.join(yield* makeTmpDir(), "alias");
+            yield* fs.symlink(subdirectory, alias);
+            const throughAlias = yield* driver.getReviewRepositories({ cwd: alias });
+            assert.equal(throughAlias.repositories[0]!.cwd, alias);
+            assert.equal(throughAlias.repositories[1]!.cwd, NodePath.join(alias, "auth service"));
+            yield* fs.symlink(upstream, NodePath.join(cwd, "escape-link"));
+            yield* git(cwd, ["config", "-f", ".gitmodules", "submodule.link.path", "escape-link"]);
+          }
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
+        }),
+      ),
+    );
     it.effect("diffs a root commit against the empty tree but rejects a shallow boundary", () =>
       Effect.gen(function* () {
         const upstream = yield* makeTmpDir();

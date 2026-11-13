@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, TurnItemId, RunId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -10,10 +10,57 @@ import {
 } from "./diffPanelStore";
 
 describe("diffPanelStore", () => {
+  it("resets repository-specific refs and commits when changing repositories", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const other = { ...ref, environmentId: EnvironmentId.make("remote") };
+    const key = scopedThreadKey(ref);
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "parent-only-branch");
+    store.selectCommit(ref, "parent-commit");
+    store.selectRepository(ref, "/project/auth");
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBe("/project/auth");
+    expect(
+      useDiffPanelStore.getState().repositoryCwdByThreadKey[scopedThreadKey(other)],
+    ).toBeUndefined();
+    store.selectGitScope(ref, "unstaged");
+    store.selectRepository(ref, "/project/ui");
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({ kind: "unstaged" });
+    store.selectBranchBaseRef(ref, "child-only-branch");
+    store.clearRepository(ref);
+    store.selectCommit(ref, "linked-parent-commit");
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual({
+      kind: "commit",
+      sha: "linked-parent-commit",
+      baseRef: null,
+    });
+    store.selectRepository(ref, "/project/auth");
+    store.selectTurn(ref, RunId.make("turn"), "file.ts");
+    const turn = useDiffPanelStore.getState().byThreadKey[key];
+    store.clearRepository(ref);
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual(turn);
+    store.selectRepository(ref, "/project/auth");
+    store.selectToolCall(ref, {
+      threadId: ThreadId.make("child"),
+      itemId: TurnItemId.make("edit"),
+      revision: "1",
+    });
+    const tool = useDiffPanelStore.getState().byThreadKey[key];
+    store.clearRepository(ref);
+    expect(useDiffPanelStore.getState().byThreadKey[key]).toEqual(tool);
+    store.selectRepository(ref, "/project/auth");
+    store.removeThread(ref);
+    expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBeUndefined();
+  });
   beforeEach(() => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      repositoryCwdByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   });

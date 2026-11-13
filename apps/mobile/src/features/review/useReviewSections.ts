@@ -1,3 +1,5 @@
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { Atom } from "effect/reactivity";
@@ -53,17 +55,46 @@ export function useReviewSections(input: {
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const [repositoryChoice, setRepositoryChoice] = useState<{
+    threadKey: string | null;
+    cwd: string;
+  } | null>(null);
+  const repositoriesQuery = useEnvironmentQuery(
+    canReadFiles && enabled && environmentId && selectedThreadCwd
+      ? reviewEnvironment.repositories({ environmentId, input: { cwd: selectedThreadCwd } })
+      : null,
+  );
+  const { selectedThreadProject } = useThreadSelection();
+  const repositories = (repositoriesQuery.data?.repositories ?? []).map((repo) =>
+    repo.path ? repo : { ...repo, name: selectedThreadProject?.title || repo.name },
+  );
+  const selectedRepository =
+    repositories.find(
+      (repo) =>
+        repositoryChoice?.threadKey === reviewCache.threadKey && repo.cwd === repositoryChoice.cwd,
+    ) ?? repositories[0];
+  // A chosen child stays unresolved while discovery has no answer, so its review never shows the parent.
+  const repositoryUnresolved =
+    repositoryChoice?.threadKey === reviewCache.threadKey &&
+    repositoryChoice.cwd !== selectedThreadCwd &&
+    !repositoriesQuery.data;
+  const reviewCwd = repositoryUnresolved
+    ? null
+    : selectedRepository?.path
+      ? selectedRepository.cwd
+      : selectedThreadCwd;
+  const repositoryPath = selectedRepository?.path ?? "";
   const diffPreview = useEnvironmentQuery(
-    canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
+    canReadFiles && enabled && environmentId !== undefined && reviewCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: reviewCwd },
         })
       : null,
   );
   const lastGitSections = useAtomValue(
-    environmentId !== undefined && selectedThreadCwd !== null
-      ? lastReviewGitSectionsAtom(environmentId, selectedThreadCwd)
+    environmentId !== undefined && reviewCwd !== null
+      ? lastReviewGitSectionsAtom(environmentId, reviewCwd)
       : NO_GIT_SECTIONS_ATOM,
   );
 
@@ -87,6 +118,7 @@ export function useReviewSections(input: {
       canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
     turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
     loadingGitSections: fileAccess.isPending || diffPreview.isPending,
+    repositoryPath,
   });
   const selectedSectionId = resolveReviewSelectedSectionId(
     cachedSections,
@@ -124,15 +156,21 @@ export function useReviewSections(input: {
   const selectedSection =
     reviewSections.find((section) => section.id === selectedSectionId) ?? null;
 
+  // With a child unresolved there are no Git sections, so a turn can be selected only as a fallback.
+  const repositoryFailureVisible =
+    repositoryUnresolved &&
+    !(selectedSection?.kind === "turn" && reviewCache.selectedSectionId === selectedSection.id);
+
   const refreshSelectedSection = async () => {
     if (!enabled) {
       return;
     }
     if (selectedSection?.kind === "turn") {
       activeTurnDiff.refresh();
-      return;
+      if (!repositoryFailureVisible) return;
     }
     diffPreview.refresh();
+    repositoriesQuery.refresh();
   };
 
   const selectSection = (sectionId: string) => {
@@ -141,8 +179,21 @@ export function useReviewSections(input: {
     }
   };
 
+  const selectRepository = (cwd: string) => {
+    if (!repositories.some((repo) => repo.cwd === cwd)) return;
+    if (selectedRepository?.cwd === cwd) return;
+    setRepositoryChoice({ threadKey: reviewCache.threadKey, cwd });
+    if (reviewCache.threadKey) setReviewSelectedSectionId(reviewCache.threadKey, null);
+  };
+
   return {
+    repositories,
+    selectedRepository,
+    selectRepository,
+    reviewCwd: selectedSection?.kind === "turn" ? selectedThreadCwd : reviewCwd,
+    repositoryPath: selectedSection?.kind === "turn" ? "" : repositoryPath,
     error:
+      (repositoryFailureVisible ? repositoriesQuery.error : null) ??
       diffPreview.error ??
       activeTurnDiff.error ??
       (selectedSection === null && !fileAccess.isPending && !canReadFiles

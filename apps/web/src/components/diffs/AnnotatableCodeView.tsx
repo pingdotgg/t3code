@@ -83,6 +83,7 @@ interface AnnotatableCodeViewProps {
     collapsed: boolean;
   }>;
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
+  filePathPrefix?: string | undefined;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -110,6 +111,7 @@ export function AnnotatableCodeView({
   environmentId,
   projectId,
   codeViewKey,
+  filePathPrefix,
   files,
   pendingFiles,
   sectionId,
@@ -143,6 +145,8 @@ export function AnnotatableCodeView({
   } | null>(null);
   const [draftText, setDraftText] = useState("");
 
+  const commentPath = (filePath: string) =>
+    filePathPrefix ? filePathPrefix + "/" + filePath : filePath;
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
     draft !== null &&
@@ -164,7 +168,7 @@ export function AnnotatableCodeView({
         .filter(
           (comment) =>
             comment.sectionId === sectionId &&
-            comment.filePath === filePath &&
+            comment.filePath === commentPath(filePath) &&
             (comment.fenceLanguage ?? "diff") === "diff",
         )
         .reduce<DiffCommentLineAnnotation[]>((annotations, comment) => {
@@ -216,7 +220,7 @@ export function AnnotatableCodeView({
       id: entry.id,
       sectionId,
       sectionTitle,
-      filePath: file.filePath,
+      filePath: commentPath(file.filePath),
       fileDiff: file.fileDiff,
       range: entry.range,
       text,
@@ -237,7 +241,7 @@ export function AnnotatableCodeView({
       id,
       sectionId,
       sectionTitle,
-      filePath,
+      filePath: commentPath(filePath),
       fileDiff: item.fileDiff,
       range,
       text: "",

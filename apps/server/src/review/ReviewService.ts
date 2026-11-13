@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import {
   VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
+  type ReviewRepositoriesInput,
+  type ReviewRepositoriesResult,
   type ReviewBranchCommitsInput,
   type ReviewBranchCommitsResult,
   type ReviewDiffFileContentsInput,
@@ -23,6 +25,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 
 const WORKSPACE_BOUND_SUBJECTS = {
+  "ReviewService.getRepositories": "repository list",
   "ReviewService.getBranchCommits": "commit list",
   "ReviewService.getDiffPreview": "diff preview",
   "ReviewService.getDiffFileContents": "diff file contents",
@@ -31,6 +34,9 @@ const WORKSPACE_BOUND_SUBJECTS = {
 export class ReviewService extends Context.Service<
   ReviewService,
   {
+    readonly getRepositories: (
+      input: ReviewRepositoriesInput,
+    ) => Effect.Effect<ReviewRepositoriesResult, ReviewDiffPreviewError>;
     readonly getBranchCommits: (
       input: ReviewBranchCommitsInput,
     ) => Effect.Effect<ReviewBranchCommitsResult, ReviewDiffPreviewError>;
@@ -93,6 +99,15 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const getRepositories: ReviewService["Service"]["getRepositories"] = Effect.fn(
+    "ReviewService.getRepositories",
+  )(function* (input) {
+    yield* assertWorkspaceBoundCwd("ReviewService.getRepositories", input.cwd);
+    const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
+    if (handle?.kind !== "git") return { repositories: [], truncated: false };
+    return yield* git.getReviewRepositories(input);
+  });
+
   const getBranchCommits: ReviewService["Service"]["getBranchCommits"] = Effect.fn(
     "ReviewService.getBranchCommits",
   )(function* (input) {
@@ -145,6 +160,7 @@ export const make = Effect.gen(function* () {
   });
 
   return ReviewService.of({
+    getRepositories,
     getBranchCommits,
     getDiffPreview,
     getDiffFileContents,
