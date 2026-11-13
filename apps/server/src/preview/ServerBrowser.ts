@@ -817,10 +817,7 @@ const make = Effect.gen(function* () {
     if (inPanel(tab)) return;
     const size = tab.page.viewportSize();
     if (!size) return;
-    if (tab.zoomFactor === 1) {
-      await tab.page.setViewportSize(size);
-      return;
-    }
+    // Playwright skips a size it already set, so 100% must replace the zoomed override itself.
     const layout = (await layoutSize(tab))!;
     await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
       width: layout.width,
@@ -2951,6 +2948,7 @@ const make = Effect.gen(function* () {
         const current = tab.page.viewportSize();
         if (current?.width === width && current.height === height) return;
         await tab.page.setViewportSize({ width, height });
+        await applyZoom(tab);
         await broadcastViewport(tab);
         return;
       }

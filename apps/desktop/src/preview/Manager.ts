@@ -69,6 +69,7 @@ import {
   PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
 } from "../ipc/channels.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import { PASSKEY_BRIDGE_ARGUMENT } from "./GuestProtocol.ts";
@@ -577,6 +578,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -1785,17 +1787,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     background: PreviewBackgroundTab,
   ) {
-    const window = yield* attempt(
-      { operation: "backgroundWindow.create", tabId },
-      () =>
-        new BrowserWindow(
-          backgroundTabWindowOptions({
-            partition: background.partition,
-            preload: guestPreloadPath,
-            passkeyBridgeArgument: passkeys.bridgeEnabled ? PASSKEY_BRIDGE_ARGUMENT : undefined,
-          }),
+    // Auxiliary, so activating the app never picks it as the main window.
+    const window = yield* electronWindow
+      .create(
+        backgroundTabWindowOptions({
+          partition: background.partition,
+          preload: guestPreloadPath,
+          passkeyBridgeArgument: passkeys.bridgeEnabled ? PASSKEY_BRIDGE_ARGUMENT : undefined,
+        }),
+        { auxiliary: true },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreviewOperationError({ operation: "backgroundWindow.create", tabId, cause }),
         ),
-    );
+      );
     backgroundWindows.set(tabId, window);
     const wc = window.webContents;
     window.once("closed", () => {

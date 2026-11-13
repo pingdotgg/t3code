@@ -85,6 +85,7 @@ async function main() {
     return;
   }
   console.log("Background preview tabs paint while the app window is hidden or minimized.");
+  NodeFS.writeFileSync(process.env.T3_BACKGROUND_PREVIEW_DONE, "ok");
   app.exit(0);
 }
 

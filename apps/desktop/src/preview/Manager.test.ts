@@ -242,6 +242,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
       }),
     ),
     Layer.provideMerge(DesktopBrowserHost.layer),
+    Layer.provideMerge(ElectronWindow.layer),
     Layer.provideMerge(layerBrowserSession),
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
@@ -622,6 +623,7 @@ describe("PreviewManager", () => {
                 agentLedPage: () => false,
                 placeDownload: () => true,
               }),
+              ElectronWindow.layer,
               Layer.mock(PreviewPasskeys.PreviewPasskeys)({
                 bridgeEnabled: false,
                 installSessionHandlers: () => {},
