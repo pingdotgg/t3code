@@ -48,7 +48,7 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-const runtimePaths = (baseDir: string, version: string) => {
+export const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const executableName = process.platform === "win32" ? "t3.exe" : "t3";
@@ -64,16 +64,16 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   args: ["serve"],
 });
 
-const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
-const RESTORE_MARKER = ".restore-pending";
+export const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
+export const RESTORE_MARKER = ".restore-pending";
 
-const databaseBackupDir = (baseDir: string, updateId: string) =>
+export const databaseBackupDir = (baseDir: string, updateId: string) =>
   NodePath.join(baseDir, "runtime", "db-backup", updateId);
 
-const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
+export const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
 
-async function pathExists(target: string): Promise<boolean> {
+export async function pathExists(target: string): Promise<boolean> {
   try {
     await NodeFSP.access(target);
     return true;
@@ -114,7 +114,7 @@ export async function readServiceEnvironment(
 }
 
 // Opened read-write: Windows refuses to flush a handle without write access.
-async function syncFile(filePath: string): Promise<void> {
+export async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
   try {
     await handle.sync();
@@ -124,7 +124,7 @@ async function syncFile(filePath: string): Promise<void> {
 }
 
 // Fsync makes renames durable; Windows returns EPERM and NTFS journals them itself.
-async function syncDirectory(directory: string): Promise<void> {
+export async function syncDirectory(directory: string): Promise<void> {
   const handle = await NodeFSP.open(directory, "r");
   try {
     await handle.sync();
@@ -142,7 +142,7 @@ function runCp(args: ReadonlyArray<string>): Promise<boolean> {
 }
 
 // macOS fs.copyFile clone flags fall back to full copies.
-async function copyDatabaseFile(source: string, destination: string): Promise<void> {
+export async function copyDatabaseFile(source: string, destination: string): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
   // cp -c replaces files and breaks hard links; copy into hard-linked destinations instead.
@@ -278,123 +278,11 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   }
 }
 
-const restoreMarkerPath = (baseDir: string, updateId: string) =>
+export const restoreMarkerPath = (baseDir: string, updateId: string) =>
   NodePath.join(databaseBackupDir(baseDir, updateId), RESTORE_MARKER);
 
-const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
-  pathExists(restoreMarkerPath(baseDir, pending.id));
-
-// Mark before live writes so recovery cannot boot a partial restore.
-async function markDatabaseRestorePending(backupDir: string): Promise<void> {
-  const markerPath = NodePath.join(backupDir, RESTORE_MARKER);
-  if (!(await pathExists(markerPath))) {
-    const handle = await NodeFSP.open(markerPath, "wx", 0o600);
-    try {
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await syncDirectory(backupDir);
-  }
-}
-
-// Resolve symlink targets even if a crashed cp -c left the final target missing.
-async function restoreTarget(path: string): Promise<string> {
-  let current = path;
-  for (let hops = 0; hops < 40; hops++) {
-    try {
-      return await NodeFSP.realpath(current);
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-    }
-    const link = await NodeFSP.readlink(current).catch((cause: unknown) => {
-      const code = (cause as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "EINVAL") return undefined;
-      throw cause;
-    });
-    if (link === undefined) return current;
-    // Do not normalize .. before following directory symlinks; match filesystem resolution.
-    current = NodePath.isAbsolute(link)
-      ? link
-      : `${await NodeFSP.realpath(NodePath.dirname(current))}${NodePath.sep}${link}`;
-  }
-  throw new Error(`Too many symbolic links resolving ${path}.`);
-}
-
-async function restoreDatabaseBackup(
-  baseDir: string,
-  pending: PendingServiceUpdate,
-): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
-
-  await markDatabaseRestorePending(backupDir);
-  const directories = new Set([NodePath.dirname(pending.dbPath)]);
-  for (const suffix of DB_FILE_SUFFIXES) {
-    const livePath = `${pending.dbPath}${suffix}`;
-    const source = databaseBackupFile(backupDir, suffix);
-    if (await pathExists(source)) {
-      // Restore into the symlink target; cloning would replace the link.
-      const target = await restoreTarget(livePath);
-      await copyDatabaseFile(source, target);
-      await syncFile(target);
-      directories.add(NodePath.dirname(target));
-    } else {
-      await NodeFSP.rm(livePath, { force: true });
-    }
-  }
-  for (const directory of directories) await syncDirectory(directory);
-}
-
-async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, updateId);
-  if (!(await pathExists(backupDir))) return;
-  await NodeFSP.rm(backupDir, { recursive: true, force: true });
-  await syncDirectory(NodePath.dirname(backupDir));
-}
-
-export async function readServiceState(filePath: string): Promise<ServiceState> {
-  const contents = await NodeFSP.readFile(filePath, "utf8");
-  const state = parseServiceState(contents);
-  if (state === undefined) throw new Error("Service state is invalid or unsupported.");
-  return state;
-}
-
-export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
-  const directory = NodePath.dirname(filePath);
-  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
-  const tempPath = NodePath.join(
-    directory,
-    `.${NodePath.basename(filePath)}.${process.pid}.${NodeCrypto.randomUUID()}`,
-  );
-  let handle: NodeFSP.FileHandle | undefined;
-  try {
-    handle = await NodeFSP.open(tempPath, "wx", 0o600);
-    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await NodeFSP.rename(tempPath, filePath);
-    await syncDirectory(directory);
-  } finally {
-    await handle?.close().catch(() => undefined);
-    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
-  }
-}
-
-async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
-  const paths = runtimePaths(baseDir, version);
-  try {
-    const [entry, sentinel] = await Promise.all([
-      NodeFSP.stat(paths.entryPath),
-      NodeFSP.readFile(paths.sentinelPath, "utf8"),
-    ]);
-    return entry.isFile() && sentinel.trim() === version;
-  } catch {
-    return false;
-  }
-}
-
+import { databaseRestorePending, discardDatabaseBackup, markDatabaseRestorePending, readServiceState, restoreDatabaseBackup, runtimeExists, writeServiceState } from "./serviceLauncherRestore.ts";
+export * from "./serviceLauncherRestore.ts";
 function terminalUpdate<S extends TerminalStatus>(input: {
   readonly pending: PendingServiceUpdate;
   readonly status: S;
@@ -839,3 +727,5 @@ export async function main(): Promise<void> {
   const state = await readServiceState(statePath);
   await new Launcher(baseDir, state, { environment }).run();
 }
+
+export { parseServiceState };
