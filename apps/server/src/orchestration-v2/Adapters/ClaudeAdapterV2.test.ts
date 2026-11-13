@@ -11446,7 +11446,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("tags a Claude Monitor's per-line wake as monitor progress", () =>
+  it.effect.each([
+    { name: "tags a Claude Monitor's per-line wake as monitor progress", scheduled: false },
+    { name: "keeps a ScheduleWakeup turn untagged while a Monitor runs", scheduled: true },
+  ])("$name", ({ scheduled }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const now = yield* DateTime.now;
@@ -11528,14 +11531,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }
       yield* harness.awaitTerminal(1);
 
-      // Claude sends no task_notification for an output line, only the turn it starts.
+      // Neither wake has a task_notification. Only a queued prompt's turn opens with a lifecycle.
+      if (scheduled) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: "00000000-0000-4000-8000-000000000a06",
+            state: "started",
+            wakeup_source: "schedule_wakeup",
+            uuid: "00000000-0000-4000-8000-000000000a07",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
       yield* Queue.offer(harness.sdkMessages, wakeTurnInit);
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
       const notification = harness.continuationRequests[0]?.notification;
-      assert.deepEqual(notification?.source, { kind: "monitor" });
-      assert.equal(notification?.outcome, "updated");
-      assert.equal(notification?.summary, `Monitor "${description}" reported new output`);
+      if (scheduled) {
+        assert.isUndefined(notification);
+      } else {
+        assert.deepEqual(notification?.source, { kind: "monitor" });
+        assert.equal(notification?.outcome, "updated");
+        assert.equal(notification?.summary, `Monitor "${description}" reported new output`);
+      }
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

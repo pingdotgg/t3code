@@ -5768,10 +5768,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const scheduledWakeupsByNativeThread = new Map<string, number>();
         // Native threads whose current turn Claude started by itself inside the early-fire margin.
         const possibleEarlyWakeNativeThreads = new Set<string>();
+        // Native threads whose current turn a queued prompt started (ScheduleWakeup, cron, a user
+        // prompt). A Monitor's per-line wake starts its turn without one.
+        const promptStartedNativeThreads = new Set<string>();
         const trackClaudeScheduledWakeup = Effect.fnUntraced(function* (
           nativeThreadId: string,
           message: SDKMessage,
         ) {
+          if (claudePromptLifecycle(message)?.state === "started") {
+            promptStartedNativeThreads.add(nativeThreadId);
+          } else if (message.type === "result") {
+            promptStartedNativeThreads.delete(nativeThreadId);
+          }
           if (isClaudeTurnStartMessage(message)) {
             const scheduledFor = scheduledWakeupsByNativeThread.get(nativeThreadId);
             if (scheduledFor === undefined) return;
@@ -9449,7 +9457,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (entry) => entry.report,
           );
           // A Monitor's per-line wake carries no task_notification or task id; only a running Monitor explains it.
-          if (reports.length === 0) {
+          if (reports.length === 0 && !promptStartedNativeThreads.has(nativeThreadId)) {
             const [monitor, ...otherMonitors] = [
               ...rosterForNativeThread(
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
