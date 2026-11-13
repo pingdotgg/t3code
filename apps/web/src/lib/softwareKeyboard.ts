@@ -82,7 +82,7 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
   return { getSnapshot, subscribe };
 }
 
-type PinWindow = Pick<Window, "visualViewport" | "scrollTo" | "requestAnimationFrame" | "document">;
+type PinWindow = Pick<Window, "visualViewport" | "scrollTo" | "document">;
 
 /**
  * Safari ignores `interactive-widget=resizes-content` and scrolls the page to the focused field.
@@ -116,28 +116,13 @@ export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): 
     if (viewport.offsetTop > 0) win.scrollTo(0, 0);
   };
 
-  // Safari animates that scroll with the keyboard, before any viewport event fires, so undoing
-  // it still shows motion. Safari skips fields that are invisible at focus, and the frame
-  // callback restores the opacity before anything paints.
-  const hideFocusFromSafari = (event: FocusEvent) => {
-    const field = event.target as HTMLElement | null;
-    if (!field?.style) return;
-    const opacity = field.style.opacity;
-    field.style.opacity = "0";
-    win.requestAnimationFrame(() => {
-      field.style.opacity = opacity;
-    });
-  };
-
   update();
-  win.document.addEventListener("focusin", hideFocusFromSafari, true);
   viewport.addEventListener("resize", update);
   // Safari reveals the focused field by scrolling the page, which only fires scroll events.
   viewport.addEventListener("scroll", update);
   return () => {
     viewport.removeEventListener("resize", update);
     viewport.removeEventListener("scroll", update);
-    win.document.removeEventListener("focusin", hideFocusFromSafari, true);
     unpin();
   };
 }

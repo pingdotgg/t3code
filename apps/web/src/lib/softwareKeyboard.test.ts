@@ -147,23 +147,12 @@ describe("pinning the shell to the keyboard viewport", () => {
         removeProperty: (key: string) => properties.delete(key),
       },
     };
-    let onFocus: ((event: { target: unknown }) => void) | undefined;
-    const document = {
-      documentElement: root,
-      addEventListener: (_type: string, listener: typeof onFocus) => (onFocus = listener),
-      removeEventListener: () => (onFocus = undefined),
-    };
-    const frames: Array<() => void> = [];
-    class FakeElement extends EventTarget {
-      style = { opacity: "" };
-    }
     const scrollTo = vi.fn(() => Object.assign(viewport, { offsetTop: 0 }));
     const stop = pinShellToKeyboardViewport(
       {
         visualViewport: viewport,
-        document,
+        document: { documentElement: root },
         scrollTo,
-        requestAnimationFrame: (callback: () => void) => frames.push(callback),
       } as unknown as Window,
       desktop,
     );
@@ -171,12 +160,7 @@ describe("pinning the shell to the keyboard viewport", () => {
       Object.assign(viewport, { height, offsetTop, scale });
       viewport.dispatchEvent(new Event(event));
     };
-    const focus = () => {
-      const field = new FakeElement();
-      onFocus?.({ target: field });
-      return field;
-    };
-    return { root, properties, stop, move, scrollTo, frames, focus };
+    return { root, properties, stop, move, scrollTo };
   }
 
   // iPad Pro 13-inch Safari: the layout viewport keeps its height under the keyboard.
@@ -205,18 +189,9 @@ describe("pinning the shell to the keyboard viewport", () => {
     expect(properties.size).toBe(0);
   });
 
-  it("hides a field from Safari's reveal only until the next frame", () => {
-    const { focus, frames } = pinFixture();
-    const field = focus();
-    expect(field.style.opacity).toBe("0");
-    for (const frame of frames) frame();
-    expect(field.style.opacity).toBe("");
-  });
-
   it("never pins on desktop", () => {
-    const { root, move, focus } = pinFixture(true);
+    const { root, move } = pinFixture(true);
     move("resize", 887, 0);
     expect(root.dataset.keyboardViewport).toBeUndefined();
-    expect(focus().style.opacity).toBe("");
   });
 });
