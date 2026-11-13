@@ -11499,13 +11499,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   // Claude 2.1.323 wakes a session per Monitor event with only init, assistant and a
   // task-notification result; just the Monitor's end sends a task_notification frame.
   it.effect.each([
-    { laterWake: "ends with its own result" },
-    { laterWake: "is absorbed by a user turn" },
+    { monitorWake: "ends with its own result", laterWake: "ends with its own result" },
+    { monitorWake: "ends with its own result", laterWake: "is absorbed by a user turn" },
+    { monitorWake: "is absorbed by a user turn", laterWake: "is absorbed by a user turn" },
   ] as const)(
-    "tags a Claude Monitor event wake as a monitor update (later wake $laterWake)",
-    ({ laterWake }) =>
+    "tags a Claude Monitor event wake as a monitor update (it $monitorWake, later wake $laterWake)",
+    ({ monitorWake, laterWake }) =>
       Effect.gen(function* () {
         const absorbed = laterWake === "is absorbed by a user turn";
+        const monitorWakeAbsorbed = monitorWake === "is absorbed by a user turn";
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
         const taskId = "bi5kfx7xp";
@@ -11594,13 +11596,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           { source: { kind: "monitor" }, outcome: "updated" },
         );
 
+        let settled = 1;
+        // Claude folds a prompt into the wake turn it already opened, so one result ends both.
+        const absorbWithUserTurn = Effect.fnUntraced(function* (result: SDKMessage) {
+          settled += 1;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-claude-monitor-event-user-${settled}`),
+              text: "Any survivors yet?",
+              attachments: [],
+              providerTurnOrdinal: settled,
+            }),
+          );
+          yield* harness.until(() => harness.offeredMessages.length === settled);
+          yield* Queue.offer(harness.sdkMessages, result);
+          yield* harness.awaitTerminal(settled);
+        });
+        const monitorWakeResult = makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000906",
+          result: "Covered. Waiting for the rest.",
+          ...(monitorWakeAbsorbed ? {} : { origin: { kind: "task-notification" } as const }),
+        });
+        if (monitorWakeAbsorbed) yield* absorbWithUserTurn(monitorWakeResult);
+        else yield* harness.offerAndWait(monitorWakeResult);
+
         // A wake buffered behind the queued Monitor continuation must not run under its tag.
         for (const frame of [
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000906",
-            result: "Covered. Waiting for the rest.",
-            origin: { kind: "task-notification" },
-          }),
           claudeSdkFrame({
             type: "system",
             subtype: "init",
@@ -11618,25 +11642,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000909",
           result: absorbed ? "No survivors yet." : "Scheduled answer.",
         });
-        if (absorbed) {
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-claude-monitor-event-user"),
-              text: "Any survivors yet?",
-              attachments: [],
-              providerTurnOrdinal: 2,
-            }),
-          );
-          yield* harness.until(() => harness.offeredMessages.length === 2);
-          yield* Queue.offer(harness.sdkMessages, laterResult);
-          yield* harness.awaitTerminal(2);
-        } else {
-          yield* harness.offerAndWait(laterResult);
-        }
-        const settled = absorbed ? 2 : 1;
+        if (absorbed) yield* absorbWithUserTurn(laterResult);
+        else yield* harness.offerAndWait(laterResult);
         const assistantTexts = () =>
           harness.events.flatMap((event) =>
             event.type === "message.updated" && event.message.role === "assistant"

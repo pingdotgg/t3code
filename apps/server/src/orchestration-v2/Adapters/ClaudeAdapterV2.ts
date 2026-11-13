@@ -12682,13 +12682,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   updated.delete(nativeThreadId);
                   return updated;
                 });
-                // A split wake that a user turn ended gets no result of its own.
-                const wakeAbsorbed =
-                  (yield* Ref.get(absorbedWakes)).has(nativeThreadId) ||
-                  (leavesLaterWake && latch?.end?.type !== "result");
-                // After this wake's own result, the absorption recorded is the later wake's.
-                if (!leavesLaterWake || latch?.end?.type !== "result")
-                  yield* forgetAbsorbedWake(nativeThreadId);
+                // A root frame clears the absorbed marker, so behind a split it is the later wake's
+                // and stays; the split wake was absorbed when its end is not a result.
+                const wakeAbsorbed = leavesLaterWake
+                  ? latch?.end?.type !== "result"
+                  : (yield* Ref.get(absorbedWakes)).has(nativeThreadId);
+                if (!leavesLaterWake) yield* forgetAbsorbedWake(nativeThreadId);
                 if (drained.length === 0) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
