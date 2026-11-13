@@ -272,6 +272,51 @@ mod tests {
         );
     }
     #[test]
+    fn animations_follow_hyprland_int_and_bool_replies() {
+        let runtime = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(runtime.path().join("hypr/fixture")).unwrap();
+        // SAFETY: no other test reads the Hyprland session environment.
+        unsafe {
+            std::env::set_var("XDG_CURRENT_DESKTOP", "Hyprland");
+            std::env::set_var("XDG_RUNTIME_DIR", runtime.path());
+            std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", "fixture");
+            std::env::remove_var("FLATPAK_ID");
+            std::env::remove_var("SNAP");
+        }
+        let listener = std::os::unix::net::UnixListener::bind(
+            session_directory().unwrap().join(".socket.sock"),
+        )
+        .unwrap();
+        for (reply, enabled) in [
+            (
+                r#"{"option":"animations:enabled","int":0,"set":true}"#,
+                false,
+            ),
+            (
+                r#"{"option":"animations:enabled","bool":true,"set":true}"#,
+                true,
+            ),
+            (
+                r#"{"option":"animations:enabled","bool":false,"set":true}"#,
+                false,
+            ),
+        ] {
+            let actual = std::thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    let mut request = [0; 64];
+                    let count = socket.read(&mut request).unwrap();
+                    assert_eq!(&request[..count], b"j/getoption animations:enabled");
+                    socket.write_all(reply.as_bytes()).unwrap();
+                });
+                let result = animations_enabled();
+                server.join().unwrap();
+                result
+            });
+            assert_eq!(actual, enabled, "{reply}");
+        }
+    }
+    #[test]
     fn rectangles_accept_negative_origins_not_invalid_sizes() {
         assert!(window(1, "t").bounds().valid());
         assert!(
