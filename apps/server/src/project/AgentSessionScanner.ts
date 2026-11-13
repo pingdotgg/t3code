@@ -880,6 +880,7 @@ export const make = Effect.gen(function* () {
     );
     let pending: Array<Uint8Array> = [];
     let done = false;
+    // Untraced: called once per chunk inside the caller's traced read.
     return Effect.fnUntraced(function* (size: number) {
       while (pending.length === 0) {
         if (done) return Option.none<Uint8Array>();
