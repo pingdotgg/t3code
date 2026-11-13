@@ -364,12 +364,15 @@ export const discoverSshHosts = Effect.fnUntraced(
     const knownHosts = yield* readKnownHosts(path.join(sshDirectory, "known_hosts"));
     const discovered = new Map<string, DesktopDiscoveredSshHost>();
 
+    const configuredNames = new Set<string>();
     const configuredDestinations = new Set<string>();
     for (const alias of configAliases) {
       const hostname = resolveConfiguredHostname(alias, hostNameRules);
       const port = resolveConfiguredPort(alias, hostNameRules);
-      configuredDestinations.add(`${alias.toLowerCase()}\u0000${port}`);
-      if (hostname !== null) configuredDestinations.add(`${hostname.toLowerCase()}\u0000${port}`);
+      for (const name of hostname === null ? [alias] : [alias, hostname]) {
+        configuredNames.add(name.toLowerCase());
+        configuredDestinations.add(`${name.toLowerCase()}\u0000${port}`);
+      }
       discovered.set(alias, {
         alias,
         hostname: hostname ?? alias,
@@ -381,9 +384,12 @@ export const discoverSshHosts = Effect.fnUntraced(
 
     for (const { hostname, port } of knownHosts) {
       const name = hostname.toLowerCase();
+      // A port-less entry connects as `ssh <host>`, so a matching alias's Port applies to it.
       if (
-        configuredDestinations.has(`${name}\u0000${port ?? 22}`) ||
-        configuredDestinations.has(`${name}\u0000*`)
+        port === null
+          ? configuredNames.has(name)
+          : configuredDestinations.has(`${name}\u0000${port}`) ||
+            configuredDestinations.has(`${name}\u0000*`)
       ) {
         continue;
       }

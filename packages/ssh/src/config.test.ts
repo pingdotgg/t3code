@@ -320,6 +320,8 @@ describe("ssh config", () => {
           "[192.0.2.10]:2223 ssh-ed25519 AAAA",
           "[192.0.2.20]:2222 ssh-ed25519 AAAA",
           "[box]:2200 ssh-ed25519 AAAA",
+          "box ssh-ed25519 AAAA",
+          "192.0.2.20 ssh-ed25519 AAAA",
           "",
         ].join("\n"),
       );
