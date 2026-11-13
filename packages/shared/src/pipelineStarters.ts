@@ -271,7 +271,80 @@ Finish with a summary: the pull request URL and merge commit; the base branch's 
   ],
 };
 
-export const PIPELINE_STARTERS: ReadonlyArray<PipelineStarter> = [FEATURE_DELIVERY_PIPELINE];
+export const PR_VISUAL_REVIEW_PIPELINE: PipelineStarter = {
+  key: "pr-visual-review",
+  name: "PR visual review",
+  description: "Understand → Capture → Guide",
+  steps: [
+    step({
+      id: "understand",
+      name: "Understand the change",
+      modelSelection: claude("claude-opus-5-5", "medium"),
+      compactAfterHandoff: true,
+      promptTemplate: `You are the first step of a review pipeline. Someone else wrote this work and I review it. Later steps only see what you write.
+
+What to review (a pull request link or number, a branch, or a description):
+{{input}}
+
+1. Find the work: the pull request, its description, comments, linked ticket, base branch and head commit. If you cannot tell which work I mean, ask me with your question tool and wait.
+2. Check out the head commit in this checkout so later steps can run it. Do not commit, push or change files.
+3. Read the full diff against its base, plus the code and docs it touches, and the repo's instructions (AGENTS.md, CLAUDE.md, CONTRIBUTING).
+4. Read it critically: does it do what the description says, what is surprising, risky or missing, and what is not covered by tests.
+
+This pipeline only prepares a review for me. Never comment on, approve, request changes on, merge or edit the pull request, the ticket or CI.
+
+Finish with: pull request link, base branch and head commit, the author's intent in their own words, what changed grouped by area, every user-visible change with where to see it (URL, route, screen, command, setting), what stayed internal, open questions for the author, and risks or concerns with file and line.`,
+    }),
+    step({
+      id: "capture",
+      name: "Capture before and after",
+      modelSelection: claude("claude-sonnet-5-5", "medium"),
+      compactAfterHandoff: true,
+      promptTemplate: `Capture what this change looks like, before and after.
+
+Change summary:
+{{steps.understand.output}}
+
+1. Run the app the way the repo documents it, isolated from production and personal data. Start long-running processes detached and record their PIDs and ports.
+2. For every user-visible change, take a screenshot on the head commit and the same view on the base commit. Cover the main path, plus empty, error and narrow or mobile states where the change affects them, and dark mode if the app has one. Record a short video for motion or timing.
+3. Save every capture outside the tracked tree (a gitignored or temp folder), named by change and before/after.
+4. If something cannot be shown visually (backend, data, CI), capture the closest evidence instead: a log, a response, a test run.
+5. Note anything that looks broken or off: spacing, overflow, contrast, wording, inconsistency with the rest of the app. Do not fix it.
+6. Stop the processes you started, then check out the head commit again.
+
+Do not change code, commit or push, and never comment on or edit the pull request.
+
+Finish with: the capture folder, a list of captures (file, what it shows, before or after), what you could not capture and why, and the visual issues you noticed.`,
+    }),
+    step({
+      id: "guide",
+      name: "Visual review guide",
+      modelSelection: claude("claude-sonnet-5-5", "medium"),
+      compactAfterHandoff: true,
+      promptTemplate: `Prepare a visual review guide for me, as if the author walks me through their change at their desk.
+
+Change summary:
+{{steps.understand.output}}
+
+Captures:
+{{steps.capture.output}}
+
+- Focus on what I can see: before and after screenshots side by side, simple diagrams of flows and how the pieces connect, and short, plain sentences. Keep the information density low: one idea per section.
+- Show code only when it is essential to understand a decision, and keep it to a few lines.
+- Order it as a walkthrough: what changed and why, each user-visible change, how it works behind the scenes, and what I should look at closely. End with the open questions for the author and the concerns found, each with file and line, so I can turn them into review comments myself.
+- Make it one self-contained HTML page with the images embedded, saved outside the tracked tree. Show it with your HTML preview tool if you have one, and link the pull request.
+
+Do not change code, and never comment on, approve or edit the pull request.
+
+Finish with the path to the guide and a three-line summary.`,
+    }),
+  ],
+};
+
+export const PIPELINE_STARTERS: ReadonlyArray<PipelineStarter> = [
+  FEATURE_DELIVERY_PIPELINE,
+  PR_VISUAL_REVIEW_PIPELINE,
+];
 
 export const withStarterRuntimeMode = (
   steps: ReadonlyArray<PipelineStarterStep>,

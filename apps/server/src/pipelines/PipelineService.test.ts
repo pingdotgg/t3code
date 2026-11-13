@@ -17,6 +17,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   FEATURE_DELIVERY_PIPELINE,
+  PIPELINE_STARTERS,
+  PR_VISUAL_REVIEW_PIPELINE,
   pipelineStarterFingerprint,
   withStarterRuntimeMode,
   type PipelineStarter,
@@ -194,7 +196,7 @@ it.effect("getRun, subscribeRun and run actions fail for a missing run", () =>
 
 it.effect("seeds each starter once and never brings a deleted one back", () =>
   Effect.gen(function* () {
-    const starters = [FEATURE_DELIVERY_PIPELINE];
+    const starters = PIPELINE_STARTERS;
     // Each build is a server start over the same database.
     const start = <A, E>(
       starterList: ReadonlyArray<PipelineStarter>,
@@ -218,6 +220,11 @@ it.effect("seeds each starter once and never brings a deleted one back", () =>
           "Feature delivery",
           withStarterRuntimeMode(FEATURE_DELIVERY_PIPELINE.steps, "approval-required"),
         ],
+        [
+          "pipeline:starter:pr-visual-review",
+          "PR visual review",
+          withStarterRuntimeMode(PR_VISUAL_REVIEW_PIPELINE.steps, "approval-required"),
+        ],
       ],
     );
 
@@ -225,7 +232,12 @@ it.effect("seeds each starter once and never brings a deleted one back", () =>
     assert.deepStrictEqual(second.pipelines, first.pipelines);
 
     yield* start(starters, (service) => service.delete({ id: first.pipelines[0]!.id }));
-    assert.deepStrictEqual((yield* start(starters, (service) => service.list())).pipelines, []);
+    assert.deepStrictEqual(
+      (yield* start(starters, (service) => service.list())).pipelines.map(
+        (pipeline) => pipeline.id,
+      ),
+      ["pipeline:starter:pr-visual-review"],
+    );
 
     const added: PipelineStarter = {
       ...FEATURE_DELIVERY_PIPELINE,
@@ -235,7 +247,7 @@ it.effect("seeds each starter once and never brings a deleted one back", () =>
     const afterRelease = yield* start([...starters, added], (service) => service.list());
     assert.deepStrictEqual(
       afterRelease.pipelines.map((pipeline) => pipeline.id),
-      ["pipeline:starter:added-later"],
+      ["pipeline:starter:added-later", "pipeline:starter:pr-visual-review"],
     );
   }).pipe(Effect.provide(storeLayer)),
 );
@@ -304,12 +316,22 @@ it.effect("an unedited copy of an older starter version is upgraded; an edited o
   }).pipe(Effect.provide(storeLayer)),
 );
 
-it("the shipped starter's previous step lists are recorded before its steps change", () => {
-  // Changing the starter's steps changes this fingerprint. Add the old value to the starter's
+it("every shipped starter's previous step lists are recorded before its steps change", () => {
+  // Changing a starter's steps changes its fingerprint. Add the old value to the starter's
   // previousFingerprints, so unedited copies upgrade, then update it here.
-  assert.strictEqual(pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps), "yjcq182r3n");
-  assert.notInclude(
-    FEATURE_DELIVERY_PIPELINE.previousFingerprints ?? [],
-    pipelineStarterFingerprint(FEATURE_DELIVERY_PIPELINE.steps),
+  const pinned: Record<string, string> = {
+    "feature-delivery": "yjcq182r3n",
+    "pr-visual-review": "803581ncl2",
+  };
+  assert.deepStrictEqual(
+    PIPELINE_STARTERS.map((starter) => starter.key).toSorted(),
+    Object.keys(pinned).toSorted(),
   );
+  for (const starter of PIPELINE_STARTERS) {
+    const current = pipelineStarterFingerprint(starter.steps);
+    assert.strictEqual(current, pinned[starter.key]);
+    for (const other of PIPELINE_STARTERS) {
+      assert.notInclude(other.previousFingerprints ?? [], current);
+    }
+  }
 });

@@ -9,16 +9,24 @@ Pipelines need a T3 Code server that supports them. Update an older server befor
 ## Set up a pipeline
 
 Define pipelines in **Settings → Pipelines**. Choose **New pipeline** and start from **Blank** or
-from the **Feature delivery** template, a full feature-delivery flow from requirements to merge and
-follow-through. Its last step waits until you start it, then merges the pull request and does the
-post-merge work.
-T3 Code adds it once. If you delete it, it stays deleted, and you can recreate it from the
-template. While you have not edited a pipeline made from the template, it is updated to the latest
-template when T3 Code updates. Once you edit it, or an agent edits it for you, it is yours and
-stays as you left it.
+from a template:
+
+- **Feature delivery**: a full feature-delivery flow from requirements to merge and follow-through.
+  Its last step waits until you start it, then merges the pull request and does the post-merge
+  work.
+- **PR visual review**: for reviewing someone else's work. Start it with a pull request link or
+  number. It reads the change, captures before and after screenshots, and builds a visual review
+  guide that ends with questions and concerns you can turn into review comments. It never comments
+  on, approves, changes or merges the pull request. Because it checks out the pull request's head
+  commit, start it in a new worktree so your own branch isn't switched.
+
+T3 Code adds each template once. If you delete one, it stays deleted, and you can recreate it from
+the template. While you have not edited a pipeline made from a template, it is updated to the
+latest template when T3 Code updates. Once you edit it, or an agent edits it for you, it is yours
+and stays as you left it.
 
 Each step has a name, a provider and model, a prompt template, optional skills, and a
-[permission mode](./permission-modes.md). Pipelines have no plan mode. The starter's steps use the
+[permission mode](./permission-modes.md). Pipelines have no plan mode. The templates' steps use the
 default runtime mode from your settings. You can also make a step wait for you before it starts.
 
 You can also ask an agent to create or edit a pipeline for you. New steps use the agent's model
