@@ -3616,15 +3616,20 @@ it.effect(
     }),
 );
 
-// Models the idle timer's view of host sleep starting awakeMs after open. Where the timer clock counts
-// sleep, the timer fires on resume far past its due time; where it pauses, only wall time jumps.
-const idleAcrossHostSleep = (input: {
+const HOST_SLEEP_IDLE_MS = 30 * 60_000;
+
+// Models host sleep starting awakeMs after open and returns the idle deadline (1-based, in awake idle
+// windows) at which the session closed. Where the timer clock counts sleep, the timer fires on resume
+// far past its due time; where it pauses, only wall time jumps.
+const idleDeadlineAcrossHostSleep = (input: {
   readonly timerCountsSleep: boolean;
   readonly awakeMs: number;
   readonly sleepMs: number;
+  readonly pinnedForMs?: number;
 }) =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const closes = yield* Queue.unbounded<string>();
     const testClock = yield* TestClock.testClockWith(Effect.succeed);
     let sleptMs = 0;
     const sleptNanos = () => BigInt(sleptMs) * BigInt(1_000_000);
@@ -3655,66 +3660,74 @@ const idleAcrossHostSleep = (input: {
       });
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
 
-      const untilDeadlineMs = 30 * 60_000 - input.awakeMs;
       yield* TestClock.adjust(input.awakeMs);
+      const untilDeadlineMs = HOST_SLEEP_IDLE_MS - (input.awakeMs % HOST_SLEEP_IDLE_MS);
       // A counting timer spends part of the sleep reaching its due time, then fires on resume.
       sleptMs = input.timerCountsSleep ? input.sleepMs - untilDeadlineMs : input.sleepMs;
       yield* TestClock.adjust(untilDeadlineMs);
-      yield* Effect.yieldNow;
-      const releasedAtFirstDeadline = !(yield* manager.isLive(providerSessionId));
-      const closeCountAtFirstDeadline = (yield* Ref.get(state)).closeCount;
-
-      yield* TestClock.adjust("30 minutes");
-      yield* Effect.yieldNow;
-      return {
-        releasedAtFirstDeadline,
-        closeCountAtFirstDeadline,
-        releasedAtSecondDeadline: !(yield* manager.isLive(providerSessionId)),
-        closeCountAtSecondDeadline: (yield* Ref.get(state)).closeCount,
-      };
+      let deadline = Math.ceil(input.awakeMs / HOST_SLEEP_IDLE_MS);
+      while (yield* manager.isLive(providerSessionId)) {
+        deadline += 1;
+        yield* TestClock.adjust(HOST_SLEEP_IDLE_MS);
+      }
+      assert.equal(yield* Queue.take(closes), "close");
+      return deadline;
     });
 
     return yield* effect.pipe(
-      Effect.provide(layerTest({ state, idleTimeoutMs: 30 * 60_000 })),
+      Effect.provide(
+        layerTest({
+          state,
+          unloads: closes,
+          idleTimeoutMs: HOST_SLEEP_IDLE_MS,
+          ...(input.pinnedForMs === undefined
+            ? {}
+            : { maxIdlePinMs: input.pinnedForMs, hasPendingBackgroundWork: Effect.succeed(true) }),
+        }),
+      ),
       Effect.provideService(Clock.Clock, hostClock),
     );
   });
 
 // regression: #11805 sessions were released right after the computer woke from sleep
-it.effect("ProviderSessionManagerV2 does not count host sleep toward the idle timeout", () =>
+it.effect("ProviderSessionManagerV2 does not count host sleep toward idle or pin budgets", () =>
   Effect.gen(function* () {
-    for (const { awakeMs, sleepMs } of [
-      { awakeMs: 5 * 60_000, sleepMs: 2 * 60 * 60_000 },
-      // Overshoots the deadline by under a minute, so deadline lateness alone misses it.
-      { awakeMs: 1_000, sleepMs: 30 * 60_000 + 30_000 },
-    ]) {
-      const result = yield* idleAcrossHostSleep({ timerCountsSleep: true, awakeMs, sleepMs });
-      assert.isFalse(
-        result.releasedAtFirstDeadline,
-        `session was idle-released on resume after ${awakeMs} awake ms and ${sleepMs} ms asleep`,
-      );
-      assert.equal(result.closeCountAtFirstDeadline, 0);
-      assert.isTrue(result.releasedAtSecondDeadline);
-      assert.equal(result.closeCountAtSecondDeadline, 1);
-    }
-  }),
-);
-
-it.effect(
-  "ProviderSessionManagerV2 releases on time when the idle timer already paused during host sleep",
-  () =>
-    Effect.gen(function* () {
-      const result = yield* idleAcrossHostSleep({
+    for (const { label, expectedDeadline, ...scenario } of [
+      {
+        label: "timer counting sleep",
+        timerCountsSleep: true,
+        awakeMs: 5 * 60_000,
+        sleepMs: 2 * 60 * 60_000,
+        expectedDeadline: 2,
+      },
+      {
+        // Overshoots the deadline by under a minute, so deadline lateness alone misses it.
+        label: "short sleep across the deadline",
+        timerCountsSleep: true,
+        awakeMs: 1_000,
+        sleepMs: HOST_SLEEP_IDLE_MS + 30_000,
+        expectedDeadline: 2,
+      },
+      {
+        label: "timer paused during sleep",
         timerCountsSleep: false,
         awakeMs: 5 * 60_000,
         sleepMs: 2 * 60 * 60_000,
-      });
-      assert.isTrue(
-        result.releasedAtFirstDeadline,
-        "session outlived its 30 awake idle minutes because wall time jumped during sleep",
-      );
-      assert.equal(result.closeCountAtFirstDeadline, 1);
-    }),
+        expectedDeadline: 1,
+      },
+      {
+        // Pinned at the first deadline, then asleep longer than the whole pin budget.
+        label: "pending work pinned across sleep",
+        timerCountsSleep: false,
+        awakeMs: 35 * 60_000,
+        sleepMs: 8 * 60 * 60_000,
+        pinnedForMs: 2 * HOST_SLEEP_IDLE_MS,
+        expectedDeadline: 3,
+      },
+    ]) {
+      assert.equal(yield* idleDeadlineAcrossHostSleep(scenario), expectedDeadline, label);
+    }
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>

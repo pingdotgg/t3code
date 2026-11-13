@@ -307,7 +307,7 @@ interface LiveSessionEntry {
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
-  readonly pinnedSinceMs: number | null;
+  readonly pinnedForMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
 }
 
@@ -1381,9 +1381,9 @@ export const layerWithOptions = (
               ),
             );
           if (hasPendingWork) {
-            const now = yield* Clock.currentTimeMillis;
-            const pinnedSinceMs = entry.pinnedSinceMs ?? now;
-            if (now - pinnedSinceMs < maxIdlePinMs) {
+            // Counted in awake idle windows, so host sleep does not spend the pin budget.
+            const pinnedForMs = entry.pinnedForMs ?? 0;
+            if (pinnedForMs < maxIdlePinMs) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (
@@ -1395,7 +1395,7 @@ export const layerWithOptions = (
                   return [false, latest] as const;
                 }
                 const updated = new Map(latest);
-                updated.set(key, { ...latestEntry, pinnedSinceMs });
+                updated.set(key, { ...latestEntry, pinnedForMs: pinnedForMs + idleTimeoutMs });
                 return [true, updated] as const;
               });
               if (!shouldContinuePin) {
@@ -1403,7 +1403,7 @@ export const layerWithOptions = (
               }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
                 providerSessionId: input.providerSessionId,
-                pinnedForMs: now - pinnedSinceMs,
+                pinnedForMs,
               });
               // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
               yield* sleepWhileAwake(idleTimeoutMs);
@@ -1411,7 +1411,7 @@ export const layerWithOptions = (
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
               providerSessionId: input.providerSessionId,
-              pinnedForMs: now - pinnedSinceMs,
+              pinnedForMs,
             });
           }
           // Closing skips the threads' own idle unloads, so archive delivered children first.
@@ -1489,7 +1489,7 @@ export const layerWithOptions = (
             ...latestEntry,
             idleGeneration: generation,
             idleFiber,
-            ...(options?.providerActivity === true ? { pinnedSinceMs: null } : {}),
+            ...(options?.providerActivity === true ? { pinnedForMs: null } : {}),
           });
           return updated;
         });
@@ -1720,7 +1720,7 @@ export const layerWithOptions = (
                 ...entry,
                 busyTurns: new Set(entry.busyTurns).add(turnKey),
                 idleFiber: null,
-                pinnedSinceMs: null,
+                pinnedForMs: null,
               });
               return [{ idleFiber: entry.idleFiber }, updated] as const;
             });
@@ -2977,7 +2977,7 @@ export const layerWithOptions = (
                 idleGeneration: 0,
                 busyTurns: new Set(),
                 idleFiber: null,
-                pinnedSinceMs: null,
+                pinnedForMs: null,
                 idleThreadUnloads: new Map(),
               };
               yield* Ref.update(sessions, (current) => {
