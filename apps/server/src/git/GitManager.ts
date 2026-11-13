@@ -1492,6 +1492,7 @@ export const make = Effect.gen(function* () {
       aheadCount: shippedByMergedPr && !details.hasUpstream ? 0 : details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: shippedByMergedPr ? 0 : details.aheadOfDefaultCount,
+      ...(details.upstreamFetchPaused ? { upstreamFetchPaused: true } : {}),
       pr,
     } satisfies VcsStatusRemoteResult;
   });

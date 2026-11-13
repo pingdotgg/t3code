@@ -102,6 +102,8 @@ export interface GitRemoteStatusDetails {
   aheadCount: number;
   behindCount: number;
   aheadOfDefaultCount: number;
+  /** Background fetches of the upstream remote stopped because Git needs credentials. */
+  upstreamFetchPaused?: boolean;
 }
 
 export interface GitPreparedCommitContext {

@@ -1776,6 +1776,113 @@ it.effect("stops background status fetches of a remote that keeps failing", () =
       }
 
       assert.isAtMost(backgroundFetches, 3);
+      assert.isTrue((yield* driver.statusDetailsRemote(cwd)).upstreamFetchPaused);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("pauses background status fetches only when the credential helper was the failure", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const helper = (event: string) =>
+      JSON.stringify({
+        event,
+        sid: "fetch/remote-https",
+        child_id: 0,
+        use_shell: true,
+        ...(event === "child_start" ? { argv: ["git credential-osxkeychain get"] } : {}),
+      });
+    for (const { helperAnswered, expectedFetches } of [
+      // The helper answered and the transport then failed: nothing for the user to do.
+      { helperAnswered: true, expectedFetches: 8 },
+      // Git stopped while the helper was still waiting, as it does behind a system dialog.
+      { helperAnswered: false, expectedFetches: 3 },
+    ]) {
+      let backgroundFetches = 0;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch")) {
+          return delegate.spawn(command);
+        }
+        backgroundFetches++;
+        const trace = [helper("child_start"), ...(helperAnswered ? [helper("child_exit")] : [])];
+        return fileSystem
+          .writeFileString(String(command.options.env?.GIT_TRACE2_EVENT), trace.join("\n"))
+          .pipe(
+            Effect.orDie,
+            Effect.as(makeFailedHandle("fatal: unable to access 'https://github.com/'")),
+          );
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+          for (let poll = 0; poll < 8; poll++) {
+            yield* driver.statusDetailsRemote(cwd);
+            yield* TestClock.adjust("16 minutes");
+          }
+
+          assert.strictEqual(backgroundFetches, expectedFetches);
+        }),
+      );
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("resumes paused background status fetches after a fetch from a linked worktree", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let backgroundFetches = 0;
+      let credentialsWork = false;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (
+          ChildProcess.isStandardCommand(command) &&
+          command.args.includes("--no-write-fetch-head")
+        ) {
+          backgroundFetches++;
+          if (!credentialsWork) {
+            return Effect.succeed(
+              makeFailedHandle("fatal: could not read Username for 'https://github.com'"),
+            );
+          }
+        }
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const worktree = NodePath.join(yield* makeTmpDir("git-vcs-driver-worktree-"), "linked");
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+      yield* git(cwd, ["worktree", "add", "-b", "linked", worktree]);
+      // Already up to date, so the later fetch changes nothing but the worktree's own FETCH_HEAD.
+      yield* git(worktree, ["fetch", "origin"]);
+
+      for (let poll = 0; poll < 5; poll++) {
+        yield* driver.statusDetailsRemote(cwd);
+        yield* TestClock.adjust("16 minutes");
+      }
+      assert.strictEqual(backgroundFetches, 3);
+
+      credentialsWork = true;
+      yield* git(worktree, ["fetch", "origin"]);
+      const status = yield* driver.statusDetailsRemote(cwd);
+
+      assert.strictEqual(backgroundFetches, 4);
+      assert.isUndefined(status.upstreamFetchPaused);
     }),
   ).pipe(Effect.provide(layerTest)),
 );

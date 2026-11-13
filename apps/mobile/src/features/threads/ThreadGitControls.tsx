@@ -61,6 +61,9 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
   if (gitStatus.behindCount > 0) {
     parts.push(`${gitStatus.behindCount} behind`);
   }
+  if (gitStatus.upstreamFetchPaused) {
+    parts.push("Fetch needs credentials");
+  }
   if (gitStatus.pr?.state === "open") {
     const { shortLabel } = sourceControlClients.get(
       gitStatus.sourceControlProvider?.kind,

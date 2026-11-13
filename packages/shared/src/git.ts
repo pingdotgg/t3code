@@ -335,6 +335,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
     ...(status.aheadOfDefaultCount === undefined
       ? {}
       : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
+    ...(status.upstreamFetchPaused ? { upstreamFetchPaused: true } : {}),
     pr: status.pr,
   };
 }

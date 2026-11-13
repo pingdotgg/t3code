@@ -112,6 +112,8 @@ const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+// Every retry runs the credential helper again, which can open a system password dialog.
+const STATUS_UPSTREAM_CREDENTIAL_FAILURE_LIMIT = 3;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
 const REPOSITORY_PATHS_REFRESH_COALESCE_TTL = Duration.seconds(5);
@@ -685,6 +687,32 @@ function trace2ChildKey(record: Record<string, unknown>): string | null {
 
 const Trace2Record = Schema.Record(Schema.String, Schema.Unknown);
 const decodeTrace2Record = decodeJsonResult(Trace2Record);
+
+// Git runs a credential helper through a shell as the single string "<helper> get". One that
+// never exited was still waiting, for example on a system dialog, when Git stopped.
+function hasUnfinishedCredentialHelper(trace: string): boolean {
+  const running = new Set<string>();
+  for (const line of trace.split("\n")) {
+    const decoded = decodeTrace2Record(line);
+    if (Result.isFailure(decoded)) continue;
+    const record = decoded.success;
+    const childKey = trace2ChildKey(record);
+    if (childKey === null) continue;
+    if (record.event === "child_exit") {
+      running.delete(childKey);
+    } else if (
+      record.event === "child_start" &&
+      record.use_shell === true &&
+      Array.isArray(record.argv) &&
+      record.argv.length === 1 &&
+      typeof record.argv[0] === "string" &&
+      record.argv[0].endsWith(" get")
+    ) {
+      running.add(childKey);
+    }
+  }
+  return running.size > 0;
+}
 
 const createTrace2Monitor = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
@@ -1394,7 +1422,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ];
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
-    if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
+    if (failure?.pausedAtFetchHeads !== undefined) {
+      if ((yield* readFetchHeadStamps(gitCommonDir)) === failure.pausedAtFetchHeads) return;
+    } else if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) {
+      return;
+    }
     const fiber = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const pending = statusFetches.get(key);
@@ -1402,18 +1434,44 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+        const started = yield* Effect.gen(function* () {
+          // Read before the fetch, so a user's fetch that lands while this one fails still resumes.
+          const fetchHeads =
+            (statusRemoteRefreshFailures.get(key)?.credentialCount ?? 0) + 1 >=
+            STATUS_UPSTREAM_CREDENTIAL_FAILURE_LIMIT
+              ? yield* readFetchHeadStamps(gitCommonDir)
+              : undefined;
+          const traceFilePath = yield* fileSystem
+            .makeTempFileScoped({ prefix: `t3code-git-trace2-${process.pid}-`, suffix: ".json" })
+            .pipe(Effect.option);
+          yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
+            env: {
+              ...STATUS_UPSTREAM_REFRESH_ENV,
+              ...(Option.isSome(traceFilePath) ? { GIT_TRACE2_EVENT: traceFilePath.value } : {}),
+            },
+            fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
+            timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+          }).pipe(
+            Effect.tapError((error) =>
+              Effect.gen(function* () {
+                const needsCredentials =
+                  error.reason === "authentication_failed" ||
+                  (Option.isSome(traceFilePath) &&
+                    (yield* fileSystem.readFileString(traceFilePath.value).pipe(
+                      Effect.map(hasUnfinishedCredentialHelper),
+                      Effect.orElseSucceed(() => false),
+                    )));
+                yield* recordStatusRemoteRefreshFailure(key, needsCredentials, fetchHeads);
+              }),
+            ),
+          );
         }).pipe(
-          Effect.asVoid,
+          Effect.scoped,
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);
             }),
           ),
-          Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
           statusFetchProcesses.withPermits(1),
           Effect.onExit(() =>
@@ -1640,7 +1698,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const statusRemoteRefreshFailures = new Map<string, { count: number; retryAt: number }>();
+  // `pausedAtFetchHeads` is set once the remote has failed for credentials
+  // STATUS_UPSTREAM_CREDENTIAL_FAILURE_LIMIT times in a row. It holds the repository's
+  // FETCH_HEAD stamps from then; the poll stays off until a fetch from any checkout moves them.
+  const statusRemoteRefreshFailures = new Map<
+    string,
+    { count: number; retryAt: number; credentialCount: number; pausedAtFetchHeads?: string }
+  >();
+  // FETCH_HEAD belongs to each checkout, so a linked worktree's fetch leaves the common one alone.
+  const readFetchHeadStamps = Effect.fn("GitVcsDriver.readFetchHeadStamps")(function* (
+    gitCommonDir: string,
+  ) {
+    const worktreesDir = path.join(gitCommonDir, "worktrees");
+    const worktreeNames = yield* fileSystem
+      .readDirectory(worktreesDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const fetchHeads = [
+      path.join(gitCommonDir, "FETCH_HEAD"),
+      ...worktreeNames.toSorted().map((name) => path.join(worktreesDir, name, "FETCH_HEAD")),
+    ];
+    const stamps = yield* Effect.forEach(
+      fetchHeads,
+      (fetchHead) =>
+        fileSystem.stat(fetchHead).pipe(
+          Effect.map((info) =>
+            Option.match(info.mtime, {
+              onNone: () => "",
+              onSome: (mtime) => `${fetchHead}\0${mtime.getTime()}`,
+            }),
+          ),
+          Effect.orElseSucceed(() => ""),
+        ),
+      { concurrency: 16 },
+    );
+    return stamps.filter((stamp) => stamp.length > 0).join("\n");
+  });
   const untrackedTotalsFailures = new Map<
     string,
     {
@@ -1654,13 +1746,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
     "GitVcsDriver.recordStatusRemoteRefreshFailure",
-  )(function* (key: string) {
-    const nextCount = (statusRemoteRefreshFailures.get(key)?.count ?? 0) + 1;
+  )(function* (key: string, needsCredentials: boolean, fetchHeads: string | undefined) {
+    const previous = statusRemoteRefreshFailures.get(key);
+    const nextCount = (previous?.count ?? 0) + 1;
+    const credentialCount = needsCredentials ? (previous?.credentialCount ?? 0) + 1 : 0;
     const now = yield* Clock.currentTimeMillis;
     statusRemoteRefreshFailures.delete(key);
     statusRemoteRefreshFailures.set(key, {
       count: nextCount,
       retryAt: now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
+      credentialCount,
+      ...(credentialCount >= STATUS_UPSTREAM_CREDENTIAL_FAILURE_LIMIT && fetchHeads !== undefined
+        ? { pausedAtFetchHeads: fetchHeads }
+        : {}),
     });
     if (statusRemoteRefreshFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
       const oldestKey = statusRemoteRefreshFailures.keys().next().value;
@@ -1688,7 +1786,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
   });
 
-  const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
+  const resolveStatusUpstreamRemote = Effect.fn("resolveStatusUpstreamRemote")(function* (
     cwd: string,
   ) {
     const headRef = yield* runGitStdout(
@@ -1697,7 +1795,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["symbolic-ref", "--quiet", "HEAD"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    if (headRef.length === 0) return;
+    if (headRef.length === 0) return null;
     const remoteName = yield* runGitStdout(
       "GitVcsDriver.refreshStatusUpstreamIfStale.upstreamRemote",
       cwd,
@@ -1705,12 +1803,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
     // Empty means no upstream; `.` means the upstream is a local branch.
-    if (remoteName.length === 0 || remoteName === ".") return;
+    if (remoteName.length === 0 || remoteName === ".") return null;
     const gitCommonDir = yield* resolveGitCommonDir(cwd);
-    yield* Cache.get(
-      statusRemoteRefreshCache,
-      new StatusRemoteRefreshCacheKey({ gitCommonDir, remoteName }),
-    ).pipe(Effect.ignore);
+    return new StatusRemoteRefreshCacheKey({ gitCommonDir, remoteName });
+  });
+
+  const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
+    cwd: string,
+  ) {
+    const cacheKey = yield* resolveStatusUpstreamRemote(cwd);
+    if (cacheKey === null) return;
+    yield* Cache.get(statusRemoteRefreshCache, cacheKey).pipe(Effect.ignore);
+  });
+
+  const isStatusUpstreamFetchPaused = Effect.fn("isStatusUpstreamFetchPaused")(function* (
+    cwd: string,
+  ) {
+    if (statusRemoteRefreshFailures.size === 0) return false;
+    const cacheKey = yield* resolveStatusUpstreamRemote(cwd).pipe(Effect.orElseSucceed(() => null));
+    return (
+      cacheKey !== null &&
+      statusRemoteRefreshFailures.get(statusRemoteRefreshFailureKey(cacheKey))
+        ?.pausedAtFetchHeads !== undefined
+    );
   });
 
   const resolveDefaultBranchName = (
@@ -2150,6 +2265,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       aheadCount,
       behindCount,
       aheadOfDefaultCount,
+      ...((yield* isStatusUpstreamFetchPaused(cwd)) ? { upstreamFetchPaused: true } : {}),
     };
   });
 

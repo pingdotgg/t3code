@@ -33,6 +33,7 @@ export function statusSummary(
     readonly workingTree?: { readonly files: readonly { readonly path: string }[] };
     readonly aheadCount?: number;
     readonly behindCount?: number;
+    readonly upstreamFetchPaused?: boolean;
     readonly pr?: { readonly state?: string; readonly number?: number } | null;
     readonly sourceControlProvider?: { readonly kind: string } | null;
   } | null,
@@ -57,6 +58,9 @@ export function statusSummary(
   }
   if ((gitStatus.behindCount ?? 0) > 0) {
     parts.push(`${gitStatus.behindCount} behind`);
+  }
+  if (gitStatus.upstreamFetchPaused) {
+    parts.push("Fetch needs credentials");
   }
   if (gitStatus.pr?.state === "open") {
     const { shortLabel } = sourceControlClients.get(

@@ -255,6 +255,9 @@ const VcsStatusRemoteShape = {
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   aheadOfDefaultCount: Schema.optional(NonNegativeInt),
+  // Background fetches of the upstream remote stopped because Git needs credentials from the
+  // user; the counts above are as old as the last fetch.
+  upstreamFetchPaused: Schema.optional(Schema.Boolean),
   pr: Schema.NullOr(VcsStatusChangeRequest),
 };
 

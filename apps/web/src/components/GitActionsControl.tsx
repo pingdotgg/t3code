@@ -1480,11 +1480,13 @@ export default function GitActionsControl({
     !gitStatusForActions.hasWorkingTreeChanges &&
     gitStatusForActions.behindCount > 0 &&
     gitStatusForActions.aheadCount === 0;
+  const isUpstreamFetchPaused = gitStatusForActions?.upstreamFetchPaused === true;
   const hasGitMenuContent = hasUsableGitMenuContent({
     menuItems: gitActionMenuItems,
     canWriteSourceControl,
     canPublishRepository,
-    hasNotice: isDetachedHead || isCleanAndBehind || Boolean(gitStatusError),
+    hasNotice:
+      isDetachedHead || isCleanAndBehind || isUpstreamFetchPaused || Boolean(gitStatusError),
   });
 
   // A disabled menu cannot refresh on open, and terminal edits or commits publish no status.
@@ -1569,6 +1571,12 @@ export default function GitActionsControl({
       )}
       {isCleanAndBehind && (
         <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+      )}
+      {isUpstreamFetchPaused && (
+        <p className="px-2 py-1.5 text-xs text-warning">
+          Upstream status may be out of date: Git needs credentials for this remote. Run git fetch
+          in a terminal to resume.
+        </p>
       )}
       {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
     </>
