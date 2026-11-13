@@ -25,6 +25,9 @@ const mocks = vi.hoisted(() => ({
   cancelPickElement: vi.fn(async (_tabId: string) => undefined),
   openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  zoomIn: vi.fn(async (_tabId: string) => undefined),
+  zoomOut: vi.fn(async (_tabId: string) => undefined),
+  resetZoom: vi.fn(async (_tabId: string) => undefined),
   pickElement: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
@@ -65,9 +68,9 @@ vi.mock(import("./previewBridge"), async (original) => ({
     hardReload: vi.fn(async () => undefined),
     openDevTools: vi.fn(async () => undefined),
     setColorScheme: vi.fn(async () => undefined),
-    zoomIn: vi.fn(async () => undefined),
-    zoomOut: vi.fn(async () => undefined),
-    resetZoom: vi.fn(async () => undefined),
+    zoomIn: mocks.zoomIn,
+    zoomOut: mocks.zoomOut,
+    resetZoom: mocks.resetZoom,
     clearCookies: vi.fn(async () => undefined),
     clearCache: vi.fn(async () => undefined),
     pictureInPicture: {
@@ -380,7 +383,7 @@ describe("PreviewView", () => {
     });
   });
 
-  it("focuses and selects the address from forwarded desktop actions only while visible", async () => {
+  it("runs forwarded desktop focus and zoom actions only while visible", async () => {
     setup();
     using stack = new DisposableStack();
     const previousBridge = window.desktopBridge;
@@ -401,9 +404,9 @@ describe("PreviewView", () => {
     await using screen = await render(view());
     const address = page.getByRole("textbox");
     const input = address.element() as HTMLInputElement;
-    const forward = () =>
+    const forward = (action = "preview.focusUrl") =>
       act(() => {
-        listeners.forEach((listener) => listener("preview.focusUrl"));
+        listeners.forEach((listener) => listener(action));
       });
 
     await forward();
@@ -413,6 +416,14 @@ describe("PreviewView", () => {
     await act(() => input.blur());
     await forward();
     await expect.element(address).toHaveFocus();
+    for (const [action, zoom] of [
+      ["preview.zoomIn", mocks.zoomIn],
+      ["preview.zoomOut", mocks.zoomOut],
+      ["preview.resetZoom", mocks.resetZoom],
+    ] as const) {
+      await forward(action);
+      expect(zoom).toHaveBeenCalledExactlyOnceWith(TEST_RUNTIME_TAB_ID);
+    }
 
     await act(() => input.blur());
     await screen.rerender(
