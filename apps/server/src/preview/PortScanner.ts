@@ -290,7 +290,6 @@ const discoveredWindowsListeners = (
   const seen = new Map<number, DiscoveredLocalServer>();
   for (const { port, pid } of listeners) {
     const owner = pid === null ? undefined : owners.get(pid);
-
     const existing = seen.get(port);
     if (existing) {
       if (owner === undefined) seen.set(port, { ...existing, ...UNOWNED });
