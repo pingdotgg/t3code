@@ -72,6 +72,28 @@ export function carryDisplacedCustomAnswerIntoPrompt(
   return `${prompt.trimEnd()}${DISPLACED_ANSWER_SEPARATOR}${displaced}`;
 }
 
+/**
+ * Takes set-aside answer text back out of the thread draft once it is the answer again.
+ * `laterDisplaced` is what was set aside after it, in order: together they locate this copy,
+ * so equal text inside another answer or the user's own draft is never the one removed.
+ */
+export function withdrawDisplacedCustomAnswerFromPrompt(
+  prompt: string,
+  displaced: string,
+  laterDisplaced: ReadonlyArray<string> = [],
+): string {
+  const text = displaced.trim();
+  if (text.length === 0) return prompt;
+  const later = laterDisplaced.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  const suffix = [text, ...later].join(DISPLACED_ANSWER_SEPARATOR);
+  if (!prompt.endsWith(suffix)) return prompt;
+  const before = prompt.slice(0, prompt.length - suffix.length);
+  const after = later.join(DISPLACED_ANSWER_SEPARATOR);
+  if (before.length === 0) return after;
+  if (!before.endsWith(DISPLACED_ANSWER_SEPARATOR)) return prompt;
+  return after.length === 0 ? before.slice(0, -DISPLACED_ANSWER_SEPARATOR.length) : before + after;
+}
+
 function countAnsweredPendingUserInputQuestions(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
