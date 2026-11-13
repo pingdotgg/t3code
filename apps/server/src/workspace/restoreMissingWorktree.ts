@@ -11,6 +11,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
+import { withWorkspaceLease } from "./workspaceLease.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
 export class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
@@ -148,9 +149,20 @@ export class ThreadWorktreeRestore extends Context.Service<
   }
 >()("t3/workspace/restoreMissingWorktree/ThreadWorktreeRestore") {}
 
+// Turn start restores under the same lease, so concurrent restores see each other's worktree.
 export const layerThreadWorktreeRestore = Layer.effect(
   ThreadWorktreeRestore,
-  Effect.map(makeRestoreMissingWorktree, (restore) => ({ restore })),
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const restore = yield* makeRestoreMissingWorktree;
+    return {
+      restore: Effect.fn("ThreadWorktreeRestore.restore")(function* (thread: WorktreeThread) {
+        return yield* thread.worktreePath === null
+          ? restore(thread)
+          : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread));
+      }),
+    };
+  }),
 );
 
 // Worktree setup uses terminals, so recovery must stay outside TerminalManager.
