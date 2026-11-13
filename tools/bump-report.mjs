@@ -517,10 +517,13 @@ if (!monorepo) {
 } else if (parts.length === 0) {
   line(`## Followed files: ${FOLLOWED} is missing or empty`);
 } else {
-  line(`## Upstream commits per part (${FOLLOWED}; tests left out)`);
+  // A backward bump (a bisect) lists the commits it takes out.
+  const backward = Number(back) > 0 && Number(commits) === 0;
+  const range = backward ? `${to}..${from}` : `${from}..${to}`;
+  line(`## Upstream commits per part (${FOLLOWED}; tests left out${backward ? "; backward: the commits this bump removes" : ""})`);
   const MAX_SUBJECTS = 12;
   for (const part of parts) {
-    const log = git("log", "--no-merges", "--format=%h %s", `${from}..${to}`, "--", ...part.specs, ...NO_TESTS);
+    const log = git("log", "--no-merges", "--format=%h %s", range, "--", ...part.specs, ...NO_TESTS);
     if (log === undefined) {
       line(`  ${part.name}: git log failed: is the old commit in CONN_MONOREPO's Git data?`);
       continue;
@@ -531,17 +534,17 @@ if (!monorepo) {
       : "";
     line(`  ${part.name}: ${rows.length === 0 ? "no change" : `${rows.length} commits; ${stat}`}`);
     for (const row of rows.slice(0, MAX_SUBJECTS)) line(`    ${row}`);
-    if (rows.length > MAX_SUBJECTS) line(`    … ${rows.length - MAX_SUBJECTS} more (git log ${short(from)}..${short(to)} -- <the part's files>)`);
+    if (rows.length > MAX_SUBJECTS) line(`    … ${rows.length - MAX_SUBJECTS} more (git log ${range.split("..").map(short).join("..")} -- <the part's files>)`);
   }
 
   // New upstream source files that no part follows: a short list to read, never a failure.
   const SOURCES = ["apps/server/src", "packages/contracts/src", "packages/shared/src", "packages/provider-core/src"];
   const added = (specs) =>
-    new Set((git("diff", "--diff-filter=A", "--name-only", from, to, "--", ...specs, ...NO_TESTS) ?? "").split("\n").filter(Boolean));
+    new Set((git("diff", `--diff-filter=${backward ? "D" : "A"}`, "--name-only", from, to, "--", ...specs, ...NO_TESTS) ?? "").split("\n").filter(Boolean));
   const allNew = added(SOURCES);
   const followedNew = added(parts.flatMap((p) => p.specs));
   const unmapped = [...allNew].filter((f) => !followedNew.has(f)).sort();
-  line(`  new upstream files no part follows (${unmapped.length}; add a pathspec when a part should follow one):`);
+  line(`  ${backward ? "upstream files this bump removes" : "new upstream files"} no part follows (${unmapped.length}; add a pathspec when a part should follow one):`);
   for (const file of unmapped.slice(0, 20)) line(`    ${file}`);
   if (unmapped.length > 20) line(`    … ${unmapped.length - 20} more`);
 
