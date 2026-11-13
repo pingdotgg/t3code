@@ -78,14 +78,16 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 
 ## Crates
 
-| Crate                  | Holds                                                                 |
-| ---------------------- | --------------------------------------------------------------------- |
-| `conn-wire`            | Effect RPC frame types and JSON codec                                 |
-| `conn-contract`        | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
-| `conn-engine`          | `Engine` trait; SQLite event store, projections, streams, turn runner |
-| `conn-provider`        | `Provider` and `Session` traits, `ProviderEvent`                      |
-| `conn-provider-claude` | The Claude provider over the `claude` CLI's stdio                     |
-| `conn-server`          | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
+| Crate                   | Holds                                                                 |
+| ----------------------- | --------------------------------------------------------------------- |
+| `conn-wire`             | Effect RPC frame types and JSON codec                                 |
+| `conn-contract`         | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
+| `conn-engine`           | `Engine` trait; SQLite event store, projections, streams, turn runner |
+| `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
+| `conn-provider-claude`  | The Claude provider over the `claude` CLI's stdio                     |
+| `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
+| `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
+| `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and

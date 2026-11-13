@@ -1,0 +1,13 @@
+[package]
+name = "conn-provider-support"
+description = "Shared pieces of the CLI providers: ids, line framing, the child-process supervisor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+
+[lints]
+workspace = true

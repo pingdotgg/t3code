@@ -89,6 +89,11 @@ pub fn server_providers(deps: &Deps, checked_at: &str) -> Vec<Value> {
         .iter()
         .filter(|p| p.driver() == conn_provider_claude::DRIVER)
         .map(|p| conn_provider_claude::server_provider_entry(p.instance_id().as_str(), checked_at))
+        .chain(
+            deps.providers
+                .iter()
+                .filter_map(|p| p.server_provider_entry(checked_at)),
+        )
         .collect()
 }
 

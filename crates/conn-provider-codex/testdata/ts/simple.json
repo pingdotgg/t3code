@@ -1,0 +1,239 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/simple.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
+  "capturedOn": "2026-11-13",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:simple:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: simple",
+        "providerInstanceId": "codex",
+        "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Asimple%3Aproject%3Aproject%253Afixture%253Asimple%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5eb-f0c0-7481-a417-5e8871805cbc",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Asimple%3Aproject%3Aproject%253Afixture%253Asimple%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Respond with the following text: fixture simple ok",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-simple-Br1ggK"
+      }
+    }
+  ],
+  "respond": [],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d5eb-f176-71d0-8e1c-a459700443de",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5eb-f176-71d0-8e1c-a459700443de",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:28.072Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+        "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asimple%3Aproject%3Aproject%253Afixture%253Asimple%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d5eb-f176-71d0-8e1c-a459700443de",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:16:49.066Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+        "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asimple%3Aproject%3Aproject%253Afixture%253Asimple%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+        "role": "assistant",
+        "text": "fixture simple ok",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-09-25T00:16:49.066Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+        "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Asimple%3Aproject%3Aproject%253Afixture%253Asimple%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d5eb-f176-71d0-8e1c-a459700443de",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T00:16:49.066Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "assistant_message",
+        "phase": "final_answer",
+        "messageId": "message:provider:codex:native-item:msg_08fda0295ef7a774016ab5bd70c40887d080d27158f71dce50",
+        "text": "fixture simple ok",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d5eb-f176-71d0-8e1c-a459700443de",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5eb-f176-71d0-8e1c-a459700443de",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:28.072Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 22737,
+          "maxTokens": 258400,
+          "inputTokens": 22730,
+          "cachedInputTokens": 6912,
+          "outputTokens": 7,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:simple:project:project%3Afixture%3Asimple%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d5eb-f176-71d0-8e1c-a459700443de",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d5eb-f176-71d0-8e1c-a459700443de",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-11-13T12:14:28.072Z",
+        "completedAt": "2026-09-25T00:16:49.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 22730,
+          "cachedInputTokens": 6912,
+          "cacheCreationTokens": 0,
+          "outputTokens": 7,
+          "reasoningTokens": 0,
+          "hasSubagents": false,
+          "models": ["gpt-6-luna"]
+        },
+        "model": "gpt-6-luna"
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Asimple%253Aproject%253Aproject%25253Afixture%25253Asimple%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d5eb-f176-71d0-8e1c-a459700443de",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

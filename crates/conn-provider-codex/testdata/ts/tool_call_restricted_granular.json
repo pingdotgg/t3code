@@ -1,0 +1,534 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/tool_call_restricted_granular.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
+  "capturedOn": "2026-11-13",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:tool_call_restricted_granular:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: tool_call_restricted_granular",
+        "providerInstanceId": "codex",
+        "modelSelection": { "instanceId": "codex", "model": "gpt-5.6-terra" },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a0d604-629d-7162-b667-18c96f6fdf56",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Create or overwrite .codex-probe-write-action.txt with exactly this text: codex app-server approval fixture. Use a local shell command or file edit only, then briefly report what happened. Do not read package metadata, use GitHub, use web, or use MCP.",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": { "instanceId": "codex", "model": "gpt-5.6-terra" },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_restricted_granular-Kz7Llq",
+        "approvalPolicy": {
+          "granular": {
+            "mcp_elicitations": true,
+            "request_permissions": true,
+            "rules": true,
+            "sandbox_approval": true,
+            "skill_approval": true
+          }
+        },
+        "sandboxPolicy": {
+          "type": "readOnly",
+          "access": { "type": "restricted", "includePlatformDefaults": false, "readableRoots": [] },
+          "networkAccess": false
+        }
+      }
+    }
+  ],
+  "respond": [
+    {
+      "requestId": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0d604-6358-72f1-bb89-7361cce0045c:native-request:exec-114e8eef-018a-444d-8542-aa0232ff1f38:60ae850c-0af3-4468-9967-365ecc316207",
+      "decision": "accept"
+    }
+  ],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d604-6358-72f1-bb89-7361cce0045c",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:28.943Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:%5B%2201a0d604-6358-72f1-bb89-7361cce0045c%22%2C%22rs_08bfce1a588b6283016ab5c3b2f48487d08c265fbb08c31486%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "reasoning",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_08bfce1a588b6283016ab5c3b2f48487d08c265fbb08c31486",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:%5B%2201a0d604-6358-72f1-bb89-7361cce0045c%22%2C%22rs_08bfce1a588b6283016ab5c3b2f48487d08c265fbb08c31486%22%2C%22summary%22%2C0%5D",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:%5B%2201a0d604-6358-72f1-bb89-7361cce0045c%22%2C%22rs_08bfce1a588b6283016ab5c3b2f48487d08c265fbb08c31486%22%2C%22summary%22%2C0%5D",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "rs_08bfce1a588b6283016ab5c3b2f48487d08c265fbb08c31486",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "reasoning",
+        "text": "**Planning patch application despite sandbox restrictions**",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:43:32.222Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+        "role": "assistant",
+        "text": "I’ll create the requested fixture file locally with that exact single-line content.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-09-25T00:43:32.222Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T00:43:32.222Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "assistant_message",
+        "phase": "commentary",
+        "messageId": "message:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b41e5c87d0badb0d609ab7ddf4",
+        "text": "I’ll create the requested fixture file locally with that exact single-line content.",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0d604-6358-72f1-bb89-7361cce0045c%3Anative-request%3Aexec-114e8eef-018a-444d-8542-aa0232ff1f38%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:provider:codex:native-item:exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "approval_request",
+        "status": "waiting",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+          "strength": "strong"
+        },
+        "runtimeRequestId": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0d604-6358-72f1-bb89-7361cce0045c:native-request:exec-114e8eef-018a-444d-8542-aa0232ff1f38:60ae850c-0af3-4468-9967-365ecc316207",
+        "checkpointScopeId": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0d604-6358-72f1-bb89-7361cce0045c%3Anative-request%3Aexec-114e8eef-018a-444d-8542-aa0232ff1f38%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0d604-6358-72f1-bb89-7361cce0045c%3Anative-request%3Aexec-114e8eef-018a-444d-8542-aa0232ff1f38%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 104,
+        "status": "waiting",
+        "title": null,
+        "startedAt": "1970-01-01T00:00:00.002Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "approval_request",
+        "requestId": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0d604-6358-72f1-bb89-7361cce0045c:native-request:exec-114e8eef-018a-444d-8542-aa0232ff1f38:60ae850c-0af3-4468-9967-365ecc316207",
+        "requestKind": "file-change",
+        "prompt": "add /home/replay-user/t3code/packages/effect-codex-app-server/.codex-probe-write-action.txt"
+      }
+    },
+    {
+      "type": "runtime_request.updated",
+      "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runtimeRequest": {
+        "id": "runtime-request:provider:codex:provider-turn:provider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a0d604-6358-72f1-bb89-7361cce0045c:native-request:exec-114e8eef-018a-444d-8542-aa0232ff1f38:60ae850c-0af3-4468-9967-365ecc316207",
+        "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Acodex%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Acodex%253Anative-turn%253A01a0d604-6358-72f1-bb89-7361cce0045c%3Anative-request%3Aexec-114e8eef-018a-444d-8542-aa0232ff1f38%3A60ae850c-0af3-4468-9967-365ecc316207",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeRequestRef": {
+          "driver": "codex",
+          "nativeId": "exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+          "strength": "strong"
+        },
+        "kind": "file-change",
+        "status": "pending",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session:provider-instance:codex:shared"
+        },
+        "createdAt": "1970-01-01T00:00:00.002Z",
+        "resolvedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:43:34.289Z",
+        "completedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-114e8eef-018a-444d-8542-aa0232ff1f38",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T00:43:34.289Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "file_change",
+        "fileName": "/home/replay-user/t3code/packages/effect-codex-app-server/.codex-probe-write-action.txt",
+        "diffStr": "codex app-server approval fixture.\n",
+        "changes": [
+          {
+            "operation": "add",
+            "path": "/home/replay-user/t3code/packages/effect-codex-app-server/.codex-probe-write-action.txt"
+          }
+        ]
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d604-6358-72f1-bb89-7361cce0045c",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:28.943Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 21452,
+          "maxTokens": 258400,
+          "inputTokens": 21328,
+          "cachedInputTokens": 6912,
+          "outputTokens": 124,
+          "reasoningOutputTokens": 49,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-09-25T00:43:36.141Z",
+        "completedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+        "role": "assistant",
+        "text": "Created `.codex-probe-write-action.txt` with exactly:\n\n```text\ncodex app-server approval fixture.\n```",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-09-25T00:43:36.141Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+        "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Atool_call_restricted_granular%3Aproject%3Aproject%253Afixture%253Atool_call_restricted_granular%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 105,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-09-25T00:43:36.141Z",
+        "completedAt": "1970-01-01T00:00:00.003Z",
+        "updatedAt": "1970-01-01T00:00:00.003Z",
+        "type": "assistant_message",
+        "phase": "final_answer",
+        "messageId": "message:provider:codex:native-item:msg_08bfce1a588b6283016ab5c3b7ef0c87d096aba0299c914020",
+        "text": "Created `.codex-probe-write-action.txt` with exactly:\n\n```text\ncodex app-server approval fixture.\n```",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d604-6358-72f1-bb89-7361cce0045c",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:28.943Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 21507,
+          "maxTokens": 258400,
+          "inputTokens": 21479,
+          "cachedInputTokens": 20224,
+          "outputTokens": 28,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.003Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:tool_call_restricted_granular:project:project%3Afixture%3Atool_call_restricted_granular%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a0d604-6358-72f1-bb89-7361cce0045c",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-11-13T12:14:28.943Z",
+        "completedAt": "2026-09-25T00:43:36.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 42807,
+          "cachedInputTokens": 27136,
+          "cacheCreationTokens": 0,
+          "outputTokens": 152,
+          "reasoningTokens": 49,
+          "hasSubagents": false,
+          "models": ["gpt-5.6-terra"]
+        },
+        "model": "gpt-5.6-terra"
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_restricted_granular%253Aproject%253Aproject%25253Afixture%25253Atool_call_restricted_granular%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d604-6358-72f1-bb89-7361cce0045c",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

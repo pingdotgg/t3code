@@ -1,0 +1,184 @@
+# How the TS server talks to `codex app-server`
+
+Read from `CodexAdapterV2.ts`, `provider/CodexProvider.ts`, `provider/codexLaunchArgs.ts`,
+`provider/Drivers/CodexHomeLayout.ts` and the recordings in
+`apps/server/src/orchestration-v2/testkit/fixtures/*/codex_transcript.ndjson` (CLI 0.156.1).
+Method names were checked against the schema that the installed CLI (0.167.0) prints with
+`codex app-server generate-json-schema --out <dir>`. Every method below is in it.
+
+## Transport
+
+JSON-RPC 2.0 without the `"jsonrpc"` member, one JSON object per line on stdin and stdout.
+stderr is logging only.
+
+| Frame               | Shape                                                                          |
+| ------------------- | ------------------------------------------------------------------------------ |
+| client request      | `{"id": n, "method": m, "params": p}`                                          |
+| client notification | `{"method": m}` (only `initialized`)                                           |
+| response to client  | `{"id": n, "result": r}` or `{"id": n, "error": {"code", "message", "data"?}}` |
+| server notification | `{"method": m, "params": p}`                                                   |
+| server request      | `{"id": n, "method": m, "params": p}`; the server numbers its own ids from 0   |
+| client reply        | `{"id": n, "result": r}`                                                       |
+
+Both sides can use the same id numbers. A frame with `method` and `id` is a server request; one
+with `id` and no `method` is a response.
+
+## Launch
+
+- **Executable:** `CodexSettings.binaryPath`, default `codex` on PATH, `~` expanded.
+- **argv:** `app-server -c thread_unload_delay_secs=0 <launch args>`. The launch args come from
+  `T3CODE_CODEX_LAUNCH_ARGS` or else `CodexSettings.launchArgs`, split like a shell.
+- **Environment:** the host environment, plus the instance's own entries, then:
+  - `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=T3 Code`, so the backend gives the same model catalog
+    it gives T3 (the instance env can override it)
+  - `CODEX_HOME=<homePath>` only when a home path or shadow home is set
+  - nothing is removed
+- **Process:** TS runs one `app-server` per provider instance, shared by every thread. The
+  provider session id is `provider-session:provider-instance:codex:shared`. On Linux it wraps
+  the spawn in a systemd agent scope, with a 2 s force-kill after SIGTERM.
+- **Conn only:** before the first spawn, it waits up to 120 s for `*.orbit` MCP hosts in
+  `config.toml` to accept TCP (`codexMcpNetworkGate.ts`).
+
+In a container, Codex reaches models through whatever the inherited environment and
+`config.toml` configure. No sign-in call is made.
+
+## Handshake
+
+1. `initialize` with
+   `{"clientInfo": {"name": "T3 Code", "title": "T3 Code", "version": <server version>},
+   "capabilities": {"experimentalApi": true, "optOutNotificationMethods":
+   ["turn/diff/updated"], "extensions": {"io.modelcontextprotocol/ui": {"mimeTypes":
+   ["text/html;profile=mcp-app"]}}}}`. The result carries `userAgent`
+   (`t3code_desktop/<version> ...`), `codexHome`, `platformFamily` and `platformOs`.
+   `-32600 "Already initialized"` counts as success.
+2. The `initialized` notification.
+
+Done once per process, before the first thread call.
+
+## Threads
+
+- **Start:** `thread/start` `{"cwd", "model", "config": {...}}`. `config` holds:
+  - `tools.update_plan.enabled: true`
+  - `mcp_optional_startup_grace_ms: 10000`
+  - `features.concurrent_reasoning_summaries: true`
+  - `shell_environment_policy.set.T3CODE_THREAD_ID: <app thread id>`
+  - with T3 MCP: `mcp_servers.t3-code` and `mcp_servers.t3-code-direct` (URL, bearer header,
+    65-minute tool timeout)
+
+  The result is `{"thread": {"id", "createdAt", "updatedAt", ...}, "model", ...}`. The native
+  thread id goes into `ProviderThread.nativeThreadRef`.
+
+- **Resume:** `thread/resume` `{"threadId", "excludeTurns": true, "cwd", "model", "config"}`.
+  A "session … is archived" error leads to `thread/unarchive` and a retry. An "active writer"
+  error (`-32600`) means another client holds the thread.
+- **Unload:** `thread/unsubscribe` (Codex sends `thread/closed` later), or `thread/archive`.
+
+## Turns
+
+- **Start:** `config/read` `{"cwd", "includeLayers": false}` first, to pass the user's
+  `model_reasoning_summary`. Then `turn/start` with:
+  - `threadId`, `cwd`, `model`
+  - `input`: `[{"type": "text", "text"}]`, plus image attachments as `localImage` items
+  - `summary`: the configured value, or `auto`
+  - `approvalPolicy`, `approvalsReviewer`, `sandboxPolicy`, from the runtime mode (table below)
+  - `effort` and `serviceTier`, when the model selection sets them
+  - `collaborationMode: {"mode": <interaction mode>, "settings": {"model",
+    "reasoning_effort"?}}`
+  - `additionalContext`, only with T3 MCP
+
+  The result is `{"turn": {"id", "status": "inProgress", "startedAt": null | secs, ...}}`. A
+  `turn/started` notification can come before the result.
+
+- **Steer:** `turn/steer` `{"expectedTurnId", "input", "threadId"}` → `{"turnId"}`.
+- **Interrupt:** `turn/interrupt` `{"threadId", "turnId"}` → `{}`. Codex then sends
+  `turn/completed` with status `interrupted`. TS waits up to 10 s for it, then finalizes the
+  turn as interrupted itself. Running background terminals are stopped with
+  `thread/backgroundTerminals/terminate` `{"threadId", "processId"}`.
+- **Model change:** none in session. Each `turn/start` carries the model and effort.
+- **Runtime mode change:** none in session. Each `turn/start` carries the policies.
+
+| Runtime mode        | `approvalPolicy` | `approvalsReviewer` | `sandboxPolicy`                |
+| ------------------- | ---------------- | ------------------- | ------------------------------ |
+| `approval-required` | `untrusted`      | `user`              | `{"type": "readOnly"}`         |
+| `auto-accept-edits` | `on-request`     | `user`              | `{"type": "workspaceWrite"}`   |
+| `auto`              | `on-request`     | `auto_review`       | `{"type": "workspaceWrite"}`   |
+| `full-access`       | `never`          | `user`              | `{"type": "dangerFullAccess"}` |
+
+## Server requests (approvals and questions)
+
+Each one becomes a `node.updated` (`approval_request` or `user_input_request`, `waiting`), a
+`turn_item.updated` and a `runtime_request.updated` (`pending`, live response capability). The
+reply waits for the user. TS emits no event of its own when the user answers; the engine
+marks the request resolved.
+
+| Request                                 | Request kind                                 | Reply                                                                            |
+| --------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------- |
+| `item/commandExecution/requestApproval` | `command`; prompt `reason ?? command`        | `{"decision": "accept" \| "acceptForSession" \| "decline" \| "cancel"}`          |
+| `item/fileChange/requestApproval`       | `file-change`; prompt from reason or changes | same                                                                             |
+| `item/permissions/requestApproval`      | `file-change`, `file-read` or `command`      | `{"permissions": <granted or {}>, "scope": "turn" \| "session"}`                 |
+| `item/tool/requestUserInput`            | `user_input` with questions                  | `{"answers": {"<question id>": {"answers": ["…"]}}}`                             |
+| `mcpServer/elicitation/request`         | `mcp-elicitation` (simple forms only)        | `{"action": "accept" \| "decline", ...}`                                         |
+| `execCommandApproval` (legacy)          | `command`                                    | `{"decision": "approved" \| "approved_for_session" \| {"denied": …} \| "abort"}` |
+| `applyPatchApproval` (legacy)           | `file-change`                                | same                                                                             |
+
+`acceptForSession` (and `acceptAlways`) is remembered per native thread and kind: the next
+request of that kind is answered at once. The allowance resets when the runtime mode changes.
+`serverRequest/resolved` follows each reply.
+
+## Notifications → `ProviderEvent`
+
+Ordinals: `providerTurnOrdinal * 100 + n`, where `n` counts the turn's items in first-seen
+order. Assistant text and reasoning are buffered and flushed every 50 ms; plan text every
+400 ms. A flush emits the row with `streaming: true`; item completion emits it completed.
+
+| Notification                                                  | Events                                                                                                               |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `turn/start` result or `turn/started`                         | `provider_turn.updated` running                                                                                      |
+| `item/started` `agentMessage`                                 | remembers the phase and reserves the ordinal                                                                         |
+| `item/agentMessage/delta`                                     | buffered text; a flush gives `node` + `turn_item` (`assistant_message`, streaming)                                   |
+| `item/completed` `agentMessage`                               | `node` + `message` + `turn_item`, completed; a repeated final answer is dropped                                      |
+| `item/reasoning/summaryTextDelta`, `textDelta`                | buffered per part; `node` (`reasoning`) + `turn_item` (`reasoning`)                                                  |
+| `item/completed` `reasoning`                                  | each part completed, using the item's summary and content as final text                                              |
+| `item/started` / `completed` `commandExecution`               | `node` (`tool_call`) + `turn_item` (`command_execution`, input, output, exit code)                                   |
+| `item/commandExecution/outputDelta`                           | `command_output.delta`                                                                                               |
+| `item/completed` `fileChange`                                 | `node` + `turn_item` (`file_change`, first path, diff, changes)                                                      |
+| `item/started` / `completed` `webSearch`                      | `node` + `turn_item` (`web_search`, patterns)                                                                        |
+| `item/started` / `completed` `mcpToolCall`, `dynamicToolCall` | `node` + `turn_item` (`dynamic_tool`)                                                                                |
+| `item/plan/delta`, `item/completed` `plan`                    | `node` (`plan`) + `plan.updated` (`proposed_plan`) + `turn_item` (`proposed_plan`)                                   |
+| `turn/plan/updated`                                           | `node` (`todo_list`) + `plan.updated` (`todo_list`) + `turn_item` (`todo_list`)                                      |
+| `item/started` / `completed` `contextCompaction`              | `turn_item` (`compaction`)                                                                                           |
+| `thread/tokenUsage/updated`                                   | `provider_turn.updated` running with `tokenUsage` from `last`; `total` feeds the turn usage                          |
+| `thread/settings/updated`, `model/rerouted`                   | the model reported on the completed turn                                                                             |
+| `error` (`willRetry: false`)                                  | the failure the terminal reports                                                                                     |
+| `error` (`willRetry: true`)                                   | a `provider_retry` turn item, completed when output resumes                                                          |
+| `mcpServer/startupStatus/updated` `failed`                    | a `system_notice` turn item                                                                                          |
+| `turn/completed`                                              | buffers flushed, open command rows ended, `provider_turn.updated` (status, `turnTokenUsage`, model), `turn.terminal` |
+
+`turn.terminal` status follows `turn.status`: `completed`, `interrupted` or `failed`. A
+`completed` turn that the user stopped counts as `interrupted`. A failed turn's failure comes
+from the last `error` notification or `turn.error`. `threadDisposition` is `reusable`.
+
+Ignored: `thread/started`, `thread/status/changed`, `account/updated`,
+`remoteControl/status/changed`, `configWarning`, `warning`, `deprecationNotice`,
+`serverRequest/resolved`, `item/reasoning/summaryPartAdded`, `hook/*`, and the realtime,
+fuzzy-search and fs families.
+
+## Exit and errors
+
+- The process exits: the event stream fails, so every open turn ends.
+- A request error is `{"code", "message"}`. TS checks these codes:
+  - `-32600 "Already initialized"`: success
+  - `-32600` "already has an active writer": thread in use
+  - `-32601`: unknown method; `thread/inject_items` falls back
+  - `-32600 "thread not found:"` on terminate: nothing is left to stop
+- A usage limit: the `error` notification or `turn.error` carries `codexErrorInfo` (HTTP
+  429 or `usageLimitExceeded`). The failure class is `usage_limit`, and `resetAt` comes from
+  `account/rateLimits/*`.
+
+## Not used by T3 here
+
+`review/start`, `command/exec`, the `fs/*`, `plugin/*` and `skills/*` families, and the
+realtime methods. Rollback (`thread/revert`, `thread/turns/list`), fork (`thread/fork`),
+goals (`thread/goal/*`), compaction (`thread/compact/start`), `thread/inject_items`,
+`thread/sample`, `feedback/upload` and the MCP-app calls are used by TS; this crate leaves them
+out (see the README).

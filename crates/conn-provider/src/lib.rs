@@ -45,6 +45,13 @@ pub trait Provider: Send + Sync {
     /// session closes; the engine is its only reader.
     fn open_session(&self, input: OpenSessionInput)
     -> BoxFuture<'_, ProviderResult<OpenedSession>>;
+
+    /// The `ServerProvider` entry (`packages/contracts/src/server.ts`) for
+    /// `ServerConfig.providers`, or `None` when the server builds it another way.
+    /// `checked_at` is ISO-8601.
+    fn server_provider_entry(&self, _checked_at: &str) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 pub struct OpenedSession {
