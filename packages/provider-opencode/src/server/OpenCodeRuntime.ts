@@ -267,7 +267,10 @@ export interface ParsedOpenCodeModelSlug {
   readonly modelID: string;
 }
 
-export type OpenCodeVariantCache = Map<string, ReadonlySet<string> | undefined>;
+export type OpenCodeVariantCache = Map<
+  string,
+  { readonly variants: ReadonlySet<string>; readonly contextWindow: number | undefined } | undefined
+>;
 
 export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   client: OpencodeClient,
@@ -281,7 +284,7 @@ export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   const key = `${model.providerID}/${model.modelID}`;
   const cached = cache?.get(key);
   if (cache?.has(key)) {
-    return cached !== undefined && !cached.has(variant) ? undefined : variant;
+    return cached !== undefined && !cached.variants.has(variant) ? undefined : variant;
   }
 
   // Only a confirmed catalog mismatch can invalidate a persisted selection.
@@ -299,8 +302,16 @@ export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
     ?.models[model.modelID];
   const variants = catalogModel ? new Set(Object.keys(catalogModel.variants ?? {})) : undefined;
   if (cache !== undefined) {
-    // Keep only this model's names; provider.list can return several megabytes.
-    cache.set(key, variants);
+    // Keep only what this model needs; provider.list can return several megabytes.
+    cache.set(
+      key,
+      catalogModel && variants
+        ? {
+            variants,
+            contextWindow: catalogModel.limit?.input ?? catalogModel.limit?.context,
+          }
+        : undefined,
+    );
   }
   return variants !== undefined && !variants.has(variant) ? undefined : variant;
 });
