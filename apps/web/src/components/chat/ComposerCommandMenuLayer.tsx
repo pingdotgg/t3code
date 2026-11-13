@@ -47,11 +47,13 @@ export function ComposerCommandMenuLayer(props: {
         return;
       }
       const composerOverlap = rootFontSizePx + 1;
+      // Rects are in layout-viewport coordinates; iOS keeps that viewport full height under the
+      // keyboard and pans the visible area down it, so the space above starts at offsetTop.
+      const visibleTop = Math.max(0, window.visualViewport?.offsetTop ?? 0);
       const next = {
-        // `bottom` is measured from the layout viewport, which iOS keeps full height under the keyboard.
         bottom: document.documentElement.clientHeight - rect.top - composerOverlap,
         left: rect.left + drawerInset,
-        maxHeight: Math.max(96, rect.top - 24 + composerOverlap),
+        maxHeight: Math.max(96, rect.top - visibleTop - 24 + composerOverlap),
         width,
       };
       setPosition((current) =>
