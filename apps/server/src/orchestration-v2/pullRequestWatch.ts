@@ -190,7 +190,9 @@ export function evaluatePullRequestWatch(
   const fresh = byOthers.filter((remark) => isNew(activeAt(remark), remark.id));
   // Bots rewrite one status comment many times, so an edit of a remark the agent already saw
   // waits until a read finds it unchanged and then wakes once with its final text.
-  const held = new Map((watch.pendingEdits ?? []).map((edit) => [edit.id, edit.editedAt]));
+  // An edit held on an older head describes that head, so a push drops it.
+  const pending = headMoved ? [] : (watch.pendingEdits ?? []);
+  const held = new Map(pending.map((edit) => [edit.id, edit.editedAt]));
   // Some bots keep rewriting one comment on the same head (a review countdown, a CI status
   // table), so each remark's edit is reported once per head; after a push its edits are news again.
   const editsTold = headMoved ? [] : (watch.remarkEditsTold ?? []);
@@ -211,7 +213,7 @@ export function evaluatePullRequestWatch(
       heldNow.push({ id: remark.id, editedAt: remark.editedAt });
     }
   }
-  const pendingEdits = remarks === null ? (watch.pendingEdits ?? []) : heldNow;
+  const pendingEdits = remarks === null ? pending : heldNow;
   const remarkEditsTold = [...new Set([...editsTold, ...edits.map((remark) => remark.id)])];
   if (added.length > 0) changes.push({ kind: "remarks", remarks: added });
   if (edits.length > 0) changes.push({ kind: "remarks", remarks: edits, edited: true });

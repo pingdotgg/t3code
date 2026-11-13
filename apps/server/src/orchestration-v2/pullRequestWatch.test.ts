@@ -692,6 +692,20 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "remarks", remarks: [at("20")], edited: true },
     ]);
     assert.deepEqual(sweep("bbbbbbbbbb", [at("25"), statusEdit]), []);
+    // An edit held on the old head does not spend the new head's report.
+    const held = evaluatePullRequestWatch(next, detail({ headSha: "bbbbbbbbbb" }), [
+      { ...status, editedAt: "2026-10-10T20:30:00.000Z" },
+    ]);
+    assert.deepEqual(held.changes, []);
+    next = held.next;
+    assert.deepEqual(
+      sweep("cccccccccc", [{ ...status, editedAt: "2026-10-10T20:30:00.000Z" }]),
+      [],
+    );
+    const finding = { ...status, editedAt: "2026-10-10T20:35:00.000Z" };
+    assert.deepEqual(sweep("cccccccccc", [finding]), [
+      { kind: "remarks", remarks: [finding], edited: true },
+    ]);
   });
 
   it("reports a remark new to the watch at once even when it was already edited", () => {
