@@ -2445,6 +2445,56 @@ it.layer(
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not leak the shell when an open is cancelled after spawn", () =>
+    Effect.gen(function* () {
+      let stateRef: SynchronizedRef.SynchronizedRef<unknown> | undefined;
+      const makeRef = vi.mocked(SynchronizedRef.make).getMockImplementation()!;
+      using _capture = vi.spyOn(SynchronizedRef, "make").mockImplementation(<A>(value: A) =>
+        makeRef(value).pipe(
+          Effect.tap((ref) =>
+            Effect.sync(() => {
+              if (typeof value === "object" && value !== null && "sessions" in value) {
+                stateRef = ref as SynchronizedRef.SynchronizedRef<unknown>;
+              }
+            }),
+          ),
+        ),
+      );
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const locked = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+      // Another operation holds the manager state lock when spawn returns.
+      const spawn = ptyAdapter.spawn.bind(ptyAdapter);
+      ptyAdapter.spawn = (input) =>
+        spawn(input).pipe(
+          Effect.tap(() =>
+            SynchronizedRef.modifyEffect(stateRef!, (state) =>
+              Deferred.succeed(locked, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as([undefined, state] as const),
+              ),
+            ).pipe(Effect.forkDetach({ startImmediately: true })),
+          ),
+        );
+
+      const input = openInput();
+      const request = yield* manager.open(input).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(locked);
+      ptyAdapter.spawn = spawn;
+      const cancelled = yield* Fiber.interrupt(request).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(cancelled);
+
+      const first = ptyAdapter.processes[0]!;
+      yield* manager.open(input);
+      expect(first.killed || ptyAdapter.processes.length === 1).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("resyncs bounded history and follows close/reopen across a stalled stream", () =>
     Effect.gen(function* () {
       const ptyAdapter = new GatedPtyAdapter();
