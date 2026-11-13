@@ -188,22 +188,48 @@ export function parseElicitationForm(
       : [],
   );
   const fields = new Map<string, Field>();
-  const questions: OrchestrationV2UserInputQuestion[] = [];
+  const parsedFields: Array<{
+    readonly id: string;
+    readonly property: Readonly<Record<string, unknown>>;
+    readonly options: Option[];
+  }> = [];
   for (const [id, value] of Object.entries(unknownRecord(schema?.properties) ?? {})) {
     const property = unknownRecord(value);
     const parsed = property === undefined ? undefined : parseField(property);
     // Question ids must survive the contract's trim to round-trip answers.
     if (property === undefined || parsed === undefined || text(id) !== id) return undefined;
     fields.set(id, parsed.field);
+    parsedFields.push({ id, property, options: parsed.options });
+  }
+  // An optional `<id>__other` text field (OMP's ask dialog) is the free-text answer to
+  // optional single choice `<id>`: ask them as one question and send custom text to the
+  // companion. Multi-select keeps both fields, since it can answer with options and text.
+  const companions = new Map<string, string>();
+  for (const [id, field] of fields) {
+    const companionId = `${id}__other`;
+    if (
+      field.kind === "choice" &&
+      fields.get(companionId)?.kind === "text" &&
+      !required.has(id) &&
+      !required.has(companionId)
+    ) {
+      companions.set(id, companionId);
+    }
+  }
+  const folded = new Set(companions.values());
+  const questions: OrchestrationV2UserInputQuestion[] = [];
+  for (const { id, property, options } of parsedFields) {
+    if (folded.has(id)) continue;
+    const kind = fields.get(id)?.kind;
     questions.push({
       id,
       header: text(property.title) ?? `Question ${questions.length + 1}`,
       question: text(property.description) ?? message,
-      options: parsed.options,
-      ...(parsed.field.kind === "text" || parsed.field.kind === "number"
+      options,
+      ...(kind === "text" || kind === "number" || companions.has(id)
         ? {}
         : { allowCustomAnswer: false }),
-      ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
+      ...(kind === "multiChoice" ? { multiSelect: true } : {}),
     });
   }
   return {
@@ -211,9 +237,14 @@ export function parseElicitationForm(
     content: (answers) => {
       const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
       for (const [id, field] of fields) {
-        const typed = Object.hasOwn(answers, id) ? typedAnswer(field, answers[id]) : undefined;
+        if (folded.has(id)) continue;
+        const answer = Object.hasOwn(answers, id) ? answers[id] : undefined;
+        const typed = answer === undefined ? undefined : typedAnswer(field, answer);
+        const companionId = companions.get(id);
         if (typed !== undefined) entries.push([id, typed]);
-        else if (required.has(id)) return undefined;
+        else if (companionId !== undefined && typeof answer === "string") {
+          entries.push([companionId, answer]);
+        } else if (required.has(id)) return undefined;
       }
       // Own properties for every field, `__proto__` included; assigning to
       // `{}` would hit its inherited setter instead.
