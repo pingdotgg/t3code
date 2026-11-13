@@ -418,4 +418,8 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
       T3CODE_LAN: "false",
     }),
   ).toBe('T3CODE_LAN=false\nCUSTOM="x\nT3CODE_LAN=y"\n');
+  const long = `CUSTOM="${"\n".repeat(130_000)}"\n`;
+  expect(upsertServiceEnv(`${long}T3CODE_LAN=true\n`, { T3CODE_LAN: "false" })).toBe(
+    `${long}T3CODE_LAN=false\n`,
+  );
 });

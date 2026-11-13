@@ -69,7 +69,7 @@ export const upsertServiceEnv = (
     index = end;
     const key = match?.[1];
     if (key === undefined || !Object.hasOwn(entries, key)) {
-      lines.push(...span);
+      lines.push(span.join("\n"));
       continue;
     }
     const value = entries[key];
