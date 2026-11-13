@@ -111,6 +111,8 @@ const SCREENCAST_MOTION_WINDOW_MS = 300;
 const SCREENCAST_MOTION_QUALITY = 50;
 const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
+// A viewer still is best-effort; a capture Chromium never answers must not hold the capture lock.
+const VIEWER_STILL_TIMEOUT_MS = 2_000;
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
@@ -2945,9 +2947,19 @@ const make = Effect.gen(function* () {
     broadcastControl(tab);
     pushFileChooser(tab);
     const pushStill = async () => {
-      const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
-      ).catch(() => null);
+      const data = await withCaptureLock(tab, async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(() => resolve(null), VIEWER_STILL_TIMEOUT_MS);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      }).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3005,7 +3017,7 @@ const make = Effect.gen(function* () {
     yield* Effect.promise(() => startScreencast(1));
     // An idle page does not repaint for a new screencast, so the viewer
     // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    if (!screencastStarted) yield* Effect.forkScoped(Effect.promise(pushStill));
     return {
       output,
       input: (raw: unknown) =>
