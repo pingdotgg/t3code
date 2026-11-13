@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { Atom } from "effect/reactivity";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  authoredMessageText,
   restoreAttachmentOnlyBootstrapPrompt,
 } from "@t3tools/shared/composerContextReferences";
 import {
@@ -13,6 +14,7 @@ import {
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 
+import { serializeComposerMessageForServer } from "../lib/composerContext";
 import { appAtomRegistry } from "./atom-registry";
 import {
   activeComposerDraftKey,
@@ -223,6 +225,33 @@ describe("beginQueuedRunEdit", () => {
     expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBe(
       "That message already started. Your edit is back in the composer.",
     );
+  });
+
+  it("recovers an edit without the effort prefix, so sending it again recalls only the user's words", async () => {
+    await waitForComposerDraftsLoaded();
+    const threadKey = "env-exit:thread-prefix-recover";
+    const runId = RunId.make("run-1");
+    const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
+      { id: runId, status: "queued" },
+    ]);
+    beginQueuedRunEdit(
+      threadKey,
+      {
+        ...edit([]),
+        originalText: "Ultrathink:\nthink",
+        context: { version: 1, records: [], authoredRange: [12, 17] },
+      },
+      runs,
+    );
+    setComposerDraftText(queuedEditDraftKey(threadKey, runId), "Ultrathink:\nthink harder");
+
+    appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
+    await flushComposerDrafts();
+
+    const recovered = getComposerDraftSnapshot(threadKey);
+    expect(recovered.text).toBe("think harder");
+    const resent = serializeComposerMessageForServer(recovered.text, recovered.context);
+    expect(authoredMessageText(resent.text, resent.context)).toBe("think harder");
   });
 
   it("ends a changed edit when its run starts, without the thread's composer mounted", () => {

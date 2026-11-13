@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  recoveredQueuedEditText,
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
   withEditedAuthoredText,
@@ -95,7 +96,7 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   if (recovery === "kept") {
     // The merge publishes the draft before writing it, so a failed write only delays persistence to the next one.
     mergeComposerDraftContent(threadKey, {
-      text: editDraft.text,
+      text: recoveredQueuedEditText({ text: edit.sentText, context: edit.context }, editDraft.text),
       attachments: editDraft.attachments,
       ...(editDraft.context ? { context: editDraft.context } : {}),
     }).catch((error: unknown) => {

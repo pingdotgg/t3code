@@ -1,5 +1,6 @@
 import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
-import type { ChatAttachment } from "@t3tools/contracts";
+import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
+import { recoveredQueuedEditText } from "@t3tools/shared/composerContextReferences";
 import {
   composerDraftHasUserContent,
   useComposerDraftStore,
@@ -12,6 +13,11 @@ export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
   readonly originalText: string;
+  /** The queued message as sent; what the app added to it stays out of the recovered draft. */
+  readonly sent?: {
+    readonly text: string;
+    readonly context?: OrchestrationMessageContext | undefined;
+  };
   readonly removedExistingAttachment?: boolean;
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
@@ -27,6 +33,9 @@ export function recoverQueuedMessageEdit(input: {
       !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
+    if (input.sent !== undefined && draft !== null) {
+      store.setPrompt(input.editTarget, recoveredQueuedEditText(input.sent, draft.prompt));
+    }
     store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
   }
   store.clearComposerContent(input.editTarget);

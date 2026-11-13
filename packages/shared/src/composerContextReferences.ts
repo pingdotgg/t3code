@@ -234,6 +234,24 @@ function withoutBootstrapPrompt(text: string): string {
     : text;
 }
 
+/** The user's part of `body`, an edit of `previous` without its attachment-only prompt. */
+function editedAuthoredRange(
+  previous: SentMessage,
+  body: string,
+): readonly [number, number] | undefined {
+  const range = authoredRange(previous.text, previous.context);
+  if (range === undefined) return undefined;
+  // The attachment-only prompt stands in for an empty message, so it is never decoration to keep.
+  const previousBody = withoutBootstrapPrompt(previous.text);
+  const prefix = previousBody.slice(0, range[0]);
+  const suffix = previousBody.slice(range[1]);
+  const kept =
+    body.length >= prefix.length + suffix.length &&
+    body.startsWith(prefix) &&
+    body.endsWith(suffix);
+  return kept ? [prefix.length, body.length - suffix.length] : [0, body.length];
+}
+
 /**
  * The context of a queued message whose text was edited. What the app put around the user's
  * words stays the app's while the edit keeps it; an edit that rewrites it makes the whole text
@@ -255,21 +273,19 @@ export function withEditedAuthoredText(
   editedText: string,
 ): OrchestrationMessageContext | undefined {
   const { authoredRange: _stale, ...edited } = context ?? { version: 1, records: [] };
-  const range = authoredRange(previous.text, previous.context);
+  const range = editedAuthoredRange(previous, withoutBootstrapPrompt(editedText));
   if (range === undefined) return context === undefined ? undefined : edited;
-  // The attachment-only prompt stands in for an empty message, so it is never decoration to keep.
-  const previousBody = withoutBootstrapPrompt(previous.text);
-  const prefix = previousBody.slice(0, range[0]);
-  const suffix = previousBody.slice(range[1]);
-  const body = withoutBootstrapPrompt(editedText);
-  const kept =
-    body.length >= prefix.length + suffix.length &&
-    body.startsWith(prefix) &&
-    body.endsWith(suffix);
-  return {
-    ...edited,
-    authoredRange: kept ? [prefix.length, body.length - suffix.length] : [0, body.length],
-  };
+  return { ...edited, authoredRange: range };
+}
+
+/**
+ * A queued edit's draft as the thread's composer should get it back: without what the app put
+ * around the user's words when it sent the message, since sending the draft decorates it again.
+ */
+export function recoveredQueuedEditText(previous: SentMessage, draftText: string): string {
+  const body = withoutBootstrapPrompt(restoreAttachmentOnlyBootstrapPrompt(draftText, true));
+  const range = editedAuthoredRange(previous, body);
+  return range === undefined ? draftText : body.slice(range[0], range[1]);
 }
 
 /**

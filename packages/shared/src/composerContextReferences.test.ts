@@ -14,6 +14,7 @@ import {
   collectComposerContextReferences,
   formatComposerContextHref,
   isImageReferencesOnly,
+  recoveredQueuedEditText,
   parseComposerContextHref,
   projectComposerContextForProvider,
   restoreAttachmentOnlyBootstrapPrompt,
@@ -202,6 +203,32 @@ describe("authored text", () => {
     const edited = withEditedAuthoredText({ version: 1, records: [image] }, previous, row.edited);
     expect(edited?.records).toEqual([image]);
     expect(authoredMessageText(row.edited, edited)).toBe(row.expected);
+  });
+
+  it.each([
+    {
+      sent: `${prefix}think`,
+      authored: "think",
+      draft: `${prefix}think harder`,
+      text: "think harder",
+    },
+    { sent: `${prefix}think`, authored: "think", draft: "think less", text: "think less" },
+    // An attachment-only edit opens on the bare prefix; a new attachment alone leaves it there.
+    { sent: `${prefix}${placeholder}`, authored: "", draft: "Ultrathink:", text: "" },
+    { sent: `${prefix}${placeholder}`, authored: "", draft: `${prefix}look`, text: "look" },
+    { sent: "hello", authored: "hello", draft: `${prefix}hello`, text: `${prefix}hello` },
+  ])("recovers $text from the unsaved edit $draft of $sent", (row) => {
+    const previous = {
+      text: row.sent,
+      context: withAuthoredText(undefined, row.sent, row.authored),
+    };
+    expect(recoveredQueuedEditText(previous, row.draft)).toBe(row.text);
+  });
+
+  it("recovers an edit whole when the message it replaces was unmarked", () => {
+    expect(recoveredQueuedEditText({ text: `${prefix}think` }, `${prefix}think harder`)).toBe(
+      `${prefix}think harder`,
+    );
   });
 
   it("leaves an edit unmarked when the message it replaces was", () => {

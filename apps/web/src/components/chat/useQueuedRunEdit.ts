@@ -302,6 +302,7 @@ export function useQueuedRunEdit(input: {
             editTarget: queuedRunEditDraftId(routeThreadRef, edit.runId),
             threadTarget: threadDraftTarget,
             originalText: edit.originalText,
+            sent: { text: edit.sentText, context: edit.context },
             removedExistingAttachment: edit.removedExistingAttachment === true,
           });
           if (recovery === "clean") return;

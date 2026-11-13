@@ -1,6 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { threadContextRecord, withAuthoredText } from "@t3tools/shared/composerContextReferences";
+import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   DraftId,
@@ -8,6 +9,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
 } from "../../composerDraftStore";
+import { recallableComposerPrompt } from "./composerPromptHistory";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
@@ -85,6 +87,27 @@ describe("queued message file edits", () => {
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
     expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+
+  it("recalls only what the user wrote after a recovered edit is sent again", () => {
+    const store = useComposerDraftStore.getState();
+    const queued = applyClaudePromptEffortPrefix("think", "ultrathink");
+    store.setPrompt(editTarget, `${queued} harder`);
+    expect(
+      recoverQueuedMessageEdit({
+        editTarget,
+        threadTarget,
+        originalText: queued,
+        sent: { text: queued, context: withAuthoredText(undefined, queued, "think") },
+      }),
+    ).toBe("kept");
+    const recovered = store.getComposerDraft(threadTarget)?.prompt ?? "";
+    expect(recovered).toBe("think harder");
+    const resent = applyClaudePromptEffortPrefix(recovered, "ultrathink");
+    expect(resent).toBe("Ultrathink:\nthink harder");
+    expect(recallableComposerPrompt(resent, withAuthoredText(undefined, resent, recovered))).toBe(
+      "think harder",
+    );
   });
 
   it("removes a kept edit draft that held a thread mention", () => {
