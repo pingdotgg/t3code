@@ -136,7 +136,7 @@ export class CodexShadowHomeSqliteConflictError extends Schema.TaggedError<Codex
   },
 ) {
   override get message(): string {
-    return `Codex shadow home '${this.effectiveHomePath}' holds SQLite writes (${this.entryNames.join(", ")}) that the shared home '${this.sharedHomePath}' may not have. Stop every Codex process using either home, back up both, then move those files out of the shadow home and retry. T3 did not change any SQLite files.`;
+    return `Codex shadow home '${this.effectiveHomePath}' holds SQLite data (${this.entryNames.join(", ")}) that the shared home '${this.sharedHomePath}' may not have, and Codex now opens its databases from the shared home. Stop every Codex process using either home and back up both. To keep a shadow database, move it with its -wal and -shm files into the shared home if that has no database of the same name. Move any other listed file out of the shadow home, then retry. T3 did not change any SQLite files.`;
   }
 }
 
@@ -230,13 +230,15 @@ export function codexSqliteHomeEnvironment(
 
 /**
  * Finds the database links an earlier layout left in the shadow home, without changing anything.
- * A WAL or journal with no database of its own beside it was written through such a link and may
- * hold writes the shared database never received.
+ * Refuses SQLite data that Codex would stop reading: a WAL or journal written through such a link,
+ * which may hold writes the shared database never received, and, when the shared home becomes the
+ * SQLite home, a database the shadow has been using as its own.
  */
 const findLegacySqliteLinks = Effect.fn("CodexHomeLayout.findLegacySqliteLinks")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string;
+  readonly opensSharedDatabases: boolean;
 }): Effect.fn.Return<ReadonlyArray<string>, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
   const fileSystemError = (operation: "readDirectory" | "stat", errorPath: string) => ({
@@ -255,7 +257,7 @@ const findLegacySqliteLinks = Effect.fn("CodexHomeLayout.findLegacySqliteLinks")
   );
   const links: Array<string> = [];
   const databases = new Set<string>();
-  const unsaved: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
+  const withData: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
   for (const entryName of entryNames) {
     const entryPath = path.join(input.effectiveHomePath, entryName);
     const state = yield* readLinkState({ ...input, entryName, linkPath: entryPath });
@@ -264,13 +266,13 @@ const findLegacySqliteLinks = Effect.fn("CodexHomeLayout.findLegacySqliteLinks")
       continue;
     }
     if (state._tag === "Missing") continue;
-    if (SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
-      databases.add(entryName.toLowerCase());
-      continue;
-    }
-    // A -shm is an index SQLite rebuilds, and an empty WAL or journal holds nothing.
-    const databaseName = SQLITE_UNSAVED_SIDECAR_ENTRY_NAME.exec(entryName)?.[1]?.toLowerCase();
+    const isDatabase = SQLITE_DATABASE_ENTRY_NAME.test(entryName);
+    // A -shm is an index SQLite rebuilds, and an empty file holds nothing.
+    const databaseName = (
+      isDatabase ? entryName : SQLITE_UNSAVED_SIDECAR_ENTRY_NAME.exec(entryName)?.[1]
+    )?.toLowerCase();
     if (databaseName === undefined) continue;
+    if (isDatabase) databases.add(databaseName);
     const size = yield* input.fileSystem.stat(entryPath).pipe(
       Effect.map((info) => Number(info.size)),
       Effect.catchTags({
@@ -280,15 +282,17 @@ const findLegacySqliteLinks = Effect.fn("CodexHomeLayout.findLegacySqliteLinks")
             : fileSystemError("stat", entryPath).PlatformError(cause),
       }),
     );
-    if (size > 0) unsaved.push({ entryName, databaseName });
+    if (size > 0) withData.push({ entryName, databaseName });
   }
 
-  const stranded = unsaved.filter((sidecar) => !databases.has(sidecar.databaseName));
-  if (stranded.length > 0) {
+  const unreachable = input.opensSharedDatabases
+    ? withData
+    : withData.filter((entry) => !databases.has(entry.databaseName));
+  if (unreachable.length > 0) {
     return yield* new CodexShadowHomeSqliteConflictError({
       sharedHomePath: input.sharedHomePath,
       effectiveHomePath: input.effectiveHomePath,
-      entryNames: stranded.map((sidecar) => sidecar.entryName).toSorted(),
+      entryNames: unreachable.map((entry) => entry.entryName).toSorted(),
     });
   }
   return links;
@@ -484,11 +488,13 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     );
 
   yield* makeDirectory(effectiveHomePath);
-  // Refuse stranded SQLite writes before anything in the shadow home changes.
+  const launchEnvironment = codexSqliteHomeEnvironment(layout, environment);
+  // Refuse SQLite data Codex would lose sight of before anything in the shadow home changes.
   const legacySqliteLinks = yield* findLegacySqliteLinks({
     fileSystem,
     sharedHomePath: layout.sharedHomePath,
     effectiveHomePath,
+    opensSharedDatabases: launchEnvironment !== environment,
   });
 
   yield* Effect.all(
@@ -572,7 +578,7 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     effectiveHomePath,
   });
 
-  return codexSqliteHomeEnvironment(layout, environment);
+  return launchEnvironment;
 });
 
 export function codexContinuationIdentity(layout: CodexHomeLayout) {

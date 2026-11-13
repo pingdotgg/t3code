@@ -319,8 +319,6 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           for (const name of ["state_5.sqlite", "state_5.sqlite-wal", "goals_1.sqlite"]) {
             yield* writeTextFile(path.join(sharedHome, name), `shared ${name}`);
           }
-          yield* writeTextFile(path.join(shadowHome, "logs_2.sqlite"), "shadow logs");
-          yield* writeTextFile(path.join(shadowHome, "logs_2.sqlite-wal"), "shadow frames");
           yield* fileSystem.symlink(
             path.join(sharedHome, "state_5.sqlite"),
             path.join(shadowHome, "state_5.sqlite"),
@@ -339,18 +337,43 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             (yield* fileSystem.readDirectory(shadowHome))
               .filter((name) => name.includes(".sqlite"))
               .toSorted(),
-          ).toEqual([
-            "logs_2.sqlite",
-            "logs_2.sqlite-wal",
-            "state_5.sqlite-shm",
-            "state_5.sqlite-wal",
-          ]);
+          ).toEqual(["state_5.sqlite-shm", "state_5.sqlite-wal"]);
           expect(yield* fileSystem.readFileString(path.join(sharedHome, "state_5.sqlite"))).toBe(
             "shared state_5.sqlite",
           );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses to route a shadow that uses its own database to the shared home",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared goals");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "shadow records");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "shadow frames");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+          expect(error).toMatchObject({ entryNames: ["state_5.sqlite", "state_5.sqlite-wal"] });
+          expect((yield* fileSystem.readDirectory(shadowHome)).toSorted()).toEqual([
+            "state_5.sqlite",
+            "state_5.sqlite-wal",
+          ]);
+          // The user's own SQLite home never read the shadow's database, so nothing is lost.
           expect(
             yield* materializeCodexShadowHome(layout, { CODEX_SQLITE_HOME: "/elsewhere" }),
           ).toEqual({ CODEX_SQLITE_HOME: "/elsewhere" });
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            "shadow records",
+          );
         }),
     );
 
