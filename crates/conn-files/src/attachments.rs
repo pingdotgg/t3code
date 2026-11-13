@@ -36,6 +36,8 @@ pub const UPLOAD_URL_TTL_MS: u64 = 10 * 60_000;
 /// `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` and `_FILE_BYTES`.
 pub const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+/// `PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS`.
+pub const MAX_IMAGE_DATA_URL_CHARS: usize = 14_000_000;
 pub const PENDING_SEGMENT: &str = "pending";
 const PENDING_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const PARTIAL_MAX_AGE: Duration = Duration::from_secs(60 * 60);
@@ -491,6 +493,50 @@ impl AttachmentStore {
 
     /// `assets.persistChatAttachments`: stores `data:` URL images under ids derived from the
     /// message, so a retry keeps its ids.
+    /// `UploadChatImageAttachment`'s checks, which the generated types drop: run before any
+    /// payload is decoded or stored. Lengths count UTF-16 units after trimming, as Effect's
+    /// `TrimmedNonEmptyString` and `isMaxLength` do.
+    pub fn check_persist_input(input: &PersistChatAttachmentsInput) -> Result<(), String> {
+        let trimmed_len = |value: &str, max: usize, field: &str| {
+            let n = value.trim().encode_utf16().count();
+            if n == 0 || n > max {
+                Err(format!("{field} must be 1 to {max} characters"))
+            } else {
+                Ok(())
+            }
+        };
+        for attachment in &input.attachments {
+            if let Some(id) = &attachment.id {
+                trimmed_len(id, 128, "id")?;
+                if !id
+                    .trim()
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                {
+                    return Err("id may hold only letters, digits, '_' and '-'".into());
+                }
+            }
+            trimmed_len(&attachment.name, 255, "name")?;
+            trimmed_len(&attachment.mime_type, 100, "mimeType")?;
+            let is_image = attachment
+                .mime_type
+                .trim()
+                .get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"));
+            if !is_image {
+                return Err(format!(
+                    "mimeType must start with image/, not '{}'",
+                    attachment.mime_type
+                ));
+            }
+            if !(0..=MAX_IMAGE_BYTES as i64).contains(&attachment.size_bytes) {
+                return Err("sizeBytes must be between 0 and 10 MiB".into());
+            }
+            trimmed_len(&attachment.data_url, MAX_IMAGE_DATA_URL_CHARS, "dataUrl")?;
+        }
+        Ok(())
+    }
+
     pub fn persist_data_urls(
         &self,
         input: &PersistChatAttachmentsInput,

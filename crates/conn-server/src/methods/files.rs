@@ -353,6 +353,8 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, input: PersistChatAttachmentsInput| {
             let f = f.clone();
             async move {
+                // The contract's limits, which the generated types do not check.
+                conn_files::AttachmentStore::check_persist_input(&input).map_err(Failure::die)?;
                 blocking(move || {
                     f.attachments
                         .persist_data_urls(&input)

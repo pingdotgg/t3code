@@ -18,7 +18,7 @@ reference is the T3 server's `apps/server/src/workspace/*`, `assets/*` and `atta
 | `filesystem.browse`, `getMetadata`      | As T3                                                                                                                                                       |
 | `shell.openInEditor`                    | A server host has no desktop: always `ExternalLauncherCommandNotFoundError`; `availableEditors` is empty so clients hide it                                 |
 | `assets.createUrl`                      | workspace and media files, drafts, attachments, project favicons, native app icons (always 404 here)                                                        |
-| `assets.persistChatAttachments`         | `data:` URL images under ids derived from the message                                                                                                       |
+| `assets.persistChatAttachments`         | `data:` URL images under ids derived from the message; the contract limits (`image/`, 10 MiB, 14,000,000-character data URL) checked before decoding      |
 | `attachments.createUploadUrl`, `delete` | Pending uploads; delete removes pending ones only                                                                                                           |
 | `GET /api/assets/<token>/<name>`        | Signed token is the credential. Streams with `Range`; HTML and SVG sandboxed; media pinned to device and inode                                              |
 | `POST /api/attachments/upload/<token>`  | Streams to a `.part` file, publishes by hard link without replacement                                                                                       |

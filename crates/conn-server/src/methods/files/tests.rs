@@ -475,3 +475,71 @@ async fn worktrees_in_the_state_folder_read_and_internal_files_stay_hidden() {
         "{dir}"
     );
 }
+
+/// `UploadChatImageAttachment` (`chatAttachment.ts`): an image type, at most 10 MiB, a data URL
+/// of at most 14,000,000 characters, checked before anything is decoded or stored.
+#[tokio::test(flavor = "current_thread")]
+async fn persisted_attachments_keep_the_contract_limits() {
+    let s = setup("persist-limits");
+    let persist = |mime: &str, size: u64, data_url: String| {
+        json!({"threadId": "thread-1", "messageId": "m1", "attachments": [{
+            "type": "image", "name": "a", "mimeType": mime, "sizeBytes": size, "dataUrl": data_url}]})
+    };
+    let ok = call(
+        &s.table,
+        CallContext::default(),
+        "assets.persistChatAttachments",
+        persist("image/png", 2, "data:image/png;base64,aGk=".into()),
+    )
+    .await;
+    assert!(ok.is_ok(), "{ok:?}");
+    for (case, input) in [
+        (
+            "not an image",
+            persist("text/html", 2, "data:text/html;base64,aGk=".into()),
+        ),
+        (
+            "over 10 MiB",
+            persist(
+                "image/png",
+                10 * 1024 * 1024 + 1,
+                "data:image/png;base64,aGk=".into(),
+            ),
+        ),
+        (
+            "data URL too long",
+            persist(
+                "image/png",
+                2,
+                format!("data:image/png;base64,{}", "A".repeat(14_000_000)),
+            ),
+        ),
+        (
+            "mimeType too long",
+            persist(
+                &format!("image/{}", "x".repeat(100)),
+                2,
+                "data:image/png;base64,aGk=".into(),
+            ),
+        ),
+        (
+            "empty name",
+            json!({"threadId": "thread-1", "messageId": "m1", "attachments": [{
+            "type": "image", "name": "  ", "mimeType": "image/png", "sizeBytes": 2,
+            "dataUrl": "data:image/png;base64,aGk="}]}),
+        ),
+    ] {
+        let result = call(
+            &s.table,
+            CallContext::default(),
+            "assets.persistChatAttachments",
+            input,
+        )
+        .await;
+        assert!(matches!(result, Err(Failure::Die(_))), "{case}: {result:?}");
+    }
+    let stored = std::fs::read_dir(s.dir.join("state/attachments"))
+        .unwrap()
+        .count();
+    assert_eq!(stored, 1, "only the valid image is stored");
+}
