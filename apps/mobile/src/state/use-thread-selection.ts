@@ -81,6 +81,8 @@ function threadDetailToShell(
     branchPullRequest: thread.branchPullRequest ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     lineage: thread.lineage,
+    linkOrigin: thread.linkOrigin,
+    delegatedFrom: thread.delegatedFrom,
     forkedFrom: thread.forkedFrom,
     createdBy: thread.createdBy,
     creationSource: thread.creationSource,

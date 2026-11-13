@@ -93,7 +93,7 @@ import {
   turnEvents,
 } from "./TransferBudgetV2Fixture.integration.ts";
 
-// The opt-ins current web and mobile clients send (`omitIdleSubagentParents` only from web), as client-runtime's boundedThreadSnapshotHttp.ts,
+// The opt-ins current web and mobile clients send, as client-runtime's boundedThreadSnapshotHttp.ts,
 // threadHistoryHttp.ts, shellSnapshotHttp.ts, threads.ts and shell.ts send them. Each is `Required`,
 // so an opt-in added to a contract fails typecheck here until this test sends it. An omitted field
 // differs per request (a cursor, or what the client holds), so each scenario sends its own.

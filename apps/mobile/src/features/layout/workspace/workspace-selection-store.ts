@@ -20,12 +20,15 @@ import type { WorkspaceSelections } from "../../../persistence/mobile-preference
 import { appAtomRegistry } from "../../../state/atom-registry";
 import { environmentPresentations } from "../../../state/presentation";
 import {
+  environmentThreads,
   environmentThreadShells,
+  loadedEnvironmentThread,
   startOpeningEnvironmentThread,
   threadEnvironment,
 } from "../../../state/threads";
 import {
   rememberedSettingsPage,
+  unlistedThreadReopens,
   workspaceSelectionsIn,
   type WorkspaceSelectionCheck,
 } from "./workspace-tab-navigation";
@@ -101,18 +104,29 @@ function environmentRemoved(environmentId: string) {
   );
 }
 
+function threadListed(environmentId: EnvironmentId, threadId: ThreadId) {
+  return (
+    !appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId)) ||
+    appAtomRegistry
+      .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
+      .has(threadId)
+  );
+}
+
 /**
  * A remembered chat is gone once its environment was removed, or once that environment's
- * snapshot has loaded without it. Before it loads there is nothing to contradict it.
+ * snapshot has loaded without it. Before it loads there is nothing to contradict it. A snapshot
+ * leaves idle subagents out, so for those the chat's loaded detail answers.
  */
 export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
   thread: (selection) => {
     if (environmentRemoved(selection.environmentId)) return false;
     const environmentId = selection.environmentId as EnvironmentId;
-    if (!appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId))) return true;
-    return appAtomRegistry
-      .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
-      .has(selection.threadId as ThreadId);
+    const threadId = selection.threadId as ThreadId;
+    return (
+      threadListed(environmentId, threadId) ||
+      unlistedThreadReopens(loadedEnvironmentThread(environmentId, threadId))
+    );
   },
   pullRequest: (selection) => !environmentRemoved(selection.environmentId),
 };
@@ -134,6 +148,32 @@ export function settingsLinkPage() {
   return REMEMBERS && workspaceHasColumns() ? rememberedSettingsPage(selections) : undefined;
 }
 
+// A cached copy is read from the local database; a chat with none answers nothing.
+const CACHED_THREAD_READ_TIMEOUT_MS = 1_000;
+
+/**
+ * Waits for the cached copy of a chat the shell rows lack, which `startOpeningEnvironmentThread`
+ * began reading: the rows cannot say whether an idle subagent is still there, its copy can.
+ */
+function cachedThreadRead(environmentId: EnvironmentId, threadId: ThreadId) {
+  if (threadListed(environmentId, threadId)) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      stop();
+      resolve();
+    };
+    const timer = setTimeout(done, CACHED_THREAD_READ_TIMEOUT_MS);
+    const stop = appAtomRegistry.subscribe(
+      environmentThreads.stateAtom(environmentId, threadId),
+      () => {
+        if (loadedEnvironmentThread(environmentId, threadId) !== null) done();
+      },
+    );
+    if (loadedEnvironmentThread(environmentId, threadId) !== null) done();
+  });
+}
+
 /**
  * Where a cold start without a link opens. A window that starts with columns reopens the last
  * chat beside the list instead of an empty detail column; a compact window opens on the list.
@@ -152,7 +192,9 @@ export async function launchWorkspaceURL(): Promise<string | null> {
     );
   }
   await metrics;
-  if (!thread || !workspaceHasColumns() || !workspaceSelectionCheck.thread(thread)) return null;
+  if (!thread || !workspaceHasColumns()) return null;
+  await cachedThreadRead(thread.environmentId as EnvironmentId, thread.threadId as ThreadId);
+  if (!workspaceSelectionCheck.thread(thread)) return null;
   return Linking.createURL(
     `threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`,
   );

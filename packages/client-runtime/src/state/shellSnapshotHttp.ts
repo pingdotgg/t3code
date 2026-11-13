@@ -22,7 +22,6 @@ import {
 
 export interface ShellSnapshotOptions {
   readonly omitIdleSubagents?: boolean;
-  readonly omitIdleSubagentParents?: boolean;
   readonly omitOlderSettled?: boolean;
   /** The cursor of held rows loaded with these omissions; the server may answer `resumable`. */
   readonly resumeFrom?: number;
@@ -54,8 +53,9 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
 ) {
   const endpoint = {
     query: {
-      ...(input.omitIdleSubagents === true ? { omitIdleSubagents: "1" } : {}),
-      ...(input.omitIdleSubagentParents === true ? { omitIdleSubagentParents: "1" } : {}),
+      ...(input.omitIdleSubagents === true
+        ? { omitIdleSubagents: "1", omitIdleSubagentParents: "1" }
+        : {}),
       ...(input.omitOlderSettled === true ? { omitOlderSettled: "1" } : {}),
       ...(input.resumeFrom === undefined ? {} : { resumeFrom: String(input.resumeFrom) }),
     },

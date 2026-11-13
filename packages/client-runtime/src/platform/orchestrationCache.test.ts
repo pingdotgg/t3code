@@ -97,7 +97,7 @@ describe("orchestration cache envelopes", () => {
   });
 
   it("gives a client from before `originV2` no origin to resume from", () => {
-    // What that client decodes: it drops keys, and origin flags, that it does not know.
+    // What that client decodes: it drops keys it does not know.
     const decodeAsOlderClient = Schema.decodeUnknownSync(
       Schema.Struct({
         schemaVersion: Schema.Literal(3),
@@ -108,7 +108,6 @@ describe("orchestration cache envelopes", () => {
       serverVersion: "1.0.0",
       databaseMigration: 70,
       omitIdleSubagents: true,
-      omitIdleSubagentParents: true,
       omitOlderSettled: true,
       snapshotAt: 1_800_000_000_000,
     };
@@ -121,7 +120,7 @@ describe("orchestration cache envelopes", () => {
 
     expect(decodeStoredShellSnapshotSync(stored).originV2).toEqual(origin);
     expect(decodeAsOlderClient(stored)).toEqual({ schemaVersion: 3 });
-    // Under `origin` the new flag would not stop it: the flags it knows still match.
+    // Under `origin` it would resume: the flags it knows match.
     expect(decodeAsOlderClient({ ...stored, origin })).toEqual({
       schemaVersion: 3,
       origin: { omitIdleSubagents: true },

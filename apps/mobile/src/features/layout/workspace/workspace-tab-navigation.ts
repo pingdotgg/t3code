@@ -1,3 +1,5 @@
+import { isListedThreadLineage, type OrchestrationV2AppThread } from "@t3tools/contracts";
+
 import type { WorkspaceSelections } from "../../../persistence/mobile-preferences";
 import {
   SETTINGS_PAGE_TARGETS,
@@ -36,6 +38,21 @@ export function rememberedSettingsPage(selections: WorkspaceSelections): Setting
   return selections.settings && REMEMBERED_SETTINGS_PAGES.has(selections.settings)
     ? (selections.settings as SettingsPageTarget)
     : DEFAULT_SETTINGS_PAGE;
+}
+
+/**
+ * Whether a remembered chat the shell rows lack is still reopened. Shells leave idle subagents and
+ * side chats out, so the chat's loaded detail answers for those. Any other missing row is gone.
+ */
+export function unlistedThreadReopens(
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "archivedAt" | "deletedAt"> | null,
+) {
+  return (
+    thread !== null &&
+    !isListedThreadLineage(thread.lineage) &&
+    thread.archivedAt === null &&
+    thread.deletedAt === null
+  );
 }
 
 /** Whether a remembered chat or pull request can still be opened. */

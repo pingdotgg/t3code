@@ -92,7 +92,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
-import { threadEnvironment } from "../../state/threads";
+import { threadEnvironment, useOpenThreadFamily } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
@@ -244,7 +244,8 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   useAndroidWorkspaceBack();
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
-  const { selectedThread } = useThreadSelection();
+  const { selectedThread, selectedThreadDetailRef } = useThreadSelection();
+  useOpenThreadFamily(selectedThreadDetailRef);
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);

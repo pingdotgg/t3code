@@ -414,7 +414,6 @@ const layerCapabilities = Layer.effectContext(
 
     return Context.make(ClientCapabilities.CloudSession, cloudSession).pipe(
       Context.add(ClientCapabilities.AnalyticsDevice, analyticsDevice),
-      Context.add(ClientCapabilities.OmitIdleSubagentParents, true),
       Context.add(ClientCapabilities.PrimaryEnvironmentAuth, primaryAuth),
       Context.add(ClientCapabilities.RelayDeviceIdentity, identity),
       Context.add(ClientCapabilities.ClientPresentation, presentation),

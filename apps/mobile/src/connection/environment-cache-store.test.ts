@@ -534,7 +534,6 @@ describe("mobile SQLite environment cache store", () => {
         serverVersion: "1.0.0",
         databaseMigration: 70,
         omitIdleSubagents: true,
-        omitIdleSubagentParents: false,
         omitOlderSettled: false,
         snapshotAt: 1_800_000_000_000,
       };

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { restoreSettingsLinkState, settingsLinkAction } from "../../settings/settings-navigation";
 import {
+  unlistedThreadReopens,
   workspaceSelectionsIn,
   workspaceTabColumns,
   workspaceTabNavigationState,
@@ -62,6 +63,26 @@ describe("workspace tab selections", () => {
 
 describe("opening a workspace tab", () => {
   const columns = { columns: true, check: available };
+
+  it("reopens a chat the shell rows lack only as a subagent or side chat that is still there", () => {
+    const detail = (lineage: object, gone: object = {}) =>
+      ({
+        lineage: { parentThreadId: "parent", rootThreadId: "root", ...lineage },
+        archivedAt: null,
+        deletedAt: null,
+        ...gone,
+      }) as Parameters<typeof unlistedThreadReopens>[0];
+    const subagent = { relationshipToParent: "subagent" };
+    expect(unlistedThreadReopens(detail(subagent))).toBe(true);
+    expect(unlistedThreadReopens(detail({ relationshipToParent: null, sideChat: true }))).toBe(
+      true,
+    );
+    // A top-level row the snapshot lacks was archived or deleted, whatever a cached copy says.
+    expect(unlistedThreadReopens(detail({ relationshipToParent: null }))).toBe(false);
+    expect(unlistedThreadReopens(detail(subagent, { archivedAt: "2026-01-01" }))).toBe(false);
+    expect(unlistedThreadReopens(detail(subagent, { deletedAt: "2026-01-01" }))).toBe(false);
+    expect(unlistedThreadReopens(null)).toBe(false);
+  });
 
   it("opens Android Settings beside its default page only in a wide window", () => {
     const open = (wide: boolean) =>
