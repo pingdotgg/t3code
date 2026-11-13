@@ -69,6 +69,8 @@ export interface ContextHandoffServiceV2Shape {
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
     readonly threadId: ThreadId;
+    /** Thread the items came from, when it is not `threadId` (a fork's source). */
+    readonly sourceThreadId?: ThreadId;
     readonly targetRunId: RunId;
     readonly transferId: OrchestrationV2ContextHandoff["transferId"];
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -109,7 +111,9 @@ function compactText(text: string, maxLength = 240): string {
   if (compacted.length <= maxLength) {
     return compacted;
   }
-  return `${compacted.slice(0, maxLength - 3)}...`;
+  const end = maxLength - 3;
+  const last = compacted.charCodeAt(end - 1);
+  return `${compacted.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}...`;
 }
 
 export function visibleDeltaRunOrdinals(
@@ -202,7 +206,7 @@ export const readForkHistoryItems = Effect.fn(
   ];
 });
 
-export function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
+function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "user_message":
       return `- User: ${compactText(item.text)}`;
@@ -211,7 +215,7 @@ export function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null
     case "command_execution":
       return `- Command: ${compactText(item.input)}`;
     case "file_change":
-      return `- File change: ${item.fileName}`;
+      return `- File change: ${compactText(item.changes?.map((change) => change.path).join(", ") ?? item.fileName)}`;
     case "checkpoint":
       return `- Checkpoint: ${item.files.length} files`;
     case "handoff":
@@ -244,10 +248,10 @@ function makeForkDeltaSummary(input: {
 
 const SIDE_CHAT_CONTEXT_MAX_CHARS = 8_000;
 
-/** `digest` holds `summarizeDeltaItem` lines for parent items after the fork point, oldest first. */
+/** Oldest first; raw parent items are summarized only until the context cap is reached. */
 export function makeSideChatContext(input: {
   readonly parentThreadId: ThreadId;
-  readonly digest: ReadonlyArray<string>;
+  readonly digest: ReadonlyArray<string | OrchestrationV2TurnItem>;
 }): string {
   const framing =
     "You are in a side chat beside the main thread. The main thread may still be running in the same worktree. Answer the user's questions; do not continue or redo the main thread's task.";
@@ -255,19 +259,24 @@ export function makeSideChatContext(input: {
   const truncated = "- Earlier items truncated.";
   const footer = `Use t3_thread_read on thread ${input.parentThreadId} to see the main thread's live state.`;
   const kept: Array<string> = [];
+  let omitted = false;
   // The cap covers the whole block, so the fixed lines are reserved before any digest line.
   let remaining =
     SIDE_CHAT_CONTEXT_MAX_CHARS - [framing, "", header, truncated, "", footer].join("\n").length;
-  for (const line of input.digest.toReversed()) {
-    if (line.length + 1 > remaining) break;
+  for (let index = input.digest.length - 1; index >= 0; index--) {
+    const item = input.digest[index]!;
+    const line = typeof item === "string" ? item : summarizeDeltaItem(item);
+    if (line === null) continue;
+    if (line.length + 1 > remaining) {
+      omitted = true;
+      break;
+    }
     kept.unshift(line);
     remaining -= line.length + 1;
   }
   return [
     framing,
-    ...(kept.length === 0
-      ? []
-      : ["", header, ...(kept.length < input.digest.length ? [truncated] : []), ...kept]),
+    ...(kept.length === 0 ? [] : ["", header, ...(omitted ? [truncated] : []), ...kept]),
     "",
     footer,
   ].join("\n");
@@ -480,6 +489,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
     )(function* (input: {
       readonly threadId: ThreadId;
+      readonly sourceThreadId?: ThreadId;
       readonly targetRunId: RunId;
       readonly transferId: OrchestrationV2ContextHandoff["transferId"];
       readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -514,7 +524,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage = handoffCoverage({
+        ...input,
+        threadId: input.sourceThreadId ?? input.threadId,
+      });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);
@@ -588,10 +601,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         summaryMessageId: null,
         summaryText: makeSideChatContext({
           parentThreadId: input.parentThreadId,
-          digest: input.parentItems.flatMap((item) => {
-            const line = summarizeDeltaItem(item);
-            return line === null ? [] : [line];
-          }),
+          digest: input.parentItems,
         }),
         createdByProviderInstanceId: null,
         createdAt: input.createdAt,

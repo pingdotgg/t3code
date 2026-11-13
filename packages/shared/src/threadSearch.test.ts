@@ -12,3 +12,8 @@ it("matches both Greek sigma forms without changing source offsets", () => {
   expect(findThreadSearchOccurrences("ΟΣ ος οσ", "ς")).toEqual([1, 4, 7]);
   expect(findThreadSearchOccurrences("İ ΟΣ", "Σ")).toEqual([3]);
 });
+
+it("matches straight and curly apostrophes without changing source offsets", () => {
+  expect(findThreadSearchOccurrences("don't don’t", "don’t")).toEqual([0, 6]);
+  expect(findThreadSearchOccurrences("İ don‘t", "don't")).toEqual([2]);
+});

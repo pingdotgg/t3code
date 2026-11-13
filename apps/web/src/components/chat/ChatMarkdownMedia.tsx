@@ -5,6 +5,7 @@ import { TriangleAlertIcon } from "lucide-react";
 import {
   createContext,
   memo,
+  use,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -36,7 +37,19 @@ export function markdownImageCopy(alt: string, src: string, title: string | unde
   const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
   const titleSuffix =
     title === undefined ? "" : ` "${title.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  return `![${escapedAlt}](${src}${titleSuffix})`;
+  return `![${escapedAlt}](${markdownDestination(src)}${titleSuffix})`;
+}
+
+// Raw HTML sources keep spaces and parentheses that a bare Markdown destination cannot hold.
+function markdownDestination(src: string): string {
+  if (!/[\s<>()]/.test(src)) return src;
+  const escaped = src
+    .replaceAll("\\", "\\\\")
+    .replaceAll("<", "\\<")
+    .replaceAll(">", "\\>")
+    .replaceAll("\n", "%0A")
+    .replaceAll("\r", "%0D");
+  return `<${escaped}>`;
 }
 
 /**
@@ -71,6 +84,8 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
 export const MarkdownLinkContext = createContext(false);
+/** The thread's workspace mutation id, so a host image the agent rewrites gets a fresh URL. */
+export const WorkspaceMutationIdContext = createContext<string | null | undefined>(undefined);
 
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
@@ -339,13 +354,15 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const resource = props.resource;
+  const threadWorkspaceMutationId = use(WorkspaceMutationIdContext);
+  const workspaceMutationId = props.workspaceMutationId ?? threadWorkspaceMutationId;
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    props.workspaceMutationId !== undefined &&
+    workspaceMutationId !== undefined &&
       props.kind !== "video" &&
       (resource._tag === "media-file" || resource._tag === "workspace-file")
-      ? props.workspaceMutationId
+      ? workspaceMutationId
       : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);

@@ -22,7 +22,6 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
-  parseSideChatCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
@@ -122,6 +121,25 @@ describe("composerSubmissionIntentForKey", () => {
       }),
     ).toBe(expected);
   });
+
+  it.each([
+    ["mod-enter", "one line"],
+    ["mod-enter-multiline", "two\nlines"],
+  ] as const)(
+    "starts a new thread in the foreground on Mod+Enter with %s",
+    (sendShortcut, prompt) => {
+      const draft = { ...input, isDraftThread: true, sendShortcut, prompt };
+      expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+        "foreground",
+      );
+      expect(
+        composerSubmissionIntentForKey({
+          ...draft,
+          event: { ...enter, ctrlKey: true, altKey: true },
+        }),
+      ).toBe("background");
+    },
+  );
 
   it("honors the send preference with an existing install's saved alternate binding", () => {
     const keybindings = mergeWithDefaultKeybindings(
@@ -551,20 +569,9 @@ describe("extendReplacementRangeForTrailingSpace", () => {
   });
 });
 
-describe("parseSideChatCommand", () => {
-  it("reads an optional prompt after /side or /btw", () => {
-    expect(parseSideChatCommand("/side")).toEqual({ prompt: "" });
-    expect(parseSideChatCommand("  /SIDE  why does this fail?\nline two ")).toEqual({
-      prompt: "why does this fail?\nline two",
-    });
-    expect(parseSideChatCommand("/btw check @src/a.ts")).toEqual({ prompt: "check @src/a.ts" });
-  });
-
-  it("ignores other commands and inline mentions, which the menu does not offer", () => {
-    expect(parseSideChatCommand("/sidebar")).toBeNull();
-    expect(parseSideChatCommand("/btwx")).toBeNull();
-    expect(parseSideChatCommand("ask /side later")).toBeNull();
-    const items = (["side", "btw", "plan"] as const).map((command) => ({
+describe("side chat slash commands", () => {
+  it("are not offered after the start of a message", () => {
+    const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
       id: `slash:${command}`,
       type: "slash-command" as const,
       command,
@@ -572,7 +579,7 @@ describe("parseSideChatCommand", () => {
       description: "",
     }));
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
-      "slash:plan",
+      "slash:model",
     ]);
   });
 });

@@ -3,12 +3,18 @@ import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
@@ -17,6 +23,7 @@ import * as SqliteClient from "./nodeSqliteClient.ts";
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
 const failingWorkers = vi.hoisted(() => ({ message: undefined as string | undefined }));
+const checkpointWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
 
 vi.mock("node:worker_threads", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeWorkerThreads>();
@@ -30,6 +37,7 @@ vi.mock("node:worker_threads", async (importOriginal) => {
             : args) as ConstructorParameters<typeof actual.Worker>),
       );
       startedWorkers.push(this);
+      if (args[1]?.workerData?.frames !== undefined) checkpointWorkers.push(this);
     }
     override terminate() {
       // A "ready" already queued when termination starts reaches the parent before "exit".
@@ -192,6 +200,34 @@ it.effect("keeps another connection from committing between a transaction's read
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("waits for another process's lock while the database opens", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-open-" });
+    const filename = path.join(directory, "state.sqlite");
+    const seed = new NodeSqlite.DatabaseSync(filename);
+    seed.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries(name TEXT NOT NULL)");
+    seed.close();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const holder = yield* spawner.spawn(
+      ChildProcess.make(process.execPath, [
+        "-e",
+        `const db = new (require("node:sqlite").DatabaseSync)(process.argv[1]);
+        db.exec("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE");
+        console.log("held");
+        setTimeout(() => db.close(), 300);`,
+        filename,
+      ]),
+    );
+    yield* Stream.runHead(holder.stdout);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(yield* sql`SELECT COUNT(*) FROM entries`.values, [[0]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("reports a transaction blocked by another writer as a lock timeout", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;
@@ -208,6 +244,52 @@ it.effect("reports a transaction blocked by another writer as a lock timeout", (
       assert.deepEqual(yield* read, [[0]]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename })));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lets the event loop run while a write waits for another connection's lock", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 5000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* Effect.forkChild(
+        sql`UPDATE counters SET value = value + 1 WHERE id = 1`,
+        { startImmediately: true },
+      );
+      // A writer on the event loop sleeps in SQLite's busy handler here, so this commit
+      // cannot run until that write has already timed out.
+      yield* eventLoopTurn;
+      yield* Effect.sync(() => other.exec("UPDATE counters SET value = 10 WHERE id = 1; COMMIT"));
+      yield* Fiber.join(write);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[11]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("finishes a write already sent to the writer before its caller is interrupted", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 5000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* Effect.forkChild(
+        sql`UPDATE counters SET value = value + 1 WHERE id = 1`,
+        { startImmediately: true },
+      );
+      yield* eventLoopTurn;
+      const interrupted = yield* Effect.forkChild(Fiber.interrupt(write), {
+        startImmediately: true,
+      });
+      yield* eventLoopTurn;
+      // The write is waiting in the worker for the lock, so the interrupt has to wait too.
+      assert.isUndefined(interrupted.pollUnsafe());
+      yield* Effect.sync(() => other.exec("COMMIT"));
+      yield* Fiber.join(interrupted);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[1]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lets the writer commit while a read-only transaction is open", () =>
@@ -378,6 +460,24 @@ it.effect("uses the writer when the reader cannot open the database", () =>
   ),
 );
 
+it.effect("fails with a typed SqlError when the database file is not SQLite", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-notadb-" });
+    const filename = path.join(directory, "state.sqlite");
+    yield* fs.writeFileString(filename, "not a db\n");
+
+    const exit = yield* Layer.build(SqliteClient.layer({ filename, writerWorker: true })).pipe(
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) assert.isTrue(SqlError.isSqlError(Cause.squash(exit.cause)));
+    if (Exit.isFailure(exit)) assert.isFalse(Cause.hasDies(exit.cause));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("finishes masked database cleanup after its caller is interrupted", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -460,4 +560,63 @@ it.effect.each([
         masked ? [[1], [2]] : [[2]],
       );
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("keeps writes moving while an outside reader pins the WAL, then trims the WAL", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-pinned-wal-" });
+    const filename = path.join(directory, "state.sqlite");
+    // Stands in for `sqlite3 statev2.sqlite` or a backup script reading the database.
+    const outside = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+      (db) =>
+        Effect.sync(() => {
+          if (db.isTransaction) db.exec("COMMIT");
+          db.close();
+        }),
+    );
+    outside.exec("PRAGMA journal_mode = WAL; CREATE TABLE blobs(data BLOB NOT NULL)");
+    const walSize = fs.stat(`${filename}-wal`).pipe(
+      Effect.map((info) => Number(info.size)),
+      Effect.orDie,
+    );
+    const limit = 8 * 1024 * 1024;
+    const payload = new Uint8Array(1024 * 1024).fill(7);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql.unsafe(`PRAGMA journal_size_limit = ${limit}`);
+      yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      outside.exec("BEGIN");
+      outside.prepare("SELECT COUNT(*) FROM blobs").get();
+      for (let write = 0; write < 24; write++) yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      assert.isAbove(yield* walSize, limit);
+      outside.exec("COMMIT");
+      const checkpointer = checkpointWorkers.at(-1)!;
+      const caughtUp = Effect.callback<void>((resume) => {
+        const onMessage = (message: { type?: unknown; log?: unknown; checkpointed?: unknown }) => {
+          if (
+            message?.type === "checked" &&
+            typeof message.log === "number" &&
+            message.log > 0 &&
+            message.log === message.checkpointed
+          ) {
+            resume(Effect.void);
+          }
+        };
+        checkpointer.on("message", onMessage);
+        checkpointer.ref();
+        return Effect.sync(() => {
+          checkpointer.off("message", onMessage);
+          checkpointer.unref();
+        });
+      });
+      // The worker checkpoints the released frames; the next write restarts the WAL at the limit.
+      yield* Effect.all([caughtUp, sql`DELETE FROM blobs WHERE rowid = 1`], { concurrency: 2 });
+      yield* sql`DELETE FROM blobs WHERE rowid = 2`;
+      assert.isAtMost(yield* walSize, limit);
+      assert.deepEqual(yield* sql`SELECT COUNT(*) FROM blobs`.values, [[23]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

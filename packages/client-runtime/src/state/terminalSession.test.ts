@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { EnvironmentId, TerminalSessionSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  retainedTerminalHistory,
+  TerminalSessionSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   applyTerminalAttachStreamEvent,
@@ -119,6 +124,14 @@ describe("terminal session reducers", () => {
 
     expect(terminalOutputText(state.output)).toBe("\uFEFFtail");
     expect(state.output.retainedBytes).toBe(7);
+    const serverTail = retainedTerminalHistory("discard﻿tail", 7);
+    expect(
+      applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history: serverTail } },
+        7,
+      ),
+    ).toEqual(state);
   });
 
   it("trims whole Unicode code points from a partially retained chunk", () => {
@@ -245,10 +258,14 @@ describe("terminal session reducers", () => {
       snapshot: BASE_SNAPSHOT,
     });
     let cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    const attachedGeneration = state.output.generation;
+    // A socket reconnect resubscribes the same stream, so the server's new snapshot gets no seed.
     state = applyTerminalAttachStreamEvent(state, { type: "snapshot", snapshot: BASE_SNAPSHOT });
     const repeated = readTerminalOutputUpdate(state.output, cursor);
     expect(repeated).toMatchObject({ type: "reset", data: "hello" });
     expect(state.version).toBe(2);
+    // Viewers replay their measured grid once per generation; the new attachment holds the old size.
+    expect(state.output.generation).not.toBe(attachedGeneration);
     cursor = repeated.cursor;
 
     state = applyTerminalAttachStreamEvent(state, {
