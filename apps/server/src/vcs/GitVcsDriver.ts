@@ -1388,6 +1388,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
+      let skipWorktreePaths: string[] = [];
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
         const sparseConfig = yield* execute({
@@ -1396,10 +1397,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: ["config", "--bool", "core.sparseCheckout"],
           allowNonZeroExit: true,
         });
+        const sparseCheckout = sparseConfig.stdout.trim() === "true";
+        if (!sparseCheckout) {
+          const listed = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["ls-files", "-v", "-z", "--", "."],
+          });
+          skipWorktreePaths = listed.stdout
+            .split("\0")
+            .filter((entry) => entry.startsWith("S ") || entry.startsWith("s "))
+            .map((entry) => entry.slice(2));
+        }
         // Restore skips skip-worktree paths by default; in a sparse checkout
         // the override would also write out-of-cone files.
-        const ignoreSkipWorktree =
-          sparseConfig.stdout.trim() === "true" ? [] : ["--ignore-skip-worktree-bits"];
+        const ignoreSkipWorktree = sparseCheckout ? [] : ["--ignore-skip-worktree-bits"];
         yield* execute({
           operation,
           cwd: input.cwd,
@@ -1436,6 +1448,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...longPaths, "reset", "--quiet", "--", "."],
+        });
+        if (skipWorktreePaths.length === 0) return;
+        // reset rebuilds entries from HEAD without their skip-worktree bit.
+        const indexed = new Set(
+          (yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["ls-files", "-z", "--", "."],
+          })).stdout.split("\0"),
+        );
+        const reflag = skipWorktreePaths.filter((entry) => indexed.has(entry));
+        if (reflag.length === 0) return;
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["update-index", "-z", "--skip-worktree", "--stdin"],
+          stdin: reflag.join("\0") + "\0",
         });
       });
       yield* recreateWorkspace;

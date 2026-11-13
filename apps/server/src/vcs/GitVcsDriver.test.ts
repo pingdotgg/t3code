@@ -1284,9 +1284,11 @@ it.effect("restores later edits to skip-worktree files whose checkpoint matches 
     yield* runGit(cwd, ["config", "user.name", "Test"]);
     yield* fileSystem.writeFileString(path.join(cwd, "flagged.txt"), "baseline\n");
     yield* fileSystem.writeFileString(path.join(cwd, "control.txt"), "baseline\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "deleted.txt"), "baseline\n");
     yield* runGit(cwd, ["add", "."]);
     yield* runGit(cwd, ["commit", "-m", "baseline"]);
-    yield* runGit(cwd, ["update-index", "--skip-worktree", "flagged.txt"]);
+    yield* runGit(cwd, ["update-index", "--skip-worktree", "flagged.txt", "deleted.txt"]);
+    yield* fileSystem.remove(path.join(cwd, "deleted.txt"));
     const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/skip-restore");
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
     yield* fileSystem.writeFileString(path.join(cwd, "flagged.txt"), "later\n");
@@ -1304,6 +1306,13 @@ it.effect("restores later edits to skip-worktree files whose checkpoint matches 
       yield* fileSystem.readFileString(path.join(cwd, "flagged.txt")),
       "baseline\n",
     );
+    const git = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "checkpoint-test", cwd, args });
+    assert.strictEqual(
+      (yield* git(["ls-files", "-v"])).stdout,
+      "H control.txt\nS deleted.txt\nS flagged.txt\n",
+    );
+    assert.strictEqual((yield* git(["status", "--porcelain"])).stdout, "");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
