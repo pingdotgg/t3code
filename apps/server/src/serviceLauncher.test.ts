@@ -367,7 +367,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
             },
           }),
         );
-        vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH ?? ""}`);
+        vi.stubEnv("PATH", bin);
         vi.stubEnv("HOME", home);
         // environment.d changes what services inherit, not where the manager reads units.
         vi.stubEnv("XDG_CONFIG_HOME", path.join(home, "service-config"));
