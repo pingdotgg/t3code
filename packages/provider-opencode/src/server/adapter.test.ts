@@ -895,6 +895,10 @@ describe("OpenCodeAdapterV2", () => {
                 hasSubagents: false,
               },
         );
+        // The thread's context window reads tokenUsage: the last step's context fill.
+        if (ending === "completed") {
+          assert.equal(completed?.providerTurn.tokenUsage?.usedTokens, 22);
+        }
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
