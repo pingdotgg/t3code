@@ -1385,6 +1385,8 @@ export function mergeLateSessionLoadResponse(input: {
   /** What the session held at readiness: initialize-time modes, or a previous session's state. */
   readonly baseline: {
     readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+    /** Whether those options came from this session's own updates, not a previous session. */
+    readonly ownConfigOptions: boolean;
     readonly modeState: AcpSessionModeState | undefined;
   };
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
@@ -1399,7 +1401,10 @@ export function mergeLateSessionLoadResponse(input: {
   const liveConfigOptions = input.configOptions.filter(
     (option) => !input.baseline.configOptions.includes(option),
   );
-  const loaded = input.response.configOptions ?? [];
+  // A response without options leaves the ones this session already announced in place.
+  const loaded =
+    input.response.configOptions ??
+    (input.baseline.ownConfigOptions ? input.baseline.configOptions : []);
   const configOptions = [
     ...loaded.map((option) => {
       const live = liveConfigOptions.find((candidate) => candidate.id === option.id);

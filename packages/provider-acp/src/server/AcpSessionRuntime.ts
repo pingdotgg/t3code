@@ -1227,6 +1227,7 @@ interface LateSessionLoad {
 
 interface LateSessionLoadBaseline {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly ownConfigOptions: boolean;
   readonly modeState: AcpSessionModeState | undefined;
 }
 
@@ -1991,6 +1992,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   // Called once the provisional setup is the session's setup, so adoption cannot run before it.
   const watchLateSessionLoad = Effect.fn("AcpSessionRuntime.watchLateSessionLoad")(function* (
     adopted: AcpSessionRuntimeStartResult["sessionSetupResult"],
+    ownConfigOptions: boolean,
   ) {
     const late = yield* Ref.get(lateSessionLoadRef);
     if (Option.isNone(late) || late.value.provisional !== adopted) {
@@ -1998,6 +2000,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
     const baseline = {
       configOptions: yield* SubscriptionRef.get(configOptionsRef),
+      ownConfigOptions,
       modeState: yield* Ref.get(modeStateRef),
     };
     yield* Fiber.await(late.value.fiber).pipe(
@@ -2052,7 +2055,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     yield* Ref.set(toolCallsRef, new Map());
     yield* Ref.set(assistantSegmentRef, { nextSegmentIndex: 0 });
     yield* Ref.set(startStateRef, { _tag: "Started", result: nextState });
-    yield* watchLateSessionLoad(sessionSetupResult);
+    // Without options of its own, the placeholder left the previous session's in place.
+    yield* watchLateSessionLoad(sessionSetupResult, sessionSetupResult.configOptions != null);
     return nextState;
   });
 
@@ -2457,7 +2461,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                       }
                     }
                     // Under the permit: no update can land between the baseline and the watch.
-                    yield* watchLateSessionLoad(result.sessionSetupResult);
+                    yield* watchLateSessionLoad(result.sessionSetupResult, true);
                     yield* Deferred.succeed(deferred, result);
                   }),
                 ),

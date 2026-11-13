@@ -143,7 +143,7 @@ describe("AcpRuntimeModel", () => {
     // Nothing live: the response is the session's configuration.
     const empty = mergeLateSessionLoadResponse({
       response,
-      baseline: { configOptions: [], modeState: undefined },
+      baseline: { configOptions: [], ownConfigOptions: true, modeState: undefined },
       configOptions: [],
       modeState: undefined,
     });
@@ -161,18 +161,29 @@ describe("AcpRuntimeModel", () => {
     ];
     const untouched = mergeLateSessionLoadResponse({
       response,
-      baseline: { configOptions: inherited, modeState: initializeModes },
+      baseline: { configOptions: inherited, ownConfigOptions: false, modeState: initializeModes },
       configOptions: inherited,
       modeState: initializeModes,
     });
     expect(untouched.configOptions).toEqual(response.configOptions);
     expect(untouched.modeState?.currentModeId).toBe("ask");
 
+    // A response without options keeps what this session announced, not a previous session's.
+    const withoutOptions = (ownConfigOptions: boolean) =>
+      mergeLateSessionLoadResponse({
+        response: {},
+        baseline: { configOptions: inherited, ownConfigOptions, modeState: undefined },
+        configOptions: inherited,
+        modeState: undefined,
+      }).configOptions;
+    expect(withoutOptions(true)).toEqual(inherited);
+    expect(withoutOptions(false)).toEqual([]);
+
     // A model written since readiness and a mode set through session/set_mode both stay.
     const liveModel = select("model", "model", "fast", ["default", "fast"]);
     const merged = mergeLateSessionLoadResponse({
       response,
-      baseline: { configOptions: inherited, modeState: initializeModes },
+      baseline: { configOptions: inherited, ownConfigOptions: false, modeState: initializeModes },
       configOptions: [liveModel, inherited[1]!],
       modeState: {
         currentModeId: "architect",
