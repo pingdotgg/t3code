@@ -1232,6 +1232,20 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
+// libghostty parses a CSI's UTF-8 bytes one by one, so a C1 continuation byte can end it.
+// DECID (0x9A) replies by itself, so it keeps the CSI's stripping rather than replaying it.
+function abandonsCsi(character: string): boolean {
+  let inString = false;
+  for (const byte of Buffer.from(character).subarray(1)) {
+    if (byte >= 0xa0) continue;
+    if (byte === 0x9a) return false;
+    if (byte === 0x9b) inString = false;
+    else if (byte === 0x90 || byte === 0x98 || byte === 0x9e || byte === 0x9f) inString = true;
+    else return true;
+  }
+  return inString;
+}
+
 // libghostty prints UTF-8 C1 code points (U+0080-U+009F) as text, so only ESC starts a sequence.
 const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
@@ -1266,9 +1280,11 @@ function sanitizeTerminalHistoryChunk(
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
         while (cursor < input.length) {
-          // libghostty abandons a CSI at a 3- or 4-byte UTF-8 character and prints it and what
-          // follows; it skips 2-byte characters and still runs the sequence.
-          if (input.charCodeAt(cursor) >= 0x800) {
+          const codePoint = input.codePointAt(cursor)!;
+          if (
+            codePoint >= 0x80 &&
+            abandonsCsi(input.slice(cursor, cursor + (codePoint > 0xffff ? 2 : 1)))
+          ) {
             append(input.slice(index, cursor));
             index = cursor;
             break;

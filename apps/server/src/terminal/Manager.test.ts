@@ -1392,8 +1392,9 @@ it.layer(
   it.effect.each([
     // libghostty abandons the CSI at 界 and prints "�nB", so the n is text, not a DSR final byte.
     { name: "keeps text after a CSI aborted by", output: "A\u001b[界nB", history: "A\u001b[界nB" },
-    // libghostty skips a 2-byte character and still answers the DSR query.
+    // libghostty keeps the CSI open through é and U+FFFD and still answers the DSR query.
     { name: "strips a DSR query containing", output: "A\u001b[é6nB", history: "AB" },
+    { name: "strips a DSR query containing U+FFFD,", output: "A\u001b[\ufffd6nB", history: "AB" },
   ])("$name a non-ASCII character", ({ output, history }) =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
