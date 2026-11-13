@@ -3658,7 +3658,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         entry={info.item}
         environmentId={props.environmentId}
         threadId={props.threadId}
-        workspaceRoot={props.workspaceRoot}
+        workspaceRoot={mediaRoot}
       >
         <ThreadMediaVisibility>
           {info.item.type === "message" &&
