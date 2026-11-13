@@ -35,6 +35,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { detachedWorktreeRef } from "./workspace/restoreMissingWorktree.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EventId,
@@ -2746,8 +2747,10 @@ describe("storage cleanup reports and local file policies", () => {
   it.live("removes a detached worktree only when nothing is held by that checkout alone", () =>
     runCleanupTest(
       Effect.gen(function* () {
-        const { service, worktree, command } = yield* cleanupFixture();
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture();
         const changed = { outcome: "kept", reason: "Repository or branch changed" };
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "feature\n");
+        yield* command(worktree, ["commit", "-am", "feature"]);
         yield* command(worktree, ["checkout", "--detach"]);
         yield* command(worktree, ["commit", "--allow-empty", "-m", "empty"]);
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
@@ -2790,6 +2793,9 @@ describe("storage cleanup reports and local file policies", () => {
           yield* command(worktree, steps.at(-1)!);
         }
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        // The saved branch holds other files, so restoration needs the detached commit.
+        const recorded = yield* command(repo, ["rev-parse", detachedWorktreeRef(worktree), "main"]);
+        expect(new Set(recorded.stdout.trim().split("\n")).size).toBe(1);
       }),
     ),
   );

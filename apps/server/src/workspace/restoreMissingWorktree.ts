@@ -1,6 +1,7 @@
 import { ThreadId, type ProjectId, type TerminalCwdNotFoundError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -38,6 +39,10 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
 
 // `git worktree remove` skips pnpm junctions on Windows, leaving these behind without a checkout.
 const LEFTOVER_WORKTREE_ENTRIES = new Set(["node_modules", ".next"]);
+
+// Storage cleanup points this at the commit of a detached checkout it removes.
+export const detachedWorktreeRef = (worktreePath: string) =>
+  `refs/t3/detached-worktrees/${Base64Url.encode(worktreePath)}`;
 
 interface WorktreeThread {
   readonly id: ThreadId;
@@ -109,6 +114,19 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
   }) {
     const { cwd, worktreePath, branch } = input;
     yield* gitWorkflow.pruneWorktrees({ cwd });
+    const detachedRef = detachedWorktreeRef(worktreePath);
+    if (yield* gitWorkflow.hasCommit({ cwd, refName: detachedRef })) {
+      // Git detaches HEAD for a ref outside refs/heads.
+      yield* gitWorkflow.createWorktree({ cwd, refName: detachedRef, path: worktreePath });
+      yield* gitWorkflow
+        .deleteRef({ cwd, refName: detachedRef })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("could not clear a restored detached worktree ref", { cause }),
+          ),
+        );
+      return;
+    }
     const localBranchNames = yield* gitWorkflow.listLocalBranchNames(cwd);
     if (localBranchNames.includes(branch)) {
       yield* gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath });

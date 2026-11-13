@@ -498,6 +498,7 @@ it.layer(
                 getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
               }),
               Layer.mock(GitWorkflowService.GitWorkflowService)({
+                hasCommit: () => Effect.succeed(false),
                 pruneWorktrees: () => Effect.void,
                 listLocalBranchNames: () => Effect.succeed(["feature"]),
                 createWorktree: () =>

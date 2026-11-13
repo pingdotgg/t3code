@@ -54,6 +54,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { detachedWorktreeRef } from "./workspace/restoreMissingWorktree.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { isNetworkPath } from "@t3tools/shared/path";
@@ -1474,6 +1475,23 @@ const make = Effect.gen(function* () {
               const changes = yield* localChangesReason(worktreePath, settings);
               if (changes !== null) return keep(changes);
             }
+            const attached = yield* git.execute({
+              operation: "StorageCleanup.detachedHead",
+              cwd: worktreePath,
+              args: ["symbolic-ref", "--quiet", "HEAD"],
+              allowNonZeroExit: true,
+            });
+            // A branch cannot bring a detached checkout back, so restoration reads its commit here.
+            const detachedRef = detachedWorktreeRef(worktreePath);
+            const recordDetached = (commit: string | null) =>
+              cleanupGit(
+                project.workspaceRoot,
+                commit === null
+                  ? ["update-ref", "-d", detachedRef]
+                  : ["update-ref", detachedRef, commit],
+                "git update-ref",
+              );
+            yield* recordDetached(attached.exitCode === 0 ? null : head.commitSha);
             yield* removeLinkedWorktree({
               operation: "StorageCleanup.cleanupGit",
               cwd: project.workspaceRoot,
@@ -1482,7 +1500,7 @@ const make = Effect.gen(function* () {
               force: submodules.force,
               execute: git.execute,
               run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
-            });
+            }).pipe(Effect.onError(() => Effect.ignore(recordDetached(null))));
             entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
             yield* gitManager.invalidateStatus(project.workspaceRoot);
             // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
