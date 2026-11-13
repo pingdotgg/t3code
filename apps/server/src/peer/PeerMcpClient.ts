@@ -159,13 +159,16 @@ const make = Effect.gen(function* () {
       const sessionId = initialized.headers["mcp-session-id"];
       if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
       if (initialized.status !== 200 || sessionId === undefined) {
-        return yield* new OrchestratorMcpFailure({
+        const failure = new OrchestratorMcpFailure({
           code: initialized.status === 401 ? "capability_denied" : "orchestration_error",
           message:
             initialized.status === 401
               ? "The linked environment no longer accepts this link. It may have been revoked there; link it again."
               : `The linked environment refused to start an MCP session (HTTP ${initialized.status}).`,
         });
+        // A gateway's 5xx is no refusal by the peer: the call was not sent, and may be again.
+        if (initialized.status >= 500) noAnswer.set(failure, "unreachable");
+        return yield* failure;
       }
       yield* post(
         url,
@@ -240,10 +243,11 @@ const make = Effect.gen(function* () {
       }
       if (response.status === 403) return yield* linkedEnvironmentsOffThere;
       if (response.status !== 200) {
-        return yield* new OrchestratorMcpFailure({
-          code: "orchestration_error",
-          message: `The linked environment answered HTTP ${response.status}.`,
-        });
+        const message = `The linked environment answered HTTP ${response.status}.`;
+        // A 5xx can come from a tunnel or proxy that lost the peer's answer after the call ran.
+        return yield* response.status >= 500
+          ? lost(message)
+          : new OrchestratorMcpFailure({ code: "orchestration_error", message });
       }
       const body = yield* decodeToolCallResponse(
         responseJson(response.headers["content-type"], yield* response.text),

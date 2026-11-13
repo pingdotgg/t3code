@@ -342,6 +342,34 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
   }),
 );
 
+it.effect.each([
+  ["tool call", 504, "lost"],
+  ["tool call", 524, "lost"],
+  ["tool call", 400, undefined],
+  ["handshake", 502, "unreachable"],
+  ["handshake", 400, undefined],
+] as const)("a %s answered HTTP %i is unanswered as %s", ([step, status, expected]) =>
+  Effect.gen(function* () {
+    // Initialize and its notification come first; the tool call is the third request.
+    const failFrom = step === "handshake" ? 0 : 2;
+    let requests = 0;
+    const http = HttpClient.make((request) =>
+      Effect.sync(() =>
+        HttpClientResponse.fromWeb(
+          request,
+          new Response("", {
+            status: requests++ < failFrom ? 200 : status,
+            headers: { "mcp-session-id": "session" },
+          }),
+        ),
+      ),
+    );
+    const failure = yield* (yield* probeThrough(http)).pipe(Effect.flip);
+    expect(failure.message).toContain(`HTTP ${status}`);
+    expect(PeerMcpClient.unanswered(failure)).toBe(expected);
+  }),
+);
+
 it.effect("bounds the session handshake, not a tool call that waits longer", () =>
   Effect.gen(function* () {
     const arrived = yield* Queue.unbounded<number>();
