@@ -90,6 +90,12 @@ const isPullRequestRoute = (route: Route) =>
   route.name === "PullRequestFile" ||
   route.name === "PullRequestFiles";
 
+// Every step of starting a task, from the project picker to the draft thread itself.
+const isNewTaskRoute = (route: Route) =>
+  route.name.startsWith("NewTask") ||
+  route.name.startsWith("AddProject") ||
+  (route.params !== undefined && "draft" in route.params && Boolean(route.params.draft));
+
 /** Beside the list, the first Settings page shows on one native screen that swaps its content. */
 const SETTINGS_DETAIL_SCREEN = "settings-detail";
 
@@ -157,13 +163,7 @@ function ColumnScreen(props: {
               options={options}
               canGoBack={!props.primary}
               column={props.primary ? "primary" : "detail"}
-              onCompose={
-                descriptor.route.params &&
-                "draft" in descriptor.route.params &&
-                descriptor.route.params.draft
-                  ? undefined
-                  : props.onCompose
-              }
+              onCompose={isNewTaskRoute(descriptor.route) ? undefined : props.onCompose}
             />
             <ColumnContent
               primary={sidebar}
