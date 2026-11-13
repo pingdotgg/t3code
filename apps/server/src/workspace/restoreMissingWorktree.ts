@@ -48,6 +48,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
     cwd: string,
+    remoteName: string | null,
   ) {
     // Recovery can follow an external checkout, before the status cache expires.
     yield* gitWorkflow.invalidateLocalStatus(cwd);
@@ -56,14 +57,15 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       const refName = `refs/heads/${currentBranch}`;
       return { refName, baseRefName: refName };
     }
-    if (yield* gitWorkflow.hasCommit({ cwd, refName: "refs/remotes/origin/HEAD" })) {
+    const remoteHead = `refs/remotes/${remoteName}/HEAD`;
+    if (remoteName !== null && (yield* gitWorkflow.hasCommit({ cwd, refName: remoteHead }))) {
       const { commitSha } = yield* gitWorkflow.resolveRemoteTrackingCommit({
         cwd,
         refName: "HEAD",
-        fallbackRemoteName: "origin",
+        fallbackRemoteName: remoteName,
       });
       // Start from the commit so the thread branch does not track the default branch.
-      return { refName: commitSha, baseRefName: "refs/remotes/origin/HEAD" };
+      return { refName: commitSha, baseRefName: remoteHead };
     }
     if (yield* gitWorkflow.hasCommit({ cwd, refName: "HEAD" })) {
       return { refName: "HEAD", baseRefName: undefined };
@@ -83,9 +85,12 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       yield* gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath });
       return;
     }
+    const remoteName = yield* gitWorkflow
+      .resolvePrimaryRemoteName(cwd)
+      .pipe(Effect.orElseSucceed(() => null));
     // Push keeps the tracking ref current, so recovery reads it without fetching.
-    const pushedRef = `refs/remotes/origin/${branch}`;
-    if (yield* gitWorkflow.hasCommit({ cwd, refName: pushedRef })) {
+    const pushedRef = remoteName === null ? null : `refs/remotes/${remoteName}/${branch}`;
+    if (pushedRef !== null && (yield* gitWorkflow.hasCommit({ cwd, refName: pushedRef }))) {
       yield* gitWorkflow.createWorktree({
         cwd,
         refName: pushedRef,
@@ -94,7 +99,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       });
       return;
     }
-    const base = yield* resolveRecreateBase(cwd);
+    const base = yield* resolveRecreateBase(cwd, remoteName);
     if (base === null) {
       return yield* new WorktreeRecreateNoBaseError({ worktreePath, branch });
     }
