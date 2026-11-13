@@ -296,9 +296,9 @@ export function syncAutoSettleDaysField(
   field: AutoSettleDaysField,
   saved: number,
 ): AutoSettleDaysField {
-  if (field.saved === saved) return field;
   // An earlier save can be confirmed while a later one is still in flight.
   const pending = field.pending === saved ? null : field.pending;
+  if (field.saved === saved && pending === field.pending) return field;
   return {
     ...field,
     saved,

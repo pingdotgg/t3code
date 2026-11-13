@@ -142,6 +142,11 @@ describe("auto-settle days field", () => {
     const back = commitAutoSettleDaysField(type(submitted, "14"));
     expect(back.submit).toBe(14);
     expect(failAutoSettleDaysField(back.field, submitted.revision)).toBe(back.field);
+
+    const settled = syncAutoSettleDaysField(back.field, 14);
+    expect(settled.pending).toBeNull();
+    expect(syncAutoSettleDaysField(settled, 14)).toBe(settled);
+    expect(syncAutoSettleDaysField(settled, 20).draft).toBe("20");
   });
 
   it("keeps a later save in flight when an earlier one is confirmed", () => {
