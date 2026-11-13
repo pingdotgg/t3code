@@ -299,6 +299,21 @@ describe("resolvePathLinkTarget", () => {
     );
   });
 
+  // regression: #36183 tsc --pretty false writes `file(line,col): error`
+  it.each([
+    ["src/main.ts(42,7): error TS2322", "src/main.ts(42,7)"],
+    [
+      "/Users/julius/project/src/main.ts(42,7): error TS2322",
+      "/Users/julius/project/src/main.ts(42,7)",
+    ],
+  ])("keeps the line and column of a TypeScript diagnostic in %s", (line, text) => {
+    const [link] = extractTerminalLinks(line);
+    expect(link).toEqual({ kind: "path", text, start: 0, end: text.length });
+    expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
+      "/Users/julius/project/src/main.ts:42:7",
+    );
+  });
+
   // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
   it("does not resolve an OSC 8 file URI target against the cwd", () => {
     expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
