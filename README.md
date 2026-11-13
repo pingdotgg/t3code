@@ -73,6 +73,7 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-provider`        | `Provider` and `Session` traits, `ProviderEvent`                      |
 | `conn-provider-claude` | The Claude provider over the `claude` CLI's stdio                     |
 | `conn-server`          | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
+| `conn-terminal`        | Shells on PTYs: sessions, scrollback, viewers (`terminal.*`)          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and
