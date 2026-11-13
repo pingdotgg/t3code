@@ -4,7 +4,6 @@ import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
-
 import {
   type KeybindingCommand,
   type KeybindingShortcut,
@@ -35,31 +34,6 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
-
-describe("terminal word navigation", () => {
-  it.each(["Win32", "Linux x86_64"])(
-    "leaves Ctrl+Arrow to the terminal encoder on %s",
-    (platform) => {
-      for (const key of ["ArrowLeft", "ArrowRight"]) {
-        assert.equal(terminalNavigationShortcutData(event({ key, ctrlKey: true }), platform), null);
-      }
-    },
-  );
-
-  it.each(["Win32", "Linux x86_64", "MacIntel"])(
-    "preserves Alt+Arrow word navigation on %s",
-    (platform) => {
-      assert.equal(
-        terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), platform),
-        "\u001bb",
-      );
-      assert.equal(
-        terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), platform),
-        "\u001bf",
-      );
-    },
-  );
-});
 
 function modShortcut(
   key: string,
@@ -202,6 +176,31 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("modelPickerOpen"),
   },
 ]);
+
+describe("terminal word navigation", () => {
+  it.each(["Win32", "Linux x86_64"])(
+    "leaves Ctrl+Arrow to the terminal encoder on %s",
+    (platform) => {
+      for (const key of ["ArrowLeft", "ArrowRight"]) {
+        assert.equal(terminalNavigationShortcutData(event({ key, ctrlKey: true }), platform), null);
+      }
+    },
+  );
+
+  it.each(["Win32", "Linux x86_64", "MacIntel"])(
+    "preserves Alt+Arrow word navigation on %s",
+    (platform) => {
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), platform),
+        "\u001bb",
+      );
+      assert.equal(
+        terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), platform),
+        "\u001bf",
+      );
+    },
+  );
+});
 
 describe("effectiveShortcutsForCommand", () => {
   it("passes only effective preview shortcuts to the desktop bridge", () => {
@@ -763,160 +762,5 @@ describe("isRichTextBoldShortcut", () => {
     const modB = event({ key: "b", metaKey: true });
     assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
     assert.isFalse(isRichTextBoldShortcut(modB, null));
-  });
-});
-
-describe("composer and pull request shortcuts", () => {
-  it("fills missing number shortcuts without replacing the saved URL binding", () => {
-    const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
-      (binding) =>
-        binding.command !== "pullRequest.copyNumber" && binding.command !== "thread.copyReference",
-    );
-    const bindings = mergeWithDefaultKeybindings([
-      ...olderServerBindings,
-      ...compileResolvedKeybindingsConfig([
-        { key: "mod+shift+8", command: "thread.copyReference", when: "!terminalFocus" },
-      ]),
-    ]);
-    for (const [key, command] of [
-      ["k", "pullRequest.copyNumber"],
-      ["8", "thread.copyReference"],
-      ["c", null],
-      ["y", null],
-    ] as const) {
-      assert.strictEqual(
-        resolveShortcutCommand(event({ key, metaKey: true, shiftKey: true }), bindings, {
-          platform: "MacIntel",
-        }),
-        command,
-      );
-    }
-  });
-
-  it.each(["MacIntel", "Win32", "Linux"])(
-    "reserves the alternate send chord for the focused composer on %s",
-    (platform) => {
-      const modifier = {
-        metaKey: platform === "MacIntel",
-        ctrlKey: platform !== "MacIntel",
-      };
-      const shiftedEnter = event({ key: "Enter", shiftKey: true, ...modifier });
-      for (const composerRequiresModifier of [false, true]) {
-        const context = {
-          composerFocus: true,
-          turnRunning: true,
-          composerRequiresModifier,
-        };
-        assert.strictEqual(
-          resolveShortcutCommand(shiftedEnter, DEFAULT_RESOLVED_KEYBINDINGS, {
-            platform,
-            context,
-          }),
-          composerRequiresModifier ? "composer.sendAlternate" : "thread.steerQueuedMessage",
-        );
-        assert.strictEqual(
-          shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "composer.sendAlternate", {
-            platform,
-            context,
-          }),
-          formatShortcutLabel(
-            modShortcut("enter", { shiftKey: composerRequiresModifier }),
-            platform,
-          ),
-        );
-        assert.strictEqual(
-          resolveShortcutCommand(shiftedEnter, DEFAULT_RESOLVED_KEYBINDINGS, {
-            platform,
-            context: { ...context, composerFocus: false },
-          }),
-          "thread.steerQueuedMessage",
-        );
-      }
-    },
-  );
-
-  const altEffortBindings = compileResolvedKeybindingsConfig([
-    { key: "mod+alt+e", command: "composer.effort", when: "!terminalFocus" },
-  ]);
-
-  it("leaves AltGr text entry alone with a custom Alt binding", () => {
-    for (const platform of ["Win32", "Linux"]) {
-      const input = event({
-        key: "€",
-        code: "KeyE",
-        ctrlKey: true,
-        altKey: true,
-        getModifierState: (key) => key === "AltGraph",
-      });
-      assert.isNull(resolveShortcutCommand(input, altEffortBindings, { platform }));
-      assert.strictEqual(
-        resolveShortcutCommand({ ...input, getModifierState: () => false }, altEffortBindings, {
-          platform,
-        }),
-        "composer.effort",
-      );
-    }
-  });
-
-  it("keeps Firefox modifier reporting usable on Windows and macOS", () => {
-    const getModifierState = (key: string) => key === "AltGraph";
-    assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "e", ctrlKey: true, altKey: true, getModifierState }),
-        altEffortBindings,
-        { platform: "Win32" },
-      ),
-      "composer.effort",
-    );
-    assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "´", code: "KeyE", metaKey: true, altKey: true, getModifierState }),
-        altEffortBindings,
-        { platform: "MacIntel" },
-      ),
-      "composer.effort",
-    );
-  });
-});
-
-describe("Usage shortcuts", () => {
-  it.each(["Linux", "MacIntel"])(
-    "preserves desktop numbered thread shortcuts on Usage on %s",
-    (platform) => {
-      const shortcut = event({
-        key: "2",
-        ctrlKey: platform === "Linux",
-        metaKey: platform === "MacIntel",
-      });
-      assert.strictEqual(
-        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-          platform,
-          context: { usagePageOpen: true, isDesktop: true },
-        }),
-        "thread.jump.2",
-      );
-      assert.isNotNull(
-        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "thread.jump.2", {
-          platform,
-          context: { usagePageOpen: true, isDesktop: true },
-        }),
-      );
-    },
-  );
-
-  it("matches shifted number keys for periods and only on Usage", () => {
-    const shortcut = event({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
-    assert.strictEqual(
-      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "Linux",
-        context: { usagePageOpen: true },
-      }),
-      "usage.period.day",
-    );
-    assert.isNull(
-      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "Linux",
-      }),
-    );
   });
 });

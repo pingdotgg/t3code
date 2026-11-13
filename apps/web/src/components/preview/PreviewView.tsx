@@ -94,6 +94,7 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { PreviewViewSurface } from "./PreviewViewSurface";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -114,30 +115,6 @@ function previewProfileName(
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
-
-function ServerTabFileNotShown(props: {
-  readonly threadRef: ScopedThreadRef;
-  readonly tabId: string;
-  readonly url: string;
-  readonly download: { readonly id: string; readonly fileName: string };
-}) {
-  const access = usePreviewStreamAccess(props.threadRef.environmentId);
-  return (
-    <PreviewFileNotShown
-      url={props.url}
-      fileName={props.download.fileName}
-      downloadUrl={
-        access
-          ? previewStreamDownloadUrl(
-              { access, threadId: props.threadRef.threadId, tabId: props.tabId },
-              props.download.id,
-            )
-          : null
-      }
-      onOpen={() => void localApi?.shell.openExternal(props.url).catch(() => undefined)}
-    />
-  );
-}
 
 export function PreviewView({
   threadRef,
@@ -871,188 +848,69 @@ export function PreviewView({
   }, [visible]);
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
-      data-thread-key={scopedThreadKey(threadRef)}
-    >
-      <PreviewChromeRow
-        url={url}
-        loading={loading || serverStreamPending}
-        canGoBack={canGoBack && !serverInputDisabled}
-        canGoForward={canGoForward && !serverInputDisabled}
-        refreshDisabled={refreshDisabled || serverInputDisabled}
-        inputDisabled={serverInputDisabled}
-        urlInputRef={urlInputRef}
-        onBack={handleBack}
-        onForward={handleForward}
-        onRefresh={handleRefresh}
-        onSubmit={(next) => void handleSubmitUrl(next)}
-        onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
-        onCapture={previewBridge && tabId && !isServerTab ? handleCapture : undefined}
-        captureDisabled={!desktopOverlay || isUnreachable}
-        recording={recordingRuntimeTabId !== null}
-        onPictureInPicture={
-          tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
-        }
-        pictureInPicture={miniPlayerTabId === tabId}
-        pictureInPictureDisabled={
-          isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents)
-        }
-        onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
+<PreviewViewSurface
+        activeProfileId={activeProfileId}
+        activeProfileName={activeProfileName}
+        activeRecordingTabIds={activeRecordingTabIds}
+        BROWSER_DEVICE_TOOLBAR_HEIGHT={BROWSER_DEVICE_TOOLBAR_HEIGHT}
+        browserDefaults={browserDefaults}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        cn={cn}
+        commitBrowserViewportChange={commitBrowserViewportChange}
+        configuredUrls={configuredUrls}
+        controller={controller}
+        desktopOverlay={desktopOverlay}
+        environmentHttpBaseUrl={environmentHttpBaseUrl}
+        handleBack={handleBack}
+        handleCapture={handleCapture}
+        handleForward={handleForward}
+        handleMoveTab={handleMoveTab}
+        handleOpenInBrowser={handleOpenInBrowser}
+        handleOpenServerUrl={handleOpenServerUrl}
+        handlePickElement={handlePickElement}
+        handlePictureInPicture={handlePictureInPicture}
+        handleRefresh={handleRefresh}
+        handleSubmitUrl={handleSubmitUrl}
+        handleToggleDeviceToolbar={handleToggleDeviceToolbar}
+        isServerTab={isServerTab}
+        isUnreachable={isUnreachable}
+        layoutZoomFactor={layoutZoomFactor}
+        loading={loading}
+        miniPlayerTabId={miniPlayerTabId}
+        moreMenuActions={moreMenuActions}
+        moveLabel={moveLabel}
+        moveTarget={moveTarget}
+        navStatus={navStatus}
         pickActive={pickActive}
-        pickDisabled={!tabId || isUnreachable}
-        pickDisabledReason={
-          isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
-        }
-        leadingActions={
-          activeProfileId !== browserDefaults.profileId ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
-            </Tooltip>
-          ) : null
-        }
-        trailingActions={
-          moreMenuActions ? (
-            <PreviewMoreMenu
-              enabled={
-                runtimeTabId !== null &&
-                (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
-              }
-              actions={moreMenuActions}
-              {...(moveTarget
-                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                : {})}
-              profileName={activeProfileName}
-              zoomFactor={
-                serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
-              }
-              colorScheme={
-                serverOwnsRendering
-                  ? (snapshot?.colorScheme ?? "system")
-                  : (desktopOverlay?.colorScheme ?? "system")
-              }
-              deviceToolbarVisible={viewport._tag !== "fill"}
-              onToggleDeviceToolbar={handleToggleDeviceToolbar}
-              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
-            />
-          ) : null
-        }
+        previewBridge={previewBridge}
+        previewPdfAssetUrl={previewPdfAssetUrl}
+        recentHistoryEntries={recentHistoryEntries}
+        recordingRuntimeTabId={recordingRuntimeTabId}
+        refreshDisabled={refreshDisabled}
+        removeUrlForThread={removeUrlForThread}
+        runtimeTabId={runtimeTabId}
+        scopedThreadKey={scopedThreadKey}
+        serverAspectRatioLocked={serverAspectRatioLocked}
+        serverBodyRef={serverBodyRef}
+        serverInputDisabled={serverInputDisabled}
+        serverOwnsRendering={serverOwnsRendering}
+        serverStreamPending={serverStreamPending}
+        serverSurfaceRef={serverSurfaceRef}
+        serverToolbarWidth={serverToolbarWidth}
+        serverZoomFactor={serverZoomFactor}
+        setServerAspectRatioLocked={setServerAspectRatioLocked}
+        setServerControlledTabId={setServerControlledTabId}
+        setServerFrameTabId={setServerFrameTabId}
+        showEmptyState={showEmptyState}
+        showPreviewPopup={showPreviewPopup}
+        snapshot={snapshot}
+        tabId={tabId}
+        threadRef={threadRef}
+        url={url}
+        urlInputRef={urlInputRef}
+        viewport={viewport}
+        visible={visible}
       />
-
-      <div ref={serverBodyRef} className="relative min-h-0 flex-1 overflow-hidden">
-        {runtimeTabId && snapshot && isServerTab ? (
-          <>
-            {viewport._tag !== "fill" && !showEmptyState && !isUnreachable ? (
-              <div className="absolute inset-x-0 top-0 z-10">
-                <BrowserDeviceToolbar
-                  setting={viewport}
-                  width={serverToolbarWidth}
-                  aspectRatio={serverAspectRatioLocked ? viewport.width / viewport.height : null}
-                  onAspectRatioChange={(ratio) => setServerAspectRatioLocked(ratio !== null)}
-                  onChange={(setting) =>
-                    commitBrowserViewportChange(
-                      { threadRef, tabId: snapshot.tabId, runtimeTabId },
-                      setting,
-                    )
-                  }
-                />
-              </div>
-            ) : null}
-            <div
-              className="absolute inset-x-0 bottom-0"
-              style={{ top: viewport._tag !== "fill" ? BROWSER_DEVICE_TOOLBAR_HEIGHT : 0 }}
-            >
-              <ServerBrowserSurface
-                key={runtimeTabId}
-                ref={serverSurfaceRef}
-                environmentId={threadRef.environmentId}
-                threadId={threadRef.threadId}
-                tabId={snapshot.tabId}
-                pdfUrl={
-                  navStatus._tag === "Success"
-                    ? previewPdfAssetUrl(url, environmentHttpBaseUrl)
-                    : null
-                }
-                visible={visible}
-                onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
-                onControl={(control) =>
-                  setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
-                }
-                onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
-                // Stays connected under the empty state so a URL picked there reaches the page.
-                className={cn(
-                  "absolute inset-0 h-full w-full",
-                  (showEmptyState || isUnreachable) && "invisible",
-                )}
-              />
-            </div>
-          </>
-        ) : runtimeTabId && snapshot && !showEmptyState ? (
-          previewBridge ? (
-            <BrowserSurfaceSlot
-              key={runtimeTabId}
-              tabId={runtimeTabId}
-              visible={visible && !isUnreachable}
-              className="absolute inset-0 h-full w-full"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center p-8 text-center">
-              <p className="max-w-sm text-sm text-muted-foreground">
-                This tab is open in the T3 Code desktop app.
-              </p>
-            </div>
-          )
-        ) : null}
-        {showEmptyState ? (
-          <PreviewEmptyState
-            threadRef={threadRef}
-            environmentId={threadRef.environmentId}
-            configuredUrls={configuredUrls}
-            recentEntries={recentHistoryEntries}
-            onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
-            onOpenUrl={(next) => void handleOpenServerUrl(next)}
-          />
-        ) : null}
-        {snapshot && desktopOverlay ? (
-          <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
-        ) : null}
-        {runtimeTabId &&
-        desktopOverlay &&
-        !showEmptyState &&
-        !isUnreachable &&
-        !activeRecordingTabIds.has(runtimeTabId) ? (
-          <AgentBrowserCursor
-            tabId={runtimeTabId}
-            zoomFactor={layoutZoomFactor}
-            controller={controller}
-          />
-        ) : null}
-        {navStatus._tag === "LoadFailed" && navStatus.download ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <ServerTabFileNotShown
-              threadRef={threadRef}
-              tabId={snapshot?.tabId ?? ""}
-              url={navStatus.url}
-              download={navStatus.download}
-            />
-          </div>
-        ) : navStatus._tag === "LoadFailed" ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <PreviewUnreachable
-              url={navStatus.url}
-              code={navStatus.code}
-              description={navStatus.description}
-              onReload={handleRefresh}
-              {...(moveTarget === "server"
-                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                : {})}
-            />
-          </div>
-        ) : null}
-      </div>
-    </div>
   );
 }

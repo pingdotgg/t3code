@@ -41,6 +41,7 @@ import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
+import { ServerBrowserViewport } from "./ServerBrowserViewport";
 
 export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
@@ -58,8 +59,8 @@ const PROBE_REUSE_MS = 10_000;
 const INPUT_SENTINEL = "\u200b";
 const BACKSPACE = { key: "Backspace", code: "Backspace", keyCode: 8 } as const;
 const DELETE = { key: "Delete", code: "Delete", keyCode: 46 } as const;
-const COPY = { key: "c", code: "KeyC", keyCode: 67 } as const;
-const CUT = { key: "x", code: "KeyX", keyCode: 88 } as const;
+export const COPY = { key: "c", code: "KeyC", keyCode: 67 } as const;
+export const CUT = { key: "x", code: "KeyX", keyCode: 88 } as const;
 const CTRL = 2;
 const MAX_UNAUTHORIZED_REFUSALS = 3;
 const TAP_SLOP_PX = 8;
@@ -741,197 +742,46 @@ export function ServerBrowserSurface(props: {
   };
 
   return (
-    <div
-      className={cn("relative flex flex-col overflow-hidden", className)}
-      data-server-browser-surface={tabId}
-      onMouseUp={handleMouseUp}
-    >
-      <div
-        className={cn(
-          "visible relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1",
-          controlPosition === "bottom" ? "order-last border-t" : "border-b",
-        )}
-      >
-        <span role="status" className="text-xs text-muted-foreground">
-          {previewStreamControlLabel(control)}
-        </span>
-        {control?.canOperate ? (
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={control.controller === "another-viewer"}
-            onClick={() =>
-              send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-            }
-          >
-            {control.controller === "you" ? "Release control" : "Take control"}
-          </Button>
-        ) : null}
-      </div>
-      <div className="relative min-h-0 flex-1">
-        {pdfUrl ? (
-          <embed
-            src={pdfUrl}
-            type="application/pdf"
-            title="PDF document"
-            className="absolute inset-0 z-10 size-full border-0"
-          />
-        ) : null}
-        <canvas
-          ref={canvasRef}
-          className="block size-full touch-none object-contain"
-          onPointerDown={handlePointer}
-          onPointerMove={handlePointer}
-          onPointerUp={handlePointer}
-          onPointerCancel={handlePointer}
-          onMouseDown={(event) => event.preventDefault()}
-          onContextMenu={(event) => event.preventDefault()}
-        />
-        {!pdfUrl && agentCursor && control?.controller !== "you" ? (
-          <AgentCursorMark
-            {...agentCursor}
-            controller={control?.controller === "agent" ? "agent" : "none"}
-          />
-        ) : null}
-        {/* Pin top-left to avoid focus scrolling; 16px prevents iOS focus zoom. */}
-        <textarea
-          ref={inputRef}
-          aria-label="Browser page"
-          aria-description="Press Shift+Escape to leave the browser page."
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          disabled={pdfUrl !== null || control?.controller !== "you"}
-          defaultValue={INPUT_SENTINEL}
-          onFocus={(event) => resetInput(event.currentTarget)}
-          className="sr-only top-0 left-0 text-base"
-          onKeyDown={(event) => handleKey("down", event)}
-          onKeyUp={(event) => handleKey("up", event)}
-          onInput={handleInput}
-          onCompositionEnd={(event) => {
-            const text = event.data.replace(/^\u200b/, "");
-            if (text) send({ type: "text", text });
-            resetInput(event.currentTarget);
-          }}
-          onCopy={(event) => handleClipboard(COPY, event)}
-          onCut={(event) => handleClipboard(CUT, event)}
-          onPaste={(event) => {
-            event.preventDefault();
-            const text = event.clipboardData.getData("text/plain");
-            if (text) send({ type: "text", text });
-          }}
-        />
-        {fileChooser && control?.controller === "you" ? (
-          <div
-            className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
-            role="dialog"
-            aria-label="Choose files for the page"
-          >
-            <p className="text-sm">
-              The page asks for {fileChooser.multiple ? "files" : "a file"}.
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              multiple={fileChooser.multiple}
-              accept={fileChooser.accept}
-              onChange={(event) => {
-                const files = [...(event.currentTarget.files ?? [])];
-                event.currentTarget.value = "";
-                if (files.length > 0) answerFileChooser(files);
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => answerFileChooser([])}>
-                Cancel
-              </Button>
-              <Button size="sm" onClick={() => fileInputRef.current?.click()}>
-                Choose {fileChooser.multiple ? "files" : "file"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-        {control?.dialog ? (
-          <div
-            className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
-            role="dialog"
-            aria-label="Browser dialog"
-          >
-            <p className="break-words text-sm">{control.dialog.message}</p>
-            {control.controller === "you" ? (
-              <>
-                {control.dialog.type === "prompt" ? (
-                  <Input
-                    aria-label="Dialog response"
-                    value={promptText}
-                    onChange={(event) => setPromptText(event.target.value)}
-                  />
-                ) : null}
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => send({ type: "dialog", accept: false })}
-                  >
-                    Dismiss
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      send({
-                        type: "dialog",
-                        accept: true,
-                        ...(control.dialog?.type === "prompt" ? { promptText } : {}),
-                      })
-                    }
-                  >
-                    Accept
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground">Take control to respond.</p>
-            )}
-          </div>
-        ) : null}
-      </div>
-      {visible && hostSetup ? (
-        <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
-          <p role="alert" className="max-w-sm text-sm text-muted-foreground">
-            {previewStreamHostSetupMessage(hostSetup)}
-          </p>
-          <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
-          <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-            Try again
-          </Button>
-        </div>
-      ) : null}
-      {visible && accessDenied ? (
-        // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
-        <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-3 text-center">
-          <p role="alert" className="text-xs text-muted-foreground">
-            Browser connection was refused.
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              unauthorizedRef.current = 0;
-              setAccessDenied(false);
-              refreshPreviewStreamAccess(environmentId);
-            }}
-          >
-            Reconnect
-          </Button>
-        </div>
-      ) : null}
-    </div>
+<ServerBrowserViewport
+        accessDenied={accessDenied}
+        agentCursor={agentCursor}
+        answerFileChooser={answerFileChooser}
+        canvasRef={canvasRef}
+        className={className}
+        cn={cn}
+        control={control}
+        controlPosition={controlPosition}
+        COPY={COPY}
+        CUT={CUT}
+        environmentId={environmentId}
+        fileChooser={fileChooser}
+        fileInputRef={fileInputRef}
+        handleClipboard={handleClipboard}
+        handleInput={handleInput}
+        handleKey={handleKey}
+        handleMouseUp={handleMouseUp}
+        handlePointer={handlePointer}
+        hostSetup={hostSetup}
+        INPUT_SENTINEL={INPUT_SENTINEL}
+        inputRef={inputRef}
+        pdfUrl={pdfUrl}
+        previewStreamControlLabel={previewStreamControlLabel}
+        previewStreamHostSetupMessage={previewStreamHostSetupMessage}
+        promptText={promptText}
+        refreshPreviewStreamAccess={refreshPreviewStreamAccess}
+        resetInput={resetInput}
+        send={send}
+        setAccessDenied={setAccessDenied}
+        setHostSetup={setHostSetup}
+        setPromptText={setPromptText}
+        tabId={tabId}
+        unauthorizedRef={unauthorizedRef}
+        visible={visible}
+      />
   );
 }
 
-interface AgentCursorPlacement {
+export interface AgentCursorPlacement {
   readonly phase: PreviewStreamPointer["phase"];
   readonly sequence: number;
   readonly left: number;
