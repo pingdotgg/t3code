@@ -1350,14 +1350,14 @@ export const layerWithOptions = (
           }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
+          const probe = (check: Effect.Effect<boolean> | undefined) =>
+            check === undefined
+              ? Effect.succeed(false)
+              : check.pipe(Effect.catchCause(() => Effect.succeed(false)));
+          const hasScheduledWork = yield* probe(probedRuntime.hasScheduledWork);
           const hasPendingWork =
-            (yield* Effect.forEach(
-              [probedRuntime.hasPendingBackgroundWork, probedRuntime.hasScheduledWork],
-              (probe) =>
-                probe === undefined
-                  ? Effect.succeed(false)
-                  : probe.pipe(Effect.catchCause(() => Effect.succeed(false))),
-            ).pipe(Effect.map((results) => results.includes(true)))) ||
+            hasScheduledWork ||
+            (yield* probe(probedRuntime.hasPendingBackgroundWork)) ||
             // Closing now would skip the archive of a child whose parent has not taken its result.
             Option.isSome(
               yield* Effect.findFirst(entry.idleThreadUnloads.keys(), (threadId) =>
@@ -1369,7 +1369,8 @@ export const layerWithOptions = (
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
-            if (now - pinnedSinceMs < maxIdlePinMs) {
+            // The cap ends work that went silent; a scheduled job is silent until it fires.
+            if (hasScheduledWork || now - pinnedSinceMs < maxIdlePinMs) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (

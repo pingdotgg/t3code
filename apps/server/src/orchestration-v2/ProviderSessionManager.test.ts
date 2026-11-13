@@ -3530,7 +3530,8 @@ it.effect("ProviderSessionManagerV2 keeps an idle session alive while it has sch
       });
       yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
 
-      yield* TestClock.adjust("1 second");
+      // A job set for later in the night must outlive the pin cap.
+      yield* TestClock.adjust("5 seconds");
       assert.isTrue(yield* manager.isLive(providerSessionId));
 
       yield* Ref.set(scheduled, false);
@@ -3538,7 +3539,12 @@ it.effect("ProviderSessionManagerV2 keeps an idle session alive while it has sch
       assert.isFalse(yield* manager.isLive(providerSessionId));
     }).pipe(
       Effect.provide(
-        layerTest({ state, idleTimeoutMs: 1000, hasScheduledWork: Ref.get(scheduled) }),
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          maxIdlePinMs: 2000,
+          hasScheduledWork: Ref.get(scheduled),
+        }),
       ),
     );
   }),
