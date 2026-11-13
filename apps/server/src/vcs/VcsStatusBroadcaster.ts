@@ -487,13 +487,13 @@ export const make = Effect.gen(function* () {
     const previousRemote = (yield* getCachedStatus(cwd))?.remote;
     const remote = yield* workflow.remoteStatus({ cwd }, options);
     const latest = yield* getCachedStatus(cwd);
-    // A turn can refresh divergence while this forge lookup is still running.
+    // An overlapping turn refresh and fetch can both move divergence during the forge lookup.
     const refreshed =
-      latest?.remote !== previousRemote && latest?.remote?.branch === branch
-        ? latest.remote.value
+      remote?.hasUpstream && latest?.remote !== previousRemote && latest?.remote?.branch === branch
+        ? yield* workflow.upstreamDivergence(cwd)
         : null;
     const value =
-      remote?.hasUpstream && refreshed?.hasUpstream
+      remote && refreshed?.refName === branch
         ? { ...remote, aheadCount: refreshed.aheadCount, behindCount: refreshed.behindCount }
         : remote;
     const currentBranch = yield* workflow.currentBranch(cwd);

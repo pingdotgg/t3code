@@ -71,6 +71,7 @@ const remoteStatusWithPr: VcsStatusRemoteResult = {
 function layerTestFor(state: {
   currentLocalStatus: VcsStatusLocalResult;
   currentRemoteStatus: VcsStatusRemoteResult | null;
+  currentDivergence?: Pick<VcsStatusRemoteResult, "aheadCount" | "behindCount">;
   localStatusCalls: number;
   remoteStatusCalls: number;
   localInvalidationCalls: number;
@@ -138,8 +139,8 @@ function layerTestFor(state: {
             state.currentRemoteStatus?.hasUpstream && state.currentLocalStatus.refName !== null
               ? {
                   refName: state.currentLocalStatus.refName,
-                  aheadCount: state.currentRemoteStatus.aheadCount,
-                  behindCount: state.currentRemoteStatus.behindCount,
+                  aheadCount: (state.currentDivergence ?? state.currentRemoteStatus).aheadCount,
+                  behindCount: (state.currentDivergence ?? state.currentRemoteStatus).behindCount,
                 }
               : null,
           ),
@@ -538,40 +539,47 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect("refreshes divergence after a merge without waiting for the forge lookup", () => {
-    const state: Parameters<typeof layerTestFor>[0] = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: { ...baseRemoteStatus, aheadCount: 2, behindCount: 3 },
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      backgroundWorkEnabled: false,
-    };
-    return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      yield* broadcaster.getStatus({ cwd: "/repo" });
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      state.beforeRemoteStatus = Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(Deferred.await(release)),
-      );
-      const lookup = yield* broadcaster.refreshPullRequestStatus("/repo").pipe(Effect.forkScoped);
-      yield* Deferred.await(started);
-      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 4, behindCount: 0 };
-      yield* broadcaster.refreshLocalStatus("/repo");
-      const status = yield* broadcaster.getStatus({ cwd: "/repo" });
-      assert.equal(status.aheadCount, 4);
-      assert.equal(status.behindCount, 0);
-      assert.equal(state.remoteStatusCalls, 1);
-      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 2, behindCount: 3 };
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(lookup);
-      const afterLookup = yield* broadcaster.getStatus({ cwd: "/repo" });
-      assert.equal(afterLookup.aheadCount, 4);
-      assert.equal(afterLookup.behindCount, 0);
-    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
-  });
+  it.effect.each([0, 2])(
+    "refreshes merge divergence while a lookup ends with %s commits behind",
+    (behindAfterLookup) => {
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: { ...baseRemoteStatus, aheadCount: 2, behindCount: 3 },
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        backgroundWorkEnabled: false,
+      };
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/repo" });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        state.beforeRemoteStatus = Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        const lookup = yield* broadcaster.refreshPullRequestStatus("/repo").pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 4, behindCount: 0 };
+        yield* broadcaster.refreshLocalStatus("/repo");
+        const status = yield* broadcaster.getStatus({ cwd: "/repo" });
+        assert.equal(status.aheadCount, 4);
+        assert.equal(status.behindCount, 0);
+        assert.equal(state.remoteStatusCalls, 1);
+        state.currentDivergence = { aheadCount: 4, behindCount: behindAfterLookup };
+        state.currentRemoteStatus =
+          behindAfterLookup > 0
+            ? { ...baseRemoteStatus, ...state.currentDivergence }
+            : { ...baseRemoteStatus, aheadCount: 2, behindCount: 3 };
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(lookup);
+        const afterLookup = yield* broadcaster.getStatus({ cwd: "/repo" });
+        assert.equal(afterLookup.aheadCount, 4);
+        assert.equal(afterLookup.behindCount, behindAfterLookup);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    },
+  );
 
   it.effect("a local-only refresh after a branch switch leaves the PR refresh able to read", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
