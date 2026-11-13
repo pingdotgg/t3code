@@ -46,6 +46,7 @@ const sources: UsageLimitSourceSnapshots = [
           windows: [
             {
               id: "five_hour",
+              kind: "session",
               label: "Session",
               usedPercent: 70,
               resetsAt: "2099-01-01T00:00:00.000Z",
@@ -58,7 +59,7 @@ const sources: UsageLimitSourceSnapshots = [
   },
 ];
 
-it("shows the limits /usage-limits reports for the thread's driver", async () => {
+it("says limits are unavailable when /usage-limits only has a source account", async () => {
   // /usage-limits opens with this report, so the card has data to show.
   expect(
     collectProviderUsageLimits(claude, providers, sources, Date.parse(checkedAt))?.accounts,
@@ -68,5 +69,7 @@ it("shows the limits /usage-limits reports for the thread's driver", async () =>
     <ThreadDetailsUsage providerInstanceId={claude} providers={providers} sources={sources} />,
   );
 
-  await expect.element(screen.getByLabelText(/^(Session|Limits):/)).toBeInTheDocument();
+  // The source account is not known to be this instance's login, so its windows stay out.
+  await expect.element(screen.getByLabelText("Limits: Unavailable")).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Session:/).query()).toBeNull();
 });

@@ -56,8 +56,9 @@ export function ThreadDetailsUsage({
   const limits =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
     providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits);
+  // /usage-limits still lists this driver's other accounts, so say this instance reported none.
+  if (!limits && !report?.accounts.length) return null;
+  const notice = limits ? limitsNotice(limits) : "No limits reported.";
 
   return (
     <ThreadDetailsSection
@@ -66,7 +67,7 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
+        {!limits || notice ? (
           <UsageRow
             label="Limits"
             fill={null}
