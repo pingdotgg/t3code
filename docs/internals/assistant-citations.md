@@ -21,6 +21,11 @@ highlight. The [navigation hash](../../apps/web/src/lib/assistantCitationNavigat
 uses base64url because router normalization otherwise decodes whitespace and
 source IDs inside the citation URI.
 
+An HTML render is cited by its turn item ID in the message slot. Its sandboxed
+page reports selections over the [render bridge](../../packages/shared/src/htmlRender.ts),
+and navigation stops at the render's row because the host cannot read or
+highlight text inside the frame.
+
 Expand citations with the [shared formatter](../../packages/shared/src/assistantCitations.ts)
 before dispatch to a provider adapter. Send the saved excerpt without looking up
 the source, distinguish quoted reference material from the user's comment, and
