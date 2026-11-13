@@ -1748,6 +1748,24 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "sent-message") {
+    return (
+      <View className="mb-1 px-1">
+        <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+          <AssistantMarkdownContent
+            markdown={entry.text}
+            environmentId={props.environmentId}
+            markdownStyles={markdownStyles.assistant}
+            linkHandlers={props.markdownLinkHandlers}
+            onUseArtifactTemplate={props.onUseArtifactTemplate}
+            renderImage={props.renderMarkdownImage}
+            skills={props.skills}
+          />
+        </MarkdownImageAvailableWidthContext>
+      </View>
+    );
+  }
+
   if (entry.type === "viewed-images") {
     const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
     return (
