@@ -8,9 +8,13 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -667,6 +671,81 @@ describe("ApnsDeliveries", () => {
     );
   });
 
+  it.effect("delivers to other devices without reordering a device's queued jobs", () =>
+    Effect.gen(function* () {
+      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+      const requests: Array<string> = [];
+      let firstDeviceRequest = true;
+      const firstStarted = yield* Deferred.make<void>();
+      const otherDeviceDelivered = yield* Deferred.make<void>();
+      const devices = [
+        { ...target, push_token: "first-token" },
+        { ...target, device_id: "device-2", push_token: "other-token" },
+      ];
+      const jobs = yield* Effect.forEach([devices[0]!, devices[0]!, devices[1]!], (device, i) =>
+        signApnsDeliveryJob({
+          secret: signingConfig.apnsDeliveryJobSigningSecret,
+          payload: makeApnsDeliveryJobPayload({
+            kind: "push_notification",
+            userId: device.user_id,
+            deviceId: device.device_id,
+            token: device.push_token,
+            aggregate: null,
+            notification: {
+              title: "Thread",
+              body: "Done",
+              environmentId: "env",
+              threadId: `thread-${i}`,
+              deepLink: "/",
+            },
+            createdAt: "1970-01-01T00:00:00.000Z",
+            expiresAt: "1970-01-01T00:10:00.000Z",
+            jobId: `job-${i}`,
+          }),
+        }),
+      );
+      const batch = yield* Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+        deliveries.processBatch(Stream.fromIterable(jobs.map((body) => ({ body })))),
+      ).pipe(
+        Effect.provide(
+          layerFor({
+            attempts,
+            currentTargets: devices,
+            config: signingConfig,
+            execute: (request) =>
+              Effect.gen(function* () {
+                const token = request.url.split("/").at(-1)!;
+                requests.push(token);
+                if (request.url.endsWith("/other-token")) {
+                  yield* Deferred.succeed(otherDeviceDelivered, undefined);
+                } else if (firstDeviceRequest) {
+                  firstDeviceRequest = false;
+                  yield* Deferred.succeed(firstStarted, undefined);
+                  yield* Deferred.await(otherDeviceDelivered);
+                }
+                return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+              }),
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstStarted);
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(batch);
+
+      expect(requests).toHaveLength(3);
+      expect(requests.filter((token) => token === "first-token")).toHaveLength(2);
+      expect(requests.indexOf("other-token")).toBeLessThan(requests.lastIndexOf("first-token"));
+      expect(attempts).toHaveLength(3);
+      expect(
+        attempts
+          .filter((attempt) => attempt.deviceId === target.device_id)
+          .map((attempt) => attempt.sourceJobId),
+      ).toEqual(["job-0", "job-1"]);
+      expect(attempts.every((attempt) => attempt.apnsStatus === 200)).toBe(true);
+    }).pipe(Effect.provide(NodeCryptoLayer.layerMac)),
+  );
+
   it.effect("skips duplicate signed queue jobs before calling APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;
@@ -848,7 +927,7 @@ describe("ApnsDeliveries", () => {
     );
   });
 
-  it.effect("retries signed queue jobs that are already claimed but not completed", () => {
+  it.effect("retries an in-flight device's jobs without cancelling other devices", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;
     const payload = makeApnsDeliveryJobPayload({
@@ -868,10 +947,18 @@ describe("ApnsDeliveries", () => {
       expiresAt: "1970-01-01T00:10:00.000Z",
       jobId: "job-push-in-flight",
     });
-    const signed = signApnsDeliveryJob({
-      secret: config.apnsDeliveryJobSigningSecret,
-      payload,
-    });
+    const signed = Effect.forEach(
+      [
+        payload,
+        { ...payload, jobId: "job-push-after-in-flight" },
+        {
+          ...payload,
+          jobId: "job-push-other-device",
+          target: { ...payload.target, deviceId: "device-2", token: "other-token" },
+        },
+      ],
+      (payload) => signApnsDeliveryJob({ secret: config.apnsDeliveryJobSigningSecret, payload }),
+    );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       Effect.sync(() => {
         executeCount += 1;
@@ -880,19 +967,22 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* Effect.exit(deliveries.processSignedJob(yield* signed));
+      const result = yield* Effect.exit(
+        deliveries.processBatch(Stream.fromIterable((yield* signed).map((body) => ({ body })))),
+      );
 
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.cause.toString()).toContain("ApnsDeliveryJobClaimInFlight");
       }
-      expect(executeCount).toBe(0);
-      expect(attempts).toEqual([]);
+      expect(executeCount).toBe(1);
+      expect(attempts).toMatchObject([{ sourceJobId: "job-push-other-device", apnsStatus: 200 }]);
     }).pipe(
       Effect.provide(
         layerFor({
           attempts,
           sourceJobClaims: new Map([["job-push-in-flight", "in_flight"]]),
+          currentTargets: [{ ...target, device_id: "device-2", push_token: "other-token" }],
           config: signingConfig,
           execute,
         }),
