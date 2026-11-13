@@ -2562,6 +2562,210 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect.each(["after result", "before result", "while running"] as const)(
+      "delivers the result of the run a pull request watch wake starts, with the original task %s",
+      (timing) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const now = yield* DateTime.now;
+          const key = `pr-watch-${timing}`;
+          const parentThreadId = ThreadId.make(`thread:${key}-parent`);
+          const projectId = ProjectId.make(`project:${key}`);
+          const parentRunId = RunId.make(`run:${key}-parent`);
+          const rootNodeId = NodeId.make(`node:${key}-parent`);
+          yield* seedParentWithTerminalTask({
+            threadId: parentThreadId,
+            projectId,
+            runId: parentRunId,
+            rootNodeId,
+            taskId: NodeId.make(`node:${key}-seed`),
+            deliveryState: "acknowledged",
+            now,
+          });
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: `${key}-child`,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          });
+          let activeRun: OrchestrationV2Run | undefined;
+          if (timing === "while running") {
+            const messageId = MessageId.make(`message:${key}-active`);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:${key}-active`),
+              threadId: child.childThreadId,
+              messageId,
+              text: "Keep working on the original task.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            activeRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+              (row) => row.userMessageId === messageId,
+            )!;
+          }
+          let firstWakeMessageId: MessageId | undefined;
+          if (timing === "after result") {
+            yield* orchestrator.recoverDelegatedTasks;
+            let firstWake = yield* requests.take;
+            while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
+            yield* orchestrator.dispatch({
+              type: "delegated_task.completion-delivery.acknowledge",
+              commandId: CommandId.make(`command:${key}-ack`),
+              parentThreadId,
+              taskId: child.taskId,
+              observedByRunId: parentRunId,
+            });
+            firstWakeMessageId = firstWake.delegatedCompletion?.messageId;
+          }
+          const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+            (run) => run.id === parentRunId,
+          )!;
+          yield* eventSink.write({
+            commandId: reconcileCommandId(`${key}-parent-finished`),
+            events: [
+              {
+                id: EventId.make(`event:${key}-parent-finished`),
+                type: "run.updated",
+                threadId: parentThreadId,
+                runId: parentRunId,
+                occurredAt: now,
+                payload: { ...parentRun, status: "completed", completedAt: now },
+              },
+            ],
+          });
+
+          const wakeMessageId = MessageId.make(`message:${key}`);
+          const pullRequest = { host: "github.com", repository: "acme/app", number: 124 };
+          const url = "https://github.com/acme/app/pull/124";
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`command:${key}-watch`),
+            threadId: child.childThreadId,
+            ...pullRequest,
+            watching: true,
+            link: { url, source: "agent" },
+          });
+          const watch = (yield* orchestrator.getThreadShell(child.childThreadId))?.pullRequests?.[0]
+            ?.watch;
+          assert.isDefined(watch);
+          if (watch === undefined) return;
+          // The shape PullRequestWatchReactor records when the watched pull request changes.
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-watch.sync",
+            commandId: CommandId.make(`command:${key}`),
+            threadId: child.childThreadId,
+            ...pullRequest,
+            startedAt: watch.startedAt,
+            watch: { ...watch, failedChecks: ["lint"], wakes: 1 },
+            wake: {
+              messageId: wakeMessageId,
+              text: "Update on pull request #124: lint failed.",
+              notification: {
+                source: { kind: "monitor" },
+                outcome: "failed",
+                summary: "#124: checks failed",
+              },
+            },
+          });
+          const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+            (row) => row.userMessageId === wakeMessageId,
+          )!;
+          // Behind the original task's own turn, the wake continues that task instead of starting one.
+          if (timing === "while running") assert.equal(run.delegatedTaskId, child.taskId);
+          else assert.notEqual(run.delegatedTaskId, child.taskId);
+          assert.isDefined(run.delegatedTaskId);
+          if (timing === "while running") {
+            assert.equal(run.status, "queued");
+            yield* eventSink.write({
+              commandId: reconcileCommandId(`${key}-initial-finished`),
+              events: [
+                runEvent({
+                  threadId: child.childThreadId,
+                  runId: activeRun!.id,
+                  ordinal: activeRun!.ordinal,
+                  status: "completed",
+                  now,
+                }),
+              ],
+            });
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              commandId: CommandId.make(`command:${key}-resume`),
+              threadId: child.childThreadId,
+            });
+            assert.notEqual(
+              (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+                (row) => row.id === run.id,
+              )?.status,
+              "queued",
+            );
+          }
+          yield* eventSink.write({
+            commandId: reconcileCommandId(`${key}-finished`),
+            events: [
+              {
+                id: EventId.make(`event:${key}-result`),
+                type: "message.updated",
+                threadId: child.childThreadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make(`message:${key}-result`),
+                  threadId: child.childThreadId,
+                  runId: run.id,
+                  nodeId: null,
+                  role: "assistant",
+                  text: "Done.",
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "agent",
+                  creationSource: "server",
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              {
+                id: EventId.make(`event:${key}-finished`),
+                type: "run.updated",
+                threadId: child.childThreadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === run.delegatedTaskId,
+          )!;
+          assert.equal(followup.status, "completed");
+          // A child that still watches its pull request tells its parent more results will follow.
+          assert.match(
+            followup.result ?? "",
+            /^Done\.\n\nT3 Code: this child still watches https:\/\/github\.com\/acme\/app\/pull\/124\. /,
+          );
+          assert.equal(followup.completionDelivery?.state, "claimed");
+          let wake = yield* requests.take;
+          while (
+            wake.threadId !== parentThreadId ||
+            wake.delegatedCompletion?.messageId === firstWakeMessageId
+          ) {
+            wake = yield* requests.take;
+          }
+          assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
+        }),
+    );
+
     it.effect.each(["live", "checkpoint-retry", "checkpoint-offer-retry"] as const)(
       "delivers the run a background command's wake starts after the original result (%s)",
       (delivery) =>

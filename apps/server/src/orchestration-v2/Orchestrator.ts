@@ -177,6 +177,7 @@ import {
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { withPullRequestWatchNote } from "./DelegatedPullRequestWatchNote.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
@@ -3745,32 +3746,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { section: sections[index] }
           : {}),
       }));
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: wakeMessage.messageId,
-          text: wakeMessage.text,
-          notification: {
-            ...wakeMessage.notification,
-            source:
-              wake.notification.source.kind === "monitor"
-                ? {
-                    kind: "monitor",
-                    pullRequest: stamps[0]!,
-                    ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
-                  }
-                : wake.notification.source,
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
+      const dispatched: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }> = {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: wakeMessage.messageId,
+        text: wakeMessage.text,
+        notification: {
+          ...wakeMessage.notification,
+          source:
+            wake.notification.source.kind === "monitor"
+              ? {
+                  kind: "monitor",
+                  pullRequest: stamps[0]!,
+                  ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
+                }
+              : wake.notification.source,
         },
-        events,
-        effects,
-      );
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      };
+      yield* dispatchMessage(dispatched, events, effects);
+      // Unlike other monitor updates, a watch wake asks a delegated child for work its parent hears about.
+      yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
     },
   );
 
@@ -3941,18 +3941,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is settled or archived and cannot watch pull requests.`,
-      });
-    }
-    // Child tasks report to their parent, which owns PR monitoring; child watches would cause unrelated wakes.
-    if (
-      command.type === "thread.pull-request.watch" &&
-      command.watching &&
-      thread.lineage.relationshipToParent === "subagent"
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Thread ${command.threadId} is a subagent; its parent thread watches pull requests.`,
       });
     }
     // Agent watches use the latest executed run to catch calls racing Stop; users can still watch.
@@ -6452,10 +6440,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.deletedAt !== null ||
         (yield* stopReachedRun(command, command.threadId, source.id))
       ) {
-        yield* emit(
-          events,
-          command,
-        )({
+        const emitEvent = emit(events, command);
+        yield* emitEvent({
           type: "thread.metadata-updated",
           threadId: command.threadId,
           occurredAt: yield* DateTime.now,
@@ -9277,7 +9263,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    if (!mayStartSubagentFollowup(command)) return;
     const pending = yield* Ref.get(events);
     const message = pending
       .flatMap((event) =>
@@ -9331,7 +9316,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === child.id &&
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
-    if (original === undefined || original.result === null) return;
+    if (original === undefined) return;
+    if (original.result === null) {
+      // PR watch wakes can arrive before the original task publishes its result.
+      if (command.notification?.source.kind !== "monitor") return;
+      const { runs } = yield* projectionStore.getThreadRecords(child.id, ["runs"]);
+      // Behind the original task's own turn, the wake continues that task, so cancelling it stops both.
+      if (
+        runs.some(
+          (row) =>
+            row.id !== run.id &&
+            (isLiveRun(row) || row.status === "waiting") &&
+            row.delegatedTaskId === undefined,
+        )
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: child.id,
+          runId: run.id,
+          occurredAt: message.createdAt,
+          payload: { ...run, delegatedTaskId: original.id },
+        });
+        return;
+      }
+    }
     const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
@@ -13979,7 +13990,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...task,
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
-        result: result.text,
+        result: withPullRequestWatchNote(result.text, childControls.thread),
         completedAt: now,
         updatedAt: now,
         // The cancelling parent gets no wake, and the task records the run it settled from.
@@ -14597,7 +14608,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
         cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
-        yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+        if (mayStartSubagentFollowup(dispatched)) {
+          yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+        }
         break;
       }
       case "notification.delivery.accept":
@@ -15171,8 +15184,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? withSubagentParentLock(command.threadId, dispatch)
           : dispatch,
       );
-    // Answering a message-mode question can also start a follow-up.
-    return yield* command.type === "runtime-request.respond"
+    // Answering a message-mode question or a pull request watch wake can also start a follow-up.
+    return yield* command.type === "runtime-request.respond" ||
+    (command.type === "thread.pull-request-watch.sync" && command.wake !== undefined)
       ? withSubagentParentLock(command.threadId, dispatch)
       : dispatch;
   });

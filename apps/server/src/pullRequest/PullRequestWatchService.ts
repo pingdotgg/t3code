@@ -44,15 +44,6 @@ export class PullRequestNotOpenError extends Schema.TaggedError<PullRequestNotOp
   }
 }
 
-export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRequestWatchFromSubagentError>()(
-  "PullRequestWatchFromSubagentError",
-  {},
-) {
-  override get message(): string {
-    return "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
-  }
-}
-
 export class PullRequestWatchThreadNotFoundError extends Schema.TaggedError<PullRequestWatchThreadNotFoundError>()(
   "PullRequestWatchThreadNotFoundError",
   { threadId: ThreadId },
@@ -73,7 +64,6 @@ export class PullRequestWatchService extends Context.Service<
       ResolvedTarget & { readonly watching: boolean; readonly wasWatching: boolean },
       | PullRequestWatchFailedError
       | PullRequestNotOpenError
-      | PullRequestWatchFromSubagentError
       | PullRequestWatchThreadNotFoundError
       | PullRequestTargetError
       | PullRequestUnavailableError
@@ -116,9 +106,6 @@ const make = Effect.gen(function* () {
       threadPullRequestsOf(shell).find(
         (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
       );
-    if (watching && thread.lineage.relationshipToParent === "subagent") {
-      return yield* new PullRequestWatchFromSubagentError();
-    }
     const before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });

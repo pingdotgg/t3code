@@ -12,7 +12,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as McpSchema from "effect/ai/McpSchema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
@@ -137,7 +136,6 @@ export const PullRequestToolError = Schema.Union([
   PullRequestWatchService.PullRequestWatchFailedError,
   PullRequestUnavailableError,
   PullRequestWatchService.PullRequestNotOpenError,
-  PullRequestWatchService.PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
 ]);
@@ -332,8 +330,7 @@ const WatchPullRequestTool = Tool.make("watch_pull_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(Tool.OpenWorld, false);
 
 const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   description: "Stop watching a PR for this thread. It stays linked.",
@@ -346,8 +343,7 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(Tool.OpenWorld, false);
 
 const GuideTarget = Schema.Struct({
   url: PullRequestTargetInput.fields.url,

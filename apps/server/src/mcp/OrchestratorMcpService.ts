@@ -87,6 +87,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { withPullRequestWatchNote } from "../orchestration-v2/DelegatedPullRequestWatchNote.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -1608,7 +1609,10 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
+          ? withPullRequestWatchNote(
+              subagentResultForRun(childProjection, taskResultRun).text,
+              childControls.thread,
+            )
           : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
@@ -3149,7 +3153,13 @@ const make = Effect.gen(function* () {
               target,
               returnedRunIds,
             );
-      if (parent !== undefined && scope.thread !== undefined && tasks.length > 0) {
+      if (
+        parent !== undefined &&
+        scope.thread !== undefined &&
+        tasks.length > 0 &&
+        // Timeline messages omit the watch notice, so keep its separate delivery pending.
+        !shell.pullRequests?.some((link) => link.watch !== undefined)
+      ) {
         for (const task of tasks) {
           const transfer = taskResultTransfer(parent.thread.id, target, task);
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
