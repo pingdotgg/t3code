@@ -77,6 +77,21 @@ describe("getProjectScopeSelectionTarget", () => {
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
   });
+
+  it("starts in the repository root checkout over an earlier sub-folder in the same environment", () => {
+    const subfolder = makeProject("old-tool", "mac", {
+      workspaceRoot: "/work/app/_archive/old-tool",
+    });
+    const root = makeProject("app", "mac", { workspaceRoot: "/work/app" });
+    const scope = { ...makeScope([subfolder, root]), representative: root };
+    expect(
+      getProjectScopeSelectionTarget(
+        scope,
+        EnvironmentId.make("mac"),
+        new Set([EnvironmentId.make("mac")]),
+      ),
+    ).toBe(root);
+  });
 });
 
 describe("newTaskFilteredProject", () => {

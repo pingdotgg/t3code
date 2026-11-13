@@ -22,7 +22,8 @@ export function getProjectScopeSelectionTarget(
   connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
 ): EnvironmentProject {
   const rank = (project: EnvironmentProject) =>
-    project.environmentId === preferredEnvironmentId ? 0 : project === scope.representative ? 1 : 2;
+    (project.environmentId === preferredEnvironmentId ? 0 : 2) +
+    (project === scope.representative ? 0 : 1);
   const ordered = [...scope.projects].sort((left, right) => rank(left) - rank(right));
   return (
     ordered.find((project) => connectedEnvironmentIds.has(project.environmentId)) ??
