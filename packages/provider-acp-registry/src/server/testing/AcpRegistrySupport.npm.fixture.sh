@@ -18,6 +18,10 @@ if [ "$1" = "config" ] && [ "$2" = "list" ]; then
       ;;
   esac
   printf '%s\n' "$FAKE_NPM_CONFIG_LIST"
+  # npm reads its global npmrc from the prefix, so a redirected prefix hides the real one.
+  if [ -z "${npm_config_prefix:-}" ]; then
+    printf '%s\n' "${FAKE_NPM_GLOBAL_CONFIG_LIST:-}"
+  fi
   exit 0
 fi
 if [ "$1" = "install" ] && [ "$2" = "--global" ]; then

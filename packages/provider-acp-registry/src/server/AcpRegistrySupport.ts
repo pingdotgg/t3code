@@ -1305,7 +1305,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     if (distribution === "npx") {
       // npm 12 blocks dependency install scripts unless told otherwise, leaving native modules
       // unbuilt. Restore the earlier default only where the user's npm sets no script policy.
-      const hasScriptPolicy = yield* npmHasInstallScriptPolicy(managerPath, installEnvironment);
+      // Queried without the managed prefix, which would also move npm's global npmrc.
+      const hasScriptPolicy = yield* npmHasInstallScriptPolicy(
+        managerPath,
+        withPreferredPath(environment, managerDirectory, platform),
+      );
       const installArgs = hasScriptPolicy
         ? ["install", "--global", packageSpec]
         : ["install", "--global", "--dangerously-allow-all-scripts", packageSpec];

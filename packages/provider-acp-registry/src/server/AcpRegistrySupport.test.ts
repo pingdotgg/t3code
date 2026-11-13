@@ -474,19 +474,11 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("leaves npm's script policy alone when a blank setting hides a lower one", () => {
-    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-script-policy-",
-      });
-      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+  it.effect.each([
+    {
+      name: "a blank setting hides a lower one",
       // What npm 12.2.2 prints for `allow-scripts=` in the user file over `allow-scripts=none`.
-      const environment = {
-        ...toolchain.environment,
-        // Inherited JSON mode replaces the per-source listing with the effective values.
-        npm_config_json: "true",
+      policy: {
         FAKE_NPM_CONFIG_LIST: [
           '; "global" config from /etc/npmrc',
           "",
@@ -496,6 +488,31 @@ describe("AcpRegistrySupport", () => {
           "",
           'allow-scripts = [""]',
         ].join("\n"),
+      },
+    },
+    {
+      name: "only the global npmrc sets one",
+      policy: {
+        FAKE_NPM_GLOBAL_CONFIG_LIST: [
+          '; "global" config from /etc/npmrc',
+          "",
+          'allow-scripts = ["none"]',
+        ].join("\n"),
+      },
+    },
+  ])("leaves npm's script policy alone when $name", ({ policy }) => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-script-policy-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = {
+        ...toolchain.environment,
+        // Inherited JSON mode replaces the per-source listing with the effective values.
+        npm_config_json: "true",
+        ...policy,
       };
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
