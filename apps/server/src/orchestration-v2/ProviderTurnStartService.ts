@@ -993,7 +993,12 @@ export const layer: Layer.Layer<
             type: "provider_resume_fallback",
           });
           const createdAt = yield* DateTime.now;
-          const boundary = ContextHandoffService.contextBoundaryOrdinal(projection.runs);
+          const history = yield* projectionStore.getTurnStartHistory(input.threadId);
+          // Turn-start context carries only this run's turn items; the boundary needs the thread's.
+          const boundary = ContextHandoffService.contextBoundaryOrdinal({
+            runs: projection.runs,
+            turnItems: history,
+          });
           const from = Math.max(1, boundary);
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
@@ -1006,7 +1011,7 @@ export const layer: Layer.Layer<
             coveredRunOrdinals: { from, to: Math.max(from, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
-            items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter((item) =>
+            items: history.filter((item) =>
               item.runId === null
                 ? boundary === 0
                 : projection.runs.some(
