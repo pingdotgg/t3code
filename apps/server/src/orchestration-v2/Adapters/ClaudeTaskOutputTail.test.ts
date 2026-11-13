@@ -102,32 +102,30 @@ describe("tailClaudeTaskOutput", () => {
   );
 
   it.effect("reads what was written last when the tool result stops it", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const { root, tasks, file } = yield* makeTaskFile;
-        yield* fileSystem.makeDirectory(tasks, { recursive: true });
-        yield* fileSystem.writeFileString(file, "one\n");
-        const chunks: Array<string> = [];
-        const stop = yield* Deferred.make<void>();
-        const first = yield* Deferred.make<void>();
-        const fiber = yield* tailClaudeTaskOutput({
-          root,
-          sessionId: SESSION_ID,
-          taskId: TASK_ID,
-          stop,
-          onChunk: (chunk) =>
-            Effect.sync(() => chunks.push(chunk)).pipe(
-              Effect.andThen(Deferred.succeed(first, undefined)),
-            ),
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.await(first);
-        yield* fileSystem.writeFileString(file, "one\ntwo\n");
-        yield* Deferred.succeed(stop, undefined);
-        yield* Fiber.join(fiber);
-        assert.deepEqual(chunks, ["one\n", "two\n"]);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { root, tasks, file } = yield* makeTaskFile;
+      yield* fileSystem.makeDirectory(tasks, { recursive: true });
+      yield* fileSystem.writeFileString(file, "one\n");
+      const chunks: Array<string> = [];
+      const stop = yield* Deferred.make<void>();
+      const first = yield* Deferred.make<void>();
+      const fiber = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: SESSION_ID,
+        taskId: TASK_ID,
+        stop,
+        onChunk: (chunk) =>
+          Effect.sync(() => chunks.push(chunk)).pipe(
+            Effect.andThen(Deferred.succeed(first, undefined)),
+          ),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(first);
+      yield* fileSystem.writeFileString(file, "one\ntwo\n");
+      yield* Deferred.succeed(stop, undefined);
+      yield* Fiber.join(fiber);
+      assert.deepEqual(chunks, ["one\n", "two\n"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
