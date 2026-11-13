@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AUTO_LEVEL_DESCRIPTOR, resolveAutoModelSelection } from "./autoModel.ts";
+import { AUTO_LEVEL_DESCRIPTOR, isAutoModelSlug, resolveAutoModelSelection } from "./autoModel.ts";
 
 const now = Date.parse("2026-11-12T12:00:00.000Z");
 const resetsAt = "2026-11-12T15:00:00.000Z";
@@ -54,6 +54,18 @@ function claude(id: string, usedPercent: number, autoAware = true): ServerProvid
     skills: [],
     usageLimits: {
       windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }],
+    },
+  } as unknown as ServerProvider;
+}
+
+function withWeekly(provider: ServerProvider, usedPercent: number, weeklyResetsAt: string) {
+  return {
+    ...provider,
+    usageLimits: {
+      windows: [
+        ...(provider.usageLimits?.windows ?? []),
+        { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent, resetsAt: weeklyResetsAt },
+      ],
     },
   } as unknown as ServerProvider;
 }
@@ -123,6 +135,71 @@ describe("resolveAutoModelSelection", () => {
       instanceId: "grok",
       model: "grok-4.7",
     });
+  });
+
+  it("routes to the account with less of its 5-hour window used", () => {
+    // A has the busier week but a nearly unused 5-hour window, so it can take work right now.
+    const providers = [
+      withWeekly(claude("claudeAutoB", 50), 20, "2026-11-18T12:00:00.000Z"),
+      withWeekly(claude("claudeAuto", 10), 60, "2026-11-18T12:00:00.000Z"),
+    ];
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId,
+    ).toBe("claudeAuto");
+  });
+
+  it("with similar 5-hour use, spends the account whose weekly limit resets first", () => {
+    // B has slightly less 5-hour use, but A's unused weekly quota is gone tomorrow.
+    const providers = [
+      withWeekly(claude("claudeAutoB", 25), 40, "2026-11-18T12:00:00.000Z"),
+      withWeekly(claude("claudeAuto", 30), 40, "2026-11-13T12:00:00.000Z"),
+    ];
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId,
+    ).toBe("claudeAuto");
+  });
+
+  it("falls back to Claude on the Antigravity subscription before other providers", () => {
+    const antigravity = {
+      ...claude("antigravity", 0, false),
+      driver: ProviderDriverKind.make("antigravity"),
+      models: ["claude-opus-4-6-thinking", "claude-sonnet-4-6"].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinking_level",
+              label: "Thinking",
+              type: "select" as const,
+              options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+            },
+          ],
+        },
+      })),
+    } as unknown as ServerProvider;
+    const providers = [claude("claudeAuto", 100), claude("claudeAutoB", 100), antigravity];
+    expect(resolveAutoModelSelection({ selection: auto(), providers, now })?.selection).toEqual({
+      instanceId: "antigravity",
+      model: "claude-opus-4-6-thinking",
+      options: [{ id: "thinking_level", value: "medium" }],
+    });
+  });
+
+  it("reads the level from auto-low / auto-medium / auto-high", () => {
+    const providers = [claude("claudeAuto", 10)];
+    const pick = (model: string) =>
+      resolveAutoModelSelection({
+        selection: { instanceId: ProviderInstanceId.make("claudeAuto"), model },
+        providers,
+        now,
+      })?.selection.model;
+    expect(pick("auto-high")).toBe("claude-fable-5-2");
+    expect(pick("auto-medium")).toBe("claude-opus-5-5");
+    expect(pick("auto-low")).toBe("claude-sonnet-5-5");
+    expect(isAutoModelSlug("auto-low")).toBe(true);
+    expect(isAutoModelSlug("auto-max")).toBe(false);
   });
 
   it("returns null when nothing is usable", () => {
