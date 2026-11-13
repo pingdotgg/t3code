@@ -1392,6 +1392,70 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("opens a thread saved on a Cursor preset id on its plain model and options", () =>
+    Effect.gen(function* () {
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* (yield* Path.Path).fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const requests: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+      const instanceId = ProviderInstanceId.make("acp-registry-cursor-preset");
+      const threadId = ThreadId.make("thread-acp-registry-cursor-preset");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation,
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "cursor" }),
+        environment: {},
+        nativeLogging: () => ({
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              if (event.status === "started") requests.push(event);
+            }),
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+            resolve: () =>
+              Effect.succeed({
+                distribution: "local" as const,
+                spawn: { command: process.execPath, args: [mockAgentPath], env: {} },
+              }),
+          }),
+        ),
+      );
+      const modelSelection = {
+        instanceId,
+        model: "gpt-5.4[reasoning=high,fast=true]",
+        options: [{ id: "reasoning", value: "low" }],
+      } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-registry-cursor-preset"),
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+      assert.deepEqual(
+        requests.flatMap((event) => {
+          if (event.method !== "session/set_config_option") return [];
+          const payload = Object(event.payload);
+          return [[payload.configId, payload.value]];
+        }),
+        [
+          ["model", "gpt-5.4"],
+          ["reasoning", "low"],
+          ["fast", "true"],
+        ],
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("the agent process env names the thread it serves", () =>
     Effect.gen(function* () {
       const selfInvocation = yield* resolveSelfInvocation();

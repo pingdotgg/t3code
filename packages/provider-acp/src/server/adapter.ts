@@ -420,6 +420,10 @@ export interface AcpAdapterV2Flavor {
   /** Values the client shows for options a new session's selection leaves unset. */
   readonly unsetOptionDefaults?: Effect.Effect<NonNullable<ModelSelection["options"]>>;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
+  /** Options a stored model id stands for (Cursor's old preset ids); the thread's own win. */
+  readonly modelImpliedOptions?: (
+    selection: ModelSelection,
+  ) => NonNullable<ModelSelection["options"]>;
   /**
    * The agent advertises its model option only after `session/new` returns
    * (Kiro sends it in a `config_option_update`), so in-session model switching
@@ -7514,7 +7518,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
           };
           const explicitSelections = modelSelection.options ?? [];
-          const implicitSelections = unsetOptionDefaults.filter(
+          const implicitSelections = [
+            ...(flavor.modelImpliedOptions?.(modelSelection) ?? []),
+            ...unsetOptionDefaults,
+          ].filter(
             (implicit) => !explicitSelections.some((selection) => selection.id === implicit.id),
           );
           const optionSelections = [...explicitSelections, ...implicitSelections].flatMap(

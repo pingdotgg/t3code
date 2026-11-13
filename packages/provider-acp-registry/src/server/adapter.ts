@@ -17,6 +17,7 @@ import {
   isCopilotLostSessionError,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import { cursorClientCapabilitiesMeta, isCursorAcp, splitCursorPresetModel } from "./cursorAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -262,6 +263,13 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+        }
+      : {}),
+    ...(isCursorAcp(options.settings)
+      ? {
+          clientCapabilitiesMeta: cursorClientCapabilitiesMeta,
+          resolveModelId: (selection) => splitCursorPresetModel(selection.model).model,
+          modelImpliedOptions: (selection) => splitCursorPresetModel(selection.model).options,
         }
       : {}),
     ...(copilotRouting === undefined

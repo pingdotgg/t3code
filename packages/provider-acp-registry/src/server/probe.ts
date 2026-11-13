@@ -26,6 +26,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { cursorClientCapabilitiesMeta, isCursorAcp } from "./cursorAcp.ts";
 import {
   findModelConfigOption,
   parseSessionModeState,
@@ -360,6 +361,8 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
             elicitation: { url: {} },
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            // The model list has to match the one a session of this agent offers.
+            ...(isCursorAcp(input.settings) ? { _meta: cursorClientCapabilitiesMeta } : {}),
           },
           clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
           authenticateOnAuthRequired: false,
