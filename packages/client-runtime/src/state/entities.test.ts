@@ -22,7 +22,7 @@ import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 const environmentId = EnvironmentId.make("environment-v2");
 
 describe("V2 client presentation", () => {
-  it("keeps async questions in Working until the run completes", () => {
+  it("an async question allows snooze and wakes an older snooze", () => {
     const runId = RunId.make("run-async-question");
     const running = {
       ...v2ThreadShell,
@@ -39,9 +39,9 @@ describe("V2 client presentation", () => {
       },
     };
     const active = presentThreadShell(environmentId, running);
-    expect(active.hasPendingUserInput).toBe(false);
-    expect(isThreadWorking(active)).toBe(true);
-    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+    expect(active.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(active)).toBe(false);
+    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(true);
 
     const completed = presentThreadShell(environmentId, {
       ...running,
@@ -53,8 +53,8 @@ describe("V2 client presentation", () => {
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 
-  it("keeps blocking and legacy questions out of Working", () => {
-    for (const capability of [{ blocking: true }, {}]) {
+  it("moves a running thread with any question out of Working", () => {
+    for (const capability of [{ blocking: false }, { blocking: true }, {}]) {
       const shell = presentThreadShell(environmentId, {
         ...v2ThreadShell,
         latestRunId: RunId.make("run-blocking-question"),
@@ -96,6 +96,19 @@ describe("V2 client presentation", () => {
         pendingBackgroundTasks: [],
       }).runtime,
     ).toBeNull();
+  });
+
+  it("keeps an imported thread that never ran out of Working", () => {
+    const imported = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      historyOrigin: "v1_import",
+      activeProviderThreadId: ProviderThreadId.make("provider-thread-imported"),
+      latestRunId: null,
+      activeRunId: null,
+      status: "idle",
+      pendingBackgroundTasks: [],
+    });
+    expect(isThreadWorking(imported)).toBe(false);
   });
 
   it.each([

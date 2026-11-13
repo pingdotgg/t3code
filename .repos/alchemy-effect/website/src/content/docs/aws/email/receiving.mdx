@@ -42,8 +42,8 @@ The snippets below run inside a Stack's `Effect.gen` body:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as SES from "alchemy/AWS/SES";
+import * as AWS from "@alchemy.run/aws";
+import * as SES from "@alchemy.run/aws/SES";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(

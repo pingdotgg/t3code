@@ -34,7 +34,7 @@ const makeAuth = (
   const requests: string[] = [];
   const layer = Layer.mock(EnvironmentAuth.EnvironmentAuth, {
     authenticateWebSocketUpgrade: (request) => {
-      requests.push(request.originalUrl);
+      requests.push(request.url);
       return error
         ? Effect.fail(error)
         : Effect.succeed({
@@ -149,7 +149,7 @@ it.effect.each([
       },
     ]);
     expect(auth.requests).toEqual([resource]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("sends replies ahead of stale frames and only the newest frame after an ack", () =>
@@ -221,7 +221,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     yield* Effect.promise(() => next.promise);
     expect(received).toEqual([1, "probe", 4]);
     expect(released).toEqual([2, 3, 1]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each([
@@ -264,7 +264,7 @@ it.effect.each([
     );
     expect(response.status).toBe(testCase.status);
     expect(attachments).toBe(0);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("serves a tab's download only to an authorized session", () =>
@@ -369,7 +369,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
       { chooserId: "chooser-1", files: [{ name: "notes.txt", text: "hello" }] },
     ]);
     expect((yield* upload([AuthPreviewOperateScope], "stale")).status).toBe(409);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 const decodeHostSetup = Schema.decodeUnknownEffect(Schema.fromJsonString(PreviewStreamHostSetup));
@@ -430,5 +430,5 @@ it.effect.each([
       need,
       command: "sudo t3 browser setup",
     });
-  }).pipe(Effect.scoped),
+  }),
 );

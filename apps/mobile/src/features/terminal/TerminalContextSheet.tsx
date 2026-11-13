@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../review/reviewDiffRendering";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -60,7 +60,7 @@ export function TerminalContextSheet(props: {
       <ScrollView
         nestedScrollEnabled
         className="flex-1"
-        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
       >
         <Text className="pb-4 text-sm text-foreground-muted">

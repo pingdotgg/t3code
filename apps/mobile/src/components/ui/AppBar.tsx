@@ -1,14 +1,18 @@
 import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
-import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
-import { useId } from "react";
+import type { HeaderBarButtonMailSearchToolbarItem, SearchBarCommands } from "react-native-screens";
+import { NavigationContext } from "@react-navigation/native";
+import { use, useId, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
+import { isDuoDevice } from "../../lib/device-type";
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
+import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
+import { InspectorCloseContext } from "../../features/layout/inspector-bar-store";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
@@ -17,6 +21,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { useControlTheme } from "./useControlTheme";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -41,31 +46,76 @@ export function AppBar(props: AppBarProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const headerId = useId();
-  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const sidebarToggle = useSidebarToggle();
+  const closeInspector = use(InspectorCloseContext);
+  const setOptions = useScreenOptionsWriter();
+  const ownsInspectorBar = closeInspector !== null && !props.embedded && !props.sheet;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- an inspector pane that stops drawing its bar must not leave it in the out-of-tree inspector bar
+  useLayoutEffect(() => {
+    if (!ownsInspectorBar || !setOptions) return;
+    setOptions({ headerShown: true });
+    return () => setOptions({ headerShown: false });
+  }, [ownsInspectorBar, setOptions]);
+  const splitBackPress = props.backInSplitView?.onPress ?? props.onBack;
+  const splitBack =
+    layout.usesSplitView && props.backInSplitView && splitBackPress
+      ? { ...props.backInSplitView, onPress: splitBackPress }
+      : null;
+  const navigation = use(NavigationContext);
+  const rootBack =
+    !layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
+      ? props.onBackToList
+      : props.guardBack && props.onBack
+        ? props.onBack
+        : null;
+  const compose =
+    layout.usesSplitView && !(usesNativeWorkspaceColumns && isDuoDevice(deviceType))
+      ? props.onCompose
+      : undefined;
   const { themeVariables } = useAppearancePreferences();
+  const { colors } = useControlTheme();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
   const menu = menus?.[0];
+  const searchBarRef = useRef<SearchBarCommands>(null);
+  const nativeSearchText = useRef(search?.value ?? "");
+  const searchValue = search?.value;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the native search bar keeps its own text; a value the caller changes (a reset) has to be pushed into it
+  useLayoutEffect(() => {
+    if (searchValue === undefined || searchValue === nativeSearchText.current) return;
+    nativeSearchText.current = searchValue;
+    searchBarRef.current?.setText(searchValue);
+  }, [searchValue]);
+  const reportSearchText = (text: string) => {
+    nativeSearchText.current = text;
+    search?.onChangeText(text);
+  };
   const compactSearch =
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
     usesNativeMailSearchToolbar;
   const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
-  const refresh = search?.refreshInToolbar ? search.onRefresh : undefined;
+  // Where the mail toolbar isn't used, the Duo keeps search at the bottom of the pane like its
+  // workspace lists; elsewhere inline search is a button in the bar.
+  const duoBottomSearch =
+    search !== undefined &&
+    !compactSearch &&
+    NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
+    isDuoDevice(deviceType);
+  if (props.embedded || props.sheet) return null;
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[
-          props.optionsVersion,
-          compactSearch ? menu : undefined,
-          compactSearch ? refresh : undefined,
-        ]}
+        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined]}
         options={{
           headerShown: true,
           headerBackVisible:
-            !layout.usesSplitView ||
-            !props.backInSplitView ||
-            !(props.backInSplitView.onPress || props.onBack),
+            props.onClose === undefined &&
+            splitBack === null &&
+            !(layout.usesSplitView && props.onBackToList) &&
+            !(props.guardBack && props.onBack),
+          ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
@@ -80,13 +130,6 @@ export function AppBar(props: AppBarProps) {
                         placeholder: search.compactPlaceholder ?? search.placeholder,
                         onSearchTextChange: search.onChangeText,
                         searchTextChangeId: `${headerId}-search-text`,
-                        ...(refresh
-                          ? {
-                              composeButtonId: `${headerId}-refresh`,
-                              composeSystemImageName: "arrow.clockwise",
-                              onComposePress: refresh,
-                            }
-                          : undefined),
                         ...(menu
                           ? {
                               filterButtonId: `${headerId}-filter`,
@@ -101,54 +144,69 @@ export function AppBar(props: AppBarProps) {
                   ? undefined
                   : {
                       allowToolbarIntegration: true,
-                      ...(NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED && search.mode === "inline"
-                        ? { placement: "integratedButton" as const }
-                        : undefined),
+                      ...(duoBottomSearch
+                        ? { placement: "integrated" as const }
+                        : NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED && search.mode === "inline"
+                          ? { placement: "integratedButton" as const }
+                          : undefined),
                       autoCapitalize: "none",
                       hideNavigationBar: false,
-                      ...(search.mode === "inline" ? { obscureBackground: false } : undefined),
+                      ...(search.mode === "inline" || duoBottomSearch
+                        ? { obscureBackground: false }
+                        : undefined),
                       placeholder: search.placeholder,
-                      onChangeText: (event) => search.onChangeText(event.nativeEvent.text),
-                      onCancelButtonPress: () => search.onChangeText(""),
+                      ref: searchBarRef,
+                      onChangeText: (event) => reportSearchText(event.nativeEvent.text),
+                      onCancelButtonPress: () => reportSearchText(""),
                     },
               }
             : undefined),
-          ...props.options,
         }}
       />
-      {layout.usesSplitView && (props.sidebar !== false || props.backInSplitView) ? (
+      {props.onClose ? (
         <Toolbar placement="left">
-          {props.backInSplitView && (props.backInSplitView.onPress || props.onBack) ? (
+          <Toolbar.Button
+            icon="xmark"
+            accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+            onPress={props.onClose}
+          />
+        </Toolbar>
+      ) : rootBack || splitBack || sidebarToggle || compose ? (
+        <Toolbar placement="left">
+          {rootBack ? (
             <ScreenHeaderButton
-              {...props.backInSplitView}
-              onPress={props.backInSplitView.onPress ?? props.onBack}
+              accessibilityLabel="Back"
+              icon="chevron.left"
+              onPress={rootBack}
+              separateBackground
             />
           ) : null}
-          {props.sidebar !== false &&
-          (!usesNativeWorkspaceColumns || deviceType === "pad" || !panes.primarySidebarVisible) ? (
+          {splitBack ? <ScreenHeaderButton {...splitBack} /> : null}
+          {sidebarToggle ? (
             <ScreenHeaderButton
               axisBehavior={usesNativeWorkspaceColumns ? "horizontalOnly" : undefined}
-              accessibilityLabel={
-                panes.primarySidebarVisible
-                  ? `Maximize ${props.title.toLowerCase()}`
-                  : "Show threads"
-              }
-              icon={
-                panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-              }
-              onPress={togglePrimarySidebar}
-              separateBackground={
-                props.backInSplitView ? props.backInSplitView.separateBackground : true
-              }
+              accessibilityLabel={sidebarToggle.accessibilityLabel}
+              icon={sidebarToggle.icon}
+              onPress={sidebarToggle.onPress}
+              separateBackground={splitBack ? splitBack.separateBackground : true}
+            />
+          ) : null}
+          {compose ? (
+            <ScreenHeaderButton
+              accessibilityLabel="New task"
+              label="New task"
+              icon="square.and.pencil"
+              onPress={compose}
+              separateBackground
             />
           ) : null}
         </Toolbar>
       ) : null}
-      {(props.actions?.length ||
-        (!compactSearch && refresh) ||
-        visibleMenus.length ||
-        props.trailing) &&
-      props.options?.unstable_headerRightItems === undefined ? (
+      {props.actions?.length ||
+      visibleMenus.length ||
+      props.trailing ||
+      props.confirm ||
+      closeInspector ? (
         <Toolbar placement="right">
           {props.actions?.map(({ loading, ...action }) =>
             loading ? (
@@ -165,20 +223,47 @@ export function AppBar(props: AppBarProps) {
                 key={action.accessibilityLabel}
                 {...action}
                 icon={iosIcon(action.icon)}
-                separateBackground
+                separateBackground={action.separateBackground ?? true}
               />
             ),
           )}
-          {refresh && !compactSearch ? (
+          {visibleMenus.map(createNativeHeaderMenu)}
+          {props.trailing}
+          {props.confirm?.loading ? (
+            <Toolbar.Custom>
+              <View
+                className="size-11 items-center justify-center"
+                accessible
+                accessibilityLabel={props.confirm.label}
+                accessibilityState={{ busy: true }}
+              >
+                <AppActivityIndicator colorClassName="accent-prominent-action" />
+              </View>
+            </Toolbar.Custom>
+          ) : props.confirm ? (
+            <Toolbar.Button
+              icon="checkmark"
+              variant="prominent"
+              visibilityPriority="high"
+              tintColor={colors["--color-prominent-action"]}
+              accessibilityLabel={props.confirm.label}
+              disabled={props.confirm.disabled}
+              onPress={props.confirm.onPress}
+            />
+          ) : null}
+          {closeInspector ? (
             <ScreenHeaderButton
-              accessibilityLabel={search?.refreshAccessibilityLabel}
-              icon="arrow.clockwise"
-              onPress={refresh}
+              accessibilityLabel="Close inspector"
+              icon="xmark"
+              onPress={closeInspector}
               separateBackground
             />
           ) : null}
-          {visibleMenus.map(createNativeHeaderMenu)}
-          {props.trailing}
+        </Toolbar>
+      ) : null}
+      {duoBottomSearch ? (
+        <Toolbar placement="bottom">
+          <Toolbar.SearchBarSlot />
         </Toolbar>
       ) : null}
     </>
@@ -187,6 +272,7 @@ export function AppBar(props: AppBarProps) {
 
 export type {
   AppBarAction,
+  AppBarConfirm,
   AppBarMenu,
   AppBarMenuItem,
   AppBarProps,
