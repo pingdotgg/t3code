@@ -709,7 +709,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       persistence: persistQuery(PullRequestLinkedThreadsResult),
       tag: WS_METHODS.pullRequestsLinkedThreads,
       staleTimeMs: 0,
-      refreshIntervalMs: 10_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     // For callers that open a thread from the answer: a persisted one reads as final before

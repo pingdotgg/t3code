@@ -1,10 +1,18 @@
+import {
+  ProjectId,
+  ThreadId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
+import { listLinkedPullRequestThreads, makeLinkedThreadsChangeDetector } from "./linkedThreads.ts";
 
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -209,3 +217,53 @@ it.effect(
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it("signals linked-thread changes only when a linked answer could change", () => {
+  const now = DateTime.makeUnsafe("2026-11-12T00:00:00.000Z");
+  const threadId = ThreadId.make("thread-a");
+  const link: ThreadPullRequestLink = {
+    host: "github.com",
+    repository: "acme/web",
+    number: 7,
+    url: "https://github.com/acme/web/pull/7",
+    source: "agent",
+    linkedAt: "2026-11-12T00:00:00.000Z",
+    snapshot: null,
+    stack: null,
+  };
+  const base = {
+    id: threadId,
+    projectId: ProjectId.make("project-a"),
+    title: "Thread A",
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+  } as unknown as OrchestrationV2AppThread;
+  const event = (
+    type: OrchestrationV2DomainEvent["type"],
+    payload: Partial<OrchestrationV2AppThread>,
+  ) => ({ type, threadId, payload: { ...base, ...payload } }) as OrchestrationV2DomainEvent;
+  const changed = makeLinkedThreadsChangeDetector();
+
+  expect(
+    [
+      event("thread.metadata-updated", { title: "Unlinked rename" }),
+      event("thread.pull-request-synced", { pullRequests: [link] }),
+      event("thread.pull-request-synced", {
+        pullRequests: [{ ...link, watch: { since: "2026-11-12T00:00:00.000Z" } as never }],
+      }),
+      event("thread.visited", { pullRequests: [link], title: "Ignored event" }),
+      { type: "thread.pull-request-link-updated", threadId, payload: link } as never,
+      event("thread.metadata-updated", { pullRequests: [link], title: "Renamed" }),
+      event("thread.archived", { pullRequests: [link], title: "Renamed", archivedAt: now }),
+      event("thread.pull-request-synced", {
+        pullRequests: [{ ...link, source: "stack-dismissed" }],
+        title: "Renamed",
+        archivedAt: now,
+      }),
+      event("thread.deleted", { pullRequests: [], deletedAt: now }),
+    ].map(changed),
+  ).toEqual([false, true, false, false, false, true, true, true, false]);
+});

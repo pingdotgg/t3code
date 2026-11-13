@@ -25,6 +25,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { makeLinkedThreadsChangeDetector } from "../pullRequest/linkedThreads.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -407,7 +408,15 @@ export const make = Effect.gen(function* () {
       return worker.enqueue(request);
     });
 
-  const processEvent = (event: OrchestrationV2DomainEvent) => {
+  const linkedThreadsChanged = makeLinkedThreadsChangeDetector();
+
+  const processEvent = (event: OrchestrationV2DomainEvent) =>
+    Effect.andThen(
+      linkedThreadsChanged(event) ? pullRequests.notifyLinkedThreadsChanged : Effect.void,
+      refreshForEvent(event),
+    );
+
+  const refreshForEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.created":
       case "thread.unarchived":

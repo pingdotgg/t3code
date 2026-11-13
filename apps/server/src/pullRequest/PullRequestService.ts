@@ -224,6 +224,8 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReportStateInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
+    /** Wakes refresh readers when a thread's pull request links change; reads stay cached. */
+    readonly notifyLinkedThreadsChanged: Effect.Effect<void>;
     readonly refreshAfterTurn: (
       projectId: ProjectId,
       options?: { readonly pushed?: boolean },
@@ -3687,6 +3689,10 @@ export const make = Effect.gen(function* () {
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
 
+  const notifyLinkedThreadsChanged = Effect.suspend(() =>
+    SubscriptionRef.set(pullRequestRefreshes, ++epochCounter),
+  );
+
   const invalidatedByMutation =
     <I extends PullRequestRef>(
       method: (input: I) => Effect.Effect<void, PullRequestError>,
@@ -3886,6 +3892,7 @@ export const make = Effect.gen(function* () {
     subscribeRefreshes: SubscriptionRef.changes(pullRequestRefreshes).pipe(
       Stream.filter((revision) => revision > 0),
     ),
+    notifyLinkedThreadsChanged,
     refreshAfterTurn,
     detail: credentialCached(detail),
     checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),

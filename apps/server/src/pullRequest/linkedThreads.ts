@@ -1,10 +1,15 @@
 import {
   normalizeThreadPullRequestKey,
+  threadPullRequestKeyOf,
   threadPullRequestKeysEqual,
+  visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
 import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
+  type ThreadId,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -66,3 +71,47 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       }),
   ),
 );
+
+// Mirrors the rows and filters of `listLinkedPullRequestThreads`.
+function linkedThreadsView(thread: OrchestrationV2AppThread): string | null {
+  if (thread.deletedAt !== null || thread.lineage.sideChat === true) return null;
+  const keys = visibleThreadPullRequests(thread.pullRequests ?? [])
+    .map(threadPullRequestKeyOf)
+    .toSorted();
+  if (keys.length === 0) return null;
+  const settled = thread.settledAt !== null || thread.settledOverride === "settled";
+  return JSON.stringify([
+    keys,
+    thread.title,
+    thread.projectId,
+    thread.archivedAt !== null,
+    settled,
+  ]);
+}
+
+const LINKED_VIEW_EVENTS = new Set<OrchestrationV2DomainEvent["type"]>([
+  "thread.created",
+  "thread.archived",
+  "thread.unarchived",
+  "thread.deleted",
+  "thread.settled",
+  "thread.unsettled",
+  "thread.metadata-updated",
+  "thread.pull-request-synced",
+]);
+
+/**
+ * Tells whether a domain event changed any `pullRequests.linkedThreads` answer, so readers can
+ * refresh on change instead of polling. A linked thread's first event after a restart counts once.
+ */
+export function makeLinkedThreadsChangeDetector() {
+  const views = new Map<ThreadId, string>();
+  return (event: OrchestrationV2DomainEvent): boolean => {
+    if (!LINKED_VIEW_EVENTS.has(event.type) || !("lineage" in event.payload)) return false;
+    const view = linkedThreadsView(event.payload);
+    const previous = views.get(event.threadId) ?? null;
+    if (view === null) views.delete(event.threadId);
+    else views.set(event.threadId, view);
+    return view !== previous;
+  };
+}

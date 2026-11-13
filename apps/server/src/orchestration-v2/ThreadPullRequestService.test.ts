@@ -201,7 +201,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         // A turn end commits its checkpoints and the run's end together. The queued
         // non-refresh request ahead of them must still become a refresh when they join it.
         const turnEnd = [
-          { type: "thread.metadata-updated", threadId: thread.id },
+          { type: "thread.metadata-updated", threadId: thread.id, payload: thread },
           { type: "checkpoint.captured", threadId: thread.id },
           { type: "checkpoint.captured", threadId: thread.id },
           { type: "run.updated", threadId: thread.id, payload: { status: "completed" } },
@@ -211,8 +211,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         // Arrives during the thread's own lookup, which may already have read the old host state.
         const duringLookup = [
           { type: "checkpoint.captured", threadId: thread.id },
-          { type: "thread.metadata-updated", threadId: thread.id },
-        ] as Array<OrchestrationV2DomainEvent>;
+          { type: "thread.metadata-updated", threadId: thread.id, payload: thread },
+        ] as unknown as Array<OrchestrationV2DomainEvent>;
         const activation = yield* Deferred.make<void>();
         const sweepStarted = yield* Deferred.make<void>();
         const turnEndQueued = yield* Deferred.make<void>();
