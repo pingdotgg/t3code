@@ -11,6 +11,7 @@ import {
 } from "@t3tools/client-runtime/user-message";
 import type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
+import { hideCodexWebCitations } from "@t3tools/shared/codexWebCitations";
 import {
   commandDisplayText,
   commandProgramName,
@@ -690,7 +691,11 @@ export function resolveAssistantMessageCopyState({
   const hasText = text !== null && text.trim().length > 0;
   const visible = showCopyButton && hasText && !streaming;
   return {
-    text: hasText ? (visible ? renderCodexDirectivesForCopy(text) : text) : null,
+    text: hasText
+      ? visible
+        ? hideCodexWebCitations(renderCodexDirectivesForCopy(text))
+        : text
+      : null,
     visible,
   };
 }
