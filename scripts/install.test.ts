@@ -138,7 +138,7 @@ async function installOver(input: {
   readonly env?: NodeJS.ProcessEnv;
   readonly cwd?: string;
 }) {
-  const target = NodePath.join(input.home, "runtime", "versions", "1.2.3");
+  const target = NodePath.resolve(input.cwd ?? ".", input.home, "runtime", "versions", "1.2.3");
   await NodeFSP.mkdir(target, { recursive: true });
   await NodeFSP.writeFile(NodePath.join(target, ".install-complete"), "1.2.3\n");
   const installer = NodePath.resolve(import.meta.dirname, input.script);
@@ -345,6 +345,30 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
       });
       expect(bothSlashed.code, bothSlashed.output).toBe(0);
       expect(bothSlashed.output).toContain("to use T3 Code here");
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+  // regression: #35833
+  it("writes a t3.cmd that runs from any directory when the home is relative", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-ps1-"));
+    try {
+      const binDir = NodePath.join(root, "bin");
+      const installed = await installOver({
+        script: "install.ps1",
+        home: "t3-home",
+        binDir,
+        cwd: root,
+      });
+      expect(installed.code, installed.output).toBe(0);
+      await NodeFSP.copyFile(process.execPath, NodePath.join(installed.target, "t3.exe"));
+      const run = NodeChildProcess.spawnSync(NodePath.join(binDir, "t3.cmd"), ["--version"], {
+        cwd: NodeOS.tmpdir(),
+        encoding: "utf8",
+        shell: true,
+      });
+      expect(run.status, `${run.stdout}${run.stderr}`).toBe(0);
+      expect(run.stdout.trim()).toBe(process.version);
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
