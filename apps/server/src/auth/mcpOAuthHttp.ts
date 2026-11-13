@@ -40,6 +40,17 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   ),
 );
 
+// RFC 6749 §5.2: invalid_client after an Authorization header attempt is a 401 with a challenge.
+const basicChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(
+    HttpServerResponse.setHeader(
+      HttpServerResponse.setStatus(response, 401),
+      "www-authenticate",
+      'Basic realm="t3code"',
+    ),
+  ),
+);
+
 const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuth.requestUrls);
 const decodeAuthorizationRequest = Schema.decodeEffect(AuthMcpAuthorizationRequest);
 
@@ -187,7 +198,15 @@ export const layer = HttpApiBuilder.group(
       .handle("token", ({ payload, request }) =>
         Effect.gen(function* () {
           yield* noStore;
-          return yield* oauth.exchangeCode({ request, urls: yield* requestUrls, token: payload });
+          return yield* oauth
+            .exchangeCode({ request, urls: yield* requestUrls, token: payload })
+            .pipe(
+              Effect.tapError((error) =>
+                error.error === "invalid_client" && request.headers.authorization !== undefined
+                  ? basicChallenge
+                  : Effect.void,
+              ),
+            );
         }),
       );
   }),
