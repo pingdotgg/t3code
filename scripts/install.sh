@@ -248,7 +248,7 @@ else
   fi
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
   [ -n "$expected" ] || fail "t3 ${version} has no release archive for ${platform}-${arch}"
-  download "${base_url}/v${version}/${archive}" "${staging}/${archive}"
+  download "${base_url}/v${version}/${archive}" "${staging}/${archive}" || fail "could not download ${archive}"
 
   step "Verifying the download..."
   actual="$(checksum "${staging}/${archive}")"
