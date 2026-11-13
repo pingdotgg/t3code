@@ -57,7 +57,7 @@ describe("IndexedDB query cache", () => {
       );
       expect(keptBytes).toBeLessThanOrEqual(32 * 1024 * 1024);
       expect(yield* tabs[1]!.load(environmentId, "large-8")).toEqual(Option.some(answer));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("drops the older copy when an answer grows too large to keep", () =>
