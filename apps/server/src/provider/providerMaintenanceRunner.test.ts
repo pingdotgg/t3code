@@ -576,7 +576,7 @@ describe("providerMaintenanceRunner", () => {
   it.effect.each([
     {
       name: "passes the system proxy to an updater whose environment names none",
-      inherited: { PATH: "/usr/bin", NO_PROXY: "registry.corp" },
+      inherited: { PATH: "/usr/bin", NO_PROXY: "Registry.Corp" },
       env: { CODEX_HOME: "/work/codex-home" },
       proxied: true,
     },

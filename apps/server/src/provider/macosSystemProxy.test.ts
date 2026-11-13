@@ -33,7 +33,7 @@ describe("macosSystemProxyEnv", () => {
   it("maps one shared HTTP and HTTPS proxy and keeps macOS's direct hosts direct", () => {
     const env = macosSystemProxyEnv(
       scutil(
-        ...exceptions("*.local", "169.254/16", "internal.corp", "fd00::5"),
+        ...exceptions("*.Local", "169.254/16", "INTERNAL.CORP", "FD00::5"),
         "FTPPassive : 1",
         ...PROXY,
         "__SUPPLEMENTAL__ : <array> {",

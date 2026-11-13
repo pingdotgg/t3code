@@ -65,10 +65,12 @@ function noProxyEntries(exception: string): ReadonlyArray<string> | null {
   if (IPV4_EXCEPTION.test(exception)) {
     return [];
   }
-  if (exception.includes(":")) {
-    return IPV6_ADDRESS.test(exception) ? [exception, `[${exception}]`] : null;
+  // npm compares entries with the lowercased URL hostname, case-sensitively.
+  const host = exception.toLowerCase();
+  if (host.includes(":")) {
+    return IPV6_ADDRESS.test(host) ? [host, `[${host}]`] : null;
   }
-  const name = exception.startsWith("*.") ? exception.slice(1) : exception;
+  const name = host.startsWith("*.") ? host.slice(1) : host;
   return HOST_NAME.test(name) ? [name] : null;
 }
 
@@ -126,7 +128,7 @@ export const readMacosSystemProxyEnv = Effect.fn("MacosSystemProxy.readEnv")(fun
   const env = { ...(yield* HostProcess.Environment), ...commandEnv };
   const noProxy = [env.no_proxy, env.NO_PROXY]
     .flatMap((value) => (value ?? "").split(","))
-    .flatMap((entry) => entry.trim() || []);
+    .flatMap((entry) => entry.trim().toLowerCase() || []);
   if (
     PROXY_ENV_KEYS.some((key) => env[key] || env[key.toUpperCase()]) ||
     // npm reads its own proxy settings from the environment too.
