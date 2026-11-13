@@ -75,48 +75,44 @@ const newSession = () => Option.some({} as RpcSession.RpcSession);
 
 describe("environment catalog atoms", () => {
   it.effect("changes the session generation only when a new session comes up", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { generation, generationAfter } = yield* makeCatalogHarness();
-        const first = generation();
-        // A retry reports the generation it is attempting before it is established.
-        expect(
-          yield* generationAfter(
-            connectionState({ phase: "connecting", stage: "opening", generation: 2, lastFailure }),
-          ),
-        ).toBe(first);
-        expect(
-          yield* generationAfter(
-            connectionState({ phase: "backoff", generation: 1, lastFailure, retryAt: 1 }),
-          ),
-        ).toBe(first);
-        expect(
-          yield* generationAfter(
-            connectionState({ phase: "connected", attempt: 2, generation: 2 }),
-            newSession(),
-          ),
-        ).not.toBe(first);
-      }),
-    ),
+    Effect.gen(function* () {
+      const { generation, generationAfter } = yield* makeCatalogHarness();
+      const first = generation();
+      // A retry reports the generation it is attempting before it is established.
+      expect(
+        yield* generationAfter(
+          connectionState({ phase: "connecting", stage: "opening", generation: 2, lastFailure }),
+        ),
+      ).toBe(first);
+      expect(
+        yield* generationAfter(
+          connectionState({ phase: "backoff", generation: 1, lastFailure, retryAt: 1 }),
+        ),
+      ).toBe(first);
+      expect(
+        yield* generationAfter(
+          connectionState({ phase: "connected", attempt: 2, generation: 2 }),
+          newSession(),
+        ),
+      ).not.toBe(first);
+    }),
   );
 
   it.effect("changes when a replaced supervisor's first session reuses an old generation", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { generation, generationAfter } = yield* makeCatalogHarness();
-        const first = generation();
+    Effect.gen(function* () {
+      const { generation, generationAfter } = yield* makeCatalogHarness();
+      const first = generation();
+      yield* generationAfter(
+        connectionState({ phase: "backoff", generation: 1, lastFailure, retryAt: 1 }),
+      );
+      // Re-pairing or editing a route installs a new supervisor, whose counter starts over.
+      yield* generationAfter(connectionState({ phase: "available", generation: 0 }));
+      expect(
         yield* generationAfter(
-          connectionState({ phase: "backoff", generation: 1, lastFailure, retryAt: 1 }),
-        );
-        // Re-pairing or editing a route installs a new supervisor, whose counter starts over.
-        yield* generationAfter(connectionState({ phase: "available", generation: 0 }));
-        expect(
-          yield* generationAfter(
-            connectionState({ phase: "connected", attempt: 1, generation: 1 }),
-            newSession(),
-          ),
-        ).not.toBe(first);
-      }),
-    ),
+          connectionState({ phase: "connected", attempt: 1, generation: 1 }),
+          newSession(),
+        ),
+      ).not.toBe(first);
+    }),
   );
 });
