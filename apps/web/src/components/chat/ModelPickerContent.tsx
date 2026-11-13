@@ -842,8 +842,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <div
         ref={pickerContentRef}
         className={cn(
-          "relative flex w-screen max-w-90 flex-row overflow-hidden",
-          props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
+          "relative flex w-screen flex-row overflow-hidden",
+          props.docked
+            ? "max-w-[min(40rem,calc(100dvw-13rem))] max-sm:h-56 max-sm:w-full max-sm:max-w-none"
+            : "max-h-86.5 max-w-90",
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
         style={
