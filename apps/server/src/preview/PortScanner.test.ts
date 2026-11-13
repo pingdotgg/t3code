@@ -603,7 +603,7 @@ effectIt.effect.each([
         }),
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            lsofSpawns += 1;
+            if (input.command === "lsof") lsofSpawns += 1;
             if (mode === "fd-budget-no-lsof") return processProbeFailure(input);
             return Effect.succeed(processOutput(`p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`));
           },
@@ -841,6 +841,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               if (input.args[0] === "-A") {
                 return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
               }
+              if (!input.args.includes("-E")) return Effect.succeed(processOutput(""));
               if (environmentFails) {
                 return Effect.fail(
                   new ProcessRunner.ProcessTimeoutError({
@@ -914,6 +915,114 @@ effectIt.effect.each(["linux", "darwin"] as const)(
     }).pipe(Effect.provide(layer));
   },
 );
+
+effectIt.effect("labels a terminal's servers on macOS by their process titles", () => {
+  // lsof reports the kernel's exec-time name; `process.title` only rewrites argv, which ps reads.
+  const servers = [
+    { pid: 1234, port: 4321, title: "api" },
+    { pid: 1235, port: 4322, title: "web" },
+  ];
+  const psCalls: Array<ReadonlyArray<string>> = [];
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command === "lsof") {
+              return Effect.succeed(
+                processOutput(
+                  servers.map(({ pid, port }) => `p${pid}\ncnode\nn*:${port}\n`).join(""),
+                ),
+              );
+            }
+            psCalls.push(input.args);
+            const listed = (input.args[input.args.indexOf("-p") + 1] ?? "").split(",").map(Number);
+            const environment = input.args.includes("-E")
+              ? ` PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=agent-thread HOME=/Users/dev`
+              : "";
+            return Effect.succeed(
+              processOutput(
+                listed
+                  .flatMap((pid) => {
+                    const title = servers.find((server) => server.pid === pid)?.title;
+                    return title === undefined ? [] : [`${pid} ${title}${environment}\n`];
+                  })
+                  .join(""),
+              ),
+            );
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner(servers.map(({ pid }) => pid));
+    const labels = [
+      { port: 4321, processName: "api", terminalId: "scanner-terminal" },
+      { port: 4322, processName: "web", terminalId: "scanner-terminal" },
+    ];
+    for (let scan = 0; scan < 2; scan++) {
+      expect(
+        (yield* scanner.scan()).map(({ port, processName, terminal }) => ({
+          port,
+          processName,
+          terminalId: terminal?.terminalId,
+        })),
+      ).toEqual(labels);
+    }
+    // Titles never read the environment, and a terminal's own listeners never need it.
+    expect(psCalls).toEqual([["-ww", "-o", "pid=,command=", "-p", "1234,1235"]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect.each([
+  {
+    source: "an executable path with spaces",
+    ps: (() =>
+      Effect.succeed(
+        processOutput("1234 /Applications/Foo Bar.app/Contents/MacOS/Foo Bar HOME=/Users/dev\n"),
+      )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
+  },
+  {
+    source: "the environment ps prints after an empty title",
+    ps: (() =>
+      Effect.succeed(
+        processOutput("1234 DEMO_SECRET=synthetic HOME=/Users/dev\n"),
+      )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
+  },
+  {
+    source: "another user's process, whose argv ps cannot read",
+    ps: (() =>
+      Effect.succeed(
+        processOutput("1234 (nginx)\n"),
+      )) satisfies ProcessRunner.ProcessRunner["Service"]["run"],
+  },
+  { source: "a failed ps", ps: processProbeFailure },
+])("keeps lsof's name on macOS for $source", ({ ps }) => {
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            input.command === "lsof"
+              ? Effect.succeed(processOutput(`p1234\ncFoo Bar\nn*:${LSOF_TEST_PORT}\n`))
+              : ps(input),
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner();
+    expect((yield* scanner.scan()).map(({ processName }) => processName)).toEqual(["Foo Bar"]);
+  }).pipe(Effect.provide(layer));
+});
 
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
