@@ -265,6 +265,26 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  // regression: #36296 the group opened the earliest sub-folder instead of the repository root
+  it("represents a group by its repository root checkout when one is a member", () => {
+    const identity = { ...repositoryIdentity, rootPath: "/work/workspace" };
+    const projects = [
+      makeProject("old-tool", "/work/workspace/_archive/old-tool", {
+        repositoryIdentity: identity,
+      }),
+      makeProject("app-a", "/work/workspace/app-a", { repositoryIdentity: identity }),
+      makeProject("root", "/work/workspace", { repositoryIdentity: identity }),
+    ];
+
+    const groups = buildProjectGroups({
+      projects,
+      settings: settings("repository"),
+      preferredEnvironmentId: environmentId,
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.representative.id).toBe("root");
+  });
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
