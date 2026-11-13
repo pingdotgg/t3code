@@ -257,6 +257,7 @@ export function resolveBranchSelectionTarget(input: {
   checkoutCwd: string;
   nextWorktreePath: string | null;
   reuseExistingWorktree: boolean;
+  staysInActiveCheckout: boolean;
 } {
   const { activeProjectCwd, activeWorktreePath, refName } = input;
 
@@ -266,10 +267,13 @@ export function resolveBranchSelectionTarget(input: {
       input.activeProjectCheckoutRoot === undefined
         ? workspaceRelativeFilePath(activeProjectCwd, refName.worktreePath) !== null
         : workspaceRelativeFilePath(input.activeProjectCheckoutRoot, refName.worktreePath) === ".";
+    const nextWorktreePath = isProjectCheckout ? null : refName.worktreePath;
     return {
       checkoutCwd: refName.worktreePath,
-      nextWorktreePath: isProjectCheckout ? null : refName.worktreePath,
+      nextWorktreePath,
       reuseExistingWorktree: true,
+      // Listed refs can predate a checkout made outside the picker, so only Git can confirm this one.
+      staysInActiveCheckout: nextWorktreePath === activeWorktreePath,
     };
   }
 
@@ -280,6 +284,7 @@ export function resolveBranchSelectionTarget(input: {
     checkoutCwd: nextWorktreePath ?? activeProjectCwd,
     nextWorktreePath,
     reuseExistingWorktree: false,
+    staysInActiveCheckout: nextWorktreePath === activeWorktreePath,
   };
 }
 
