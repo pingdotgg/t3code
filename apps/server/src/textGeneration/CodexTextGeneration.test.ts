@@ -387,6 +387,30 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("disables dotted MCP server names after a launch-arg mcp_servers table", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ branch: "remove-default-shapes" }),
+        launchArgs: '-c \'mcp_servers={"my.server"={command="true"}}\'',
+        mcpServers: [
+          { name: "augmenter", enabled: true },
+          { name: "my.server", enabled: true },
+        ],
+        requireArg:
+          'exec -c mcp_servers={"my.server"={command="true"}} --config features.plugins=false --config features.apps=false --config mcp_servers={"my.server"={enabled=false}} --config mcp_servers.augmenter.enabled=false --ephemeral',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "Remove default shapes",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.branch).toBe("remove-default-shapes");
+        }),
+    ),
+  );
+
   it.effect("still generates when Codex cannot list its MCP servers", () =>
     withFakeCodexEnv(
       {

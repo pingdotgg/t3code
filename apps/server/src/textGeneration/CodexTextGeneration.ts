@@ -50,23 +50,32 @@ const CodexMcpServers = Schema.fromJsonString(
 );
 const decodeCodexMcpServers = Schema.decodeEffect(CodexMcpServers);
 
-// Codex splits -c keys on every "." and the first "=" without quoting, and a later
-// mcp_servers={...} replaces servers earlier -c flags defined, so only such names use the table.
+const configOverride = (args: ReadonlyArray<string>, index: number) => {
+  const previous = args[index - 1];
+  if (previous === "--config" || previous === "-c") return args[index];
+  return /^(?:--config|-c)=(.*)$/s.exec(args[index] ?? "")?.[1];
+};
+const setsMcpServersTable = (args: ReadonlyArray<string>) =>
+  args.some((_, index) => configOverride(args, index)?.split("=")[0]?.trim() === "mcp_servers");
+// Codex splits -c keys on every "." and the first "=" without quoting, so only such names use the
+// table. A later mcp_servers={...} replaces servers earlier -c flags defined, so the table goes
+// before launch args unless they set mcp_servers={...} themselves, which would replace it.
 const hasUnsplittableKey = (name: string) => /[.=]/.test(name);
-const codexMcpServersOff = (names: ReadonlyArray<string>) => {
+const codexMcpServersOff = (names: ReadonlyArray<string>, tableAfterLaunchArgs: boolean) => {
   const tableNames = names.filter(hasUnsplittableKey);
-  return {
-    beforeLaunchArgs:
-      tableNames.length === 0
-        ? []
-        : [
-            "--config",
-            `mcp_servers={${tableNames.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`,
-          ],
-    afterLaunchArgs: names
-      .filter((name) => !hasUnsplittableKey(name))
-      .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]),
-  };
+  const table =
+    tableNames.length === 0
+      ? []
+      : [
+          "--config",
+          `mcp_servers={${tableNames.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`,
+        ];
+  const dotted = names
+    .filter((name) => !hasUnsplittableKey(name))
+    .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]);
+  return tableAfterLaunchArgs
+    ? { beforeLaunchArgs: [], afterLaunchArgs: [...table, ...dotted] }
+    : { beforeLaunchArgs: table, afterLaunchArgs: dotted };
 };
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
@@ -304,18 +313,21 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             }
           : {}),
       };
+      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
       const mcpServersOff = yield* listEnabledMcpServers({
         binary,
         cwd,
         env,
         launchArgs: codexMcpListLaunchArgs(launchArgs),
-      }).pipe(Effect.map(codexMcpServersOff));
+      }).pipe(
+        Effect.map((names) => codexMcpServersOff(names, setsMcpServersTable(execLaunchArgs))),
+      );
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
           ...mcpServersOff.beforeLaunchArgs,
-          ...codexExecLaunchArgs(launchArgs),
+          ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...mcpServersOff.afterLaunchArgs,
