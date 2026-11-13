@@ -78,8 +78,9 @@ export function orchestrationV2WorktreePending(
     latest?.status === "preparing" ||
     latest?.status === "failed" ||
     latest?.status === "interrupted";
-  // A sandbox run can never resolve to a local workspace, so it holds only
-  // while it is the latest run; a worktree holds until its path exists.
+  // A sandbox run can never resolve to a local workspace, so it holds while it
+  // is the latest executed run; a worktree holds only while that run is also
+  // missing its path.
   if (unresolved && latest?.workspacePreparation?.type === "sandbox") return true;
   return worktreePath === null && unresolved && latest?.workspacePreparation?.type === "worktree";
 }

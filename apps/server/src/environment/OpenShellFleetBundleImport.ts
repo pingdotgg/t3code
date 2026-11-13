@@ -22,7 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 /**
  * Drains a worker bundle into an ARCHIVED read-only thread (spec 7.4): the snapshot's projection
  * replays through the EventSink (lossless; no lossy AgentSessionImporter fallback). Idempotency:
- * migration-085 rows mark {environmentId, drainId, snapshotSequence} — same sequence skips,
+ * migration-091 rows mark {environmentId, drainId, snapshotSequence} — same sequence skips,
  * changed supersedes via projection upserts; crashes before the marker only warn (content stays).
  */ /** One attachment file recorded in a bundle envelope's manifest. */
 export interface BundleAttachmentManifestEntry {
@@ -454,7 +454,7 @@ export const makeFleetBundleImporter = (input: {
 };
 
 /**
- * The sqlite-backed import-state store over migration 085's table; tests run
+ * The sqlite-backed import-state store over migration 091's table; tests run
  * it on the in-memory sqlite layer like the other persistence stores.
  */
 export const sqliteFleetDrainImportStore = (sql: SqlClient.SqlClient): FleetDrainImportStore => {
