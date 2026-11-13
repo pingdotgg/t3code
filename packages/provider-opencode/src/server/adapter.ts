@@ -1349,7 +1349,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const childSessionId = taskSessionId(part);
           if (childSessionId !== null && context.childSessionId === null) {
             context.childSessionId = childSessionId;
-            context.childThreadId = idAllocator.derive.threadFromProviderThread({
+            context.childThreadId = idAllocator.derive.subagentThread({
               driver: OPENCODE_PROVIDER,
               nativeThreadId: childSessionId,
             });
