@@ -104,6 +104,31 @@ describe("applyUsageLimitsUpdate", () => {
       zeroSpendCap: true,
     });
   });
+  it("revokes credit spending once and publishes nothing for a block it already knows", () => {
+    const later = "2026-09-03T12:00:05.000Z";
+    const revoke = { windows: [], continuesOnCredits: false } as const;
+    const revoked = applyUsageLimitsUpdate({
+      previous: { ...published, continuesOnCredits: true },
+      checkedAt: later,
+      update: revoke,
+    });
+    expect(revoked).toEqual({ ...published, checkedAt: later, continuesOnCredits: false });
+    expect(applyUsageLimitsUpdate({ previous: revoked, checkedAt: later, update: revoke })).toBe(
+      revoked,
+    );
+    expect(applyUsageLimitsUpdate({ previous: published, checkedAt: later, update: revoke })).toBe(
+      published,
+    );
+
+    const granted = { ...published, continuesOnCredits: true };
+    expect(
+      applyUsageLimitsUpdate({
+        previous: granted,
+        checkedAt: later,
+        update: { windows: [{ ...session, usedPercent: 55 }] },
+      })?.continuesOnCredits,
+    ).toBe(true);
+  });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
@@ -129,6 +154,20 @@ describe("resolveUsageLimitsAfterProbe", () => {
       checkedAt: live.checkedAt,
       windows: live.windows,
     });
+
+    // A probe that read the account before a block was reported cannot grant over it.
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...live, continuesOnCredits: false },
+        probed: { ...probed, continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...live, continuesOnCredits: false },
+        probed: { ...probed, checkedAt: "2026-09-03T12:00:06.000Z", continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(true);
 
     const sameTime = { ...probed, checkedAt: live.checkedAt };
     const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
