@@ -3070,6 +3070,35 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  it("imports Claude slash commands as typed and omits their local output", () => {
+    const quoted = "Why does <command-name>/compact</command-name> show up?";
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        "<local-command-stdout>Set model to opus</local-command-stdout>",
+        "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>",
+        "<local-command-stdout>Compacted</local-command-stdout>",
+        "<command-message>model</command-message>\n<command-name>/model</command-name>\n<command-args>opus</command-args>",
+        "<local-command-stderr>Unknown model</local-command-stderr>",
+        quoted,
+      ]
+        .map((content) =>
+          JSON.stringify({ type: "user", sessionId: "claude-session", message: { content } }),
+        )
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("/compact");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "/compact",
+      "/model opus",
+      quoted,
+    ]);
+  });
+
   it.each([
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.
@@ -3355,57 +3384,121 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread).toBeNull();
   });
 
-  it("uses the canonical Codex event when its turn has generated response context", () => {
+  it.each([
+    { records: "with a shared turn ID", metadata: { turn_id: "turn-1" } },
+    { records: "without turn metadata", metadata: undefined },
+  ])(
+    "uses the canonical Codex event when its turn has generated response context $records",
+    ({ metadata }) => {
+      const thread = AgentSessionScanner.parseAgentSessionTranscript({
+        contents: [
+          encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+          encodeTranscriptRecord({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              internal_chat_message_metadata_passthrough: metadata,
+              content: [
+                {
+                  type: "input_text",
+                  text: "<environment_context>\n<cwd>/tmp/project</cwd>\n<shell>zsh</shell>\n</environment_context>",
+                },
+              ],
+            },
+          }),
+          encodeTranscriptRecord({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              internal_chat_message_metadata_passthrough: metadata,
+              content: [
+                {
+                  type: "input_text",
+                  text: "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nPrivate project rules\n</INSTRUCTIONS>",
+                },
+              ],
+            },
+          }),
+          encodeTranscriptRecord({
+            type: "event_msg",
+            payload: {
+              type: "user_message",
+              message: "Do something here so it looks like a real project.",
+            },
+          }),
+          encodeTranscriptRecord({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              internal_chat_message_metadata_passthrough: metadata,
+              content: [
+                {
+                  type: "input_text",
+                  text: "Do something here so it looks like a real project.",
+                },
+              ],
+            },
+          }),
+          encodeTranscriptRecord({
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Created the project." }],
+            },
+          }),
+        ].join("\n"),
+        source: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        fallbackSessionId: "fallback",
+        lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+      });
+
+      expect(thread?.title).toBe("Do something here so it looks like a real project.");
+      expect(thread?.messages.map((message) => message.text)).toEqual([
+        "Do something here so it looks like a real project.",
+        "Created the project.",
+      ]);
+    },
+  );
+
+  it("imports a paginated Codex rollout from its completed user items", () => {
+    const responseUser = (text: string) =>
+      encodeTranscriptRecord({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+          content: [{ type: "input_text", text }],
+        },
+      });
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        responseUser("# AGENTS.md instructions for /tmp/project\n\nProject rules"),
+        responseUser("Build a transcript viewer"),
         encodeTranscriptRecord({
-          type: "response_item",
+          type: "event_msg",
+          timestamp: "2026-08-25T07:00:00.000Z",
           payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [
-              {
-                type: "input_text",
-                text: "<environment_context>\n<cwd>/tmp/project</cwd>\n<shell>zsh</shell>\n</environment_context>",
-              },
-            ],
-          },
-        }),
-        encodeTranscriptRecord({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [
-              {
-                type: "input_text",
-                text: "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nPrivate project rules\n</INSTRUCTIONS>",
-              },
-            ],
+            type: "item_completed",
+            turn_id: "turn-1",
+            item: {
+              type: "UserMessage",
+              content: [{ type: "text", text: "Build a transcript viewer" }],
+            },
           },
         }),
         encodeTranscriptRecord({
           type: "event_msg",
           payload: {
-            type: "user_message",
-            message: "Do something here so it looks like a real project.",
-          },
-        }),
-        encodeTranscriptRecord({
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [
-              {
-                type: "input_text",
-                text: "Do something here so it looks like a real project.",
-              },
-            ],
+            type: "item_completed",
+            turn_id: "turn-1",
+            item: { type: "AgentMessage", content: [{ type: "Text", text: "Starting" }] },
           },
         }),
         encodeTranscriptRecord({
@@ -3413,9 +3506,11 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: "Created the project." }],
+            content: [{ type: "output_text", text: "Starting" }],
           },
         }),
+        // Context injected after the first reply still belongs to the event's turn.
+        responseUser("<environment_context>\n<cwd>/tmp/other</cwd>\n</environment_context>"),
       ].join("\n"),
       source: "codex",
       providerInstanceId: ProviderInstanceId.make("codex"),
@@ -3423,11 +3518,85 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("Do something here so it looks like a real project.");
-    expect(thread?.messages.map((message) => message.text)).toEqual([
-      "Do something here so it looks like a real project.",
-      "Created the project.",
+    expect(thread?.title).toBe("Build a transcript viewer");
+    expect(thread?.messages).toEqual([
+      { role: "user", text: "Build a transcript viewer", createdAt: "2026-08-25T07:00:00.000Z" },
+      { role: "assistant", text: "Starting", createdAt: "2026-08-25T08:00:00.000Z" },
     ]);
+  });
+
+  const questionReply = (replies: unknown) =>
+    `<send_user_message_question_reply>\n${JSON.stringify(replies)}\n</send_user_message_question_reply>`;
+  const reply = { questionItemId: "question-1", question: "Which database?", answer: "PostgreSQL" };
+  it.each([
+    {
+      name: "request after mentioned files",
+      prompt:
+        "# Files mentioned by the user:\n\n## a.ts: /tmp/a.ts\n\n## My request for Codex:\nFix a.ts\n",
+      expected: "Fix a.ts",
+    },
+    {
+      name: "request after the last delimiter",
+      prompt:
+        "# Context from my IDE setup:\n\n## Active selection:\n## My request for Codex:\nquoted\n\n## My request for Codex:\nUse the last request",
+      expected: "Use the last request",
+    },
+    {
+      name: "attachment without a request",
+      prompt:
+        "# Files mentioned by the user:\n\n## shot.png: /tmp/shot.png\n\n## My request for Codex:\n",
+      expected:
+        "# Files mentioned by the user:\n\n## shot.png: /tmp/shot.png\n\n## My request for Codex:\n",
+    },
+    {
+      name: "question reply",
+      prompt: questionReply([reply]),
+      expected: "> Which database?\n\nPostgreSQL",
+    },
+    {
+      name: "question reply after IDE context",
+      prompt: `# Context from my IDE setup:\n\n## Open tabs:\n- a.ts\n\n## My request for Codex:\n${questionReply(reply)}`,
+      expected: "> Which database?\n\nPostgreSQL",
+    },
+    {
+      name: "several question replies",
+      prompt: questionReply([reply, { ...reply, question: "Which port?", answer: "5432" }]),
+      expected: "> Which database?\n\nPostgreSQL\n\n> Which port?\n\n5432",
+    },
+    {
+      name: "malformed question reply",
+      prompt: questionReply({ question: "No answer" }),
+      expected: questionReply({ question: "No answer" }),
+    },
+    {
+      name: "quoted question reply",
+      prompt: `Explain ${questionReply([reply])}`,
+      expected: `Explain ${questionReply([reply])}`,
+    },
+  ])("shows a Codex $name as Codex does", ({ prompt, expected }) => {
+    const parse = (record: unknown) =>
+      AgentSessionScanner.parseAgentSessionTranscript({
+        contents: [
+          encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+          encodeTranscriptRecord(record),
+        ].join("\n"),
+        source: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        fallbackSessionId: "fallback",
+        lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+      });
+    const fromEvent = parse({
+      type: "event_msg",
+      payload: { type: "user_message", message: prompt },
+    });
+    const fromResponse = parse({
+      type: "response_item",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] },
+    });
+
+    expect(fromEvent?.messages.map((message) => message.text)).toEqual([expected]);
+    expect(fromEvent?.title).toBe(expected.split("\n")[0]);
+    expect(fromResponse?.messages.map((message) => message.text)).toEqual([expected.trim()]);
   });
 
   it("preserves context markup in response-only Codex messages", () => {

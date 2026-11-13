@@ -92,10 +92,12 @@ Pi conversation imports its active branch, the one Pi reopens.
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.
-It omits tool activity and attachments. For Codex, it omits generated setup
-context only when a canonical user event and a valid shared turn ID identify the
-same user turn. Ambiguous legacy or response-only context stays in the imported
-conversation so T3 Code does not remove user text. It reads one conversation at
+It omits tool activity and attachments. Codex prompts appear as Codex shows
+them: without the setup and IDE context Codex adds, and with an answered
+question as the question and your answer. An older Codex conversation that kept
+no separate record of what you sent keeps that context, so T3 Code does not
+remove user text. Claude slash commands appear as you typed them, without their
+local output. It reads one conversation at
 a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
 does not count toward that limit. It skips a conversation with more than 100,000
