@@ -4922,8 +4922,8 @@ describe("parent run waiting on foreground subagents", () => {
     result: null,
   });
 
-  it("does not show a plain Thinking row while the open run only waits on running children", () => {
-    const rows = deriveMessagesTimelineRows({
+  const liveRow = (later: ReadonlyArray<OrchestrationV2TurnItem>, toolCallVisibility?: "hideAll") =>
+    deriveMessagesTimelineRows({
       timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems: (
           [
@@ -4947,8 +4947,9 @@ describe("parent run waiting on foreground subagents", () => {
               streaming: false,
             },
             child("a", 2),
-            child("b", 3),
+            { ...child("b", 3), status: "completed", completedAt: at(3) },
             child("c", 4),
+            ...later,
           ] satisfies OrchestrationV2TurnItem[]
         ).map((item) => ({
           position: item.ordinal,
@@ -4969,12 +4970,28 @@ describe("parent run waiting on foreground subagents", () => {
       activeTurnStartedAt: DateTime.formatIso(at(0)),
       turnDiffSummaries: [],
       supportsConversationRollback: false,
-    });
-    expect(rows.find((row) => row.id === "live-activity-row")).not.toEqual({
-      kind: "thinking",
-      id: "live-activity-row",
-      createdAt: DateTime.formatIso(at(0)),
-    });
+      ...(toolCallVisibility ? { toolCallVisibility } : {}),
+    }).find((row) => row.id === "live-activity-row");
+  const thinking = {
+    kind: "thinking",
+    id: "live-activity-row",
+    createdAt: DateTime.formatIso(at(0)),
+  };
+
+  it("names the running children while the open run has done nothing since launching them", () => {
+    expect(liveRow([])).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
+    expect(liveRow([], "hideAll")).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
+  });
+
+  it("keeps Thinking when a hidden newer parent command follows the children", () => {
+    const command: OrchestrationV2TurnItem = {
+      ...base("command", 5),
+      status: "running",
+      completedAt: null,
+      type: "command_execution",
+      input: "sleep 5",
+    };
+    expect(liveRow([command], "hideAll")).toEqual(thinking);
   });
 });
 
