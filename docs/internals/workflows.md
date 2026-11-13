@@ -35,6 +35,12 @@ as the request id, so a replay finds the thread it already started. The run is n
 modes to pass on, so the link's access is the only ceiling on what it starts there. Making and
 linking machines is the workflow author's own code in a `step`; nothing here knows how.
 
+**An agent step's thread says which run it belongs to.** The thread is created with the run, the
+workflow and the step it is, and its lineage marks it as a workflow step, so every list of
+threads leaves it out the way it leaves out subagents: a run can have dozens, and they are read
+through the run. Only the server may set this, as with a link's origin; over a link the launch
+tool carries it and it is kept only for a link session.
+
 **An invoked run is a run of its own.** `invoke` starts it from a step with this run as its
 parent and then waits like any `wait`; the engine signals that wait when the child ends, however
 it ends, so a child that finished before the parent got to its wait is not missed. A key names

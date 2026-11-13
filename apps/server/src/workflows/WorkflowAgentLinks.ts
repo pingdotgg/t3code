@@ -156,6 +156,7 @@ export const make = Effect.gen(function* () {
     input: Parameters<Service["start"]>[0],
     environment: string,
     requestId: string,
+    here: EnvironmentId,
   ) {
     if (!(yield* links.enabled)) {
       return yield* new WorkflowAgentError({
@@ -194,6 +195,8 @@ export const make = Effect.gen(function* () {
         message: input.prompt,
         ...outputSchema,
         clientRequestId: requestId,
+        // The thread there says which run it is a step of, and where that run lives.
+        workflowRun: { environmentId: here, ...input.origin },
       },
     );
     if (launched.runId === null) {

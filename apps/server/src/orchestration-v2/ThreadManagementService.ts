@@ -92,6 +92,7 @@ export function withCreationProvenance(
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
         initialMessage: _initialMessage,
+        workflowRun: _workflowRun,
         ...rest
       } = command;
       return { ...rest, ...provenance };

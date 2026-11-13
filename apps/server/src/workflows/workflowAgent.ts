@@ -58,6 +58,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
     agents
       .start({
         key: `${run.runId}/${name}/${key}`,
+        origin: { runId: run.runId, workflow: run.workflow, step: name },
         title: `${run.workflow}: ${name}`,
         prompt,
         outputSchema,
