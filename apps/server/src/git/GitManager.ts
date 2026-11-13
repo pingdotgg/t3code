@@ -1282,7 +1282,7 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-        const { headContext, lookup, openOnly } = yield* resolveLookupHeadContext(cwd, details);
+        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
         if (!lookup) {
           return { latest: null, headContext };
         }
@@ -1293,8 +1293,7 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const found = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
-        const latest = openOnly && found?.state !== "open" ? null : found;
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
         if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
@@ -1846,12 +1845,11 @@ export const make = Effect.gen(function* () {
         return {
           headContext: yield* resolveBranchHeadContext(cwd, { ...details, remoteName }),
           lookup: true,
-          openOnly: false,
         };
       }
     }
     if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
-      return { headContext, lookup: true, openOnly: false };
+      return { headContext, lookup: true };
     }
     const upstreamHeadIsBase =
       headContext.headBranch === details.defaultBranch ||
@@ -1882,9 +1880,7 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => false),
           )));
     if (!upstreamHeadIsBase) {
-      // Git records a branch cut from a base and a PR checked out under another name the same
-      // way, so a PR found through the upstream's name is this branch's only while it is open.
-      return { headContext, lookup: true, openOnly: true };
+      return { headContext, lookup: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(
       cwd,
@@ -1892,14 +1888,14 @@ export const make = Effect.gen(function* () {
       headContext.remoteName,
     ).pipe(Effect.orElseSucceed(() => null));
     if (remoteName === null) {
-      return { headContext, lookup: false, openOnly: false };
+      return { headContext, lookup: false };
     }
     const ownNameContext = yield* resolveBranchHeadContext(cwd, {
       branch: details.branch,
       upstreamRef: null,
       remoteName,
     });
-    return { headContext: ownNameContext, lookup: true, openOnly: false };
+    return { headContext: ownNameContext, lookup: true };
   });
 
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
