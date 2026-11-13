@@ -12,7 +12,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 type Question = {
   header: string;
   question: string;
-  options: { label: string; description: string }[];
+  options: { label: string; description: string; preview?: string }[];
 };
 
 const renderPanel = (questions: Question[], questionIndex = 0) =>
@@ -117,4 +117,26 @@ it("keeps one direction for the whole set when a single question is Hebrew", asy
   await expect
     .element(screen.getByText("גרסה 3 (חדשה!)", { exact: true }))
     .toHaveStyle({ direction: "rtl" });
+});
+
+it("shows an option's preview so the user can see what they are approving", async () => {
+  await using screen = await renderPanel([
+    {
+      header: "Issue",
+      question: "Approve this issue title and body?",
+      options: [
+        {
+          label: "Approve",
+          description: "File it as drafted.",
+          preview: "Title: Login fails\n\nBody: A quote in the password breaks login.",
+        },
+        { label: "Cancel", description: "Do not file it." },
+      ],
+    },
+  ]);
+
+  await screen.getByRole("button", { name: /Approve/ }).hover();
+  await expect
+    .element(screen.getByText("A quote in the password breaks login.", { exact: false }))
+    .toBeVisible();
 });
