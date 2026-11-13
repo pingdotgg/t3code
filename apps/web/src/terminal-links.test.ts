@@ -306,9 +306,17 @@ describe("resolvePathLinkTarget", () => {
     ["app/(auth)/page.tsx", "/repo/app/(auth)/page.tsx"],
   ])("preserves a TypeScript compiler location on %s", (path, target) => {
     const text = `${path}(42,7)`;
-    const links = extractTerminalLinks(`${text}: error TS2322`);
-    expect(links).toEqual([{ kind: "path", text, start: 0, end: text.length }]);
+    const links = extractTerminalLinks(`${text}: error TS2322: Type mismatch`);
+    expect(links).toEqual([{ kind: "path", text: `${path}:42:7`, start: 0, end: text.length }]);
     expect(resolveTerminalLinkTarget(links[0]?.text ?? "", "/repo")).toBe(`${target}:42:7`);
+  });
+
+  it.each([
+    [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
+    ["/tmp/report(42,7)", "/tmp/report(42,7)"],
+  ])("keeps a literal parenthesized path in %s", (line, target) => {
+    const [link] = extractTerminalLinks(line);
+    expect(resolveTerminalLinkTarget(link?.text ?? "", "/repo")).toBe(target);
   });
 
   // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths

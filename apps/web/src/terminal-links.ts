@@ -106,7 +106,10 @@ function collectMatches(
 
     const candidate: TerminalLinkMatch = {
       kind,
-      text: trimmed,
+      text:
+        kind === "path" && /^:\s+(?:error|warning) TS\d+:/u.test(line.slice(start + trimmed.length))
+          ? trimmed.replace(/\((\d+),(\d+)\)$/, ":$1:$2")
+          : trimmed,
       start,
       // A position outside quotes spans the closing quote in the terminal buffer.
       end: start + trimmed.length + (rawMatch.groups?.position ? 1 : 0),
@@ -161,10 +164,7 @@ export function isTerminalUrl(value: string): boolean {
 /** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */
 export function resolveTerminalLinkTarget(text: string, cwd: string): string {
   const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text) : null;
-  if (!fileUrl) {
-    const path = text.replace(/\((\d+),(\d+)\)$/, ":$1:$2");
-    return resolvePathLinkTarget(path, cwd);
-  }
+  if (!fileUrl) return resolvePathLinkTarget(text, cwd);
   return formatFilePathPosition(
     splitFilePathPosition(
       stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path)),
