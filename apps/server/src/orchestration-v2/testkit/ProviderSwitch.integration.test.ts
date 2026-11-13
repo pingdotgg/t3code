@@ -444,7 +444,11 @@ function makeTestAdapter(input: {
               }
             }),
           steerTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
+          // Like Claude: a Stop that restarts the runtime clears the session's background roster.
+          interruptTurn: (interrupt) =>
+            interrupt.requestRuntimeRestart === true && input.backgroundWork !== undefined
+              ? Ref.set(input.backgroundWork, false)
+              : Effect.void,
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
@@ -2798,6 +2802,11 @@ describe("orchestration v2 provider switching", () => {
       "refuses the hand-off while the previous instance still runs background work",
       { background: true, queued: false, sharedHistory: false },
     ],
+    // regression: #35240 the refusal says "press Stop", so Stop must lift it
+    [
+      "lets the hand-off through after Stop on an idle thread whose session reports background work",
+      { background: true, queued: false, sharedHistory: false, stopAfterRefusal: true },
+    ],
     [
       "keeps a busy previous session running when a queued hand-off starts",
       { background: true, queued: true, sharedHistory: false },
@@ -2806,7 +2815,7 @@ describe("orchestration v2 provider switching", () => {
       "holds a queued account switch while the replaced session still runs background work",
       { background: true, queued: true, sharedHistory: true },
     ],
-  ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
+  ] as const)("%s", ([, { background, queued, sharedHistory, ...options }]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("handoff-releases-session");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -2981,7 +2990,16 @@ describe("orchestration v2 provider switching", () => {
             unchanged.providerSessions.map((session) => [session.id, session.status]),
             [[firstSession!.id, "ready"]],
           );
-          yield* Ref.set(backgroundWork, false);
+          if ("stopAfterRefusal" in options) {
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("command:handoff-releases-session:stop"),
+              threadId: handoffThreadId,
+            });
+            yield* worker.drain();
+          } else {
+            yield* Ref.set(backgroundWork, false);
+          }
         }
 
         yield* send(2, secondSelection);
