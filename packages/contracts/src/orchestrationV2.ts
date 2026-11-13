@@ -3563,6 +3563,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
           ...ThreadPullRequestKey.fields,
           startedAt: IsoDateTime,
           watch: Schema.NullOr(ThreadPullRequestWatch),
+          checksPendingBefore: Schema.optional(Schema.Boolean),
           endedWatch: Schema.optional(ThreadPullRequestWatch),
           includesRemarks: Schema.optional(Schema.Boolean),
         }),

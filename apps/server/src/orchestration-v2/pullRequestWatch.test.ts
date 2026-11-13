@@ -878,7 +878,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.isTrue(pending([unreadable], watch({ headSha: "aaaaaaaaaa", checksPending: true })));
   });
 
-  it("waits for a new head's checks only where the host always reports some", () => {
+  it("waits a while for a new head's checks on every host", () => {
     const pushed = (checksAlwaysReport: boolean) =>
       evaluatePullRequestWatch(
         watch({ headSha: "aaaaaaaaaa", checksPending: false }),
@@ -890,19 +890,25 @@ describe("evaluatePullRequestWatch", () => {
         noRemarks,
       ).next.checksPending;
     assert.isTrue(pushed(true));
-    assert.isFalse(pushed(false));
+    assert.isTrue(pushed(false));
 
-    // Once told none reported, the watch stops waiting for them.
-    let current = watch({ headSha: "aaaaaaaaaa" });
-    for (const minute of [0, 20]) {
-      current = evaluate(
-        current,
-        detail({ headSha: "bbbbbbbbbb", checks: [] }),
-        noRemarks,
-        minute * 60_000,
-      ).next;
+    // Once the no-checks window passes, the watch stops waiting for them.
+    for (const checksAlwaysReport of [true, false]) {
+      let current = watch({ headSha: "aaaaaaaaaa" });
+      for (const minute of [0, 20]) {
+        current = evaluate(
+          current,
+          detail({
+            headSha: "bbbbbbbbbb",
+            capabilities: capabilities(checksAlwaysReport),
+            checks: [],
+          }),
+          noRemarks,
+          minute * 60_000,
+        ).next;
+      }
+      assert.isFalse(current.checksPending);
     }
-    assert.isFalse(current.checksPending);
 
     // A watch with no answer waits on an empty list only while the no-checks clock runs.
     const unanswered = (checksAwaitedSince: string | null) =>

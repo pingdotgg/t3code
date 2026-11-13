@@ -64,11 +64,9 @@ export function evaluatePullRequestWatch(
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
-  // A new head without checks waits for them only where the host always reports some. A watch with
-  // no answer (saved before the field, or since a push) waits only while the clock below runs.
-  let checksPending = headMoved
-    ? detail.capabilities.checksAlwaysReport === true
-    : (watch.checksPending ?? watch.checksAwaitedSince != null);
+  // A watch with no answer (saved before the field, or since a push) waits only while the clock
+  // below runs.
+  let checksPending = headMoved ? false : (watch.checksPending ?? watch.checksAwaitedSince != null);
   // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
@@ -159,25 +157,23 @@ export function evaluatePullRequestWatch(
     passedChecks = passedNow ? gateNames : [];
   }
 
-  // Only a head never read with checks waits for them: an empty read after checks were seen is
-  // the failed read above. A watch saved before this field may have seen pending checks on its
-  // head, so its clock starts only at the next push. Where a host's empty list can mean the
-  // repository runs no checks at all, nothing waits.
-  let checksAwaitedSince = watch.checksAwaitedSince;
-  if (detail.capabilities.checksAlwaysReport === true) {
-    const awaitedBefore =
-      headMoved || watch.awaitingBaseline === "all"
-        ? DateTime.formatIso(DateTime.makeUnsafe(now))
-        : (watch.checksAwaitedSince ?? null);
-    checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
-    const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
-    if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+  // Only a head never read with checks waits for them; a legacy watch's clock starts at its next
+  // push. CI can register late on any host, so every host waits, but running out of time is news
+  // only where a host always reports checks: elsewhere an empty list can mean there are none.
+  const awaitedBefore =
+    headMoved || watch.awaitingBaseline === "all"
+      ? DateTime.formatIso(DateTime.makeUnsafe(now))
+      : (watch.checksAwaitedSince ?? null);
+  let checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
+  const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
+  if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+    if (detail.capabilities.checksAlwaysReport === true) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
-      checksAwaitedSince = null;
-      checksPending = false;
-    } else if (checksAwaitedSince !== null) {
-      checksPending = true;
     }
+    checksAwaitedSince = null;
+    checksPending = false;
+  } else if (checksAwaitedSince !== null) {
+    checksPending = true;
   }
 
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();

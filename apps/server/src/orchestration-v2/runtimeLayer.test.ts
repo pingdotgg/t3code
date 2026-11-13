@@ -4294,16 +4294,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           branch: null,
           worktreePath: null,
         });
-        yield* orchestrator.dispatch({
-          type: "thread.pull-request.watch",
-          commandId: CommandId.make("pr-watch-quiet-start"),
-          threadId,
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number: 17,
-          watching: true,
-          link: { url: "https://github.com/pingdotgg/t3code/pull/17", source: "agent" },
-        });
+        // Two watches, as with a stack, so news on both wakes the thread once for both.
+        for (const number of [17, 18]) {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-quiet-start-${number}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number,
+            watching: true,
+            link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+          });
+        }
 
         let e2e: PullRequestCheck["status"] = "pending";
         let comments: ReadonlyArray<PullRequestComment> = [];
@@ -4315,7 +4318,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
-            detail: () =>
+            detail: (input) =>
               Effect.gen(function* () {
                 if (gate !== null) {
                   yield* Deferred.succeed(gate.started, undefined);
@@ -4324,7 +4327,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 return {
                   ...watchedPullRequestDetail({
                     projectId,
-                    number: 17,
+                    number: input.number,
                     at: "2026-10-02T12:00:00.000Z",
                   }),
                   checks: [
@@ -4347,10 +4350,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           orchestrator.getThreadRecords(threadId, ["messages"]),
           ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
         );
-        const checksPending = Effect.map(
-          orchestrator.getThreadShell(threadId),
-          (thread) => thread?.pullRequests?.[0]?.watch?.checksPending,
-        );
+        const checksPending = Effect.map(orchestrator.getThreadShell(threadId), (thread) => {
+          const answers = (thread?.pullRequests ?? []).map((link) => link.watch?.checksPending);
+          assert.lengthOf(answers, 2);
+          assert.strictEqual(answers[0], answers[1]);
+          return answers[0];
+        });
 
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
         yield* reactor.sweep;
@@ -4398,7 +4403,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         gate = null;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(inFlight);
-        assert.deepEqual(yield* summaries, ["#17: new comments"]);
+        assert.lengthOf(yield* summaries, 1);
         assert.isUndefined(yield* checksPending);
 
         // The next sweep reads it again though nothing on the host changed.
