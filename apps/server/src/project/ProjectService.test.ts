@@ -1,15 +1,19 @@
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -33,6 +37,7 @@ import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const layerWorkspacePaths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
   normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot.replace(/\/$/, "")),
@@ -101,11 +106,93 @@ const layerTestFor = (
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
   );
 
 const layerTest = layerTestFor(layerMetadata);
+
+it.effect("resolves only the requested active project page in creation order", () =>
+  Effect.gen(function* () {
+    const inspected = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const note = (workspaceRoot: string) =>
+      Ref.update(inspected, (roots) => new Set([...roots, workspaceRoot]));
+    const metadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          note(workspaceRoot).pipe(
+            Effect.as({
+              canonicalKey: `example.test${workspaceRoot}`,
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: `https://example.test${workspaceRoot}.git`,
+              },
+              rootPath: workspaceRoot,
+            }),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: (workspaceRoot) => note(workspaceRoot).pipe(Effect.as(null)),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* ProjectService.ProjectService;
+      const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const changes = yield* enrichment.subscribeChanges;
+      const rows = Arr.makeBy(6, (index) => ({
+        project_id: `page:${index}`,
+        title: `Project ${index}`,
+        workspace_root: `/work/page-${index}`,
+        scripts_json: "[]",
+        created_at: "2026-10-01T00:00:00.000Z",
+        updated_at: "2026-10-01T00:00:00.000Z",
+        deleted_at: index === 1 ? "2026-10-02T00:00:00.000Z" : null,
+        auto_pull: 0,
+      }));
+      yield* sql`INSERT INTO projection_projects ${sql.insert(rows)}`;
+      const first = yield* service.listPage({ cursor: 0, limit: 2 });
+      assert.deepEqual(
+        first.projects.map((project) => project.id),
+        ["page:0", "page:2"],
+      );
+      assert.equal(first.nextCursor, 2);
+      assert.deepEqual(
+        first.projects.map((project) => project.repositoryIdentity?.canonicalKey),
+        ["example.test/work/page-0", "example.test/work/page-2"],
+      );
+      // A sentinel queued after the page lets the enrichment workers finish
+      // earlier requests before checking which workspaces were inspected.
+      yield* enrichment.request("/work/page-sentinel");
+      for (;;) {
+        if ((yield* PubSub.take(changes)).workspaceRoot === "/work/page-sentinel") break;
+      }
+      assert.deepEqual(
+        new Set(yield* Ref.get(inspected)),
+        new Set(["/work/page-0", "/work/page-2", "/work/page-sentinel"]),
+      );
+      const second = yield* service.listPage({ cursor: first.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        second.projects.map((project) => project.id),
+        ["page:3", "page:4"],
+      );
+      assert.equal(second.nextCursor, 4);
+      const last = yield* service.listPage({ cursor: second.nextCursor!, limit: 2 });
+      assert.deepEqual(
+        last.projects.map((project) => project.id),
+        ["page:5"],
+      );
+      assert.isNull(last.nextCursor);
+      assert.isFalse((yield* Ref.get(inspected)).has("/work/page-1"));
+      assert.deepEqual(yield* service.listPage({ cursor: 99, limit: 2 }), {
+        projects: [],
+        nextCursor: null,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTestFor(metadata)));
+  }),
+);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
@@ -120,8 +207,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(layerMetadata),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -215,7 +302,14 @@ it.layer(layerTest)("ProjectService", (it) => {
       });
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
-      assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
+      assert.equal(
+        (yield* waitForProject(
+          service,
+          projectId,
+          (project) => project.faviconPath === hydratedCreated.faviconPath,
+        )).faviconPath,
+        hydratedCreated.faviconPath,
+      );
       assert.isNull(reset.defaultThreadEnvMode);
       assert.deepEqual(
         (yield* service.snapshot).projects.map((project) => project.id),
@@ -367,15 +461,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         ],
       };
       const first = yield* service.update(invalid).pipe(Effect.flip);
-      assert.equal(first._tag, "ProjectOperationError");
+      assert.equal(first._tag, "ProjectInvalidError");
+      assert.include(first.message, "Script IDs must be 1-24 lowercase letters");
       const replayed = yield* service
         .update({ ...invalid, scripts: [{ ...invalid.scripts[0]!, id: "valid" }] })
         .pipe(Effect.flip);
-      assert.equal(replayed._tag, "ProjectOperationError");
-      assert.include(
-        String(replayed._tag === "ProjectOperationError" && replayed.cause),
-        "Script ID",
-      );
+      assert.deepEqual(replayed, first);
       const receipts = yield* sql<{ readonly status: string; readonly aggregate_id: string }>`
         SELECT status, aggregate_id FROM orchestration_command_receipts
         WHERE command_id = ${invalid.commandId}
@@ -461,6 +552,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         title: "Delete retry",
         workspaceRoot: "/work/delete-retry",
       });
+      // Enrichment landing between the two deletes would change the project the retry reads.
+      yield* waitForProject(
+        service,
+        projectId,
+        (project) => project.faviconPath !== null && project.repositoryIdentity !== null,
+      );
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
       const deleted = yield* service.delete(input);
       assert.deepEqual(yield* service.delete(input), deleted);
@@ -641,6 +738,49 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
       );
     }).pipe(Effect.provide(layerTestFor(layerVersionedMetadata)));
   }),
+);
+
+it.effect("resolves a restored icon immediately after reselecting its saved path", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-icon-reselect-" });
+    const iconPath = `${cwd}/icon.svg`;
+    const metadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+      ProjectFaviconResolver.layer.pipe(
+        Layer.provide(layerWorkspacePaths),
+        Layer.provide(T3ProjectFileLoader.layer),
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+      const projectId = ProjectId.make("project:icon-reselect");
+      yield* service.create({
+        commandId: CommandId.make("command:icon-reselect:create"),
+        projectId,
+        title: "Icon reselection",
+        workspaceRoot: cwd,
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:icon-reselect:missing"),
+        projectId,
+        faviconPath: "icon.svg",
+      });
+      assert.isNull(yield* resolver.resolvePath(cwd, "icon.svg"));
+      yield* fileSystem.writeFileString(iconPath, '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      assert.isNull(yield* resolver.resolvePath(cwd, "icon.svg"));
+      yield* service.update({
+        commandId: CommandId.make("command:icon-reselect:restored"),
+        projectId,
+        faviconPath: "icon.svg",
+      });
+      assert.equal(yield* resolver.resolvePath(cwd, "icon.svg"), iconPath);
+    }).pipe(Effect.provide(layerTestFor(metadata)));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("serializes two projects claiming the same workspace root", () =>

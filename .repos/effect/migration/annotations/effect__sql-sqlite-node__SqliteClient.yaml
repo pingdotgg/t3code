@@ -1,0 +1,18 @@
+"@effect/sql-sqlite-node/SqliteClient#SqliteClient":
+  replacement: "@effect/sql-sqlite-node/SqliteClient#SqliteClient"
+  note: "Retained on node:sqlite, but the byte-export member was removed; use backup(destination) for file backup."
+"@effect/sql-sqlite-node/SqliteClient#SqliteClientConfig":
+  replacement: "@effect/sql-sqlite-node/SqliteClient#SqliteClientConfig"
+  note: "Retained; prepareCacheTTL now uses Duration.Input."
+"@effect/sql-sqlite-node/SqliteClient#make":
+  include: true
+  replacement: "SqliteClient.make"
+  note: "Database opening and initialization now fail with SqlError instead of defects. Handle the typed setup error, or use Effect.orDie when setup failures should remain fatal."
+"@effect/sql-sqlite-node/SqliteClient#layer":
+  include: true
+  replacement: "SqliteClient.layer"
+  note: "The layer now has a SqlError error channel for database opening and initialization failures. Handle setup failures, or use Layer.orDie when they should remain fatal."
+"@effect/sql-sqlite-node/SqliteClient#layerConfig":
+  include: true
+  replacement: "SqliteClient.layerConfig"
+  note: "The layer now fails with ConfigError | SqlError: configuration errors remain typed, and database opening and initialization failures are also typed. Handle SqlError as well, or use Layer.orDie if all setup failures should be fatal."

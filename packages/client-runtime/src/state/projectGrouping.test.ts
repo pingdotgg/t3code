@@ -6,6 +6,7 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
+  pickableProjectGroups,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
@@ -288,6 +289,20 @@ describe("buildProjectGroups", () => {
     expect(groups[1]?.label).toBe("julius/t3code-fork");
   });
 
+  // regression: #15049 a rename to the repository name snapped back to the display path
+  it("labels a renamed group by its title even when it matches the repository name", () => {
+    const folderTitles = [
+      makeProject("t3code", "/work/t3code", { title: "t3code" }),
+      makeProject("t3code-2", "/work/t3code-2", { title: "t3code" }),
+    ];
+    const renamed = folderTitles.map((project) => ({ ...project, hasCustomTitle: true }));
+
+    const label = (projects: ReadonlyArray<EnvironmentProject>) =>
+      buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
+    expect(label(folderTitles)).toBe("T3 Code");
+    expect(label(renamed)).toBe("t3code");
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");
@@ -376,6 +391,31 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("project pins and archives", () => {
+  const at = "2026-07-02T00:00:00.000Z";
+  const remote = EnvironmentId.make("remote");
+  const group = (...projects: EnvironmentProject[]) =>
+    buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+  it("keeps a project visible while its machines disagree", () => {
+    const local = makeProject("local", "/work/t3code");
+    const other = makeProject("remote", "/work/t3code", { environmentId: remote });
+    const partial = group({ ...local, pinnedAt: at, archivedAt: at }, other);
+    expect(partial).toMatchObject({ pinned: true, archived: false });
+    expect(group({ ...local, archivedAt: at }, { ...other, archivedAt: at }).archived).toBe(true);
+  });
+
+  it("offers pinned projects first and leaves archived ones out", () => {
+    const pickable = pickableProjectGroups([
+      { key: "a", pinned: false, archived: false },
+      { key: "b", pinned: true, archived: true },
+      { key: "c", pinned: true, archived: false },
+      { key: "d", pinned: false, archived: true },
+    ]);
+    expect(pickable.map((entry) => entry.key)).toEqual(["c", "a"]);
   });
 });
 

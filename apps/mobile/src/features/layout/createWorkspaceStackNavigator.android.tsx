@@ -19,9 +19,13 @@ import {
 } from "@react-navigation/native-stack";
 import { use, type ComponentProps } from "react";
 
+import { BottomSheetContext } from "../../components/ui/BottomSheetContext";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 
-import { projectStackPresentation } from "../../native/workspace-stack-projection";
+import {
+  isPresentedRoute,
+  projectStackPresentation,
+} from "../../native/workspace-stack-projection";
 import {
   WorkspaceColumnsRendererContext,
   WorkspacePresentationHostContext,
@@ -37,8 +41,7 @@ function WorkspaceStackView(props: ViewProps) {
 
   const isOverlay = (route: Route) => {
     const descriptor = props.descriptors[route.key] ?? props.describe(route, true);
-    const presentation = descriptor.options.presentation;
-    return presentation !== undefined && presentation !== "card";
+    return isPresentedRoute(descriptor.options);
   };
   const projection = projectStackPresentation(props.state, isOverlay);
   const workspaceRoutes = projection.workspace;
@@ -46,6 +49,8 @@ function WorkspaceStackView(props: ViewProps) {
   if (!visibleRoute) return <NativeStackView {...props} />;
 
   const visibleDescriptor = props.descriptors[visibleRoute.key]!;
+  // Home is the sidebar beside the pages, and under them the page shown when none is selected.
+  const home = workspaceRoutes.find((route) => route.name === "Home");
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const baseDescriptor: Descriptor = {
     ...visibleDescriptor,
@@ -61,6 +66,7 @@ function WorkspaceStackView(props: ViewProps) {
             preloadedRoutes: props.state.preloadedRoutes.filter((route) => !isOverlay(route)),
           }}
         />,
+        home ? props.descriptors[home.key]?.render() : null,
       ),
   };
   const routes = [baseRoute, ...projection.overlays];
@@ -118,14 +124,23 @@ function WorkspaceStackNavigator({
           descriptors={Object.fromEntries(
             Object.entries(descriptors).map(([key, descriptor]) => [
               key,
-              descriptor.options.presentation === "formSheet"
-                ? {
-                    ...descriptor,
-                    render: () => (
-                      <RoutedFormSheetContext value>{descriptor.render()}</RoutedFormSheetContext>
-                    ),
-                  }
-                : descriptor,
+              {
+                ...descriptor,
+                // Screens draw their bar in-tree; hiding the native one only after mount
+                // shows it for the first frame and leaves the page measured short.
+                options: { ...descriptor.options, headerShown: false },
+                ...(descriptor.options.presentation === "formSheet"
+                  ? {
+                      render: () => (
+                        <BottomSheetContext value>
+                          <RoutedFormSheetContext value>
+                            {descriptor.render()}
+                          </RoutedFormSheetContext>
+                        </BottomSheetContext>
+                      ),
+                    }
+                  : undefined),
+              },
             ]),
           )}
           navigation={navigation}

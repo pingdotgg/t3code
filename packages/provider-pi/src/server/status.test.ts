@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -21,19 +24,22 @@ function processHandle(input: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly exitCode?: number;
+  /** Holds stdout and the exit back until it completes, like a CLI slow to answer. */
+  readonly answered?: Effect.Effect<void>;
 }) {
+  const answered = input.answered ?? Effect.void;
   const bytes = (value: string | undefined) =>
     value === undefined || value.length === 0
       ? Stream.empty
       : Stream.succeed(encoder.encode(value));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(900_000_001),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
+    exitCode: Effect.as(answered, ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: bytes(input.stdout),
+    stdout: Stream.unwrap(Effect.as(answered, bytes(input.stdout))),
     stderr: bytes(input.stderr),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -52,7 +58,11 @@ function piProbeSpawner(version: string) {
   });
 }
 
-const piDiscoverySpawner = (inventory: unknown) =>
+const piRpcProcess = (
+  inventory: unknown,
+  onModelRequest: Effect.Effect<void> = Effect.void,
+  state: unknown = {},
+) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     let stdinBuffer = "";
@@ -66,12 +76,18 @@ const piDiscoverySpawner = (inventory: unknown) =>
           stdinBuffer = stdinBuffer.slice(newline + 1);
           if (line.length === 0) continue;
           const request = decodeRpcRequest(line);
+          if (request.type === "get_available_models") {
+            yield* onModelRequest;
+            if (inventory === null) continue;
+          }
           const data =
             request.type === "get_available_models"
               ? inventory
               : request.type === "get_commands"
                 ? { commands: [] }
-                : {};
+                : request.type === "get_state"
+                  ? state
+                  : {};
           yield* Queue.offer(
             stdout,
             encoder.encode(
@@ -81,21 +97,53 @@ const piDiscoverySpawner = (inventory: unknown) =>
         }
       }),
     );
-    return ChildProcessSpawner.make((command) => {
-      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
-      return Effect.succeed(
-        args.includes("--version")
-          ? processHandle({ stdout: "pi 0.84.3\n" })
-          : ChildProcessSpawner.makeHandle({
-              ...processHandle({}),
-              exitCode: Effect.never,
-              isRunning: Effect.succeed(true),
-              stdin,
-              stdout: Stream.fromQueue(stdout),
-            }),
-      );
+    return ChildProcessSpawner.makeHandle({
+      ...processHandle({}),
+      exitCode: Effect.never,
+      isRunning: Effect.succeed(true),
+      stdin,
+      stdout: Stream.fromQueue(stdout),
     });
   });
+
+/** Makes the extension-free launch exit before answering, like launch args naming an extension provider. */
+const exitsWithoutExtensions = Symbol("exitsWithoutExtensions");
+
+// Text generation lists models with --no-extensions, so its inventory can differ.
+const piDiscoverySpawner = (
+  inventory: unknown,
+  extensionFreeInventory: unknown = inventory,
+  onExtensionFreeModelRequest: Effect.Effect<void> = Effect.void,
+  options: {
+    readonly version?: string;
+    readonly state?: unknown;
+    readonly authCheck?: string | undefined;
+  } = {},
+) =>
+  Effect.succeed(
+    ChildProcessSpawner.make((command) => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      if (args.includes("--version")) {
+        return Effect.succeed(processHandle({ stdout: `pi ${options.version ?? "0.84.3"}\n` }));
+      }
+      if (args[0] === "auth") {
+        const expected = ["auth", "check", "--provider", "openai", "--json", "--no-refresh"];
+        return options.authCheck === undefined || args.join(" ") !== expected.join(" ")
+          ? Effect.die(`Unexpected pi ${args.join(" ")}`)
+          : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
+      }
+      if (args.includes("--no-extensions") && extensionFreeInventory === exitsWithoutExtensions) {
+        return Effect.succeed(
+          processHandle({ stderr: 'Error: Unknown provider "demo".', exitCode: 1 }),
+        );
+      }
+      return piRpcProcess(
+        args.includes("--no-extensions") ? extensionFreeInventory : inventory,
+        args.includes("--no-extensions") ? onExtensionFreeModelRequest : Effect.void,
+        options.state,
+      );
+    }),
+  );
 
 const settings = {
   enabled: true,
@@ -131,6 +179,48 @@ describe("PiProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect.each([
+    {
+      label: "answers after 6 s",
+      versionDelay: "6 seconds",
+      status: "ready",
+      version: "0.84.3",
+      message: "could not refresh its models and commands",
+      probesAfterVersion: true,
+    },
+    {
+      label: "never answers",
+      versionDelay: "Infinity",
+      status: "error",
+      version: null,
+      message: "Pi CLI is installed but timed out while running `pi --version`.",
+      probesAfterVersion: false,
+    },
+  ] as const)("gives `pi --version` 10 s when it $label", (row) =>
+    Effect.gen(function* () {
+      const spawned: Array<string> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+        spawned.push(args.join(" "));
+        return Effect.succeed(
+          args.includes("--version")
+            ? processHandle({ stdout: "pi 0.84.3\n", answered: Effect.sleep(row.versionDelay) })
+            : processHandle({ stderr: "RPC startup failed", exitCode: 1 }),
+        );
+      });
+      const fiber = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("10 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, row.status);
+      assert.equal(snapshot.version, row.version);
+      assert.include(snapshot.message ?? "", row.message);
+      assert.equal(spawned.length > 1, row.probesAfterVersion);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports a known unauthenticated inventory when Pi returns no usable models", () =>
     Effect.gen(function* () {
       const spawner = yield* piDiscoverySpawner({ models: [] });
@@ -142,6 +232,200 @@ describe("PiProvider", () => {
       assert.deepEqual(
         snapshot.models.map((model) => model.slug),
         ["default"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      label: "a pinned model without credentials",
+      version: "1.4.0",
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: '{"status":"not_ready","provider":"openai","reason":"credentials_not_configured"}',
+      message: "Pi default (openai/gpt-5) has no credentials configured for openai.",
+    },
+    {
+      label: "a pinned model with a runtime --api-key",
+      version: "1.4.0",
+      launchArgs: "--provider openai --model gpt-5 --api-key fake-key",
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: undefined,
+      message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
+    },
+    {
+      label: "a pinned model whose provider auth check cannot find",
+      version: "1.4.0",
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: '{"status":"not_ready","provider":"openai","reason":"provider_not_found"}',
+      message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
+    },
+    {
+      label: "a pinned model on Pi without auth check",
+      version: MINIMUM_PI_VERSION,
+      activeModel: { provider: "openai", id: "gpt-5" },
+      authCheck: undefined,
+      message: "Pi default (openai/gpt-5) uses openai, which has no available models in Pi.",
+    },
+    {
+      label: "an uncatalogued model id of a provider with credentials",
+      version: "1.4.0",
+      activeModel: { provider: "anthropic", id: "claude-next" },
+      authCheck: undefined,
+      message: undefined,
+    },
+    {
+      label: "an extension model Pi lists as available",
+      version: "1.4.0",
+      activeModel: { provider: "router", id: "auto" },
+      authCheck: undefined,
+      message: undefined,
+    },
+  ])("diagnoses Pi's active model readiness for $label", (row) =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "anthropic", id: "claude-sonnet-4" },
+            { provider: "router", id: "auto" },
+          ],
+        },
+        undefined,
+        Effect.void,
+        { version: row.version, state: { model: row.activeModel }, authCheck: row.authCheck },
+      );
+      const snapshot = yield* checkPiProviderStatus({
+        ...settings,
+        launchArgs: row.launchArgs ?? "",
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      if (row.message === undefined) assert.isUndefined(snapshot.message);
+      else assert.include(snapshot.message ?? "", row.message);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("marks models that only load with Pi extensions as unusable for text generation", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "anthropic", id: "claude-sonnet-4" },
+            { provider: "demo", id: "demo-model" },
+          ],
+        },
+        { models: [{ provider: "anthropic", id: "claude-sonnet-4" }] },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.supportsTextGeneration]),
+        [
+          ["default", undefined],
+          ["anthropic/claude-sonnet-4", undefined],
+          ["demo/demo-model", false],
+        ],
+      );
+      assert.equal(snapshot.supportsTextGeneration, undefined);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { label: "exits before answering", extensionFreeInventory: exitsWithoutExtensions },
+    { label: "lists no models", extensionFreeInventory: { models: [] } },
+  ])("makes Pi unusable for text generation when Pi without extensions $label", (row) =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "demo", id: "extension-model" }] },
+        row.extensionFreeInventory,
+      );
+      const snapshot = yield* checkPiProviderStatus({
+        ...settings,
+        launchArgs: "--provider demo --model extension-model",
+        customModels: ["local/custom-alias"],
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      // Pi default and custom models still run in chat, so the picker keeps them.
+      assert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        ["default", "demo/extension-model", "local/custom-alias"],
+      );
+      assert.equal(snapshot.supportsTextGeneration, false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves normal discovery when the extension-free model listing times out", () =>
+    Effect.gen(function* () {
+      const modelRequested = yield* Deferred.make<void>();
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "demo", id: "demo-model" }] },
+        null,
+        Deferred.succeed(modelRequested, undefined).pipe(Effect.asVoid),
+      );
+      const fiber = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(modelRequested);
+      yield* TestClock.adjust("5 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.supportsTextGeneration]),
+        [
+          ["default", undefined],
+          ["demo/demo-model", undefined],
+        ],
+      );
+      assert.equal(snapshot.supportsTextGeneration, undefined);
+      assert.include(
+        snapshot.slashCommands.map((command) => command.name),
+        "compact",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("advertises a model's service tiers beside its thinking levels", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner({
+        models: [
+          {
+            provider: "columbia-codex",
+            id: "gpt-6.1-sol",
+            reasoning: true,
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "2x speed, increased usage" },
+              { id: "ultrafast", name: "Ultrafast" },
+            ],
+          },
+          { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
+        ],
+      });
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const descriptors = (slug: string) =>
+        snapshot.models.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? [];
+      assert.deepEqual(
+        descriptors("columbia-codex/gpt-6.1-sol").map((descriptor) => descriptor.id),
+        ["thinking", "serviceTier"],
+      );
+      assert.deepEqual(descriptors("columbia-codex/gpt-6.1-sol")[1], {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [
+          { id: "default", label: "Standard", isDefault: true },
+          { id: "priority", label: "Fast", description: "2x speed, increased usage" },
+          { id: "ultrafast", label: "Ultrafast" },
+        ],
+        currentValue: "default",
+      });
+      assert.deepEqual(
+        descriptors("anthropic/claude-sonnet-4").map((descriptor) => descriptor.id),
+        ["thinking"],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
