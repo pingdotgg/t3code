@@ -3002,7 +3002,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (other !== kind) yield* closeTextStream(context, other);
           }
           const stream = textStreamFor(context, kind);
-          const sourceMessageId = messageId?.trim() || null;
+          const sourceMessageId = messageId || null;
           if (
             stream.current !== null &&
             sourceMessageId !== null &&
