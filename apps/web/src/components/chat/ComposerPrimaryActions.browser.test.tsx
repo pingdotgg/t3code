@@ -36,7 +36,7 @@ function setup() {
 }
 
 it.each([false, true])(
-  "keeps repeat clicks away from Resume and Send, then retires Stopped (draft: %s)",
+  "keeps repeat Stop clicks from reaching Resume or Send (draft: %s)",
   async (draft) => {
     const props = setup();
     const container = document.createElement("div");
@@ -66,22 +66,19 @@ it.each([false, true])(
         hasSendableContent={draft}
       />,
     );
-    expect(screen.getByRole("button", { name: "Stopped", exact: true }).element()).toBeDisabled();
-    expect(target()).toHaveAttribute("aria-label", "Stopped");
+    const action = draft ? "Submit message" : "Resume thread";
+    expect(screen.getByRole("button", { name: "Stop generation" }).query()).toBeNull();
+    expect(target()).toHaveAttribute("aria-label", action);
     await act(() => {
       for (let i = 0; i < 20; i++) target()?.click();
     });
+    await act(() => vi.advanceTimersByTime(499));
+    await act(() => target()?.click());
     expect(props.onResume).not.toHaveBeenCalled();
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
-    const action = screen
-      .getByRole("button", { name: draft ? "Submit message" : "Resume thread" })
-      .element() as HTMLButtonElement;
-    await act(() => action.click());
-    expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);
-    await act(() => vi.advanceTimersByTime(1_499));
-    expect(screen.getByRole("button", { name: "Stopped", exact: true }).query()).not.toBeNull();
     await act(() => vi.advanceTimersByTime(1));
-    expect(screen.getByRole("button", { name: "Stopped", exact: true }).query()).toBeNull();
+    await act(() => target()?.click());
+    expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);
     await screen.rerender(<ComposerPrimaryActions {...props} />);
     expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
   },
@@ -107,7 +104,9 @@ it("allows retry after ten seconds and protects a late stop", async () => {
   await screen.rerender(
     <ComposerPrimaryActions {...props} isRunning={false} canInterrupt={false} canResume />,
   );
-  expect(screen.getByRole("button", { name: "Stopped", exact: true }).element()).toBeDisabled();
+  await act(() =>
+    (screen.getByRole("button", { name: "Resume thread" }).element() as HTMLButtonElement).click(),
+  );
   expect(props.onInterrupt).toHaveBeenCalledTimes(2);
   expect(props.onResume).not.toHaveBeenCalled();
 });
