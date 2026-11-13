@@ -1,5 +1,7 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
+import { Platform } from "react-native";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
+import { VideoPreviewModal } from "../../components/ui/VideoPreviewModal";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import {
   mediaVideoPreviewUri,
@@ -28,23 +30,35 @@ export function ThreadMarkdownVideo(props: {
     "resource" in source ? source.resource : null,
   );
   const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
+  const [fullscreen, setFullscreen] = useState(false);
   return (
-    <MediaVideoPlayer
-      key={thumbnailKey}
-      uri={uri}
-      resolvePlaybackUri={
-        "resource" in source
-          ? async () => mediaVideoPreviewUri(source, await refreshAssetUrl())
-          : undefined
-      }
-      name={source.name}
-      thumbnailKey={thumbnailKey}
-      thumbnailVisible={visible}
-      visible={visible}
-      onPlaybackStart={props.onPlaybackStart}
-      unavailable={"resource" in source && asset._tag === "Failure"}
-      actionsSource={source.actionsSource}
-      borderRadius={props.borderRadius}
-    />
+    <>
+      <MediaVideoPlayer
+        key={thumbnailKey}
+        uri={uri}
+        resolvePlaybackUri={
+          "resource" in source
+            ? async () => mediaVideoPreviewUri(source, await refreshAssetUrl())
+            : undefined
+        }
+        name={source.name}
+        thumbnailKey={thumbnailKey}
+        thumbnailVisible={visible}
+        visible={visible}
+        onPlaybackStart={props.onPlaybackStart}
+        unavailable={"resource" in source && asset._tag === "Failure"}
+        actionsSource={source.actionsSource}
+        borderRadius={props.borderRadius}
+        // AVKit omits its fullscreen control at inline sizes, so iOS plays in the native fullscreen player.
+        onPressPlay={Platform.OS === "ios" ? () => setFullscreen(true) : undefined}
+      />
+      {fullscreen ? (
+        <VideoPreviewModal
+          source={source}
+          visible={visible}
+          onRequestClose={() => setFullscreen(false)}
+        />
+      ) : null}
+    </>
   );
 }

@@ -144,6 +144,8 @@ interface MediaVideoPlayerProps {
   readonly autoPlay?: boolean;
   readonly paused?: boolean;
   readonly onPlaybackStart?: () => void;
+  /** Replaces inline playback when the poster is tapped. */
+  readonly onPressPlay?: () => void;
   readonly actionsSource?: MediaActionsSource;
   readonly borderRadius?: number;
 }
@@ -210,7 +212,8 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
             onPress={() => {
               if (props.uri !== null && !props.unavailable) {
                 props.onPlaybackStart?.();
-                setPlaybackUri(props.uri);
+                if (props.onPressPlay) props.onPressPlay();
+                else setPlaybackUri(props.uri);
               }
             }}
             className="flex-1 items-center justify-center px-4"

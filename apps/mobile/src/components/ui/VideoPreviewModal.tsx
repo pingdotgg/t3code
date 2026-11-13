@@ -2,7 +2,8 @@ import * as Dialog from "./Dialog";
 import { requireNativeModule } from "expo";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
-import { useEffect, useEffectEvent, useId } from "react";
+import { useEffect, useEffectEvent, useId, useRef } from "react";
+import { AppState } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
 import { usePreviewPresentation, videoPreviewKey } from "../../lib/previewPresentation";
@@ -35,11 +36,13 @@ const NativeControls = requireNativeModule<{
 
 function NativeVideoPreview(props: {
   readonly source: VideoPreviewSource;
+  readonly visible?: boolean;
   readonly onRequestClose: () => void;
 }) {
   const { source } = props;
   const localAttachment = source.type === "local" ? source.attachment : null;
   const identifier = useId();
+  const cancelPending = useRef(() => {});
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const environmentId =
     source.type === "media" && "environmentId" in source ? source.environmentId : null;
@@ -92,6 +95,15 @@ function NativeVideoPreview(props: {
       } else release();
     });
     let ready = false;
+    // Like inline playback, an interruption while loading cancels the presentation for good.
+    cancelPending.current = () => {
+      if (ready || controller.signal.aborted) return;
+      controller.abort();
+      onRequestClose();
+    };
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state !== "active") cancelPending.current();
+    });
     fullscreenVideoOpened();
     void (async () => {
       const file =
@@ -139,16 +151,24 @@ function NativeVideoPreview(props: {
       controller.abort();
       fullscreenVideoClosed();
       subscription.remove();
+      appState.remove();
       release();
       void NativeControls.dismissVideo(identifier).catch(() => undefined);
     };
   }, [localAttachment, name, source.sourceIdentifier, identifier]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the caller's row scrolling away is an interruption of the pending native presentation
+  useEffect(() => {
+    if (props.visible === false) cancelPending.current();
+  }, [props.visible]);
 
   return null;
 }
 
 export function VideoPreviewModal(props: {
   readonly source: VideoPreviewSource | null;
+  /** Losing visibility before playback is presented cancels it. */
+  readonly visible?: boolean;
   readonly onRequestClose: () => void;
 }) {
   usePreviewPresentation(
@@ -156,5 +176,11 @@ export function VideoPreviewModal(props: {
     props.onRequestClose,
   );
   if (!props.source) return null;
-  return <NativeVideoPreview source={props.source} onRequestClose={props.onRequestClose} />;
+  return (
+    <NativeVideoPreview
+      source={props.source}
+      visible={props.visible}
+      onRequestClose={props.onRequestClose}
+    />
+  );
 }
