@@ -164,6 +164,8 @@ function harness(input: {
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
   readonly gitFailure?: unknown;
+  /** `HostName` by `Host`, as `ssh -G` reports them. */
+  readonly sshConfig?: Readonly<Record<string, string>>;
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const graphqlCalls: Array<GraphQlCall> = [];
@@ -203,9 +205,13 @@ function harness(input: {
     process: {
       run: (args) =>
         Effect.succeed(
-          args.args[0] === "remote"
-            ? processOutput(input.remotes)
-            : processOutput(input.resolved ?? "", input.resolved ? 0 : 1),
+          args.command === "ssh"
+            ? processOutput(
+                `user git\nhostname ${input.sshConfig?.[args.args[1]!] ?? args.args[1]}\n`,
+              )
+            : args.args[0] === "remote"
+              ? processOutput(input.remotes)
+              : processOutput(input.resolved ?? "", input.resolved ? 0 : 1),
         ),
     },
   });
@@ -325,10 +331,14 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     ["github", "git@github:acme/web.git"],
     ["github.com-scale", "git@github.com-scale:acme/web.git"],
     ["github.com-scale", "ssh://git@github.com-scale:22/acme/web.git"],
+    // Only ssh config says where these two lead.
+    ["gh-work", "git@gh-work:acme/web.git"],
+    ["github.work", "ssh://git@github.work/acme/web.git"],
   ] as const)("reads an SSH alias on %s through github.com (%s)", ([host, remoteUrl]) => {
     const hosts: string[] = [];
     const { layer } = harness({
       remotes: remotesOutput(["origin", remoteUrl]),
+      sshConfig: { "gh-work": "github.com", "github.work": "ssh.github.com" },
       api: {
         rest: (input) =>
           Effect.sync(() => {

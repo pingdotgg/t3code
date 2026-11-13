@@ -4,6 +4,11 @@ import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definiti
 import { definition } from "../shared/definition.ts";
 import { isGitHubHost } from "./GitHubCredentials.ts";
 
+/** Lower-cased SSH hosts that ssh config sends to github.com, beyond those the spelling shows. */
+export type GitHubSshAliases = ReadonlySet<string>;
+
+const NO_SSH_ALIASES: GitHubSshAliases = new Set();
+
 export interface GitHubRepositoryLocator {
   readonly host: string;
   readonly owner: string;
@@ -26,6 +31,7 @@ export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
   readonly host: string;
+  readonly sshAliases?: GitHubSshAliases;
 }): { readonly owner: string; readonly name: string } | null {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
@@ -33,7 +39,7 @@ export function selectGitHubBaseRepository(input: {
     const [normalizedHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     const remoteHost =
       normalizedHost && isSshRemoteUrl(remote.url)
-        ? (apiHostForSshAlias(normalizedHost) ?? normalizedHost)
+        ? (apiHostForSshAlias(normalizedHost, input.sshAliases) ?? normalizedHost)
         : normalizedHost;
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
     repositories.set(remote.name, { owner, name });
@@ -67,13 +73,16 @@ export function resolveGitHubRepository(input: {
   readonly resolved: string;
   readonly hostHint: string | undefined;
   readonly defaultHost: string;
+  readonly sshAliases?: GitHubSshAliases;
 }): { readonly host: string; readonly locator: GitHubRepositoryLocator | null } {
   const fetchRemotes = parseFetchRemotes(input.remotes).map((remote) => ({
     ...remote,
-    host: gitHubApiHostForRemote(remote.url),
+    host: gitHubApiHostForRemote(remote.url, input.sshAliases),
   }));
   const host =
-    (input.hostHint === undefined ? undefined : apiHostForHint(input.hostHint, fetchRemotes)) ??
+    (input.hostHint === undefined
+      ? undefined
+      : apiHostForHint(input.hostHint, fetchRemotes, input.sshAliases)) ??
     fetchRemotes.find((remote) => remote.name === "origin" && remote.host !== null)?.host ??
     fetchRemotes.find((remote) => remote.host !== null)?.host ??
     input.defaultHost;
@@ -81,6 +90,7 @@ export function resolveGitHubRepository(input: {
     remotes: input.remotes,
     resolved: input.resolved,
     host,
+    ...(input.sshAliases === undefined ? {} : { sshAliases: input.sshAliases }),
   });
   if (selected !== null) return { host, locator: { host, ...selected } };
   // Match gh's host-filtered priority: upstream, github, origin, then the first remote.
@@ -157,26 +167,37 @@ export function parsePullRequestReference(
 // An additional dot is a real DNS host, never a github.com SSH alias.
 const GITHUB_DOT_COM_SSH_ALIAS = /^github\.com-[a-z0-9_-]+$/u;
 
-function apiHostForSshAlias(host: string): string | null | undefined {
+function apiHostForSshAlias(
+  host: string,
+  sshAliases: GitHubSshAliases = NO_SSH_ALIASES,
+): string | null | undefined {
+  if (sshAliases.has(host)) return "github.com";
   if (!host.includes(".")) return host.includes("github") ? "github.com" : null;
   return GITHUB_DOT_COM_SSH_ALIAS.test(host) ? "github.com" : undefined;
 }
 
 /** Recognized GitHub SSH aliases use github.com for API requests. */
-export function gitHubApiHostForRemote(remoteUrl: string): string | null {
+export function gitHubApiHostForRemote(
+  remoteUrl: string,
+  sshAliases?: GitHubSshAliases,
+): string | null {
   const remote = parseGitRemoteHost(remoteUrl);
   if (remote === null) return null;
   const host = new URL(`https://${remote.host}`).host.toLowerCase();
   if (isSshRemoteUrl(remoteUrl)) {
-    const aliased = apiHostForSshAlias(host);
+    const aliased = apiHostForSshAlias(host, sshAliases);
     if (aliased !== undefined) return aliased;
   }
   return definition.recognizeRemote(remote) === null ? null : host;
 }
 
-function apiHostForHint(host: string, remotes: ReadonlyArray<{ readonly url: string }>): string {
+function apiHostForHint(
+  host: string,
+  remotes: ReadonlyArray<{ readonly url: string }>,
+  sshAliases: GitHubSshAliases = NO_SSH_ALIASES,
+): string {
   const normalized = host.toLowerCase();
-  if (GITHUB_DOT_COM_SSH_ALIAS.test(normalized)) {
+  if (GITHUB_DOT_COM_SSH_ALIAS.test(normalized) || sshAliases.has(normalized)) {
     const matching = remotes.filter(
       (remote) => normalizeGitRemoteUrl(remote.url).split("/")[0] === normalized,
     );
@@ -185,5 +206,5 @@ function apiHostForHint(host: string, remotes: ReadonlyArray<{ readonly url: str
     if (matching.length === 0 || matching.some((remote) => !isSshRemoteUrl(remote.url)))
       return normalized;
   }
-  return apiHostForSshAlias(normalized) ?? normalized;
+  return apiHostForSshAlias(normalized, sshAliases) ?? normalized;
 }

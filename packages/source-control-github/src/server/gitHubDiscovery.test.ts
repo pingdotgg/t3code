@@ -21,14 +21,23 @@ const unknownContext = (baseUrl: string) => ({
   remoteUrl: "git@code.example.test:team/project.git",
 });
 
-// The default host dies on any command, so refinement never reaches `gh`.
+// The host dies on any command but the ssh config read, so refinement never reaches `gh`.
 const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"]) =>
   GitHubSourceControlProvider.makeDiscovery.pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
         Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
-        TestSourceControlHost.layer(),
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) =>
+              input.command === "ssh"
+                ? Effect.succeed(
+                    TestSourceControlHost.processOutput(`hostname ${input.args.at(-1)}\n`),
+                  )
+                : Effect.die(`Unexpected ${input.command} run in ${input.operation}.`),
+          },
+        }),
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),
