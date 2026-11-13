@@ -1139,7 +1139,6 @@ struct ThreadSetting {
     thread_id: String,
     runtime_mode: Option<Value>,
     interaction_mode: Option<Value>,
-    model_selection: Option<Value>,
 }
 
 fn thread_runtime_mode_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -1170,18 +1169,26 @@ fn thread_interaction_mode_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![])
 }
 
+/// A model change on the thread's instance applies at the next turn. A change of instance is a
+/// provider switch, as `Orchestrator.ts` plans it for `thread.model-selection.set`.
 fn thread_model_selection_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadSetting = decode(command)?;
-    let Some(selection) = c.model_selection.as_ref().map(normalize_model_selection) else {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let Some(selection) = command
+        .get("modelSelection")
+        .filter(|s| s.is_object())
+        .map(normalize_model_selection)
+    else {
         return reject("modelSelection is required.");
     };
+    if live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"] {
+        return switch_provider(tx, &command, selection);
+    }
     patch_thread(
         tx,
-        &c.thread_id,
+        &thread_id,
         "thread.model-selection-updated",
         true,
         |t, _| {
-            t["providerInstanceId"] = selection["instanceId"].clone();
             t["modelSelection"] = selection;
         },
     )?;
@@ -1625,15 +1632,27 @@ fn provider_session_detach(tx: &mut Tx<'_>, command: Value) -> Outcome {
 /// `provider.switch`: the next turn runs on another provider instance. Its history does not
 /// move to the new provider (no context handoff yet), so the new provider starts fresh.
 fn provider_switch(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
-    if active_run(tx, &thread_id)?.is_some() {
+    let thread_id = command["threadId"].as_str().unwrap_or_default();
+    if active_run(tx, thread_id)?.is_some() {
         return reject(format!(
             "Thread {thread_id} is running; switch providers between turns."
         ));
     }
     let selection = normalize_model_selection(&command["modelSelection"]);
+    switch_provider(tx, &command, selection)
+}
+
+/// Moves the thread to `selection`. A change of instance is refused while a run is active,
+/// clears the active provider thread and closes the session.
+fn switch_provider(tx: &mut Tx<'_>, command: &Value, selection: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let switching = live_thread(tx, &thread_id)?["providerInstanceId"] != selection["instanceId"];
-    thread_patch(tx, &command, "thread.provider-switched", |t, now| {
+    if switching && active_run(tx, &thread_id)?.is_some() {
+        return reject(format!(
+            "Thread {thread_id} is running; switch providers between turns."
+        ));
+    }
+    thread_patch(tx, command, "thread.provider-switched", |t, now| {
         t["providerInstanceId"] = selection["instanceId"].clone();
         t["modelSelection"] = selection;
         if switching {

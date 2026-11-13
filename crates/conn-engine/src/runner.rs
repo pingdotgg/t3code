@@ -29,6 +29,8 @@ use crate::store::Draft;
 /// A thread whose provider session is open.
 pub(crate) struct LiveThread {
     session: Arc<dyn Session>,
+    /// The provider instance the session belongs to. A run on another instance reopens.
+    instance: String,
     state: Mutex<LiveState>,
     /// When the session last did anything; the idle reaper closes it after `idle_session`.
     last_used: Mutex<Instant>,
@@ -199,9 +201,37 @@ impl Inner {
                         .as_str()
                         .or_else(|| project.as_ref().and_then(|p| p["workspaceRoot"].as_str()))
                         .map(str::to_owned);
-                    let provider_thread = match thread["activeProviderThreadId"].as_str() {
-                        Some(id) => tx.entity(&tid, "providerThreads", id)?,
+                    let instance = run["providerInstanceId"].as_str().unwrap_or_default();
+                    let same_instance =
+                        |pt: &Value| pt["providerInstanceId"].as_str() == Some(instance);
+                    // Never resume a provider thread of another instance. Without an active one
+                    // of this instance, take its newest root thread (`rootProviderThreadsForProvider`).
+                    let active = match thread["activeProviderThreadId"].as_str() {
+                        Some(id) => tx
+                            .entity(&tid, "providerThreads", id)?
+                            .filter(|pt| same_instance(pt)),
                         None => None,
+                    };
+                    let provider_thread = match active {
+                        Some(pt) => Some(pt),
+                        None => tx
+                            .entities_where(
+                                &tid,
+                                "providerThreads",
+                                "providerInstanceId",
+                                instance,
+                            )?
+                            .into_iter()
+                            .filter(|pt| {
+                                pt["ownerNodeId"].is_null()
+                                    && pt["appThreadId"].as_str().is_none_or(|a| a == tid)
+                            })
+                            .max_by_key(|pt| {
+                                (
+                                    pt["lastRunOrdinal"].as_u64().unwrap_or(0),
+                                    pt["updatedAt"].as_str().unwrap_or_default().to_owned(),
+                                )
+                            }),
                     };
                     Ok(Some(TurnContext {
                         thread,
@@ -231,17 +261,28 @@ impl Inner {
         }))
         .map_err(|e| e.to_string())?;
 
+        let instance = context.run["providerInstanceId"]
+            .as_str()
+            .unwrap_or_default();
+        // A live session of another instance closes; the run opens one on its own instance.
+        if let Some(live) = self.live_thread(thread_id)
+            && live.instance != instance
+        {
+            self.close_session(thread_id).await;
+        }
         let live = match self.live_thread(thread_id) {
             Some(live) => live,
             None => {
-                let instance = context.run["providerInstanceId"]
-                    .as_str()
-                    .unwrap_or_default();
+                // Only a run that names no instance may go to the one configured provider.
                 let provider = self
                     .providers
                     .iter()
                     .find(|p| p.instance_id().as_str() == instance)
-                    .or_else(|| (self.providers.len() == 1).then(|| &self.providers[0]))
+                    .or_else(|| {
+                        (instance.is_empty() && self.providers.len() == 1)
+                            .then(|| self.providers.first())
+                            .flatten()
+                    })
                     .cloned()
                     .ok_or_else(|| {
                         format!("No provider instance `{instance}` is configured on this server.")
@@ -276,6 +317,7 @@ impl Inner {
                 }
                 let live = Arc::new(LiveThread {
                     session,
+                    instance: instance.to_owned(),
                     state: Mutex::new(LiveState::default()),
                     last_used: Mutex::new(Instant::now()),
                     closed: tokio::sync::Notify::new(),
@@ -333,6 +375,9 @@ impl Inner {
 
         let attempt_id = format!("{run_id}:attempt:1");
         let mut provider_thread_json = to_json(&provider_thread);
+        if provider_thread_json.is_object() {
+            provider_thread_json["providerInstanceId"] = json!(instance);
+        }
         if provider_thread_json
             .get("appThreadId")
             .is_none_or(Value::is_null)
@@ -481,7 +526,16 @@ impl Inner {
             live.touch();
             let active = live.active();
             let run_id = active.as_ref().map(|a| a.run_id.clone());
-            match translate(&thread_id, active.as_ref(), event) {
+            let mut translated = translate(&thread_id, active.as_ref(), event);
+            // A session belongs to one instance, so its provider threads do too. The engine sets
+            // it, as `Orchestrator.ts` builds provider threads from the run's instance.
+            if let Translated::Event(draft) = &mut translated
+                && draft.event_type == "provider-thread.updated"
+                && draft.payload.is_object()
+            {
+                draft.payload["providerInstanceId"] = json!(live.instance);
+            }
+            match translated {
                 Translated::Ignore => {}
                 Translated::ProviderTurn(id, draft) => {
                     if let Some(active) = lock(&live.state).active.as_mut() {

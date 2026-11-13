@@ -2296,3 +2296,130 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     );
     assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
 }
+
+/// Two fake providers, `claudeAgent` and `codex`, as a server with both configured.
+fn open_two(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>, Arc<FakeProvider>) {
+    let claude = Arc::new(FakeProvider::new("claudeAgent"));
+    let codex = Arc::new(FakeProvider::new("codex"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![claude.clone(), codex.clone()];
+    config.stream_flush = Duration::from_millis(20);
+    (SqliteEngine::open(config).unwrap(), claude, codex)
+}
+
+fn count(n: &std::sync::atomic::AtomicUsize) -> usize {
+    n.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn model_selection_set(command: &str, instance: &str) -> Value {
+    json!({
+        "type": "thread.model-selection.set", "commandId": command, "threadId": "t1",
+        "modelSelection": {"instanceId": instance, "model": "m"},
+    })
+}
+
+/// `thread.model-selection.set` to another instance is a provider switch, as in
+/// `Orchestrator.ts`: refused while a run is active, `thread.provider-switched`, the old session
+/// closes, and the next turn runs on the new provider in its own provider thread.
+#[tokio::test(flavor = "current_thread")]
+async fn a_model_selection_on_another_instance_switches_the_provider() {
+    let db = TempDb::new("switch-selection");
+    let (engine, claude, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let busy = engine
+        .dispatch(from_json(model_selection_set("c3", "codex")).unwrap())
+        .await;
+    assert!(
+        matches!(busy, Err(EngineError::Rejected(_))),
+        "a busy thread keeps its provider"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    // A model change on the same instance stays a model change.
+    dispatch(&engine, model_selection_set("c5", "claudeAgent")).await;
+    assert_eq!(count(&claude.closed), 0);
+
+    dispatch(&engine, model_selection_set("c6", "codex")).await;
+    let mut switched = None;
+    while switched.is_none() {
+        let item = next(&mut thread).await;
+        let ty = item["event"]["type"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if ty.starts_with("thread.") && item["event"]["payload"]["providerInstanceId"] == "codex" {
+            switched = Some((ty, item["event"]["payload"].clone()));
+        }
+    }
+    let (ty, payload) = switched.unwrap();
+    assert_eq!(ty, "thread.provider-switched");
+    assert_eq!(payload["activeProviderThreadId"], Value::Null);
+    assert_eq!(count(&claude.closed), 1, "the old session closes");
+
+    dispatch(&engine, message("t1", "c7", "hi")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert_eq!(p["runs"][1]["providerInstanceId"], "codex");
+    assert_eq!(p["runs"][1]["providerThreadId"], "provider-thread:codex:t1");
+    assert_eq!((count(&claude.sessions), count(&codex.sessions)), (1, 1));
+}
+
+/// A `message.dispatch` that names another instance runs there: the live session of the other
+/// instance closes, and a provider thread of the other instance is never resumed. Going back
+/// resumes the first instance's own provider thread (`rootProviderThreadsForProvider`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_dispatch_on_another_instance_runs_on_that_provider() {
+    let db = TempDb::new("switch-dispatch");
+    let (engine, claude, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    let mut on_codex = message("t1", "c3", "hi");
+    on_codex["modelSelection"] = json!({"instanceId": "codex", "model": "gpt"});
+    dispatch(&engine, on_codex).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    assert_eq!(p["runs"][1]["providerThreadId"], "provider-thread:codex:t1");
+    assert_eq!((count(&claude.sessions), count(&codex.sessions)), (1, 1));
+    assert_eq!(count(&claude.closed), 1);
+
+    let mut back = message("t1", "c4", "hi");
+    back["modelSelection"] = json!({"instanceId": "claudeAgent", "model": "m"});
+    dispatch(&engine, back).await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(p["runs"][2]["status"], "completed");
+    assert_eq!(p["runs"][2]["providerThreadId"], "provider-thread:t1");
+    assert_eq!((count(&claude.sessions), count(&codex.sessions)), (2, 1));
+    assert_eq!(count(&codex.closed), 1);
+}
+
+/// An instance the server does not have fails the run; it never goes to another provider.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unknown_instance_fails_the_run_even_with_one_provider() {
+    let db = TempDb::new("unknown-instance");
+    let (engine, provider) = open(&db);
+    let mut c = create("t1", "c1");
+    c["modelSelection"] = json!({"instanceId": "codex", "model": "gpt"});
+    dispatch(&engine, c).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["runs"][0]["status"], "failed");
+    assert_eq!(count(&provider.sessions), 0);
+}

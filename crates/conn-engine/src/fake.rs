@@ -69,6 +69,7 @@ struct Turn {
 
 struct FakeSession {
     id: ProviderSessionId,
+    instance: String,
     driver: String,
     events: mpsc::Sender<ProviderEvent>,
     turn: Arc<Mutex<Option<Turn>>>,
@@ -98,6 +99,7 @@ impl Provider for FakeProvider {
             Ok(OpenedSession {
                 session: Box::new(FakeSession {
                     id: input.provider_session_id,
+                    instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
                     events: tx,
                     turn: Arc::new(Mutex::new(None)),
@@ -179,9 +181,15 @@ impl Session for FakeSession {
     ) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
         Box::pin(async move {
             let now = now_iso();
+            // Each instance has its own provider thread; the default instance keeps the short id.
+            let id = if self.instance == "claudeAgent" {
+                format!("provider-thread:{}", input.thread_id)
+            } else {
+                format!("provider-thread:{}:{}", self.instance, input.thread_id)
+            };
             Ok(from_json(json!({
-                "id": format!("provider-thread:{}", input.thread_id), "driver": self.driver,
-                "providerInstanceId": "claudeAgent", "providerSessionId": self.id,
+                "id": id, "driver": self.driver,
+                "providerInstanceId": self.instance, "providerSessionId": self.id,
                 "appThreadId": input.thread_id, "ownerNodeId": null,
                 "nativeThreadRef": {"driver": self.driver, "nativeId": "native-1", "strength": "strong"},
                 "nativeConversationHeadRef": null, "status": "active", "firstRunOrdinal": null,
