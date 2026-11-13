@@ -46,6 +46,7 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  baselineAfterSilentDelivery,
   rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -428,6 +429,7 @@ interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
   readonly sourceJobId: string;
+  readonly replay?: boolean;
 }
 
 export type SendLiveActivityDeliveryInput =
@@ -767,11 +769,22 @@ const make = Effect.gen(function* () {
         }),
       );
     if (result.ok) {
+      const preferences = parsePreferences(currentTarget.preferences_json);
+      const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
       yield* liveActivities.markDelivery({
         userId: input.target.user_id,
         deviceId: input.target.device_id,
         kind: input.kind,
-        aggregate,
+        // An alerting job queued earlier may still be on its way behind this replay.
+        aggregate:
+          input.replay && aggregate && previousAggregate && preferences?.notificationsEnabled
+            ? baselineAfterSilentDelivery({
+                previousAggregate,
+                nextAggregate: aggregate,
+                preferences,
+                nowMs: now.epochMilliseconds,
+              })
+            : aggregate,
         deliveredAt: iso,
       });
     } else if (isPermanentApnsTokenFailure(result)) {
@@ -988,6 +1001,7 @@ const make = Effect.gen(function* () {
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
+            ...(payload.replay ? { replay: true } : {}),
           });
         case "live_activity_end":
           return sendLiveActivity({
@@ -1002,6 +1016,7 @@ const make = Effect.gen(function* () {
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
+            ...(payload.replay ? { replay: true } : {}),
           });
         case "push_notification":
           if (payload.notification === null) {
@@ -1101,6 +1116,7 @@ const make = Effect.gen(function* () {
         apsEnvironment: input.target.aps_environment,
         aggregate: delivery.aggregate,
         alert,
+        ...(input.replay ? { replay: true } : {}),
       });
       if (delivery.kind === "live_activity_end" && notification && input.target.push_token) {
         yield* deliveryQueue.enqueuePushNotification({

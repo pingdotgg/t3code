@@ -113,6 +113,31 @@ export function terminalTransitionRows(
   });
 }
 
+// A silent repaint must not count as the alert: keep rows that still owe one as last delivered.
+export function baselineAfterSilentDelivery(
+  input: TransitionInput & {
+    readonly previousAggregate: RelayAgentActivityAggregateState;
+    readonly nowMs: number;
+  },
+): RelayAgentActivityAggregateState {
+  const owed = new Set(
+    [
+      ...attentionTransitionRows(input),
+      ...terminalTransitionRows({ ...input, includeUnobserved: true }),
+    ].map(rowKey),
+  );
+  if (owed.size === 0) return input.nextAggregate;
+  const previousRows = new Map(input.previousAggregate.activities.map((row) => [rowKey(row), row]));
+  return {
+    ...input.nextAggregate,
+    activities: input.nextAggregate.activities.flatMap((row) => {
+      if (!owed.has(rowKey(row))) return [row];
+      const previous = previousRows.get(rowKey(row));
+      return previous ? [previous] : [];
+    }),
+  };
+}
+
 export function alertForActivityRows(
   rows: ReadonlyArray<RelayAgentActivityAggregateRow>,
 ): AgentActivityAlert | null {

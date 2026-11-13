@@ -868,6 +868,7 @@ describe("ApnsDeliveries", () => {
       Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
     > = [];
     const sentAlerts: Array<unknown> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
     const approval: RelayAgentActivityState = {
       ...state,
       phase: "waiting_for_approval",
@@ -892,6 +893,13 @@ describe("ApnsDeliveries", () => {
         activities: [aggregate.activities[0]!, turnedOffRow],
       }),
     };
+    const currentTargets = [device];
+    const approvalRow = {
+      ...aggregate.activities[0]!,
+      phase: approval.phase,
+      status: "Approval",
+      updatedAt: approval.updatedAt,
+    };
     const signed = signApnsDeliveryJob({
       secret: config.apnsDeliveryJobSigningSecret,
       payload: makeApnsDeliveryJobPayload({
@@ -903,15 +911,7 @@ describe("ApnsDeliveries", () => {
           ...aggregate,
           activeCount: 2,
           updatedAt: approval.updatedAt,
-          activities: [
-            {
-              ...aggregate.activities[0]!,
-              phase: approval.phase,
-              status: "Approval",
-              updatedAt: approval.updatedAt,
-            },
-            turnedOffRow,
-          ],
+          activities: [approvalRow, turnedOffRow],
         },
         alert: { title: "Thread", body: "Approval: Project" },
         createdAt: "1970-01-01T00:00:00.000Z",
@@ -929,22 +929,36 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      // Turning the environment off re-registers, and that silent replay overtakes the alert.
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: { ...aggregate, updatedAt: approval.updatedAt, activities: [approvalRow] },
+        nowMs: 0,
+        replay: true,
+      });
+      yield* deliveries.processSignedJob(queuedJobs[0]);
+      currentTargets[0] = {
+        ...device,
+        last_aggregate_json: JSON.stringify(markedDeliveries[0]?.aggregate),
+      };
       const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({ kind: "live_activity_update", ok: true, apnsStatus: 200 });
-      expect(sentAlerts).toMatchObject([{ title: "Thread", body: "Approval: Project" }]);
-      expect(markedDeliveries.map((delivery) => delivery.aggregate)).toMatchObject([
-        {
-          activeCount: 1,
-          activities: [{ environmentId: state.environmentId, phase: "waiting_for_approval" }],
-        },
+      expect(sentAlerts).toEqual([
+        undefined,
+        expect.objectContaining({ title: "Thread", body: "Approval: Project" }),
       ]);
+      expect(markedDeliveries.at(-1)?.aggregate).toMatchObject({
+        activeCount: 1,
+        activities: [{ environmentId: state.environmentId, phase: "waiting_for_approval" }],
+      });
     }).pipe(
       Effect.provide(
         layerFor({
           attempts,
           markedDeliveries,
-          currentTargets: [device],
+          queuedJobs,
+          currentTargets,
           activityStates: [approval, turnedOff],
           config: signingConfig,
           execute,
