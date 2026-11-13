@@ -11,7 +11,11 @@ const fs = NodeFS;
 const path = NodePath;
 const { fileURLToPath, pathToFileURL } = NodeURL;
 
-const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../..");
+// The Conn monorepo holds the contract and the client code under test. CONN_MONOREPO names it;
+// the default is the checkout this file sits in.
+const repo =
+  process.env.CONN_MONOREPO ??
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../..");
 const load = (file) => import(pathToFileURL(path.join(repo, file)).href);
 // The workspace's own `effect`, so schemas and the code under test share one instance.
 const effect = fs.realpathSync(path.join(repo, "packages/client-runtime/node_modules/effect"));
@@ -122,7 +126,10 @@ check("shell: snapshot, project and new thread", () => {
   assert.equal(threadRow.status, "completed");
   assert.equal(threadRow.activeRunId, null);
   assert.equal(threadRow.itemCount, 2);
-  assert.equal(shell.snapshot.snapshotSequence, exported.shellItems.at(-1).sequence);
+  assert.equal(
+    shell.snapshot.snapshotSequence,
+    exported.shellItems.findLast((item) => item.sequence !== undefined).sequence,
+  );
 });
 
 // 2. launchThread answers in the contract's shape.
@@ -173,21 +180,71 @@ check("thread: events rebuild the same projection as a snapshot", () => {
   assert.deepEqual(strip(live.projection), strip(socket.projection));
 });
 
-// 5. After a restart during a turn, both streams show the turn ended with a reason.
+// 5. After a restart during a turn, the turn ends as cancelled and continues in a new run.
 const restartShell = followShell(exported.restartShellItems);
 const restartThread = followThread(exported.restartThreadItems);
-check("restart: the running turn ends as failed with a reason", () => {
+check("restart: the cut turn is cancelled and continues", () => {
   const row = restartShell.snapshot.threads.find((thread) => thread.id === "thread-2");
-  assert.equal(row.status, "failed");
+  assert.equal(row.status, "completed");
   assert.equal(row.activeRunId, null);
-  assert.match(row.lastError, /restarted/);
-  assert.equal(restartThread.projection.runs[0].status, "failed");
-  const items = visible(restartThread.projection);
   assert.deepEqual(
-    items.map((item) => item.type),
-    ["user_message", "error"],
+    restartThread.projection.runs.map((run) => [
+      run.status,
+      run.restartContinuationOfRunId ?? null,
+    ]),
+    [
+      ["cancelled", null],
+      ["completed", "run:thread-2:1"],
+    ],
   );
+  assert.deepEqual(
+    visible(restartThread.projection).map((item) => item.type),
+    ["user_message", "system_notice", "user_message", "assistant_message"],
+  );
+  const continuation = restartThread.projection.messages.find((m) => m.createdBy === "agent");
+  assert.match(continuation.text, /^Continue where you left off\./);
   assert.equal(restartShell.snapshot.threads.find((t) => t.id === "thread-1").status, "completed");
+});
+
+// 6. A compact snapshot (deduped bodies, turn items once) restores to the full projection.
+const compact = followThread(exported.compactItems);
+check("thread: a compact snapshot restores to the full projection", () => {
+  const raw = exported.compactItems[0];
+  assert.equal(raw.turnItemsOmitLocalVisible, true);
+  assert.deepEqual(raw.projection.turnItems, []);
+  assert.ok(raw.projection.visibleTurnItems.every((row) => row.item.textOmitted === true));
+  const strip = (projection) => {
+    const { updatedAt: _ignored, ...rest } = encodeProjection(projection);
+    return rest;
+  };
+  assert.deepEqual(strip(compact.projection), strip(socket.projection));
+});
+
+// 7. A message sent during a turn queues, then runs after the interrupted turn.
+const queue = followThread(exported.queueItems);
+check("queue: a message sent during a turn runs after it", () => {
+  assert.deepEqual(
+    queue.projection.runs.map((run) => run.status),
+    ["interrupted", "completed"],
+  );
+  assert.deepEqual(
+    visible(queue.projection).map(({ type, text }) => [type, text]),
+    [
+      ["user_message", "hang"],
+      ["user_message", "after that"],
+      ["assistant_message", "echo: after that"],
+    ],
+  );
+  const queued = queue.projection.visibleTurnItems[1].item;
+  assert.equal(queued.inputIntent, "queued_turn");
+});
+
+// 8. Projects added and removed at runtime reach the shell.
+check("projects: added and removed at runtime", () => {
+  const kinds = exported.shellItems.map((item) => item.kind);
+  assert.ok(kinds.includes("project.updated") && kinds.includes("project.removed"));
+  assert.equal(shell.snapshot.projects.length, 1);
+  assert.ok(!shell.snapshot.projects.some((project) => project.id === "project:added"));
 });
 
 console.log(`\n${checks} checks passed against the client's own decoders and reducers.`);
