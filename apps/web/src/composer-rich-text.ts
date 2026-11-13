@@ -23,8 +23,8 @@ function sameMarks(left: readonly RichTextMark[], right: readonly RichTextMark[]
   return left.length === right.length && left.every((mark, index) => mark === right[index]);
 }
 
-// Brackets, quotes, commas, and Markdown delimiters end a URL or path token.
-const PATH_TOKEN = /[\p{L}\p{N}_/.:@%+=&?#-]+/gu;
+// Brackets, quotes, commas, and Markdown delimiters end a URL or path token; a lone `~` does not.
+const PATH_TOKEN = /(?:[\p{L}\p{N}_/.:@%+=&?#-]|(?<!~)~(?!~))+/gu;
 const FILE_EXTENSION = /^\.[a-z][a-z0-9]*(?::\d+){0,2}$/i;
 // `_yes_/_no_`: each side of a slash is its own emphasis span, so the word is not a path.
 const EMPHASIS_ALTERNATIVES = /^_[^/]+_(?:\/_[^/]+_)+$/;
@@ -43,7 +43,11 @@ function literalUnderscoreRuns(text: string): Set<number> {
     if (EMPHASIS_ALTERNATIVES.test(token.slice(0, bodyEnd))) continue;
     while (bodyEnd > 0 && token[bodyEnd - 1] === "_") bodyEnd -= 1;
     const body = token.slice(0, bodyEnd);
-    if (!body.includes("/") && !FILE_EXTENSION.test(body.slice(body.lastIndexOf(".")))) continue;
+    // A slash alone is prose (`and/_or_`); a path also has a dot, a scheme or port, or a root.
+    const isPath = body.includes("/")
+      ? /^~?\/|[.:]/.test(body)
+      : FILE_EXTENSION.test(body.slice(body.lastIndexOf(".")));
+    if (!isPath) continue;
     let closesInside = false;
     let start = body.indexOf("_");
     while (start !== -1) {
