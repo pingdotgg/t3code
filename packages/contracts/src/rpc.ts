@@ -38,6 +38,8 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
+import { SecretReference } from "./secretReference.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -523,6 +525,7 @@ export const WS_METHODS = {
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverCheckSecretSource: "server.checkSecretSource",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
   serverUninstallAcpRegistryManagedBinary: "server.uninstallAcpRegistryManagedBinary",
@@ -592,6 +595,7 @@ export const WS_METHODS = {
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReportState: "pullRequests.reportState",
   pullRequestsSubscribeRefreshes: "pullRequests.subscribeRefreshes",
+  pullRequestsSubscribeLinkedThreadRefreshes: "pullRequests.subscribeLinkedThreadRefreshes",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
@@ -674,6 +678,16 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /**
+     * Reply with no providers; the config stream carries the result. For callers that only wait
+     * for the refresh. Ignored with `instanceId` and `cwd`, whose reply is the snapshot.
+     */
+    omitProviders: Schema.optional(Schema.Boolean),
+    /**
+     * With `providerCatalogsOnDemand`, a cwd reply also carries the machine slash command names
+     * and skills with their `catalogDigest`. Sent by a client whose held lists are not current.
+     */
+    machineCatalog: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
@@ -862,6 +876,12 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerCheckSecretSourceRpc = Rpc.make(WS_METHODS.serverCheckSecretSource, {
+  payload: Schema.Struct({ source: SecretReference }),
+  success: SecretSourceCheckResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1218,6 +1238,17 @@ const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(WS_METHODS.pullRequestsSubs
   error: EnvironmentAuthorizationError,
   stream: true,
 });
+
+// Separate from the refreshes above so linked-thread changes don't refetch forge-backed reads.
+const WsPullRequestsSubscribeLinkedThreadRefreshesRpc = Rpc.make(
+  WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  {
+    payload: Schema.Struct({}),
+    success: NonNegativeInt,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
 
 // Fetch reviewer candidates only when the menu opens to avoid unused host requests.
 const WsPullRequestsReviewerCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsReviewerCandidates, {
@@ -1963,6 +1994,13 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
     /** With on-demand snapshots, also omit machine slash commands and skills a cwd snapshot replaces. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /**
+     * With on-demand catalogs, send a `catalogDigest` in place of the machine slash command names
+     * and skills. The client keeps the lists it holds and loads new ones with a cwd snapshot.
+     */
+    providerCatalogDigests: Schema.optional(Schema.Boolean),
+    /** Send provider changes as `providerStatusDeltas`; older clients reject the event type. */
+    providerStatusDeltas: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -2101,6 +2139,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
   WsServerUninstallAcpRegistryManagedBinaryRpc,
@@ -2166,6 +2205,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReportStateRpc,
   WsPullRequestsSubscribeRefreshesRpc,
+  WsPullRequestsSubscribeLinkedThreadRefreshesRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
   WsPullRequestsLabelCandidatesRpc,

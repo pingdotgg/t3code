@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
@@ -81,6 +83,17 @@ describe("loadOpenCode2Catalog", () => {
           ["opencode/step-5-preview-free", undefined],
         ],
       );
+    }),
+  );
+
+  it.effect("lists no models yet when the model list does not answer", () =>
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        readCatalog({ "/api/provider": PROVIDERS_BODY }, ["/api/model"]),
+      );
+      yield* TestClock.adjust("5 seconds");
+
+      assert.deepStrictEqual(yield* Fiber.join(fiber), []);
     }),
   );
 
