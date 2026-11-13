@@ -159,6 +159,29 @@ describe("terminal session reducers", () => {
     }
   });
 
+  it.each([
+    ["CSI", "prefix\u001b[31mOK", 6],
+    ["OSC", "prefix\u001b]0;HIDDEN\u0007OK", 10],
+  ] as const)("never retains the tail of a cut %s sequence", (_kind, history, maxBytes) => {
+    const fromSnapshot = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history } },
+      maxBytes,
+    );
+    const fromOutput = applyTerminalAttachStreamEvent(
+      applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot: BASE_SNAPSHOT },
+        maxBytes,
+      ),
+      { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data: history },
+      maxBytes,
+    );
+
+    expect(terminalOutputText(fromSnapshot.output)).toBe("OK");
+    expect(terminalOutputText(fromOutput.output)).toBe("OK");
+  });
+
   it("delivers all output when several events arrive before a renderer reads", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",

@@ -416,6 +416,16 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
   }
 });
 
+it.each([
+  ["CSI", "prefix\u001b[31mOK", 6],
+  ["OSC", "prefix\u001b]0;HIDDEN\u0007OK", 10],
+] as const)(
+  "byte eviction never retains the tail of a cut %s sequence",
+  (_kind, text, maxBytes) => {
+    expect(new TerminalManager.BoundedTerminalHistory(5_000, text, maxBytes).value()).toBe("OK");
+  },
+);
+
 it("restores bounded history across append compaction, clears and split Unicode", () => {
   const maxBytes = 64;
   const history = new TerminalManager.BoundedTerminalHistory(3, "", maxBytes);
