@@ -16,7 +16,8 @@ use conn_contract::{
     AssetProjectFaviconNotFoundError, AssetResource, AssetResourceAttachmentDisposition,
     AssetSourceControlMediaUrlValidationError, AssetWorkspaceAssetInspectionError,
     AssetWorkspaceAssetNotFoundError, AssetWorkspaceContextNotFoundError,
-    AssetWorkspaceRootNormalizationError, AssetsCreateUrlError, lit, support::JsNumber,
+    AssetWorkspacePathValidationError, AssetWorkspaceRootNormalizationError, AssetsCreateUrlError,
+    lit, support::JsNumber,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -171,18 +172,6 @@ struct Finalized {
     file_name: String,
     image_dimensions: Option<(u32, u32)>,
     file_revision: Option<String>,
-}
-
-fn error_json(
-    tag: &str,
-    resource: &AssetResource,
-    extra: serde_json::Value,
-) -> AssetsCreateUrlError {
-    let mut value = json!({ "_tag": tag, "resource": resource });
-    if let (Some(object), Some(extra)) = (value.as_object_mut(), extra.as_object()) {
-        object.extend(extra.clone());
-    }
-    serde_json::from_value(value).expect("contract error shape")
 }
 
 fn not_found(resource: &AssetResource, checked: Option<&Path>) -> AssetsCreateUrlError {
@@ -548,10 +537,12 @@ impl Files {
             requested.to_owned()
         };
         let Some((_, relative)) = paths::resolve_within_root(root, &relative) else {
-            return Err(error_json(
-                "AssetWorkspacePathValidationError",
-                resource,
-                json!({ "cause": { "message": "Workspace file path must be relative to the project root." } }),
+            return Err(AssetsCreateUrlError::AssetWorkspacePathValidationError(
+                AssetWorkspacePathValidationError {
+                    tag: lit::AssetWorkspacePathValidationError,
+                    resource: resource.clone(),
+                    cause: json!({ "message": "Workspace file path must be relative to the project root." }),
+                },
             ));
         };
         let draft_media =
@@ -970,11 +961,20 @@ fn attribute(text: &str, lower: &str, key: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// How a served file is offered to the browser.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Disposition {
+    /// Shown in place, when its type is safe to render.
+    Inline,
+    /// Saved as a file, never rendered.
+    Download,
+}
+
 /// `assetResponseHeaders`: what a served file's response carries. HTML and SVG get a sandbox
 /// CSP; downloads become `attachment`s of a type that cannot render as a document.
 pub fn response_headers(
     path: &Path,
-    download: bool,
+    disposition: Disposition,
     file_name: Option<&str>,
     mime_type: Option<&str>,
 ) -> Vec<(&'static str, String)> {
@@ -986,7 +986,7 @@ pub fn response_headers(
         ("cache-control", "private, max-age=3600".to_owned()),
         ("x-content-type-options", "nosniff".to_owned()),
     ];
-    if download {
+    if disposition == Disposition::Download {
         headers.push(("content-disposition", download_disposition(file_name)));
         headers.push((
             "content-security-policy",

@@ -248,6 +248,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             let f = f.clone();
             async move {
                 require(&ctx, FilesystemRead)?;
+                // A contract limit the generated types do not check.
+                if input.query.encode_utf16().count() > 256 {
+                    return Err(Failure::die("query must be at most 256 characters"));
+                }
                 blocking(move || {
                     let root =
                         entries::normalize_root(&input.cwd, f.home.as_deref()).map_err(|e| {
@@ -267,6 +271,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             let f = f.clone();
             async move {
                 require(&ctx, FilesystemRead)?;
+                // A contract limit the generated types do not check.
+                if input.query.is_empty() || input.query.encode_utf16().count() > 256 {
+                    return Err(Failure::die("query must be 1 to 256 characters"));
+                }
                 blocking(move || {
                     let root =
                         entries::normalize_root(&input.cwd, f.home.as_deref()).map_err(|e| {

@@ -12,6 +12,12 @@ pub struct Signer {
     key: [u8; 32],
 }
 
+impl std::fmt::Debug for Signer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Signer { key: <redacted> }")
+    }
+}
+
 impl Signer {
     /// Loads the key, or creates it on first start.
     pub fn open(secrets_dir: &Path) -> io::Result<Self> {

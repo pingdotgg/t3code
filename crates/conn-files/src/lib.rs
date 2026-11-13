@@ -26,6 +26,7 @@ use paths::InternalPaths;
 use signer::Signer;
 
 /// The files service: one per server, shared by the methods and the asset routes.
+#[derive(Debug)]
 pub struct Files {
     pub attachments: AttachmentStore,
     pub signer: Signer,

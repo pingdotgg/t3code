@@ -59,6 +59,18 @@ pub struct FileFailure {
     pub detail: Option<String>,
 }
 
+impl std::fmt::Display for FileFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.failure)?;
+        match &self.detail {
+            Some(detail) => write!(f, ": {detail}"),
+            None => Ok(()),
+        }
+    }
+}
+
+impl std::error::Error for FileFailure {}
+
 impl FileFailure {
     fn outside_root() -> Self {
         Self::plain(Failure::WorkspacePathOutsideRoot, None)

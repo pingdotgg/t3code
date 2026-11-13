@@ -48,7 +48,7 @@ fn normalize_query(query: &str) -> String {
 
 /// Fuzzy path scoring with nucleo (the matcher helix uses), set up for paths: a match in
 /// the file name and at segment starts ranks higher. Higher is better; `None` is no match.
-pub struct Scorer {
+struct Scorer {
     matcher: nucleo_matcher::Matcher,
     pattern: Option<Pattern>,
     glob: Option<String>,
@@ -56,7 +56,7 @@ pub struct Scorer {
 }
 
 impl Scorer {
-    pub fn new(query: &str) -> Self {
+    fn new(query: &str) -> Self {
         let glob = query.contains(['*', '?']).then(|| query.to_owned());
         let pattern = (!query.is_empty() && glob.is_none()).then(|| {
             Pattern::new(
@@ -74,7 +74,7 @@ impl Scorer {
         }
     }
 
-    pub fn score(&mut self, path: &str) -> Option<i64> {
+    fn score(&mut self, path: &str) -> Option<i64> {
         let length_penalty = path.len() as i64 + path.matches('/').count() as i64 * 4;
         if let Some(glob) = &self.glob {
             let lower = path.to_lowercase();
@@ -202,20 +202,20 @@ fn entry(path: &str, kind: ProjectEntryKind) -> ProjectEntry {
 }
 
 /// Builds the content matcher. An invalid regex falls back to a literal search and reports why.
-fn content_matcher(input: &ProjectSearchContentsInput) -> (RegexMatcher, Option<String>) {
+/// `None` when even the literal does not compile (a query past the regex size limit).
+fn content_matcher(input: &ProjectSearchContentsInput) -> Option<(RegexMatcher, Option<String>)> {
     let build = |pattern: &str| {
         RegexMatcherBuilder::new()
             .case_insensitive(!input.case_sensitive)
             .build(pattern)
     };
-    let literal =
-        || build(&regex_syntax::escape(&input.query)).expect("an escaped literal compiles");
+    let literal = || build(&regex_syntax::escape(&input.query)).ok();
     if !input.use_regex {
-        return (literal(), None);
+        return Some((literal()?, None));
     }
     match build(&input.query) {
-        Ok(matcher) => (matcher, None),
-        Err(error) => (literal(), Some(error.to_string())),
+        Ok(matcher) => Some((matcher, None)),
+        Err(error) => Some((literal()?, Some(error.to_string()))),
     }
 }
 
@@ -258,7 +258,13 @@ pub fn search_contents(
     input: &ProjectSearchContentsInput,
 ) -> ProjectSearchContentsResult {
     let limit = input.limit.clamp(1, 500) as usize;
-    let (matcher, regex_fallback_error) = content_matcher(input);
+    let Some((matcher, regex_fallback_error)) = content_matcher(input) else {
+        return ProjectSearchContentsResult {
+            matches: Vec::new(),
+            truncated: false,
+            regex_fallback_error: Some("The query is too long to search.".into()),
+        };
+    };
     let deadline = Instant::now() + CONTENT_TIME_BUDGET;
     let mut matches: Vec<ProjectContentMatch> = Vec::new();
     // ripgrep's searcher reads line by line in a bounded buffer and skips binary files.

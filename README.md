@@ -72,6 +72,7 @@ no model. The `rust-*` scenarios spend about five Haiku turns.
 | `conn-engine`          | `Engine` trait; SQLite event store, projections, streams, turn runner |
 | `conn-provider`        | `Provider` and `Session` traits, `ProviderEvent`                      |
 | `conn-provider-claude` | The Claude provider over the `claude` CLI's stdio                     |
+| `conn-files`           | Project files, search, asset URLs, attachments (`crates/conn-files`)  |
 | `conn-server`          | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
@@ -357,8 +358,7 @@ cross-compiler for bundled SQLite, such as `cargo zigbuild`.
 What a real Conn session hits that this server does not do:
 
 - **Not supported (error in that view):** VCS (`subscribeVcsStatus`, `subscribeVcsBranch`,
-  `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), files
-  (`projects.readFile`, `assets.createUrl`, so no project favicon), previews, annotations,
+  `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), previews, annotations,
   discovered local servers, archived and older-settled shell reads, terminals, provider
   refresh, settings writes, and every other method not listed above.
 - **No checkpoints:** turns are not captured as git refs, so no diff or restore.

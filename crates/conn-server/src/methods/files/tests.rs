@@ -119,6 +119,20 @@ async fn registers_the_area_and_checks_scopes() {
     };
     assert_eq!(error["requiredScope"], "filesystem:read");
 
+    // Contract limits the generated types do not check end as defects, never a panic.
+    let long = json!({"cwd": cwd, "query": "x".repeat(300), "limit": 5,
+        "caseSensitive": false, "wholeWord": false, "useRegex": true});
+    assert!(matches!(
+        call(
+            &s.table,
+            CallContext::default(),
+            "projects.searchContents",
+            long
+        )
+        .await,
+        Err(Failure::Die(_))
+    ));
+
     // No editor on a server host.
     let Err(Failure::Fail(error)) = call(
         &s.table,
@@ -154,9 +168,16 @@ async fn http(addr: std::net::SocketAddr, head: &str, body: &[u8]) -> (u16, Stri
         body.len()
     );
     stream.write_all(request.as_bytes()).await.unwrap();
-    stream.write_all(body).await.unwrap();
+    // A refused upload is answered before its body is read; the reset that follows is fine.
+    let _ = stream.write_all(body).await;
     let mut bytes = Vec::new();
-    stream.read_to_end(&mut bytes).await.unwrap();
+    let mut chunk = [0u8; 8192];
+    while let Ok(n) = stream.read(&mut chunk).await {
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..n]);
+    }
     let split = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
     let headers = String::from_utf8_lossy(&bytes[..split]).into_owned();
     let status = headers[9..12].parse().unwrap();

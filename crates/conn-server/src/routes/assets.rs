@@ -123,9 +123,16 @@ async fn serve_file(
     }
     let size = meta.len();
     let mut response_headers = HeaderMap::new();
-    for (name, value) in
-        assets::response_headers(path, download, file_name.as_deref(), mime_type.as_deref())
-    {
+    for (name, value) in assets::response_headers(
+        path,
+        if download {
+            assets::Disposition::Download
+        } else {
+            assets::Disposition::Inline
+        },
+        file_name.as_deref(),
+        mime_type.as_deref(),
+    ) {
         if let Ok(value) = HeaderValue::from_str(&value) {
             response_headers.insert(name, value);
         }

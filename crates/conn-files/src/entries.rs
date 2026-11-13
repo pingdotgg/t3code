@@ -34,6 +34,18 @@ pub struct EntriesFailure {
     pub detail: Option<String>,
 }
 
+impl std::fmt::Display for EntriesFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.failure)?;
+        match &self.detail {
+            Some(detail) => write!(f, ": {detail}"),
+            None => Ok(()),
+        }
+    }
+}
+
+impl std::error::Error for EntriesFailure {}
+
 impl EntriesFailure {
     fn new(failure: Failure, normalized: &Path, detail: Option<String>) -> Self {
         Self {
@@ -274,6 +286,7 @@ pub fn list_directory(
             entries.push(entry(&path, kind));
         }
     }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
     mark_ignored(root, &relative, through_symlink, &mut entries);
     Ok(ProjectListEntriesResult {
         entries,

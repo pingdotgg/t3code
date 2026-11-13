@@ -248,6 +248,7 @@ pub enum UploadOutcome {
     Rejected { status: u16, detail: String },
 }
 
+#[derive(Debug)]
 pub struct AttachmentStore {
     dir: PathBuf,
     last_sweep_ms: Mutex<Option<u64>>,
@@ -414,7 +415,10 @@ impl AttachmentStore {
     }
 
     fn maybe_sweep(&self, now_ms: u64) {
-        let mut last = self.last_sweep_ms.lock().expect("sweep lock");
+        let mut last = self
+            .last_sweep_ms
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if last.is_some_and(|at| now_ms.saturating_sub(at) < SWEEP_INTERVAL_MS) {
             return;
         }

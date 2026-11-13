@@ -37,6 +37,7 @@ Line format, as the workspace README fixes it, with two additions:
 | `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs |
 | `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                  |
 | `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)           |
+| `*-files`    | Favicon, `@` search, image upload, content search, open a file; no model call                    |
 
 The server starts with `--auto-bootstrap-project-from-cwd` in a scratch git repo, so it has one
 project and one empty thread before the client arrives. `pairing` therefore lands on that thread,
