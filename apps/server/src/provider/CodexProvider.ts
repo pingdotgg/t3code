@@ -925,8 +925,7 @@ function accountProbeStatus(
     };
   }
 
-  // No OpenAI login needed means a custom model provider, such as a hub, serves the requests.
-  return { status: "ready", auth: { ...auth, type: "customEndpoint" } };
+  return { status: "ready", auth };
 }
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (

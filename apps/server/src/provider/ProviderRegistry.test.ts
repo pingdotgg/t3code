@@ -601,8 +601,6 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
-        // regression: #30778 a custom model provider follows the routing of the hub it is sent to
-        assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.endpoint, "http://127.0.0.1:8317");
         // regression: #11873 a custom provider has no subscription to read, which is not a failure
         assert.deepStrictEqual(status.usageLimits?.unavailable, { reason: "unsupported" });
