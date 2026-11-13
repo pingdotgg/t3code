@@ -802,8 +802,11 @@ async fn commit_preview(
 
 const CONTENTS_OP: &str = "GitVcsDriver.getReviewDiffFileContents";
 
+/// `is_internal` names the server's own files (`conn_files::paths::InternalPaths`); a
+/// working-tree file that resolves into them is refused, as `GitVcsDriverCore.ts` does.
 pub async fn diff_file_contents(
     input: ReviewDiffFileContentsInput,
+    is_internal: impl Fn(&Path) -> bool + Send + 'static,
 ) -> VcsResult<ReviewDiffFileContentsResult> {
     let cwd = PathBuf::from(&input.cwd);
     let root = repo::optional_text(
@@ -857,7 +860,9 @@ pub async fn diff_file_contents(
     let new_contents = match (input.change_type, new_revision) {
         (ChangeType::Deleted, _) => String::new(),
         (_, Some(revision)) => show_file(&cwd, &revision, &input.new_path).await?,
-        (_, None) => read_working_file(&input.cwd, root, input.new_path.clone()).await?,
+        (_, None) => {
+            read_working_file(&input.cwd, root, input.new_path.clone(), is_internal).await?
+        }
     };
     Ok(ReviewDiffFileContentsResult {
         old_contents,
@@ -888,7 +893,12 @@ async fn show_file(cwd: &Path, revision: &str, path: &str) -> VcsResult<String> 
     Ok(out.stdout_text())
 }
 
-async fn read_working_file(cwd: &str, root: PathBuf, path: String) -> VcsResult<String> {
+async fn read_working_file(
+    cwd: &str,
+    root: PathBuf,
+    path: String,
+    is_internal: impl Fn(&Path) -> bool + Send + 'static,
+) -> VcsResult<String> {
     let cwd = cwd.to_owned();
     tokio::task::spawn_blocking(move || {
         let fail =
@@ -918,6 +928,12 @@ async fn read_working_file(cwd: &str, root: PathBuf, path: String) -> VcsResult<
             return Err(fail(
                 "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
                 outside,
+            ));
+        }
+        if is_internal(&real) {
+            return Err(fail(
+                "GitVcsDriver.getReviewDiffFileContents.workingTree.fs.realPath",
+                format!("Diff file '{path}' is not available."),
             ));
         }
         let meta = std::fs::metadata(&real).map_err(|_| {

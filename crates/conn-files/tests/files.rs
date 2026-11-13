@@ -239,7 +239,7 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
     symlink(f.project.join("src"), f.project.join("src-link")).unwrap();
     symlink(&f.project, f.project.join("src/up")).unwrap();
 
-    let listed = entries::list_directory(&f.project, "").unwrap();
+    let listed = entries::list_directory(&f.project, "", &f.files.internal).unwrap();
     let mut names: Vec<(String, ProjectEntryKind, Option<bool>)> = listed
         .entries
         .into_iter()
@@ -258,19 +258,19 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
         "the link out and .git are left out"
     );
     // A link back up to an ancestor is not offered as a folder.
-    let src = entries::list_directory(&f.project, "src").unwrap();
+    let src = entries::list_directory(&f.project, "src", &f.files.internal).unwrap();
     assert_eq!(src.entries.len(), 1, "{:?}", src.entries);
     for escape in ["..", "../outside", "out", ".git", "src/../.."] {
         assert!(
-            entries::list_directory(&f.project, escape).is_err(),
+            entries::list_directory(&f.project, escape, &f.files.internal).is_err(),
             "{escape}"
         );
     }
 
-    let all = entries::list_all(&f.project);
+    let all = entries::list_all(&f.project, &f.files.internal);
     let paths: Vec<&str> = all.entries.iter().map(|e| e.path.as_str()).collect();
     assert_eq!(paths, [".gitignore", "src", "src/main.rs"]);
-    let ignored = entries::list_ignored(&f.project);
+    let ignored = entries::list_ignored(&f.project, &f.files.internal);
     let ignored: Vec<&str> = ignored.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(ignored, ["debug.log"], "build/ is a wholly ignored folder");
 }
@@ -297,7 +297,7 @@ fn searches_names_and_contents_without_ignored_files() {
             kind,
             image_only: image_only.then_some(true),
         };
-        search::search_entries(&f.project, &input)
+        search::search_entries(&f.project, &input, &f.files.internal)
             .entries
             .into_iter()
             .map(|e| e.path)
@@ -322,7 +322,7 @@ fn searches_names_and_contents_without_ignored_files() {
             whole_word: word,
             use_regex: regex,
         };
-        search::search_contents(&f.project, &input)
+        search::search_contents(&f.project, &input, &f.files.internal)
     };
     let all = grep("main", false, false, false);
     assert_eq!(all.matches.len(), 3, "{:?}", all.matches);

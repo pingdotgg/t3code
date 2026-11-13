@@ -17,7 +17,11 @@ use conn_contract::{
     ProjectListIgnoredFilesResult, ProjectSearchContentsError, ProjectSearchEntriesError, lit,
 };
 
-use crate::{git, paths, workspace::display};
+use crate::{
+    git,
+    paths::{self, InternalPaths},
+    workspace::display,
+};
 
 /// `WORKSPACE_INDEX_MAX_ENTRIES`.
 pub const MAX_ENTRIES: usize = 25_000;
@@ -109,10 +113,21 @@ impl EntriesFailure {
     }
 }
 
-/// `normalizeWorkspaceRoot`: the resolved folder, which must exist and be a directory.
-pub fn normalize_root(cwd: &str, home: Option<&Path>) -> Result<PathBuf, EntriesFailure> {
+/// `normalizeWorkspaceRoot`: the resolved folder, which must exist and be a directory. A
+/// folder inside the server's internal set answers as missing (T3 does not check this; the
+/// signing key there mints asset URLs that work without a session).
+pub fn normalize_root(
+    cwd: &str,
+    home: Option<&Path>,
+    internal: &InternalPaths,
+) -> Result<PathBuf, EntriesFailure> {
     let root = paths::resolve_cwd(cwd, home);
     match fs::metadata(&root) {
+        Ok(_) if internal.contains(&InternalPaths::real(&root)) => Err(EntriesFailure::new(
+            Failure::WorkspaceRootNotFound,
+            &root,
+            None,
+        )),
         Ok(meta) if meta.is_dir() => Ok(root),
         Ok(_) => Err(EntriesFailure::new(
             Failure::WorkspaceRootNotDirectory,
@@ -148,18 +163,23 @@ pub enum WalkEnd {
 ///
 /// Ignore rules are Git's (`.gitignore` in the tree and its parents, `.git/info/exclude`, the
 /// global excludes file), applied in and out of a Git checkout, as fff does. Hidden files are
-/// listed; `.git` is not; links are not followed.
+/// listed; `.git` and the server's internal files are not; links are not followed.
 pub fn walk_files(
     root: &Path,
+    internal: &InternalPaths,
     deadline: Option<Instant>,
     visit: &mut dyn FnMut(&str) -> bool,
 ) -> WalkEnd {
+    // From the canonical root, every path the walk yields is canonical too (it follows no
+    // links), so the internal check needs no further lookups.
+    let root = &InternalPaths::real(root);
+    let internal = internal.clone();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)
         .ignore(false)
         .require_git(false)
         .follow_links(false)
-        .filter_entry(|entry| entry.file_name() != ".git")
+        .filter_entry(move |entry| entry.file_name() != ".git" && !internal.contains(entry.path()))
         .build();
     let mut seen = 0usize;
     for entry in walker.filter_map(Result::ok) {
@@ -188,9 +208,9 @@ pub fn walk_files(
 
 /// `projects.listEntries` without a folder: every file and folder, sorted, at most
 /// [`MAX_ENTRIES`].
-pub fn list_all(root: &Path) -> ProjectListEntriesResult {
+pub fn list_all(root: &Path, internal: &InternalPaths) -> ProjectListEntriesResult {
     let mut files: Vec<String> = Vec::new();
-    let end = walk_files(root, None, &mut |path| {
+    let end = walk_files(root, internal, None, &mut |path| {
         files.push(path.to_owned());
         true
     });
@@ -228,10 +248,11 @@ fn entry(path: &str, kind: ProjectEntryKind) -> ProjectEntry {
 }
 
 /// `projects.listEntries` with a folder: its children, with links resolved inside the root
-/// only, `.git` left out, and Git-ignored children marked.
+/// only, `.git` and the server's internal files left out, and Git-ignored children marked.
 pub fn list_directory(
     root: &Path,
     directory: &str,
+    internal: &InternalPaths,
 ) -> Result<ProjectListEntriesResult, EntriesFailure> {
     let fail =
         |detail: String| EntriesFailure::new(Failure::DirectoryListFailed, root, Some(detail));
@@ -248,6 +269,7 @@ pub fn list_directory(
         .map_err(|_| fail("Directory must be inside the workspace and outside .git.".into()))?;
     if inside.components().any(|c| c.as_os_str() == ".git")
         || relative.split('/').any(|s| s == ".git")
+        || internal.contains(&real_dir)
     {
         return Err(fail(
             "Directory must be inside the workspace and outside .git.".into(),
@@ -268,13 +290,15 @@ pub fn list_directory(
     for child in fs::read_dir(&real_dir).map_err(|e| fail(e.to_string()))? {
         let Ok(child) = child else { continue };
         let name = child.file_name().to_string_lossy().into_owned();
-        if name == ".git" {
+        if name == ".git" || internal.contains(&real_dir.join(&name)) {
             continue;
         }
         let kind = match child.file_type() {
             Ok(t) if t.is_dir() => Some(ProjectEntryKind::Directory),
             Ok(t) if t.is_file() => Some(ProjectEntryKind::File),
-            Ok(t) if t.is_symlink() => symlink_kind(&real_dir.join(&name), &real_root, &ancestors),
+            Ok(t) if t.is_symlink() => {
+                symlink_kind(&real_dir.join(&name), &real_root, &ancestors, internal)
+            }
             _ => None,
         };
         if let Some(kind) = kind {
@@ -294,10 +318,15 @@ pub fn list_directory(
     })
 }
 
-fn symlink_kind(link: &Path, real_root: &Path, ancestors: &[PathBuf]) -> Option<ProjectEntryKind> {
+fn symlink_kind(
+    link: &Path,
+    real_root: &Path,
+    ancestors: &[PathBuf],
+    internal: &InternalPaths,
+) -> Option<ProjectEntryKind> {
     let resolved = fs::canonicalize(link).ok()?;
     let inside = resolved.strip_prefix(real_root).ok()?;
-    if inside.components().any(|c| c.as_os_str() == ".git") {
+    if inside.components().any(|c| c.as_os_str() == ".git") || internal.contains(&resolved) {
         return None;
     }
     let meta = fs::metadata(&resolved).ok()?;
@@ -388,8 +417,9 @@ fn check_ignore(root: &Path, git_root: &str, paths: &[String]) -> Option<git::Ou
 }
 
 /// `projects.listIgnoredFiles`: untracked files Git ignores, without wholly ignored folders such
-/// as `node_modules`, at most 200, with their sizes. Links are not followed.
-pub fn list_ignored(root: &Path) -> ProjectListIgnoredFilesResult {
+/// as `node_modules`, at most 200, with their sizes. Links are not followed; the server's
+/// internal files are left out.
+pub fn list_ignored(root: &Path, internal: &InternalPaths) -> ProjectListIgnoredFilesResult {
     let empty = ProjectListIgnoredFilesResult {
         files: Vec::new(),
         truncated: false,
@@ -414,11 +444,13 @@ pub fn list_ignored(root: &Path) -> ProjectListIgnoredFilesResult {
     if output.code != Some(0) || output.truncated {
         return empty;
     }
+    let real_root = InternalPaths::real(root);
     let mut paths: Vec<String> = output
         .stdout
         .split(|&b| b == 0)
         .map(|p| String::from_utf8_lossy(p).into_owned())
         .filter(|p| !p.is_empty() && !p.ends_with('/'))
+        .filter(|p| !internal.contains(&real_root.join(p)))
         .collect();
     paths.sort();
     let truncated = paths.len() > IGNORED_FILES_LIMIT;

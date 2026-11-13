@@ -476,54 +476,65 @@ async fn file_contents_and_branch_commits() {
             old_path: "src/lib.rs".into(),
             new_path: "src/lib.rs".into(),
         };
-    let working = review::diff_file_contents(contents(
-        Kind::WorkingTree,
-        ChangeType::Change,
-        Some("HEAD"),
-        None,
-    ))
+    let working = review::diff_file_contents(
+        contents(Kind::WorkingTree, ChangeType::Change, Some("HEAD"), None),
+        |_| false,
+    )
     .await
     .unwrap();
     assert!(working.old_contents.contains("    2"));
     assert!(working.new_contents.contains("    3"));
-    let range = review::diff_file_contents(contents(
-        Kind::BranchRange,
-        ChangeType::Change,
-        Some("origin/main"),
-        Some("feature"),
-    ))
+    let range = review::diff_file_contents(
+        contents(
+            Kind::BranchRange,
+            ChangeType::Change,
+            Some("origin/main"),
+            Some("feature"),
+        ),
+        |_| false,
+    )
     .await
     .unwrap();
     assert!(range.old_contents.contains("    1"));
     let parent = git(&fx.work, &["rev-parse", &format!("{sha}^")])
         .trim()
         .to_owned();
-    let commit = review::diff_file_contents(contents(
-        Kind::Commit,
-        ChangeType::Change,
-        Some(&parent),
-        Some(&sha),
-    ))
+    let commit = review::diff_file_contents(
+        contents(Kind::Commit, ChangeType::Change, Some(&parent), Some(&sha)),
+        |_| false,
+    )
     .await
     .unwrap();
     assert!(commit.old_contents.contains("    1") && commit.new_contents.contains("    2"));
-    let stale = review::diff_file_contents(contents(
-        Kind::Commit,
-        ChangeType::Change,
-        Some(&sha),
-        Some(&sha),
-    ))
+    let stale = review::diff_file_contents(
+        contents(Kind::Commit, ChangeType::Change, Some(&sha), Some(&sha)),
+        |_| false,
+    )
     .await
     .unwrap_err();
     assert!(stale.to_string().contains("Selected commit changed"));
     let mut escape = contents(Kind::WorkingTree, ChangeType::Change, None, None);
     escape.new_path = "../outside.txt".into();
     assert!(
-        review::diff_file_contents(escape)
+        review::diff_file_contents(escape, |_| false)
             .await
             .unwrap_err()
             .to_string()
             .contains("outside")
+    );
+
+    // A working file in the server's own state is not served (T3 `isServerInternalPath`).
+    let internal = review::diff_file_contents(
+        contents(Kind::WorkingTree, ChangeType::Change, Some("HEAD"), None),
+        |path: &std::path::Path| path.ends_with("src/lib.rs"),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        internal
+            .to_string()
+            .contains("Diff file 'src/lib.rs' is not available."),
+        "{internal}"
     );
 
     let commits = review::branch_commits(ReviewBranchCommitsInput {

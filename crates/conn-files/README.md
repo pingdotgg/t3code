@@ -33,7 +33,18 @@ tree again, bounded by 25,000 files and its time budget.
   files after an hour, at most every 15 minutes, when an upload URL is issued.
 - `<state-dir>/secrets/asset-signing-key`: 32 random bytes (0600) that sign asset and upload
   URLs. Removing it invalidates every issued URL.
-- The whole state folder except `attachments/` is never served by a file method or asset URL.
+- **Internal files** are never served by a file method, listing, search or asset URL
+  (`paths::InternalPaths`). The base is the T3 server's set (`auth/serverInternalPaths.ts`):
+  `secrets/`, files directly in the state folder whose name holds `.sqlite`
+  (`engine.sqlite`, its journal, `server-owner.sqlite`), and `/dev/fd`. We add `auth.json`
+  (session and pairing-link hashes, which T3 keeps inside its refused SQLite file) and
+  `terminals/` (terminal scrollback). The rest of the state folder reads like any host file,
+  as in T3; that includes thread worktrees under `<state-dir>/worktrees`.
+- Beyond T3, listings and searches (`listEntries`, `listIgnoredFiles`, `searchEntries`,
+  `searchContents`) refuse a root inside the internal set (`workspace_root_not_found`) and
+  skip internal files during the walk. T3 does not check there; we do because the signing key
+  mints asset URLs that work without a session. The review file read checks the set as T3's
+  does.
 
 ## For providers and the engine
 

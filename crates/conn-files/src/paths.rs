@@ -120,27 +120,55 @@ pub fn is_not_dir(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotADirectory
 }
 
-/// The server's own files: client reads never serve them. That is the whole state folder
-/// (sessions, signing key, event store) except the attachment store, plus `/dev/fd`.
+/// The server's own files: no file method, listing, search or asset URL serves them.
+///
+/// The base is the T3 server's set (`auth/serverInternalPaths.ts`): `secrets/`, files directly
+/// in the state folder whose name holds `.sqlite` (the event store and its journal), and
+/// `/dev/fd`. Two more hold what T3 keeps inside its SQLite file or should not show:
+/// `auth.json` (session and pairing-link hashes; T3 keeps them in `state.sqlite`) and
+/// `terminals/` (terminal scrollback). Everything else in the state folder reads as any host
+/// file does, as in T3; that includes thread worktrees under `<state-dir>/worktrees`.
 #[derive(Clone, Debug)]
 pub struct InternalPaths {
     state_dir: PathBuf,
-    attachments_dir: PathBuf,
+    secrets_dir: PathBuf,
+    terminals_dir: PathBuf,
+    auth_file: PathBuf,
 }
 
+/// Folder and file names inside the state folder that [`InternalPaths`] refuses. Written by
+/// `signer.rs`, `conn-server`'s terminal methods and its auth store.
+pub const SECRETS_DIR: &str = "secrets";
+pub const TERMINALS_DIR: &str = "terminals";
+pub const AUTH_FILE: &str = "auth.json";
+
 impl InternalPaths {
-    pub fn new(state_dir: &Path, attachments_dir: &Path) -> Self {
-        let real = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| normalize(p));
+    pub fn new(state_dir: &Path) -> Self {
+        let state_dir = fs::canonicalize(state_dir).unwrap_or_else(|_| normalize(state_dir));
         Self {
-            state_dir: real(state_dir),
-            attachments_dir: real(attachments_dir),
+            secrets_dir: state_dir.join(SECRETS_DIR),
+            terminals_dir: state_dir.join(TERMINALS_DIR),
+            auth_file: state_dir.join(AUTH_FILE),
+            state_dir,
         }
     }
 
-    /// `path` must be canonical.
+    /// `path` must be canonical (or, during a walk that follows no links, below a canonical
+    /// root).
     pub fn contains(&self, path: &Path) -> bool {
-        (is_within(path, &self.state_dir) && !is_within(path, &self.attachments_dir))
+        is_within(path, &self.secrets_dir)
+            || is_within(path, &self.terminals_dir)
+            || path == self.auth_file
+            || (path.parent() == Some(self.state_dir.as_path())
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().contains(".sqlite")))
             || is_within(path, Path::new("/dev/fd"))
+    }
+
+    /// The canonical form of `path`, when it exists; the lexical form otherwise.
+    pub fn real(path: &Path) -> PathBuf {
+        fs::canonicalize(path).unwrap_or_else(|_| normalize(path))
     }
 }
 
@@ -227,5 +255,34 @@ mod tests {
         assert_eq!(extension("a/B.PNG"), ".png");
         assert_eq!(extension(".gitignore"), ".gitignore");
         assert_eq!(extension("Makefile"), "");
+    }
+
+    #[test]
+    fn internal_paths_are_the_t3_set_plus_auth_and_terminals() {
+        let internal = InternalPaths::new(Path::new("/nonexistent/state"));
+        let s = Path::new("/nonexistent/state");
+        for refused in [
+            s.join("secrets"),
+            s.join("secrets/asset-signing-key"),
+            s.join("engine.sqlite"),
+            s.join("engine.sqlite-wal"),
+            s.join("server-owner.sqlite"),
+            s.join("auth.json"),
+            s.join("terminals/t.log"),
+            PathBuf::from("/dev/fd/3"),
+        ] {
+            assert!(internal.contains(&refused), "{refused:?}");
+        }
+        for served in [
+            s.to_path_buf(),
+            s.join("worktrees/p/t3-1/a.rs"),
+            s.join("worktrees/p/t3-1/db.sqlite"),
+            s.join("attachments/x.png"),
+            s.join("settings.json"),
+            s.join("keybindings.json"),
+            PathBuf::from("/nonexistent/statefoo/secrets"),
+        ] {
+            assert!(!internal.contains(&served), "{served:?}");
+        }
     }
 }

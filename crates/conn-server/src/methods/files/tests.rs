@@ -280,3 +280,198 @@ async fn uploads_and_serves_attachments_over_http() {
     let (status, _, _) = http(addr, &format!("GET {asset_url} HTTP/1.1"), b"").await;
     assert_eq!(status, 404);
 }
+
+/// A worktree under `<state>/worktrees` reads like any workspace; the server's internal files
+/// (T3's set plus `auth.json` and `terminals/`) stay out of reads, listings and searches,
+/// even when the search root holds the state folder.
+#[tokio::test(flavor = "current_thread")]
+async fn worktrees_in_the_state_folder_read_and_internal_files_stay_hidden() {
+    let s = setup("internal");
+    let state = s.dir.join("state");
+    let worktree = state.join("worktrees/project/t3-1");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(worktree.join("main.rs"), "fn main() {}").unwrap();
+    std::fs::write(worktree.join("pic.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    for (path, body) in [
+        ("auth.json", "needle-auth"),
+        ("engine.sqlite", "needle-db"),
+        ("terminals/t1.log", "needle-terminal"),
+        ("settings.json", "{}"),
+    ] {
+        let path = state.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    let ctx = || with_scopes(&["filesystem:read"]);
+    let text = |p: &std::path::Path| p.to_string_lossy().into_owned();
+
+    let read = call(
+        &s.table,
+        ctx(),
+        "projects.readFile",
+        json!({"cwd": text(&worktree), "relativePath": "main.rs"}),
+    )
+    .await;
+    assert_eq!(read.unwrap()["contents"], "fn main() {}");
+    let meta = call(
+        &s.table,
+        ctx(),
+        "filesystem.getMetadata",
+        json!({"paths": [text(&worktree.join("main.rs"))]}),
+    )
+    .await
+    .unwrap();
+    assert!(meta["entries"][0]["kind"] == "file", "{meta}");
+    let url = call(
+        &s.table,
+        ctx(),
+        "assets.createUrl",
+        json!({"resource": {
+        "_tag": "draft-workspace-file", "cwd": text(&worktree), "path": "pic.png"}}),
+    )
+    .await;
+    assert!(url.is_ok(), "{url:?}");
+
+    for internal in [
+        "secrets/asset-signing-key",
+        "auth.json",
+        "engine.sqlite",
+        "terminals/t1.log",
+    ] {
+        let read = call(
+            &s.table,
+            ctx(),
+            "projects.readFile",
+            json!({"cwd": text(&state), "relativePath": internal}),
+        )
+        .await;
+        assert!(read.is_err(), "{internal}");
+        let meta = call(
+            &s.table,
+            ctx(),
+            "filesystem.getMetadata",
+            json!({"paths": [text(&state.join(internal))]}),
+        )
+        .await
+        .unwrap();
+        assert!(meta["entries"][0].is_null(), "{internal}: {meta}");
+    }
+    // As in T3, other state files are not internal.
+    let settings = call(
+        &s.table,
+        ctx(),
+        "projects.readFile",
+        json!({"cwd": text(&state), "relativePath": "settings.json"}),
+    )
+    .await;
+    assert!(settings.is_ok(), "{settings:?}");
+
+    // A root inside the internal set is refused.
+    for root in [state.join("secrets"), state.join("terminals")] {
+        let search = call(
+            &s.table,
+            ctx(),
+            "projects.searchContents",
+            json!({"cwd": text(&root),
+            "query": "needle", "limit": 50, "caseSensitive": false, "wholeWord": false,
+            "useRegex": false}),
+        )
+        .await;
+        assert!(search.is_err(), "{root:?}: {search:?}");
+        let listed = call(
+            &s.table,
+            ctx(),
+            "projects.listEntries",
+            json!({"cwd": text(&root)}),
+        )
+        .await;
+        assert!(listed.is_err(), "{root:?}");
+        let found = call(
+            &s.table,
+            ctx(),
+            "projects.searchEntries",
+            json!({"cwd": text(&root), "query": "", "limit": 50}),
+        )
+        .await;
+        assert!(found.is_err(), "{root:?}");
+        let ignored = call(
+            &s.table,
+            ctx(),
+            "projects.listIgnoredFiles",
+            json!({"cwd": text(&root)}),
+        )
+        .await;
+        assert!(ignored.is_err(), "{root:?}");
+    }
+    // A root that holds the state folder skips the internal files during the walk.
+    for root in [state.clone(), s.dir.clone()] {
+        let search = call(
+            &s.table,
+            ctx(),
+            "projects.searchContents",
+            json!({"cwd": text(&root),
+            "query": "needle", "limit": 50, "caseSensitive": false, "wholeWord": false,
+            "useRegex": false}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(search["matches"], json!([]), "{root:?}");
+        let key = call(
+            &s.table,
+            ctx(),
+            "projects.searchContents",
+            json!({"cwd": text(&root),
+            "query": ".", "limit": 500, "caseSensitive": false, "wholeWord": false,
+            "useRegex": true}),
+        )
+        .await
+        .unwrap();
+        assert!(!key.to_string().contains("asset-signing-key"), "{root:?}");
+        for listing in [
+            call(
+                &s.table,
+                ctx(),
+                "projects.listEntries",
+                json!({"cwd": text(&root)}),
+            )
+            .await
+            .unwrap(),
+            call(
+                &s.table,
+                ctx(),
+                "projects.searchEntries",
+                json!({"cwd": text(&root), "query": "", "limit": 500}),
+            )
+            .await
+            .unwrap(),
+        ] {
+            let listing = listing.to_string();
+            for hidden in ["asset-signing-key", "auth.json", "engine.sqlite", "t1.log"] {
+                assert!(
+                    !listing.contains(hidden),
+                    "{root:?} lists {hidden}: {listing}"
+                );
+            }
+            assert!(
+                listing.contains("main.rs") && listing.contains("settings.json"),
+                "{listing}"
+            );
+        }
+    }
+    let dir = call(
+        &s.table,
+        ctx(),
+        "projects.listEntries",
+        json!({"cwd": text(&state), "directoryPath": ""}),
+    )
+    .await
+    .unwrap()
+    .to_string();
+    assert!(
+        !dir.contains("secrets")
+            && !dir.contains("auth.json")
+            && !dir.contains("terminals")
+            && dir.contains("worktrees"),
+        "{dir}"
+    );
+}

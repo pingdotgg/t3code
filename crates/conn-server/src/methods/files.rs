@@ -187,12 +187,12 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             let f = f.clone();
             async move {
                 blocking(move || {
-                    let root = entries::normalize_root(&input.cwd, f.home.as_deref())
+                    let root = entries::normalize_root(&input.cwd, f.home.as_deref(), &f.internal)
                         .map_err(|e| fail(e.into_list_error(&input.cwd)))?;
                     match input.directory_path.as_deref() {
-                        Some(directory) => entries::list_directory(&root, directory)
+                        Some(directory) => entries::list_directory(&root, directory, &f.internal)
                             .map_err(|e| fail(e.into_list_error(&input.cwd))),
-                        None => Ok(entries::list_all(&root)),
+                        None => Ok(entries::list_all(&root, &f.internal)),
                     }
                 })
                 .await?
@@ -207,9 +207,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             let f = f.clone();
             async move {
                 blocking(move || {
-                    let root = entries::normalize_root(&input.cwd, f.home.as_deref())
+                    let root = entries::normalize_root(&input.cwd, f.home.as_deref(), &f.internal)
                         .map_err(|e| fail(e.into_list_error(&input.cwd)))?;
-                    Ok(entries::list_ignored(&root))
+                    Ok(entries::list_ignored(&root, &f.internal))
                 })
                 .await?
             }
@@ -227,11 +227,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                     return Err(Failure::die("query must be at most 256 characters"));
                 }
                 blocking(move || {
-                    let root =
-                        entries::normalize_root(&input.cwd, f.home.as_deref()).map_err(|e| {
+                    let root = entries::normalize_root(&input.cwd, f.home.as_deref(), &f.internal)
+                        .map_err(|e| {
                             fail(e.into_search_error(&input.cwd, &input.query, input.limit))
                         })?;
-                    Ok(search::search_entries(&root, &input))
+                    Ok(search::search_entries(&root, &input, &f.internal))
                 })
                 .await?
             }
@@ -249,11 +249,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                     return Err(Failure::die("query must be 1 to 256 characters"));
                 }
                 blocking(move || {
-                    let root =
-                        entries::normalize_root(&input.cwd, f.home.as_deref()).map_err(|e| {
+                    let root = entries::normalize_root(&input.cwd, f.home.as_deref(), &f.internal)
+                        .map_err(|e| {
                             fail(e.into_contents_error(&input.cwd, &input.query, input.limit))
                         })?;
-                    Ok(search::search_contents(&root, &input))
+                    Ok(search::search_contents(&root, &input, &f.internal))
                 })
                 .await?
             }
