@@ -1197,6 +1197,24 @@ it.layer(
     }),
   );
 
+  it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [persisted, restored] of [
+        ["\u001b]0;x\u0007ABCD", "ABCD"],
+        ["名\u001b]0;名\u0007ABCD", "ABCD"],
+        ["\u001b]0;x\u0007\u001b[31mABCD", "ABCD"],
+      ] as const) {
+        const { manager, logsDir } = yield* createManager(5, { historyByteLimit: 8 });
+        const path = yield* historyLogPath(logsDir);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(path, persisted);
+        expect((yield* manager.open(openInput())).history).toBe(restored);
+        expect(yield* fs.readFileString(path)).toBe(restored);
+      }
+    }),
+  );
+
   it.effect("persists small terminal updates without rewriting the retained history", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
