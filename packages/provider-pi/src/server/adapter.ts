@@ -569,6 +569,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let heldRunAdmission: string | null = null;
       // A declined run still starts and settles aborted, without a model request; no turn owns it.
       let declinedRunSettling = false;
+      // Sent when the admitted run settles: queued into that run, the prompt would join its first
+      // model request, and a run that aborts itself would never deliver it.
+      let promptAfterAdmittedRun: PiPromptSend | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -2262,6 +2265,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return;
             }
             if (turn !== null) {
+              const deferred = promptAfterAdmittedRun;
+              promptAfterAdmittedRun = null;
+              if (deferred?.providerTurnId === turn.providerTurn.id) yield* sendPrompt(deferred);
               turn.nativeAborted = event["aborted"] === true;
               turn.settleWhenIdle = true;
               turn.settleProbeGeneration += 1;
@@ -3007,11 +3013,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 state.activeTurn = activeTurn;
                 activeTurn.adoptedWake = wake !== null && !continuation;
                 // The selection is applied and this turn owns the session, so the held run may start.
-                // This turn's prompt follows that run: a steer would join its first model request.
                 const admittedRun = heldRunAdmission !== null && !continuation;
                 if (heldRunAdmission !== null && admittedRun) {
                   yield* answerRunAdmission(heldRunAdmission, true);
                   heldRunAdmission = null;
+                  activeTurn.adoptedWake = true;
                 }
                 if (compactCommand !== null) {
                   yield* connection.send(compactRpcRecord(compactCommand));
@@ -3020,16 +3026,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     kind: "turn_start",
                   });
                 } else if (payload !== null) {
-                  yield* sendPrompt({
+                  const prompt: PiPromptSend = {
                     providerTurnId: providerTurn.id,
                     kind: "turn_start",
                     record: {
                       type: "prompt",
                       message: payload.message,
-                      streamingBehavior: admittedRun ? "followUp" : "steer",
+                      streamingBehavior: "steer",
                       ...(payload.images.length === 0 ? {} : { images: payload.images }),
                     },
-                  });
+                  };
+                  if (admittedRun) promptAfterAdmittedRun = prompt;
+                  else yield* sendPrompt(prompt);
                 }
                 yield* emit({
                   type: "provider_turn.updated",
