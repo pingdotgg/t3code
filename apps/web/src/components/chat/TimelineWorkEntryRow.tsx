@@ -358,7 +358,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           workspaceRoot,
         })
       : null;
-  // A lone output image repeats the row's viewed image, so it opens that image's gallery.
+  // A lone output image pages through its viewed image's gallery, keeping the stored snapshot
+  // the tool returned in that image's slot.
   const onOutputImageExpand =
     viewedImage && onImageExpand
       ? (preview: ExpandedImagePreview) => {
@@ -366,12 +367,17 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             (image) => image.alt === viewedImage.alt && markdownImageItems.has(image),
           );
           const item = viewed && markdownImageItems.get(viewed);
-          const outputImage =
-            preview.images.length === 1 &&
-            preview.images[0]?.actionsSource?.asset?.resource._tag === "tool-output-image";
-          onImageExpand(
-            viewed && item && outputImage ? markdownImageGallery(viewed, item) : preview,
-          );
+          const output = preview.images.length === 1 ? preview.images[0] : undefined;
+          if (
+            !viewed ||
+            !item ||
+            output?.actionsSource?.asset?.resource._tag !== "tool-output-image"
+          ) {
+            onImageExpand(preview);
+            return;
+          }
+          const gallery = markdownImageGallery(viewed, item);
+          onImageExpand({ ...gallery, images: gallery.images.with(gallery.index, output) });
         }
       : onImageExpand;
   const canExpand =

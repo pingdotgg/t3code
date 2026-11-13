@@ -1773,7 +1773,22 @@ describe("MessagesTimeline attachments", () => {
       screen.getByRole("button", { name: "Preview Tool output image" }).element(),
     );
     await click(toolOutput as HTMLElement);
-    expect(onImageExpand).toHaveBeenLastCalledWith(gallery);
+    expect(onImageExpand).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        index: 1,
+        images: [
+          expect.objectContaining({ name: "first.png" }),
+          expect.objectContaining({
+            actionsSource: expect.objectContaining({
+              asset: expect.objectContaining({
+                resource: expect.objectContaining({ _tag: "tool-output-image" }),
+              }),
+            }),
+          }),
+          expect.objectContaining({ name: "third.png" }),
+        ],
+      }),
+    );
   });
 
   it("pages between the images of one expanded tool result", async () => {
