@@ -118,6 +118,12 @@ describe("scrubFeedback", () => {
       "Key [redacted] leaked",
     ],
     [
+      "a run whose only digits are a known value",
+      "Key AbCdEfGhIjKlMnOp-1234-QrStUvWxYzAbCdEf leaked",
+      ["1234"],
+      "Key [redacted] leaked",
+    ],
+    [
       "a random run right before a path",
       "AbCd1234EfGh5678-QrSt9012UvWx3456=C:\\Users\\private\\file.txt\nAbCd1234EfGh5678-QrSt9012UvWx3456=file:///home/private/file.txt",
       [],
