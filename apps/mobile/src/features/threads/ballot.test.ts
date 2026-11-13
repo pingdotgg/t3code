@@ -223,10 +223,11 @@ describe("createBallotTapGate", () => {
 });
 
 describe("appendBallotPicks", () => {
-  it("adds a space only between words", () => {
+  it("adds the picks as their own paragraph", () => {
     expect(appendBallotPicks("", "Apply R1")).toBe("Apply R1");
-    expect(appendBallotPicks("Notes:", "Apply R1")).toBe("Notes: Apply R1");
-    expect(appendBallotPicks("Notes:\n", "Apply R1")).toBe("Notes:\nApply R1");
+    expect(appendBallotPicks("  \n", "Apply R1")).toBe("Apply R1");
+    expect(appendBallotPicks("Notes:", "Apply R1")).toBe("Notes:\n\nApply R1");
+    expect(appendBallotPicks("Notes:\n\n\n", "Apply R1")).toBe("Notes:\n\nApply R1");
   });
 });
 

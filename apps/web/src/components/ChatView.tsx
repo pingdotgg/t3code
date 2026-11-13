@@ -1955,7 +1955,7 @@ export default function ChatView(props: ChatViewProps) {
         }
         const composer = composerRef.current;
         if (!composer) return false;
-        if (!composer.insertTextAtEnd(request.text, { ensureLeadingBoundary: true })) {
+        if (!composer.insertTextAtEnd(request.text, { asParagraph: true })) {
           toastManager.add({
             type: "error",
             title: "Unable to add to chat",

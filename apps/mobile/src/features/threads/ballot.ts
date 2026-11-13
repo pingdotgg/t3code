@@ -3,6 +3,7 @@
 // desktop (apps/web/src/ballot.ts). Nothing is sent.
 import { readBallotPicksRequest } from "@t3tools/shared/htmlRender";
 import { getRandomValues } from "expo-crypto";
+import { appendParagraphToDraft } from "@t3tools/client-runtime/next-prompt-draft";
 
 /** A tap must end this soon before the request, a little like a browser's user activation. */
 export const BALLOT_TAP_WINDOW_MS = 1_500;
@@ -127,10 +128,8 @@ export function createBallotTapGate(): BallotTapGate {
   };
 }
 
-/** Appends to the draft with a space between, as the desktop composer does. */
-export function appendBallotPicks(draft: string, text: string): string {
-  return draft.length > 0 && !/\s$/.test(draft) ? `${draft} ${text}` : `${draft}${text}`;
-}
+/** Picks go in as their own paragraph, as next-prompt suggestions do. */
+export const appendBallotPicks = appendParagraphToDraft;
 
 export interface BallotPicksRequest {
   /** `scopedThreadKey` of the thread whose timeline holds the page. */

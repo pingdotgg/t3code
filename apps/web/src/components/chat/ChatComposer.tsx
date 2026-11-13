@@ -292,7 +292,12 @@ export interface ChatComposerHandle {
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
-    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
+    options?: {
+      ensureLeadingBoundary?: boolean;
+      /** Put the text after a blank line, as its own paragraph. */
+      asParagraph?: boolean;
+      clipboardData?: DataTransfer;
+    },
   ) => boolean;
   replaceTextRange: (input: {
     rangeStart: number;
@@ -2539,6 +2544,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     position: "cursor" | "end",
     options?: {
       ensureLeadingBoundary?: boolean;
+      asParagraph?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
       clipboardData?: DataTransfer;
     },
@@ -2556,6 +2562,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       text = importPastedComposerText(options.clipboardData, importContextFragment);
     }
     const prompt = promptRef.current;
+    if (options?.asParagraph) {
+      const kept = prompt.trimEnd().length;
+      return applyPromptReplacement(kept, prompt.length, kept === 0 ? text : `\n\n${text}`);
+    }
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
     const needsLeadingSpace =
       (options?.ensureLeadingBoundary ?? false) &&

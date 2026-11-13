@@ -49,6 +49,11 @@ export function isNextPromptInDraft(draft: string, insertText: string): boolean 
 
 const LEADING_BLANK_LINES = /^(?:[ \t\r]*\n)+/;
 
+/** Adds text as its own paragraph: an empty box gets it alone, other text gets a blank line first. */
+export function appendParagraphToDraft(draft: string, text: string): string {
+  return draft.trim().length === 0 ? text : `${draft.trimEnd()}\n\n${text}`;
+}
+
 /**
  * The draft after a click on a suggestion: an empty box gets the suggestion, other text gets it
  * after a blank line, and a suggestion already there as its own paragraph is removed. A slash
@@ -64,7 +69,7 @@ export function toggleNextPromptInDraft(
     if (draft.trim().length === 0) return insertText;
     return options?.leading === true
       ? `${insertText.trimEnd()}\n\n${draft.replace(LEADING_BLANK_LINES, "")}`
-      : `${draft.trimEnd()}\n\n${insertText}`;
+      : appendParagraphToDraft(draft, insertText);
   }
   const before = draft.slice(0, pick.start);
   const after = draft.slice(pick.end);
