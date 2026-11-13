@@ -4168,6 +4168,30 @@ it.layer(
       ),
     );
 
+    it.effect.each([
+      { subscriptionType: "max", label: "Claude Max Subscription" },
+      { subscriptionType: "Claude Max 5x", label: "Claude Max Subscription" },
+      { subscriptionType: "Claude Max 20x", label: "Claude Ultra Subscription" },
+      { subscriptionType: "Claude Max 20x Subscription", label: "Claude Ultra Subscription" },
+      { subscriptionType: "Claude Ultra", label: "Claude Ultra Subscription" },
+    ])("labels Claude subscription $subscriptionType as $label", ({ subscriptionType, label }) =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ subscriptionType, tokenSource: "claude.ai" }),
+        );
+        assert.strictEqual(status.auth.label, label);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("keeps an API key install authenticated when it reports no token source", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

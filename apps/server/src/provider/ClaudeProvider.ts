@@ -105,28 +105,23 @@ function toTitleCaseWords(value: string): string {
 }
 
 function claudeSubscriptionLabel(subscriptionType: string | undefined): string | undefined {
-  const normalized = subscriptionType?.toLowerCase().replace(/[\s_-]+/g, "");
+  // The CLI reports plans as "pro", "Claude Max 20x", or "Claude Max 20x Subscription".
+  const normalized = subscriptionType
+    ?.toLowerCase()
+    .replace(/[\s_-]+/g, "")
+    .replace(/^claude/, "")
+    .replace(/subscription$/, "");
   if (!normalized) return undefined;
 
   switch (normalized) {
-    case "claudemaxsubscription":
-    case "claudemax5xsubscription":
-      return "Max";
-    case "claudemax20xsubscription":
-      return "Ultra";
-    case "claudeenterprisesubscription":
-      return "Enterprise";
-    case "claudeteamsubscription":
-      return "Team";
-    case "claudeprosubscription":
-      return "Pro";
-    case "claudefreesubscription":
-      return "Free";
     case "max":
     case "maxplan":
     case "max5":
+    case "max5x":
       return "Max";
     case "max20":
+    case "max20x":
+    case "ultra":
       return "Ultra";
     case "enterprise":
       return "Enterprise";
