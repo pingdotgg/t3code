@@ -25,9 +25,12 @@ fn main() {
     }
     let mut providers: Vec<Arc<dyn Provider>> =
         vec![Arc::new(ClaudeProvider::new("claudeAgent".into(), claude))];
-    if let Some(codex) =
-        conn_provider_codex::CodexProvider::detect("codex".into(), Default::default())
-    {
+    let codex = conn_provider_codex::CodexConfig {
+        // The same store Claude reads; Codex gets a path line per attachment and the images.
+        attachments_dir: Some(options.state_dir.join("attachments")),
+        ..Default::default()
+    };
+    if let Some(codex) = conn_provider_codex::CodexProvider::detect("codex".into(), codex) {
         providers.push(Arc::new(codex));
     }
     // One thread: a container serves a handful of clients, and each worker thread costs

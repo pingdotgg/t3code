@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
 # Signals process groups without forking `/bin/kill`, which slim images may lack. Already in
 # the tree through conn-terminal (`pty-process`); safe wrappers, no `unsafe` here.

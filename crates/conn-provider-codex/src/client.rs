@@ -19,21 +19,19 @@ use conn_provider_support::{
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::launch;
 use crate::protocol::{Inbound, RpcError, notification, reply_error, request};
+use crate::{launch, network_gate};
 
 /// A line longer than this is dropped. Tool results with inline images stay below it.
 pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// SIGTERM, then SIGKILL after this (`CODEX_APP_SERVER_FORCE_KILL_AFTER` in TS).
+pub const FORCE_KILL_AFTER: Duration = Duration::from_secs(2);
 /// The CLI release this crate was checked against: its printed schema (0.167.0) and the TS
 /// recordings (0.156.1). Newer releases still work while the fields read here keep their
 /// names; unknown methods and items are skipped and logged.
 pub const TESTED_CLI_VERSION: &str = "0.167.0";
 const SESSION_INBOX: usize = 256;
-
-/// `(slug, display name)` pairs from `model/list`.
-pub type ModelList = Vec<(String, String)>;
-type OnModels = Box<dyn Fn(ModelList) + Send + Sync>;
 
 #[derive(Debug)]
 pub enum SessionMsg {
@@ -79,27 +77,36 @@ struct State {
     sessions: HashMap<String, mpsc::Sender<SessionMsg>>,
     /// Set from the `initialize` answer.
     version: Option<String>,
+    /// Deltas dropped because a session's inbox was full (logged once).
+    dropped_deltas: u64,
+    /// Native threads loaded on a process (started, resumed or forked there), by generation.
+    loaded: HashMap<String, u64>,
 }
 
 pub struct AppServer {
     spec: LaunchSpec,
+    /// The Orbit MCP network wait, run once before the first spawn.
+    gate: Option<network_gate::Gate>,
+    gate_done: tokio::sync::OnceCell<()>,
     state: Mutex<State>,
     /// Serializes start-up and `initialize`; never held by notification routing.
     starting: tokio::sync::Mutex<()>,
-    /// Called once per process with the `model/list` entries.
-    on_models: OnModels,
 }
 
 impl AppServer {
-    pub fn new(
-        spec: LaunchSpec,
-        on_models: impl Fn(Vec<(String, String)>) + Send + Sync + 'static,
-    ) -> Arc<Self> {
+    /// The T3 server sends a session's app-server nothing beyond `initialize` until a thread
+    /// call (no `model/list`: its model catalog comes from a separate status probe).
+    pub fn new(spec: LaunchSpec) -> Arc<Self> {
+        Self::with_gate(spec, None)
+    }
+
+    pub fn with_gate(spec: LaunchSpec, gate: Option<network_gate::Gate>) -> Arc<Self> {
         Arc::new(Self {
             spec,
+            gate,
+            gate_done: tokio::sync::OnceCell::new(),
             state: Mutex::new(State::default()),
             starting: tokio::sync::Mutex::new(()),
-            on_models: Box::new(on_models),
         })
     }
 
@@ -125,8 +132,36 @@ impl AppServer {
             }
         };
         if let Some(live) = live {
-            live.process.shutdown().await;
+            live.process.terminate(FORCE_KILL_AFTER).await;
         }
+    }
+
+    /// Records that `native` is loaded on the running process.
+    pub fn mark_loaded(&self, native: &str) {
+        let mut state = self.lock();
+        if let Some(generation) = state.live.as_ref().map(|l| l.generation) {
+            state.loaded.insert(native.to_owned(), generation);
+        }
+    }
+
+    /// Whether the running process holds `native`, so a session can use it without
+    /// `thread/resume` (TS starts a turn on a thread it forked without resuming it).
+    pub fn is_loaded(&self, native: &str) -> bool {
+        let state = self.lock();
+        let live = state
+            .live
+            .as_ref()
+            .filter(|l| l.initialized && !l.process.has_exited());
+        live.is_some_and(|l| state.loaded.get(native) == Some(&l.generation))
+    }
+
+    pub fn forget_loaded(&self, native: &str) {
+        self.lock().loaded.remove(native);
+    }
+
+    /// How many sessions share the process.
+    pub fn session_count(&self) -> usize {
+        self.lock().sessions.len()
     }
 
     pub fn route(&self, native_thread_id: &str, inbox: mpsc::Sender<SessionMsg>) {
@@ -142,11 +177,40 @@ impl AppServer {
     /// The running process's generation, starting and initializing one when none runs.
     pub async fn ensure_started(self: &Arc<Self>) -> Result<u64, CallError> {
         let _guard = self.starting.lock().await;
+        // A call that outlived its session (Stop during a turn start) must not start a
+        // process that no session owns and nothing would stop.
+        if self.lock().sessions.is_empty() {
+            return Err(CallError::Stopped);
+        }
         if let Some(live) = &self.lock().live
             && live.initialized
             && !live.process.has_exited()
         {
             return Ok(live.generation);
+        }
+        if let Some(gate) = &self.gate {
+            self.gate_done
+                .get_or_init(|| async {
+                    let result = gate.wait().await;
+                    if !result.ready || result.waited >= Duration::from_secs(1) {
+                        eprintln!(
+                            "conn-provider-codex: Orbit MCP hosts {} after {} ms: {:?}{}",
+                            if result.ready {
+                                "reachable"
+                            } else {
+                                "unreachable, starting anyway"
+                            },
+                            result.waited.as_millis(),
+                            result.hosts,
+                            if result.pending.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", pending {:?}", result.pending)
+                            },
+                        );
+                    }
+                })
+                .await;
         }
         let (tx, rx) = mpsc::channel(SESSION_INBOX);
         let process = Process::spawn(&self.spec, MAX_LINE_BYTES, tx)
@@ -155,6 +219,7 @@ impl AppServer {
             let mut state = self.lock();
             state.generation += 1;
             let generation = state.generation;
+            state.loaded.clear();
             state.live = Some(Live {
                 process,
                 generation,
@@ -172,7 +237,7 @@ impl AppServer {
             Err(e) => {
                 let live = self.lock().live.take();
                 if let Some(live) = live {
-                    live.process.shutdown().await;
+                    live.process.terminate(FORCE_KILL_AFTER).await;
                 }
                 return Err(e);
             }
@@ -198,43 +263,11 @@ impl AppServer {
                 live.initialized = true;
             }
         }
-        tokio::spawn(self.clone().list_models(generation));
         Ok(generation)
     }
 
     pub fn version(&self) -> Option<String> {
         self.lock().version.clone()
-    }
-
-    async fn list_models(self: Arc<Self>, generation: u64) {
-        let mut models = Vec::new();
-        let mut cursor = Value::Null;
-        loop {
-            let params = if cursor.is_null() {
-                serde_json::json!({})
-            } else {
-                serde_json::json!({ "cursor": cursor })
-            };
-            let Ok(page) = self.request_on(generation, "model/list", params).await else {
-                return;
-            };
-            for model in page["data"].as_array().into_iter().flatten() {
-                if model["hidden"] == true {
-                    continue;
-                }
-                if let Some(slug) = model["model"].as_str().or(model["id"].as_str()) {
-                    let name = model["displayName"].as_str().unwrap_or(slug);
-                    models.push((slug.to_owned(), name.to_owned()));
-                }
-            }
-            cursor = page["nextCursor"].clone();
-            if cursor.is_null() || models.len() > 500 {
-                break;
-            }
-        }
-        if !models.is_empty() {
-            (self.on_models)(models);
-        }
     }
 
     /// A request on the current process, starting it when needed.
@@ -340,7 +373,28 @@ impl AppServer {
         };
         match (target, inbound) {
             (Some(inbox), inbound) => {
-                let _ = inbox.send(SessionMsg::Frame(inbound)).await;
+                // One reader serves every session: a session whose inbox is full must not
+                // hold back the others' frames and responses. Streamed deltas are dropped
+                // then (the item's completion carries the whole text, and command output
+                // deltas are not persisted); every other frame waits for room.
+                match inbox.try_send(SessionMsg::Frame(inbound)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(SessionMsg::Frame(frame)))
+                        if is_delta(&frame) =>
+                    {
+                        let mut state = self.lock();
+                        state.dropped_deltas = state.dropped_deltas.saturating_add(1);
+                        if state.dropped_deltas == 1 {
+                            eprintln!(
+                                "conn-provider-codex: a session's inbox is full; dropping streamed deltas for it"
+                            );
+                        }
+                    }
+                    Err(mpsc::error::TrySendError::Full(msg)) => {
+                        let _ = inbox.send(msg).await;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {}
+                }
             }
             (None, Inbound::Request { id, method, .. }) => {
                 let line = reply_error(
@@ -378,6 +432,21 @@ impl AppServer {
     }
 }
 
+/// Pure streaming notifications whose content the item's `item/completed` repeats.
+fn is_delta(frame: &Inbound) -> bool {
+    matches!(
+        frame,
+        Inbound::Notification { method, .. } if matches!(
+            method.as_str(),
+            "item/agentMessage/delta"
+                | "item/reasoning/summaryTextDelta"
+                | "item/reasoning/textDelta"
+                | "item/plan/delta"
+                | "item/commandExecution/outputDelta"
+        )
+    )
+}
+
 /// Whether `version` has a higher major or minor than `tested`.
 fn newer_minor(version: &str, tested: &str) -> bool {
     let parse = |v: &str| -> (u64, u64) {
@@ -406,29 +475,20 @@ mod tests {
 read init
 echo '{"id":1,"result":{"userAgent":"t3code_desktop/0.167.0 (x)"}}'
 read initialized
-read models
-echo '{"id":2,"result":{"data":[{"model":"gpt-6-luna","displayName":"GPT-6-Luna","hidden":false}],"nextCursor":null}}'
 read start
 echo '{"method":"thread/started","params":{"threadId":"t1"}}'
-echo '{"id":3,"result":{"thread":{"id":"t1"}}}'
+echo '{"id":2,"result":{"thread":{"id":"t1"}}}'
 read never
 "#;
 
     #[tokio::test(flavor = "current_thread")]
     async fn routes_responses_and_notifications_then_reports_exit() {
-        let models = Arc::new(Mutex::new(Vec::new()));
-        let seen = models.clone();
-        let server = AppServer::new(fake(FAKE), move |m| *seen.lock().unwrap() = m);
+        let server = AppServer::new(fake(FAKE));
         let (tx, mut inbox) = mpsc::channel(8);
         server.add_session("s1", tx.clone());
         server.route("t1", tx);
         let generation = server.ensure_started().await.unwrap();
         assert_eq!(server.version().as_deref(), Some("0.167.0"));
-        // Let the model listing take id 2 before the thread request.
-        while models.lock().unwrap().is_empty() {
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(models.lock().unwrap()[0].0, "gpt-6-luna");
         let result = server
             .request_on(generation, "thread/start", json!({}))
             .await
@@ -448,12 +508,9 @@ read never
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_crash_fails_pending_requests_and_tells_sessions() {
-        let server = AppServer::new(
-            fake(
-                r#"read init; echo '{"id":1,"result":{}}'; read initialized; read models; read req; exit 7"#,
-            ),
-            |_| {},
-        );
+        let server = AppServer::new(fake(
+            r#"read init; echo '{"id":1,"result":{}}'; read initialized; read req; exit 7"#,
+        ));
         let (tx, mut inbox) = mpsc::channel(8);
         server.add_session("s1", tx);
         let generation = server.ensure_started().await.unwrap();
@@ -466,6 +523,49 @@ read never
             panic!("expected an exit notice")
         };
         assert!(detail.contains("exit code 7"), "{detail}");
+    }
+
+    /// A session that does not read its inbox must not stall responses: streamed deltas
+    /// for it are dropped once its inbox is full.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_full_inbox_does_not_stall_responses() {
+        let mut script =
+            String::from(r#"read init; echo '{"id":1,"result":{}}'; read initialized; read req; "#);
+        for _ in 0..(SESSION_INBOX + 50) {
+            script.push_str(r#"echo '{"method":"item/agentMessage/delta","params":{"threadId":"slow","turnId":"t","itemId":"i","delta":"x"}}'; "#);
+        }
+        script.push_str(r#"echo '{"id":2,"result":{"ok":true}}'; read never"#);
+        let server = AppServer::new(fake(&script));
+        let (slow_tx, mut slow_rx) = mpsc::channel(SESSION_INBOX);
+        server.add_session("slow", slow_tx.clone());
+        server.route("slow", slow_tx);
+        let generation = server.ensure_started().await.unwrap();
+        let answer = tokio::time::timeout(
+            Duration::from_secs(5),
+            server.request_on(generation, "turn/interrupt", json!({})),
+        )
+        .await;
+        assert_eq!(
+            answer,
+            Ok(Ok(json!({"ok": true}))),
+            "the response waited on a full inbox"
+        );
+        let mut deltas = 0;
+        while slow_rx.try_recv().is_ok() {
+            deltas += 1;
+        }
+        assert_eq!(
+            deltas, SESSION_INBOX,
+            "the overflow was dropped, not queued"
+        );
+        server.remove_session("slow").await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn no_process_starts_without_a_session() {
+        let server = AppServer::new(fake("read never"));
+        assert_eq!(server.ensure_started().await, Err(CallError::Stopped));
+        assert!(server.pid().is_none());
     }
 
     #[test]

@@ -11,14 +11,16 @@ use std::{
 
 use conn_contract::{ProviderInstanceId, ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, InterruptInput, McpServer, ProviderError, ProviderEvent,
-    ProviderResult, ResumeThreadInput, RuntimeRequestResponse, Session, SteerInput, TurnInput,
+    BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, ProviderError,
+    ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget, RollbackThreadInput,
+    RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
 };
 use conn_provider_support::ids::{self, Env, SystemEnv, iso_from_ms};
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
 
 use crate::client::{AppServer, CallError, SessionMsg};
+use crate::context::ToolAvailability;
 use crate::launch;
 use crate::mapper::{DRIVER, Mapper, Out};
 
@@ -36,6 +38,12 @@ pub struct CodexSession {
 struct Inner {
     id: String,
     instance_id: String,
+    /// Where chat attachments are read from (`CodexConfig::attachments_dir`).
+    attachments_dir: Option<std::path::PathBuf>,
+    /// The model and working folder the session opened with: TS resumes a thread for a
+    /// rollback, and forks one, with the session's own selection and policy.
+    open_model: Option<String>,
+    open_cwd: Option<String>,
     server: Arc<AppServer>,
     inbox: mpsc::Sender<SessionMsg>,
     state: Mutex<State>,
@@ -61,12 +69,17 @@ impl CodexSession {
         instance_id: &ProviderInstanceId,
         server: Arc<AppServer>,
         events: mpsc::Sender<ProviderEvent>,
+        attachments_dir: Option<std::path::PathBuf>,
+        open: (Option<String>, Option<String>),
     ) -> Self {
         let (inbox, rx) = mpsc::channel(EVENT_CAPACITY);
         server.add_session(id.as_str(), inbox.clone());
         let inner = Arc::new(Inner {
             id: id.as_str().to_owned(),
             instance_id: instance_id.as_str().to_owned(),
+            attachments_dir,
+            open_model: open.0,
+            open_cwd: open.1,
             server,
             inbox,
             state: Mutex::new(State {
@@ -88,6 +101,15 @@ impl CodexSession {
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Fails once the session closed; checked after each await of a multi-step call.
+    fn check_open(&self) -> ProviderResult<()> {
+        if self.lock().closed {
+            Err(ProviderError::SessionStopped)
+        } else {
+            Ok(())
+        }
     }
 
     /// Sends events and replies in order. Holds no lock across a send.
@@ -116,7 +138,16 @@ impl Inner {
                 }
                 Out::Skipped(kind) => {
                     let key: String = kind.chars().take(80).collect();
-                    if self.lock().logged.insert(key) {
+                    // At most 64 kinds are remembered, as in the Claude crate; past that a
+                    // kind may be logged again.
+                    let first = {
+                        let mut state = self.lock();
+                        if state.logged.len() >= 64 {
+                            state.logged.clear();
+                        }
+                        state.logged.insert(key)
+                    };
+                    if first {
                         eprintln!("conn-provider-codex: skipped {kind}");
                     }
                 }
@@ -146,20 +177,31 @@ impl Inner {
         }
         let app_thread = self.lock().app_thread_id.clone();
         let cwd = policy.and_then(|p| p.cwd.clone());
-        self.resume(&native, app_thread.as_deref(), cwd.as_deref(), model)
+        self.resume(&native, app_thread.as_deref(), cwd.as_deref(), model, false)
             .await?;
         Ok(native)
     }
 
-    /// `thread/resume`, unarchiving the thread once when Codex reports it archived.
+    /// `thread/resume`, unarchiving the thread once when Codex reports it archived. Without
+    /// `force`, a thread the app-server already holds (started, resumed or forked on it) is
+    /// used as is: TS starts a turn on a thread it forked without resuming it, but its
+    /// `resumeThread` always sends `thread/resume`.
     async fn resume(
         &self,
         native: &str,
         app_thread: Option<&str>,
         cwd: Option<&str>,
         model: Option<&str>,
+        force: bool,
     ) -> ProviderResult<Value> {
         self.server.route(native, self.inbox.clone());
+        if !force && self.server.is_loaded(native) {
+            let generation = self.server.generation();
+            if let Some(thread) = &mut self.lock().thread {
+                thread.1 = generation;
+            }
+            return Ok(json!({ "thread": { "id": native } }));
+        }
         let mcp = self.lock().mcp_servers.clone();
         let mut params = launch::thread_params(app_thread, cwd, model, &mcp);
         params["threadId"] = json!(native);
@@ -183,6 +225,7 @@ impl Inner {
             ),
             _ => call_failed("resume_thread")(e),
         })?;
+        self.server.mark_loaded(native);
         let generation = self.server.generation();
         if let Some(thread) = &mut self.lock().thread {
             thread.1 = generation;
@@ -264,6 +307,113 @@ fn codex_time(seconds: &Value) -> String {
     }
 }
 
+/// `isTerminalProviderTurn`: a turn that reached Codex and ended (goal control turns have no
+/// native turn and never count).
+fn is_terminal_turn(turn: &Value) -> bool {
+    !turn["nativeTurnRef"].is_null()
+        && matches!(
+            turn["status"].as_str(),
+            Some("completed" | "interrupted" | "failed" | "cancelled")
+        )
+}
+
+/// `countTerminalTurnsAfterBoundary`: ended turns after the boundary turn, or `None` when the
+/// boundary is not among `turns`.
+fn turns_after(turns: &[Value], boundary_id: &str) -> Option<usize> {
+    let boundary = turns.iter().find(|t| t["id"] == boundary_id)?;
+    let ordinal = boundary["ordinal"].as_f64()?;
+    Some(
+        turns
+            .iter()
+            .filter(|t| t["ordinal"].as_f64().is_some_and(|o| o > ordinal) && is_terminal_turn(t))
+            .count(),
+    )
+}
+
+impl Inner {
+    /// `readCodexThreadHistoryMetadata`: the history mode and whether this app-server has
+    /// the thread loaded.
+    async fn history(
+        &self,
+        operation: &'static str,
+        native: &str,
+    ) -> ProviderResult<(Option<String>, bool)> {
+        let read = self
+            .server
+            .request(
+                "thread/read",
+                json!({"threadId": native, "includeTurns": false}),
+            )
+            .await
+            .map_err(call_failed(operation))?;
+        let thread = &read["thread"];
+        Ok((
+            thread["historyMode"].as_str().map(str::to_owned),
+            thread["status"]["type"] != "notLoaded",
+        ))
+    }
+
+    /// `revertCodexThread`: drops the newest `turns` turns. Pages `thread/turns/list` from the
+    /// newest turn to find the oldest turn to drop, then `thread/revert` before it. Answers
+    /// with `thread/read` when the thread has no turns.
+    async fn revert(
+        &self,
+        operation: &'static str,
+        native: &str,
+        turns: usize,
+    ) -> ProviderResult<Value> {
+        let mut remaining = turns;
+        let mut before: Option<String> = None;
+        let mut cursor = Value::Null;
+        let mut visited: Vec<Value> = Vec::new();
+        while remaining > 0 {
+            if visited.contains(&cursor) {
+                return Err(failed(
+                    operation,
+                    "Thread history pagination repeated a cursor.",
+                ));
+            }
+            visited.push(cursor.clone());
+            let page = self
+                .server
+                .request(
+                    "thread/turns/list",
+                    json!({
+                        "threadId": native, "cursor": cursor, "limit": remaining.min(100),
+                        "sortDirection": "desc", "itemsView": "summary",
+                    }),
+                )
+                .await
+                .map_err(call_failed(operation))?;
+            for turn in page["data"].as_array().into_iter().flatten() {
+                before = turn["id"].as_str().map(str::to_owned);
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+            }
+            cursor = page["nextCursor"].clone();
+            if cursor.is_null() {
+                break;
+            }
+        }
+        let (method, params) = match before {
+            Some(turn) => (
+                "thread/revert",
+                json!({"threadId": native, "beforeTurnId": turn}),
+            ),
+            None => (
+                "thread/read",
+                json!({"threadId": native, "includeTurns": false}),
+            ),
+        };
+        self.server
+            .request(method, params)
+            .await
+            .map_err(call_failed(operation))
+    }
+}
+
 impl Session for CodexSession {
     fn provider_session_id(&self) -> &ProviderSessionId {
         &self.id
@@ -308,6 +458,7 @@ impl Session for CodexSession {
                 })?
                 .to_owned();
             inner.server.route(&native, inner.inbox.clone());
+            inner.server.mark_loaded(&native);
             {
                 let mut state = inner.lock();
                 state.thread = Some((native.clone(), inner.server.generation()));
@@ -361,6 +512,7 @@ impl Session for CodexSession {
                     app_thread.as_deref(),
                     cwd.as_deref(),
                     model.as_deref(),
+                    true,
                 )
                 .await?;
             let mut row = row;
@@ -391,6 +543,7 @@ impl Session for CodexSession {
             let native = inner
                 .loaded_thread(Some(&input.runtime_policy), Some(&model))
                 .await?;
+            inner.check_open()?;
             if inner.lock().mapper.thread_busy(&native) {
                 return Err(failed("start_turn", "the previous turn is still running"));
             }
@@ -407,12 +560,29 @@ impl Session for CodexSession {
                         .as_str()
                         .map(str::to_owned)
                 });
+            inner.check_open()?;
+            let codex_input = launch::user_input(
+                &input.message.text,
+                &input.message.attachments,
+                inner.attachments_dir.as_deref(),
+            )
+            .map_err(|detail| ProviderError::Protocol { detail })?;
+            // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
+            // `t3-code` server. Browser tools on, device tools off: the session carries no
+            // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
+            let t3_tools = inner
+                .lock()
+                .mcp_servers
+                .iter()
+                .any(|s| s.name == "t3-code")
+                .then(ToolAvailability::default);
             let params = launch::turn_start_params(
                 &native,
-                launch::user_input(&input.message.text),
+                codex_input,
                 &input.runtime_policy,
                 &input.model_selection,
                 summary.as_deref(),
+                t3_tools,
             );
             inner.lock().mapper.begin_turn(&native, &input);
             match inner.server.request("turn/start", params).await {
@@ -442,11 +612,17 @@ impl Session for CodexSession {
             let (Some(turn), Some(thread)) = (native_turn, native_thread) else {
                 return Err(failed("steer_turn", "that turn is not running"));
             };
+            let codex_input = launch::user_input(
+                &input.message.text,
+                &input.message.attachments,
+                inner.attachments_dir.as_deref(),
+            )
+            .map_err(|detail| ProviderError::Protocol { detail })?;
             inner
                 .server
                 .request(
                     "turn/steer",
-                    json!({"expectedTurnId": turn, "input": launch::user_input(&input.message.text), "threadId": thread}),
+                    json!({"expectedTurnId": turn, "input": codex_input, "threadId": thread}),
                 )
                 .await
                 .map(|_| ())
@@ -525,6 +701,201 @@ impl Session for CodexSession {
         Box::pin(std::future::ready(Ok(())))
     }
 
+    /// `rollbackThread`: count the ended turns after the target, revert that many on the
+    /// native thread (resuming it first when this app-server does not hold it).
+    fn rollback_thread(
+        &self,
+        input: RollbackThreadInput,
+    ) -> BoxFuture<'_, ProviderResult<ThreadSnapshot>> {
+        Box::pin(async move {
+            const OP: &str = "rollback_thread";
+            let inner = &self.inner;
+            let native = native_thread_id(&input.provider_thread)
+                .ok_or_else(|| failed(OP, "provider thread has no native Codex id"))?;
+            let thread_row = to_json(&input.provider_thread);
+            let turns: Vec<Value> = input.provider_thread_turns.iter().map(to_json).collect();
+            let (count, head) = match &input.target {
+                RollbackTarget::ThreadStart { .. } => (
+                    turns.iter().filter(|t| is_terminal_turn(t)).count(),
+                    Value::Null,
+                ),
+                RollbackTarget::ProviderTurn { provider_turn, .. } => {
+                    let target = to_json(provider_turn);
+                    if target["providerThreadId"] != thread_row["id"] {
+                        return Err(failed(
+                            OP,
+                            format!(
+                                "Cannot roll back Codex thread {} to provider turn {}: target turn belongs to provider thread {}.",
+                                thread_row["id"].as_str().unwrap_or_default(),
+                                target["id"].as_str().unwrap_or_default(),
+                                target["providerThreadId"].as_str().unwrap_or_default(),
+                            ),
+                        ));
+                    }
+                    let id = target["id"].as_str().unwrap_or_default();
+                    let count = turns_after(&turns, id).ok_or_else(|| failed(OP, format!(
+                        "Cannot roll back Codex thread {} to provider turn {id}: target turn was not found in durable provider turn history.",
+                        thread_row["id"].as_str().unwrap_or_default(),
+                    )))?;
+                    (count, target["nativeTurnRef"].clone())
+                }
+            };
+            let mut row = thread_row.clone();
+            row["nativeConversationHeadRef"] = head;
+            row["status"] = json!("idle");
+            if count > 0 {
+                let (history, loaded) = inner.history(OP, &native).await?;
+                if history.as_deref() != Some("paginated") {
+                    return Err(failed(
+                        OP,
+                        format!(
+                            "Cannot roll back Codex thread {native}: the thread uses legacy history, which Codex 0.156 cannot revert."
+                        ),
+                    ));
+                }
+                if !loaded {
+                    let app_thread = thread_row["appThreadId"].as_str().map(str::to_owned);
+                    inner
+                        .resume(
+                            &native,
+                            app_thread.as_deref(),
+                            inner.open_cwd.as_deref(),
+                            inner.open_model.as_deref(),
+                            true,
+                        )
+                        .await?;
+                }
+                let response = inner.revert(OP, &native, count).await?;
+                inner.lock().mapper.forget_usage(&native);
+                let id = response["thread"]["id"]
+                    .as_str()
+                    .unwrap_or(&native)
+                    .to_owned();
+                row["nativeThreadRef"] =
+                    json!({"driver": DRIVER, "nativeId": id, "strength": "strong"});
+                row["updatedAt"] = json!(codex_time(&response["thread"]["updatedAt"]));
+            }
+            Ok(ThreadSnapshot {
+                provider_thread: from_json(row).map_err(|e| failed(OP, e.to_string()))?,
+                provider_turns: Vec::new(),
+                messages: Vec::new(),
+                runtime_requests: Vec::new(),
+            })
+        })
+    }
+
+    /// `forkThread`: `thread/fork` (inclusive `lastTurnId` when the boundary turn has a native
+    /// id), or a fork of the whole thread reverted to the boundary.
+    fn fork_thread(&self, input: ForkThreadInput) -> BoxFuture<'_, ProviderResult<ProviderThread>> {
+        Box::pin(async move {
+            const OP: &str = "fork_thread";
+            let inner = &self.inner;
+            let source = to_json(&input.source_provider_thread);
+            let native = native_thread_id(&input.source_provider_thread)
+                .ok_or_else(|| failed(OP, "provider thread has no native Codex id"))?;
+            let turns: Vec<Value> = input
+                .source_provider_turns
+                .iter()
+                .map(to_json)
+                .filter(|t| t["providerThreadId"] == source["id"])
+                .collect();
+            let (last_turn, rollback) = match &input.provider_turn_id {
+                None => (None, 0),
+                Some(turn_id) => {
+                    let count = turns_after(&turns, turn_id.as_str()).ok_or_else(|| failed(OP, format!(
+                        "Cannot fork Codex thread from provider turn {}: source turn was not found in provider thread {}.",
+                        turn_id.as_str(),
+                        source["id"].as_str().unwrap_or_default(),
+                    )))?;
+                    let native_turn = turns
+                        .iter()
+                        .find(|t| t["id"] == turn_id.as_str())
+                        .and_then(|t| t["nativeTurnRef"]["nativeId"].as_str())
+                        .map(str::to_owned);
+                    match native_turn {
+                        Some(turn) => (Some(turn), 0),
+                        None => (None, count),
+                    }
+                }
+            };
+            let mcp = inner.lock().mcp_servers.clone();
+            let mut params = launch::thread_params(
+                Some(input.target_thread_id.as_str()),
+                inner.open_cwd.as_deref(),
+                inner.open_model.as_deref(),
+                &mcp,
+            );
+            params["threadId"] = json!(native);
+            params["excludeTurns"] = json!(true);
+            if let Some(turn) = &last_turn {
+                params["lastTurnId"] = json!(turn);
+            }
+            let response = match inner.server.request("thread/fork", params.clone()).await {
+                Err(CallError::Rpc(e))
+                    if e.message.contains("is archived")
+                        || e.message.contains("codex unarchive") =>
+                {
+                    inner
+                        .server
+                        .request("thread/unarchive", json!({ "threadId": native }))
+                        .await
+                        .map_err(call_failed(OP))?;
+                    inner.server.request("thread/fork", params).await
+                }
+                other => other,
+            }
+            .map_err(call_failed(OP))?;
+            let mut thread = response["thread"].clone();
+            let forked = thread["id"]
+                .as_str()
+                .ok_or_else(|| ProviderError::Protocol {
+                    detail: "thread/fork answered without a thread id".into(),
+                })?
+                .to_owned();
+            if rollback > 0 {
+                let (history, _) = inner.history(OP, &forked).await?;
+                if history.as_deref() != Some("paginated") {
+                    return Err(failed(
+                        OP,
+                        format!(
+                            "Cannot fork Codex thread {native} at provider turn {}: the source turn has no native Codex turn reference, and the forked thread uses legacy history which Codex 0.156 cannot revert.",
+                            input
+                                .provider_turn_id
+                                .as_ref()
+                                .map(|t| t.as_str())
+                                .unwrap_or_default(),
+                        ),
+                    ));
+                }
+                thread = inner.revert(OP, &forked, rollback).await?["thread"].clone();
+            }
+            let id = thread["id"].as_str().unwrap_or(&forked).to_owned();
+            inner.server.mark_loaded(&id);
+            let mut forked_from = json!({"providerThreadId": source["id"]});
+            if let Some(turn) = &input.provider_turn_id {
+                forked_from["providerTurnId"] = json!(turn.as_str());
+            }
+            let row = json!({
+                "id": ids::provider_thread_id(DRIVER, &id),
+                "driver": DRIVER,
+                "providerInstanceId": inner.instance_id,
+                "providerSessionId": inner.id,
+                "appThreadId": input.target_thread_id.as_str(),
+                "ownerNodeId": input.owner_node_id.as_ref().map(|n| n.as_str()),
+                "nativeThreadRef": {"driver": DRIVER, "nativeId": id, "strength": "strong"},
+                "nativeConversationHeadRef": null,
+                "status": "idle",
+                "firstRunOrdinal": null,
+                "lastRunOrdinal": null,
+                "handoffIds": [],
+                "forkedFrom": forked_from,
+                "createdAt": codex_time(&thread["createdAt"]),
+                "updatedAt": codex_time(&thread["updatedAt"]),
+            });
+            from_json(row).map_err(|e| failed(OP, e.to_string()))
+        })
+    }
+
     fn close(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let inner = &self.inner;
@@ -534,11 +905,15 @@ impl Session for CodexSession {
                 state.thread.clone()
             };
             if let Some((native, Some(generation))) = thread {
-                if inner.server.generation() == Some(generation) {
+                // TS unloads a thread (`thread/unsubscribe`) only while the shared process
+                // keeps serving other threads; the last session just stops the process.
+                if inner.server.generation() == Some(generation) && inner.server.session_count() > 1
+                {
                     let _ = inner
                         .server
                         .request("thread/unsubscribe", json!({ "threadId": native }))
                         .await;
+                    inner.server.forget_loaded(&native);
                 }
                 inner.server.unroute(&native);
             }

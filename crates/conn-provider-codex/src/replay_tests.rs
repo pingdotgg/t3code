@@ -289,3 +289,152 @@ fn a_frame_that_beats_the_turn_start_answer_registers_the_turn() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_resumed_threads_old_token_usage_does_not_bind_the_new_turn() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let stale = json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "th",
+        "turnId": "old", "tokenUsage": {"total": {"totalTokens": 5}, "last": {"totalTokens": 5}}}});
+    assert!(mapper.handle(Inbound::from_value(stale)).is_empty());
+    let outs = mapper.turn_start_result("th", &json!({"turn": {"id": "new", "startedAt": null}}));
+    assert!(!outs.is_empty());
+    assert_eq!(mapper.native_turn(&ids_for(&outs)), Some("new".to_owned()));
+}
+
+/// The provider turn id of the first `provider_turn.updated` in `outs`.
+fn ids_for(outs: &[Out]) -> String {
+    outs.iter()
+        .find_map(|o| match o {
+            Out::Event(e) => serde_json::to_value(e).unwrap()["providerTurn"]["id"]
+                .as_str()
+                .map(str::to_owned),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_request_codex_resolved_itself_gets_no_late_answer() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    let request = json!({"method": "item/commandExecution/requestApproval", "id": 0,
+        "params": {"threadId": "th", "turnId": "tu", "itemId": "c1", "command": "ls"}});
+    let outs = mapper.handle(Inbound::from_value(request));
+    let id = outs
+        .iter()
+        .find_map(|o| match o {
+            Out::Event(e) => {
+                let v = serde_json::to_value(e).unwrap();
+                (v["type"] == "runtime_request.updated")
+                    .then(|| v["runtimeRequest"]["id"].as_str().unwrap().to_owned())
+            }
+            _ => None,
+        })
+        .unwrap();
+    let resolved =
+        json!({"method": "serverRequest/resolved", "params": {"threadId": "th", "requestId": 0}});
+    mapper.handle(Inbound::from_value(resolved));
+    let answer = RuntimeRequestResponse {
+        request_id: id.as_str().into(),
+        decision: from_json(json!("accept")).ok(),
+        feedback: None,
+        answers: None,
+    };
+    assert!(mapper.respond(&answer).is_err());
+}
+
+/// Hundreds of turns of every kind leave the mapper's collections at a fixed size: messages,
+/// reasoning, plans, commands, approvals, usage, interrupts and failures.
+#[test]
+fn mapper_state_stays_bounded_over_many_turns() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    let mut sizes = Vec::new();
+    for round in 0..300 {
+        let turn = format!("tu{round}");
+        mapper.begin_turn("th", &input);
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": turn, "startedAt": null}}));
+        let frames = [
+            json!({"method": "item/started", "params": {"threadId": "th", "turnId": turn,
+                "item": {"type": "agentMessage", "id": format!("m{round}"), "text": "", "phase": "final_answer"}}}),
+            json!({"method": "item/agentMessage/delta", "params": {"threadId": "th", "turnId": turn,
+                "itemId": format!("m{round}"), "delta": "hi"}}),
+            json!({"method": "item/reasoning/summaryTextDelta", "params": {"threadId": "th", "turnId": turn,
+                "itemId": format!("r{round}"), "delta": "think", "summaryIndex": 0}}),
+            json!({"method": "item/plan/delta", "params": {"threadId": "th", "turnId": turn,
+                "itemId": format!("p{round}"), "delta": "plan"}}),
+            json!({"method": "item/started", "params": {"threadId": "th", "turnId": turn,
+                "item": {"type": "commandExecution", "id": format!("c{round}"), "command": "ls", "processId": "9", "status": "inProgress"}}}),
+            json!({"method": "item/commandExecution/requestApproval", "id": round,
+                "params": {"threadId": "th", "turnId": turn, "itemId": format!("c{round}"), "command": "ls"}}),
+            json!({"method": "serverRequest/resolved", "params": {"threadId": "th", "requestId": round}}),
+            json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "th", "turnId": turn,
+                "tokenUsage": {"total": {"totalTokens": round}, "last": {"totalTokens": 1}}}}),
+            json!({"method": "model/rerouted", "params": {"threadId": "th", "turnId": turn, "toModel": "x"}}),
+            json!({"method": "item/completed", "params": {"threadId": "th", "turnId": turn,
+                "item": {"type": "agentMessage", "id": format!("m{round}"), "text": "hi", "phase": "final_answer"}}}),
+            json!({"method": "item/completed", "params": {"threadId": "th", "turnId": turn,
+                "item": {"type": "plan", "id": format!("p{round}"), "text": "plan"}}}),
+        ];
+        for frame in frames {
+            let _ = mapper.handle(Inbound::from_value(frame));
+        }
+        let _ = mapper.flush(true);
+        if round % 3 == 0 {
+            mapper.mark_interrupting(&turn);
+        }
+        let status = ["completed", "interrupted", "failed"][round % 3];
+        let done = json!({"method": "turn/completed", "params": {"threadId": "th",
+            "turn": {"id": turn, "status": status, "completedAt": 3}}});
+        let _ = mapper.handle(Inbound::from_value(done));
+        if round == 100 || round == 299 {
+            sizes.push(mapper.state_sizes());
+        }
+    }
+    assert_eq!(
+        sizes[0], sizes[1],
+        "mapper state grew between turn 100 and 300"
+    );
+    for (name, size) in &sizes[1] {
+        assert!(*size <= 64, "{name} holds {size} entries");
+    }
+}
+
+#[test]
+fn a_failed_turns_text_loses_its_secrets() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    let done = json!({"method": "turn/completed", "params": {"threadId": "th", "turn": {"id": "tu",
+        "status": "failed", "completedAt": 3,
+        "error": {"message": "401 from https://u:p@api.test/v1?key=abc: Authorization: Bearer sk-abcdefghijklmnopqrst"}}}});
+    let outs = mapper.handle(Inbound::from_value(done));
+    let terminal = outs
+        .iter()
+        .find_map(|o| match o {
+            Out::Event(e) => {
+                let v = serde_json::to_value(e).unwrap();
+                (v["type"] == "turn.terminal").then_some(v)
+            }
+            _ => None,
+        })
+        .unwrap();
+    let message = terminal["failure"]["message"].as_str().unwrap();
+    assert!(message.contains("https://api.test/v1"), "{message}");
+    for secret in ["u:p", "key=abc", "sk-abcdefghijklmnopqrst"] {
+        assert!(!message.contains(secret), "{secret} in {message}");
+    }
+}

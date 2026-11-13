@@ -11,8 +11,12 @@
 //! Reference behaviour: `CodexAdapterV2.ts`. See `PROTOCOL.md` and `README.md`.
 
 pub mod client;
+pub mod context;
+#[rustfmt::skip]
+pub mod instructions;
 pub mod launch;
 pub mod mapper;
+pub mod network_gate;
 pub mod protocol;
 pub mod session;
 
@@ -49,19 +53,24 @@ pub struct CodexProvider {
 impl CodexProvider {
     pub fn new(instance_id: ProviderInstanceId, config: CodexConfig) -> Self {
         let launch_args = std::env::var(launch::LAUNCH_ARGS_ENV).ok();
-        let spec = launch::launch_spec(&config, launch_args.as_deref());
+        let host_has_originator = std::env::var_os(launch::ORIGINATOR_ENV).is_some();
+        let spec = launch::launch_spec(&config, launch_args.as_deref(), host_has_originator);
         let models = Arc::new(Mutex::new(
             config
                 .effective_home()
                 .and_then(|home| cached_models(&home.join("models_cache.json")))
                 .unwrap_or_else(fallback_models),
         ));
-        let live_models = models.clone();
-        let server = client::AppServer::new(spec, move |list| {
-            if let Ok(mut models) = live_models.lock() {
-                *models = list;
-            }
+        // TS reads the gate's variables from `{...process.env, ...spawn environment}`.
+        let gate = network_gate::Gate::from_env(|key| {
+            spec.env_set
+                .iter()
+                .rev()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .or_else(|| std::env::var(key).ok())
         });
+        let server = client::AppServer::with_gate(spec, Some(gate));
         Self {
             instance_id,
             config,
@@ -136,6 +145,11 @@ impl Provider for CodexProvider {
                 &self.instance_id,
                 self.server.clone(),
                 tx,
+                self.config.attachments_dir.clone(),
+                (
+                    Some(launch::selection_model(&input.model_selection)),
+                    input.runtime_policy.cwd.clone(),
+                ),
             );
             Ok(OpenedSession {
                 session: Box::new(session),
@@ -155,8 +169,8 @@ impl Provider for CodexProvider {
     }
 }
 
-/// `CodexProviderCapabilitiesV2` with what this crate does not do switched off: rollback,
-/// fork, snapshots, subagents, handoff context, queued messages, dynamic tool callbacks.
+/// `CodexProviderCapabilitiesV2` with what this crate does not do switched off: snapshots,
+/// subagents, handoff context, queued messages, dynamic tool callbacks.
 pub fn capabilities() -> Value {
     json!({
         "sessions": {
@@ -169,9 +183,9 @@ pub fn capabilities() -> Value {
         "threads": {
             "canCreateEmptyThread": true,
             "canReadThreadSnapshot": false,
-            "canRollbackThread": false,
-            "canForkThread": false,
-            "canForkFromTurn": false,
+            "canRollbackThread": true,
+            "canForkThread": true,
+            "canForkFromTurn": true,
             "canForkFromSubagentThread": false,
             "exposesNativeThreadId": true,
         },
@@ -237,8 +251,8 @@ pub fn capabilities() -> Value {
         "checkpointing": {
             "appCanCheckpointFilesystem": true,
             "supportsNestedCheckpointScopes": false,
-            "providerCanRollbackConversation": false,
-            "providerRollbackReturnsSnapshot": false,
+            "providerCanRollbackConversation": true,
+            "providerRollbackReturnsSnapshot": true,
             "providerCanReadConversationSnapshot": false,
         },
         "identity": {
@@ -251,7 +265,7 @@ pub fn capabilities() -> Value {
     })
 }
 
-/// Offered before an app-server has answered `model/list`, when Codex has no model cache.
+/// Offered when Codex has no model cache (the session process sends no `model/list`).
 pub fn fallback_models() -> Vec<(String, String)> {
     [
         ("gpt-6.1-sol", "GPT-6.1-Sol"),

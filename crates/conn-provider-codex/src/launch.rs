@@ -7,19 +7,24 @@
 
 use std::path::{Path, PathBuf};
 
-use conn_contract::{ModelSelection, to_json};
+use conn_contract::{ChatAttachment, ModelSelection, to_json};
 use conn_provider::{McpServer, RuntimePolicy};
-use conn_provider_support::process::LaunchSpec;
+use conn_provider_support::{attachments, process::LaunchSpec};
+
+use crate::context::{ToolAvailability, additional_context};
 use serde_json::{Value, json};
 
 /// `CODEX_CLIENT_NAME` in `CodexProvider.ts`. The backend tailors the model catalog to it.
 pub const CLIENT_NAME: &str = "T3 Code";
+/// Tells the Codex backend which client this is; it tailors the model catalog to it.
+pub const ORIGINATOR_ENV: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
 /// Launch args from the environment win over the instance setting (`resolveCodexLaunchArgs`).
 pub const LAUNCH_ARGS_ENV: &str = "T3CODE_CODEX_LAUNCH_ARGS";
 /// `PortScanner.AGENT_THREAD_ENV`, set per thread through shell config, not the process env.
 pub const AGENT_THREAD_ENV: &str = "T3CODE_THREAD_ID";
-/// The `version` Conn Server reports in `initialize`.
-pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The `version` sent in `initialize`: the T3 server sends its own package version, so this is
+/// the pinned `apps/server` version, the one Conn Server reports as its server version.
+pub const CLIENT_VERSION: &str = conn_contract::SERVER_VERSION;
 
 /// The Codex instance's settings that shape a launch (`CodexSettings` in contracts).
 #[derive(Clone, Debug)]
@@ -32,6 +37,9 @@ pub struct CodexConfig {
     pub launch_args: String,
     /// The provider instance's own environment entries.
     pub instance_env: Vec<(String, String)>,
+    /// T3's attachment store (`<state>/attachments`): attachments are read from
+    /// `<dir>/<id><ext>`. `None`: attachments are listed as unavailable.
+    pub attachments_dir: Option<PathBuf>,
 }
 
 impl Default for CodexConfig {
@@ -41,6 +49,7 @@ impl Default for CodexConfig {
             home_path: None,
             launch_args: String::new(),
             instance_env: Vec::new(),
+            attachments_dir: None,
         }
     }
 }
@@ -85,7 +94,11 @@ fn expand_home(path: &Path) -> PathBuf {
 
 /// argv and environment for one app-server, given the launch-args variable as read from the
 /// host environment.
-pub fn launch_spec(config: &CodexConfig, launch_args_env: Option<&str>) -> LaunchSpec {
+pub fn launch_spec(
+    config: &CodexConfig,
+    launch_args_env: Option<&str>,
+    host_has_originator: bool,
+) -> LaunchSpec {
     let launch_args = launch_args_env
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -94,10 +107,12 @@ pub fn launch_spec(config: &CodexConfig, launch_args_env: Option<&str>) -> Launc
         .map(String::from)
         .into();
     args.extend(tokenize_cli_args(launch_args));
-    let mut env_set = vec![(
-        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE".to_owned(),
-        CLIENT_NAME.to_owned(),
-    )];
+    // `codexAppServerEnvironment`: the originator comes first, so the host or instance
+    // environment can override it.
+    let mut env_set = Vec::new();
+    if !host_has_originator {
+        env_set.push((ORIGINATOR_ENV.to_owned(), CLIENT_NAME.to_owned()));
+    }
     env_set.extend(config.instance_env.iter().cloned());
     if let Some(home) = &config.home_path {
         env_set.push((
@@ -266,6 +281,33 @@ pub fn runtime_mode_defaults(runtime_mode: &str) -> (&'static str, &'static str,
     }
 }
 
+/// `V2TurnStartParams__SandboxPolicy` as the TS adapter decodes an override: the fields of
+/// the policy's own type, the rest dropped. An unknown type passes as is (Codex rejects it).
+fn decode_sandbox_policy(policy: &Value) -> Value {
+    let keys: &[&str] = match policy["type"].as_str() {
+        Some("dangerFullAccess") => &["type"],
+        Some("readOnly") | Some("externalSandbox") => &["networkAccess", "type"],
+        Some("workspaceWrite") => &[
+            "excludeSlashTmp",
+            "excludeTmpdirEnvVar",
+            "networkAccess",
+            "type",
+            "writableRoots",
+        ],
+        _ => return policy.clone(),
+    };
+    let Some(object) = policy.as_object() else {
+        return policy.clone();
+    };
+    Value::Object(
+        object
+            .iter()
+            .filter(|(k, _)| keys.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
+}
+
 /// A string option on a model selection (`getModelSelectionStringOptionValue`).
 pub fn selection_option(selection: &ModelSelection, id: &str) -> Option<String> {
     to_json(selection)["options"]
@@ -292,18 +334,27 @@ pub fn selection_model(selection: &ModelSelection) -> String {
         .to_owned()
 }
 
-/// `turn/start` params (`buildCodexTurnStartParams`), without T3 MCP context or Cyber Access.
+/// `turn/start` params (`buildCodexTurnStartParams`), without Cyber Access and app context.
+/// `t3_tools` is set when the thread has T3's MCP server: the turn then carries T3's
+/// `additionalContext`.
 pub fn turn_start_params(
     native_thread_id: &str,
     input: Value,
     policy: &RuntimePolicy,
     selection: &ModelSelection,
     configured_summary: Option<&str>,
+    t3_tools: Option<ToolAvailability>,
 ) -> Value {
     let runtime_mode = to_json(&policy.runtime_mode);
     let interaction_mode = to_json(&policy.interaction_mode);
     let (approval, reviewer, sandbox) =
         runtime_mode_defaults(runtime_mode.as_str().unwrap_or("full-access"));
+    let approval = policy.approval_policy.clone().unwrap_or(json!(approval));
+    let sandbox = policy
+        .sandbox_policy
+        .as_ref()
+        .map(decode_sandbox_policy)
+        .unwrap_or(sandbox);
     let model = selection_model(selection);
     let effort = selection_option(selection, "reasoningEffort").or_else(|| {
         model
@@ -328,6 +379,9 @@ pub fn turn_start_params(
         "sandboxPolicy": sandbox,
         "collaborationMode": {"mode": interaction_mode, "settings": settings},
     });
+    if let Some(tools) = t3_tools {
+        params["additionalContext"] = additional_context(&model, effort.as_deref(), tools);
+    }
     if let Some(effort) = effort {
         params["effort"] = json!(effort);
     }
@@ -337,15 +391,40 @@ pub fn turn_start_params(
     params
 }
 
-/// The user input for `turn/start` and `turn/steer`: the text, with a skill typed with any
-/// currency sigil rewritten to `$name` (`codexSkillMentionText`). Attachments are not sent.
-pub fn user_input(text: &str) -> Value {
-    let text = skill_mention_text(text);
-    if text.is_empty() {
-        json!([])
-    } else {
-        json!([{ "type": "text", "text": text }])
+/// The user input for `turn/start` and `turn/steer` (`toCodexInput`): the text, with a skill
+/// typed with any currency sigil rewritten to `$name` (`codexSkillMentionText`) and a line per
+/// attachment with its saved path; then each image a provider takes inline, as a data URL.
+/// Errors are the TS adapter's protocol errors, safe to show.
+pub fn user_input(
+    text: &str,
+    attachments: &[ChatAttachment],
+    attachments_dir: Option<&Path>,
+) -> Result<Value, String> {
+    let attachments: Vec<Value> = attachments.iter().map(to_json).collect();
+    let text = attachments::prompt_text(&skill_mention_text(text), &attachments, attachments_dir);
+    let mut items = Vec::new();
+    if !text.is_empty() {
+        items.push(json!({ "type": "text", "text": text }));
     }
+    for attachment in attachments
+        .iter()
+        .filter(|a| attachments::is_native_image(a))
+    {
+        let id = attachment["id"].as_str().unwrap_or_default();
+        let path = attachments::saved_path(attachments_dir, attachment)
+            .ok_or_else(|| format!("Invalid attachment id '{id}'"))?;
+        let bytes =
+            std::fs::read(&path).map_err(|_| format!("Failed to read attachment '{id}'."))?;
+        let mime = attachment["mimeType"].as_str().unwrap_or_default();
+        items.push(json!({
+            "type": "image",
+            "url": format!("data:{mime};base64,{}", attachments::base64(&bytes)),
+        }));
+    }
+    if items.is_empty() {
+        return Err("Turn requires non-empty text or attachments.".into());
+    }
+    Ok(Value::Array(items))
 }
 
 /// `SKILL_MENTION_PATTERN` (`composerInlineTokens.ts`): a whole word made of a currency sigil
@@ -453,7 +532,7 @@ mod tests {
             instance_env: vec![("OPENAI_BASE_URL".into(), "http://router".into())],
             ..CodexConfig::default()
         };
-        let spec = launch_spec(&config, None);
+        let spec = launch_spec(&config, None, false);
         assert_eq!(spec.program, PathBuf::from("codex"));
         assert_eq!(
             spec.args,
@@ -481,7 +560,12 @@ mod tests {
             spec.env_remove.is_empty(),
             "the host environment passes through"
         );
-        let from_env = launch_spec(&config, Some("--disable bar"));
+        let from_env = launch_spec(&config, Some("--disable bar"), true);
+        assert_eq!(
+            from_env.env_set,
+            [("OPENAI_BASE_URL".into(), "http://router".into())],
+            "a host originator wins, as the TS spread lets it"
+        );
         assert_eq!(&from_env.args[3..], ["--disable", "bar"]);
     }
 
@@ -495,9 +579,15 @@ mod tests {
             from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"})).unwrap();
         let params = turn_start_params(
             "01a0d5eb-f0c0",
-            user_input("Respond with the following text: fixture simple ok"),
+            user_input(
+                "Respond with the following text: fixture simple ok",
+                &[],
+                None,
+            )
+            .unwrap(),
             &policy,
             &selection,
+            None,
             None,
         );
         assert_eq!(
