@@ -64,7 +64,6 @@ import {
   type SDKRateLimitInfo,
   type SDKResultMessage,
   type SDKUserMessage,
-  type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
@@ -671,11 +670,6 @@ export interface ClaudeAgentSdkQuerySession {
   }) => Effect.Effect<unknown, ClaudeAgentSdkQueryRunnerError>;
   readonly listPermissionRules: Effect.Effect<
     ReadonlyArray<ClaudePermissionRule>,
-    ClaudeAgentSdkQueryRunnerError
-  >;
-  /** The session's slash commands, including the ones its SessionStart hooks registered. */
-  readonly supportedCommands?: Effect.Effect<
-    ReadonlyArray<SlashCommand>,
     ClaudeAgentSdkQueryRunnerError
   >;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -1692,10 +1686,6 @@ export const layerQueryRunner: Layer.Layer<
                   }),
                 catch: (cause) => queryRunnerError(cause, "callMcpTool"),
               }),
-            supportedCommands: Effect.tryPromise({
-              try: () => queryRuntime.supportedCommands(),
-              catch: (cause) => queryRunnerError(cause, "supportedCommands"),
-            }),
             listPermissionRules: Effect.tryPromise({
               try: () =>
                 sendClaudeControlRequest(queryRuntime, { subtype: "list_permission_rules" }),
@@ -5266,11 +5256,6 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
-  /** Capability probes run without hooks, so only a live session lists hook-registered commands. */
-  readonly onSessionSlashCommands?: (
-    cwd: string,
-    commands: ReadonlyArray<SlashCommand>,
-  ) => Effect.Effect<void>;
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -12291,24 +12276,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {
-                  const { onSessionSlashCommands } = adapterOptions;
-                  const sessionCwd = turnInput.runtimePolicy.cwd;
-                  // Detached: the list is optional and must not hold up the message stream.
-                  const reportSlashCommands =
-                    onSessionSlashCommands &&
-                    sessionCwd &&
-                    querySession.supportedCommands &&
-                    message.type === "system" &&
-                    message.subtype === "init" &&
-                    !context.receivedInit
-                      ? querySession.supportedCommands.pipe(
-                          Effect.flatMap((commands) =>
-                            onSessionSlashCommands(sessionCwd, commands),
-                          ),
-                          Effect.ignore,
-                          Effect.forkDetach,
-                        )
-                      : Effect.void;
                   if (
                     message.type === "system" &&
                     message.subtype === "init" &&
@@ -12352,9 +12319,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
-                  return reportSlashCommands.pipe(
-                    Effect.andThen(handleSdkMessage({ query: querySession, message })),
-                  );
+                  return handleSdkMessage({ query: querySession, message });
                 }),
               ),
             ),
@@ -13767,10 +13732,7 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<
-      ClaudeAdapterV2Options,
-      "scopedLimitNames" | "onUsageLimits" | "onSessionSlashCommands" | "modelCatalog"
-    > = {},
+    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

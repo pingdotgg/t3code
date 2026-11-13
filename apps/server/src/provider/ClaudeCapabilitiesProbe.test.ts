@@ -7,10 +7,12 @@ import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  type ClaudeHookSlashCommandsByCwd,
   buildClaudeCapabilitiesProbeQueryOptions,
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
@@ -42,15 +44,56 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
       { skills: [], slashCommands: [] } as unknown as ServerProvider,
       "/nonexistent/t3-deleted-worktree",
       { HOME: "/nonexistent/t3-home" },
-      [{ name: "handoffs" }, { name: "Compact", description: "duplicate of the built-in" }],
     );
     assert.strictEqual(snapshot.slashCommandsPending, false);
-    // The hookless probe cannot list what a session's hooks registered, so a live session does.
-    assert.deepEqual(
-      snapshot.slashCommands.map((command) => command.name),
-      ["compact", "handoffs"],
-    );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// regression: #17418 a mod registers its commands in a SessionStart hook, which hookless scans skip
+it.effect("lists hook-registered commands from one hook-running probe per folder", () =>
+  Effect.gen(function* () {
+    const hookProbeCwds: Array<string | undefined> = [];
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      const hookless =
+        (options?.settings as { readonly disableAllHooks?: boolean } | undefined)
+          ?.disableAllHooks === true;
+      if (!hookless) hookProbeCwds.push(options?.cwd);
+      return {
+        initializationResult: async () => ({
+          commands: [
+            { name: "review", description: "Review changes", argumentHint: "" },
+            ...(hookless ? [] : [{ name: "handoffs", description: "Handoffs", argumentHint: "" }]),
+          ],
+        }),
+      } as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped();
+    const settings = yield* decodeClaudeSettings({ binaryPath: "claude" });
+    const environment = {
+      PATH: (yield* HostProcess.Environment).PATH,
+      CLAUDE_CONFIG_DIR: yield* fileSystem.makeTempDirectoryScoped(),
+    };
+    const byCwd = yield* Ref.make<ClaudeHookSlashCommandsByCwd>(new Map());
+    const scan = (discover: boolean, scanCwd = cwd) =>
+      probeClaudeWorkspaceSnapshot(
+        settings,
+        { skills: [], slashCommands: [] } as unknown as ServerProvider,
+        scanCwd,
+        environment,
+        { byCwd, discover },
+      ).pipe(Effect.map((snapshot) => snapshot.slashCommands.map((command) => command.name)));
+
+    // A caller that may not run hooks neither runs them nor remembers their absence.
+    assert.deepEqual(yield* scan(false), ["compact", "review"]);
+    assert.deepEqual(hookProbeCwds, []);
+    assert.deepEqual(yield* scan(true), ["compact", "review", "handoffs"]);
+    // Later scans, a read-only caller's included, reuse the answer without running hooks again.
+    assert.deepEqual(yield* scan(true), ["compact", "review", "handoffs"]);
+    assert.deepEqual(yield* scan(false), ["compact", "review", "handoffs"]);
+    assert.deepEqual(hookProbeCwds, [cwd]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
