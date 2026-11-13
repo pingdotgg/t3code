@@ -1,6 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 // Scenario drivers. Each gets a fresh page in a shared browser context, so scenario 2 onward
 // reuses the session cookie that scenario 1 earned by pairing.
@@ -877,6 +878,119 @@ async function rustTerminal(ctx) {
   });
 }
 
+/** True once the client sent a frame whose JSON contains `text`. */
+const sentIn = (ctx, text) =>
+  ctx.cap.lines.some((l) => l.dir === "in" && JSON.stringify(l.frame).includes(text));
+
+/** An image upload that Claude reads and names the colour of. */
+async function rustAttachment(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await ctx.page
+    .locator("input[type=file]")
+    .first()
+    .setInputFiles({ name: "red.png", mimeType: "image/png", buffer: solidPng(229, 72, 77) });
+  const deadline = Date.now() + 30_000;
+  while (
+    Date.now() < deadline &&
+    !ctx.cap.http.some((h) => h.method === "POST" && h.url.includes("/api/attachments/upload/"))
+  ) {
+    await ctx.page.waitForTimeout(200);
+  }
+  await settle(ctx, 1500, 15_000);
+  await send(ctx, "What colour fills this image? Reply with one lowercase word.");
+  await waitTurnEnd(ctx);
+  await ctx.page
+    .getByText(/^red\.?$/i)
+    .last()
+    .waitFor({ timeout: 30_000 });
+  await ctx.shotAlways("attachment-described");
+}
+
+/** A thread launched into a new git worktree from the composer's run context menu. */
+async function rustWorktree(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await ctx.page
+    .getByRole("button", { name: /^Run context/ })
+    .first()
+    .click();
+  await ctx.page
+    .getByRole("menuitemradio", { name: /New worktree/ })
+    .first()
+    .click();
+  await settle(ctx, 1000, 10_000);
+  await ctx.shotAlways("worktree-mode");
+  await send(ctx, "Reply with exactly: worktree ok");
+  await waitTurnEnd(ctx);
+  await ctx.page
+    .getByText(/^worktree ok\.?$/i)
+    .last()
+    .waitFor({ timeout: 30_000 });
+  if (!sentIn(ctx, '"workspaceStrategy":{"type":"worktree"')) {
+    throw new Error("the client did not launch with a worktree strategy");
+  }
+  await ctx.shotAlways("worktree-turn");
+}
+
+/** A turn where Claude calls a T3 tool over /mcp. */
+async function rustMcp(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, "Full access");
+  await send(
+    ctx,
+    "Call the t3_thread_list tool of the t3-code MCP server once, then reply with exactly: mcp ok",
+  );
+  await waitTurnEnd(ctx, 180_000);
+  await ctx.page
+    .getByText(/^mcp ok\.?$/i)
+    .last()
+    .waitFor({ timeout: 30_000 });
+  if (
+    !ctx.cap.lines.some(
+      (l) => l.dir === "out" && JSON.stringify(l.frame).includes("t3_thread_list"),
+    )
+  ) {
+    throw new Error("no t3_thread_list tool row reached the client");
+  }
+  await ctx.shotAlways("mcp-tool");
+}
+
+/** A subagent turn; its row opens the child thread. */
+async function rustSubagent(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, "Full access");
+  await send(
+    ctx,
+    "Use the Agent tool with the description 'Echo check' to run the shell command `echo sub-ok` and report its output. Then reply with exactly: subagent ok",
+  );
+  // The user's own Claude settings may still ask for the subagent's command: approve it.
+  const deadline = Date.now() + 240_000;
+  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  while (Date.now() < deadline && (await stopButton(ctx).first().isVisible())) {
+    const approve = ctx.page.getByRole("button", { name: "Approve", exact: true }).first();
+    if (await approve.isVisible().catch(() => false)) {
+      ctx.log("approving the subagent's command");
+      await approve.click();
+    }
+    await ctx.page.waitForTimeout(500);
+  }
+  await settle(ctx, 4000, 60_000);
+  await ctx.page
+    .getByText(/subagent ok/i)
+    .last()
+    .waitFor({ timeout: 60_000 });
+  await ctx.shotAlways("subagent-parent");
+  const parentUrl = ctx.page.url();
+  await ctx.page.getByText("Echo check", { exact: true }).first().click();
+  await ctx.page.waitForURL((u) => u.href !== parentUrl, { timeout: 15_000 });
+  await settle(ctx, 2000, 15_000);
+  if (!decodeURIComponent(ctx.page.url()).includes("thread:subagent:")) {
+    throw new Error(`the row opened ${ctx.page.url()}, not a child thread`);
+  }
+  await ctx.shotAlways("subagent-child");
+}
+
 export const SCENARIOS = {
   pairing,
   reconnect,
@@ -903,4 +1017,8 @@ export const SCENARIOS = {
   "rust-files": rustFiles,
   terminal,
   "rust-terminal": rustTerminal,
+  "rust-attachment": rustAttachment,
+  "rust-worktree": rustWorktree,
+  "rust-mcp": rustMcp,
+  "rust-subagent": rustSubagent,
 };

@@ -7,7 +7,10 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use conn_contract::{ChatAttachment, TerminalCloseInput, from_json, to_json};
+use conn_contract::{
+    ChatAttachment, ProjectClonePhase, TerminalCloseInput, WorktreeSetupStageId,
+    WorktreeSetupStageStatus, from_json, to_json,
+};
 use conn_engine::{
     AgentSession, AgentTools, BoxFuture, EngineHost, ProvisionedWorktree, ThreadClose,
     TurnObserver, TurnPoint, WorktreeRequest,
@@ -150,6 +153,21 @@ impl TurnObserver for Host {
     fn turn_started(&self, point: TurnPoint) -> BoxFuture<'_, ()> {
         if let Some(mcp) = self.mcp.get() {
             mcp.touch_thread(&point.thread_id);
+        }
+        // A launch into a new worktree ends its setup when the agent starts.
+        let setups = &self.vcs.setups;
+        if setups
+            .get(&point.thread_id)
+            .is_some_and(|s| s.phase == ProjectClonePhase::Running)
+        {
+            setups.mark_uncancellable(&point.thread_id);
+            setups.stage_status(
+                &point.thread_id,
+                WorktreeSetupStageId::Agent,
+                WorktreeSetupStageStatus::Done,
+                None,
+            );
+            setups.finish(&point.thread_id, ProjectClonePhase::Done, None);
         }
         Box::pin(std::future::ready(()))
     }
