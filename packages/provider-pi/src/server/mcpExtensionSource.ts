@@ -8,6 +8,7 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+export const PI_T3_STOP_SUBAGENTS_COMMAND = "t3-stop-subagents";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -25,6 +26,7 @@ const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
+const STOP_SUBAGENTS_COMMAND = ${JSON.stringify(PI_T3_STOP_SUBAGENTS_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -304,6 +306,21 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     description: "Set the service tier T3 Code sends with provider requests",
     handler: async (args) => {
       serviceTier = args.trim() || undefined;
+    },
+  });
+
+  // Detached pi-subagents runs are separate processes, so Stop asks pi-subagents to end them by id.
+  pi.registerCommand(STOP_SUBAGENTS_COMMAND, {
+    description: "Stop the pi-subagents background runs that T3 Code stopped",
+    handler: async (args) => {
+      for (const id of args.split(/\\s+/).filter(Boolean)) {
+        pi.events.emit("subagents:rpc:v1:request", {
+          version: 1,
+          requestId: NodeCrypto.randomUUID(),
+          method: "stop",
+          params: { id },
+        });
+      }
     },
   });
 

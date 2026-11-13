@@ -76,6 +76,10 @@ installs Pi's example `subagent` extension, T3 Code also shows its task progress
 UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
 threads.
 
+Background runs started through the [pi-subagents](https://github.com/nicobailon/pi-subagents)
+extension stay on the turn that launched them until each child finishes, so that turn keeps showing
+as waiting. Stopping it asks pi-subagents to stop those runs.
+
 ## Troubleshooting
 
 - If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh

@@ -73,8 +73,13 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_SERVICE_TIER_COMMAND,
+  PI_T3_STOP_SUBAGENTS_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
+import { makePiBackgroundSubagents, type PiBackgroundSubagent } from "./subagents.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -543,6 +548,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      const backgroundSubagents = makePiBackgroundSubagents<ActivePiTurn>();
+      let backgroundSubagentTurns: ReadonlySet<ActivePiTurn> = new Set();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1292,7 +1299,95 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
         if (toolName === "subagent") {
           yield* emitSubagentTasks(turn, toolCallId, resultRecord, completed);
+          if (completed && !isError) {
+            yield* emitBackgroundSubagents(
+              backgroundSubagents.observeLaunch({
+                owner: turn,
+                toolCallId,
+                args,
+                details: recordField(resultRecord, "details"),
+              }),
+            );
+          }
         }
+      });
+
+      // A detached child outlives its turn, so its rows keep that turn's ids and hold its run open.
+      const emitBackgroundSubagents = Effect.fnUntraced(function* (
+        members: ReadonlyArray<PiBackgroundSubagent<ActivePiTurn>>,
+      ) {
+        const emittedAt = yield* DateTime.now;
+        for (const member of members) {
+          const turn = member.owner;
+          const subagentId = idAllocator.derive.nodeFromProviderItem({
+            driver: PI_PROVIDER,
+            nativeItemId: member.nativeTaskId,
+          });
+          // A workflow starts children long after the call that launched it returned.
+          const startedAt =
+            Option.getOrUndefined(DateTime.make(member.startedAt ?? Number.NaN)) ??
+            turn.toolStartedAt.get(member.toolCallId) ??
+            emittedAt;
+          const completedAt =
+            member.status === "pending" || member.status === "running" ? null : emittedAt;
+          yield* emit({
+            type: "subagent.updated",
+            driver: PI_PROVIDER,
+            subagent: {
+              id: subagentId,
+              threadId: turn.turnInput.threadId,
+              runId: turn.turnInput.runId,
+              parentNodeId: idAllocator.derive.nodeFromProviderItem({
+                driver: PI_PROVIDER,
+                nativeItemId: member.toolCallId,
+              }),
+              origin: "provider_native",
+              createdBy: "agent",
+              driver: PI_PROVIDER,
+              providerInstanceId: options.instanceId,
+              providerThreadId: turn.turnInput.providerThread.id,
+              childThreadId: null,
+              nativeTaskRef: providerRef(member.nativeTaskId),
+              prompt: member.prompt,
+              title: member.title,
+              model: member.model,
+              status: member.status,
+              result: null,
+              startedAt,
+              completedAt,
+              updatedAt: emittedAt,
+            },
+          });
+          yield* emit({
+            type: "turn_item.updated",
+            driver: PI_PROVIDER,
+            turnItem: {
+              ...baseItemFields(turn, member.nativeTaskId, startedAt, emittedAt),
+              status: member.status,
+              title: member.title,
+              completedAt,
+              type: "subagent",
+              subagentId,
+              origin: "provider_native",
+              driver: PI_PROVIDER,
+              providerInstanceId: options.instanceId,
+              childThreadId: null,
+              prompt: member.prompt,
+              result: null,
+            },
+          });
+        }
+        const pending = backgroundSubagents.pendingOwners();
+        for (const turn of new Set([...backgroundSubagentTurns, ...pending])) {
+          if (backgroundSubagentTurns.has(turn) === pending.has(turn)) continue;
+          yield* emit({
+            type: "background_work.updated",
+            driver: PI_PROVIDER,
+            providerTurnId: turn.providerTurn.id,
+            pending: pending.has(turn),
+          });
+        }
+        backgroundSubagentTurns = pending;
       });
 
       const emitSubagentTasks = Effect.fnUntraced(function* (
@@ -1901,6 +1996,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           yield* updateExtensionStatus(event);
           return;
         }
+        // Detached children belong to the turn that launched them, so a wake never buffers their frames.
+        const backgroundMembers = backgroundSubagents.observeSessionFrame(event);
+        if (backgroundMembers !== undefined) {
+          yield* emitBackgroundSubagents(backgroundMembers);
+          return;
+        }
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
         const interactiveUiRequest =
           event["type"] === "extension_ui_request" &&
@@ -2496,6 +2597,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   protocolError("Pi transport closed during rollback"),
                 );
               pendingWake = null;
+              yield* emitBackgroundSubagents(backgroundSubagents.close());
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
                 state.activeTurn.failure = interrupted
@@ -2779,10 +2881,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
-        hasPendingBackgroundWorkForThread: (providerThread) =>
+        hasPendingBackgroundWork: Effect.sync(
+          () => pendingWake !== null || backgroundSubagentTurns.size > 0,
+        ),
+        hasPendingBackgroundWorkForThread: (providerThread, probe) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (probe?.includeSubagents === true &&
+                [...backgroundSubagentTurns].some(
+                  (turn) => turn.turnInput.providerThread.id === providerThread.id,
+                )),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
@@ -3085,6 +3194,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           function* (interruptInput) {
             const turn = threadState?.activeTurn ?? null;
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
+              // The children are separate processes. Their rows settle when pi-subagents reports them stopped.
+              const asyncIds = backgroundSubagents.requestStop(
+                (owner) => owner.providerTurn.id === interruptInput.providerTurnId,
+              );
+              if (asyncIds.length > 0) {
+                yield* request(
+                  {
+                    type: "prompt",
+                    message: `/${PI_T3_STOP_SUBAGENTS_COMMAND} ${asyncIds.join(" ")}`,
+                  },
+                  2_000,
+                ).pipe(Effect.ignore);
+              }
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
               return;
