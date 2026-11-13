@@ -1,6 +1,5 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { useNavigation } from "@react-navigation/native";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   htmlRenderFileName,
   htmlRenderFrameHeight,
@@ -174,14 +173,16 @@ export function HtmlRenderWebView(props: {
 
 export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
   readonly render: HtmlRenderReference;
   readonly frameWidth: number;
+  readonly expandedHeight: number | undefined;
+  readonly onToggleExpanded: () => void;
   readonly iconColor: ColorValue;
 }) {
-  const navigation = useNavigation();
   const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const inlineHeight = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const expanded = props.expandedHeight !== undefined;
+  const height = Math.max(inlineHeight, props.expandedHeight ?? 0);
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
@@ -243,23 +244,17 @@ export function ThreadHtmlRender(props: {
         {uri !== null && !failed ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${title}`}
+            accessibilityLabel={expanded ? `Shrink ${title}` : `Enlarge ${title}`}
             hitSlop={8}
             className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
-            onPress={() =>
-              navigation.navigate("ThreadAttachment", {
-                environmentId: String(props.environmentId),
-                threadId: String(props.threadId),
-                attachmentId,
-                name: fileName,
-                mimeType: "text/html",
-                sizeBytes: "0",
-                htmlRender: "1",
-              })
-            }
+            onPress={props.onToggleExpanded}
           >
             <SymbolView
-              name="arrow.up.left.and.arrow.down.right"
+              name={
+                expanded
+                  ? "arrow.down.right.and.arrow.up.left"
+                  : "arrow.up.left.and.arrow.down.right"
+              }
               size={12}
               tintColor={props.iconColor}
               type="monochrome"

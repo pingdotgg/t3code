@@ -1623,6 +1623,8 @@ function RunFoldButton({
   );
 }
 
+type ExpandedHtmlRender = { readonly id: string; readonly height: number };
+
 function renderFeedEntry(
   info: { item: ThreadFeedRow; index: number },
   props: Pick<
@@ -1668,6 +1670,8 @@ function renderFeedEntry(
     readonly contentWidth: number;
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
+    readonly expandedHtmlRender: ExpandedHtmlRender | null;
+    readonly onToggleHtmlRender: (rowId: string) => void;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
   },
 ) {
@@ -1730,9 +1734,12 @@ function renderFeedEntry(
     return (
       <ThreadHtmlRender
         environmentId={props.environmentId}
-        threadId={props.threadId}
         render={entry.render}
         frameWidth={props.contentWidth}
+        expandedHeight={
+          props.expandedHtmlRender?.id === entry.id ? props.expandedHtmlRender.height : undefined
+        }
+        onToggleExpanded={() => props.onToggleHtmlRender(entry.id)}
         iconColor={iconSubtleColor}
       />
     );
@@ -2725,6 +2732,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [expandedHtmlRender, setExpandedHtmlRender] = useState<ExpandedHtmlRender | null>(null);
   const [disclosureLayout, setDisclosureLayout] = useState<DisclosureLayout | null>(null);
   const disclosureMotionRef = useRef<DisclosureLayout | null>(null);
   const disclosureMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3259,6 +3267,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
     disclosureLayout,
+    expandedHtmlRender,
     reduceMotion,
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
@@ -3584,7 +3593,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const getFixedItemSize = (entry: ThreadFeedRow) => {
     if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
-      return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+      const height = htmlRenderFrameHeight(entry.render, contentWidth);
+      return htmlRenderRowHeight(
+        expandedHtmlRender?.id === entry.id ? Math.max(height, expandedHtmlRender.height) : height,
+      );
     }
     if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
@@ -3634,6 +3646,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       listRef.current?.clearCaches({ mode: "sizes" });
     }
   }, [textSizeKey, contentWidth, hasHtmlRenders, listRef]);
+
+  // Enlarged in place: a WebView reloads when it moves, so another screen would start the page over.
+  const onToggleHtmlRender = (id: string) => {
+    if (expandedHtmlRender?.id === id) {
+      setExpandedHtmlRender(null);
+      return;
+    }
+    const visibleHeight =
+      viewportHeight - anchorTopInset - bottomContentInset - props.contentInsetEndAdjustment.get();
+    setExpandedHtmlRender({ id, height: Math.round(visibleHeight) });
+  };
+  const shownHtmlRender = useRef(expandedHtmlRender);
+  const resizeHtmlRenderRow = useEffectEvent((expanded: ExpandedHtmlRender | null) => {
+    if (shownHtmlRender.current === expanded) return;
+    shownHtmlRender.current = expanded;
+    const list = listRef.current;
+    if (!list) return;
+    list.clearCaches({ mode: "sizes" });
+    if (expanded === null) return;
+    const index = groupedFeed.findIndex((entry) => entry.id === expanded.id);
+    if (index !== -1) list.scrollToIndex({ index, viewPosition: 0, viewOffset: anchorTopInset });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- LegendList reads row sizes only after the commit that resizes the enlarged page
+  useLayoutEffect(() => resizeHtmlRenderRow(expandedHtmlRender), [expandedHtmlRender]);
 
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <DisclosureRow
@@ -3710,6 +3746,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
             workflowOpening,
+            expandedHtmlRender,
+            onToggleHtmlRender,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
