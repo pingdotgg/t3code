@@ -38,6 +38,11 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import {
+  ThreadWorktreeRestore,
+  WorktreeRecreateError,
+} from "../workspace/restoreMissingWorktree.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -195,6 +200,79 @@ it.effect(
       });
 
       expect(dispatched).toEqual(["message.dispatch"]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect(
+  "sendToThread fails, without dispatching, when the thread's missing worktree cannot be recreated",
+  () => {
+    const projectId = ProjectId.make("project:thread-management:worktree-gone");
+    const threadId = ThreadId.make("thread:thread-management:worktree-gone");
+    const dispatched: Array<string> = [];
+    const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+      Layer.provide(
+        Layer.succeed(ThreadWorktreeRestore, {
+          restore: () =>
+            Effect.fail(
+              new WorktreeRecreateError({
+                worktreePath: "/worktrees/gone",
+                branch: "t3/gone",
+                cause: new Error("branch_checked_out_in_worktree"),
+              }),
+            ),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+          ensureTranscript: () =>
+            Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+        }),
+      ),
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId,
+                deletedAt: null,
+                archivedAt: null,
+                worktreePath: "/worktrees/gone",
+                branch: "t3/gone",
+              },
+              runs: [],
+              providerTurns: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command.type);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provideMerge(layerReceiptsTest),
+    );
+
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const error = yield* Effect.flip(
+        threads.sendToThread({
+          projectId,
+          threadId,
+          commandId: CommandId.make("command:thread-management:worktree-gone"),
+          messageId: MessageId.make("message:thread-management:worktree-gone"),
+          text: "Reply with ok.",
+          attachments: [],
+          mode: "auto",
+          createdBy: "agent",
+          creationSource: "mcp",
+        }),
+      );
+      expect(error._tag).toBe("ThreadManagementWorktreeRestoreError");
+      expect(dispatched).toEqual([]);
     }).pipe(Effect.provide(layerTest));
   },
 );
