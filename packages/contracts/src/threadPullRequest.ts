@@ -100,7 +100,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   pendingEdits: Schema.optional(
     Schema.Array(Schema.Struct({ id: TrimmedNonEmptyString, editedAt: IsoDateTime })),
   ),
-  /** Remarks whose edit was reported on headSha; their later edits wait for a new head. */
+  /** Remarks whose edit was reported on headSha; their later edits settle for longer. */
   remarkEditsTold: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   conflicting: Schema.Boolean,
   /** Last removal seen; null after an empty read, absent before the first read. */

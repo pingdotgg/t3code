@@ -11,6 +11,8 @@ import * as DateTime from "effect/DateTime";
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
 export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
+/** Outlasts a bot's countdown rewrites, so a remark already reported on a head wakes once more. */
+const TOLD_EDIT_SETTLE_MS = 10 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
@@ -194,14 +196,17 @@ export function evaluatePullRequestWatch(
   const pending = headMoved ? [] : (watch.pendingEdits ?? []);
   const held = new Map(pending.map((edit) => [edit.id, edit.editedAt]));
   // Some bots keep rewriting one comment on the same head (a review countdown, a CI status
-  // table), so each remark's edit is reported once per head; after a push its edits are news again.
+  // table), so after a remark's edit is reported on a head its later edits settle for longer.
   const editsTold = headMoved ? [] : (watch.remarkEditsTold ?? []);
   const added: Array<PullRequestComment> = [];
   const edits: Array<PullRequestComment> = [];
   const heldNow: Array<{ id: string; editedAt: string }> = [];
   for (const remark of byOthers) {
     if (remark.editedAt != null && held.get(remark.id) === remark.editedAt) {
-      edits.push(remark);
+      const settling =
+        editsTold.includes(remark.id) && now - Date.parse(remark.editedAt) < TOLD_EDIT_SETTLE_MS;
+      if (settling) heldNow.push({ id: remark.id, editedAt: remark.editedAt });
+      else edits.push(remark);
     } else if (!fresh.includes(remark)) {
       // A rewatch moves the watermark past an edit made while the watch was stopped.
       if (remark.editedAt != null && held.has(remark.id)) {
@@ -209,7 +214,7 @@ export function evaluatePullRequestWatch(
       }
     } else if (remark.editedAt == null || isNew(remark.createdAt, remark.id)) {
       added.push(remark);
-    } else if (!editsTold.includes(remark.id)) {
+    } else {
       heldNow.push({ id: remark.id, editedAt: remark.editedAt });
     }
   }

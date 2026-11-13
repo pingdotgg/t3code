@@ -658,7 +658,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(ownHeld.next, detail(), [own]).changes, []);
   });
 
-  it("reports a remark's settled edit once per head, and again after a push", () => {
+  it("reports a remark's later edits on one head only after they settle for longer", () => {
     const summary = remark("coderabbitai[bot]", "2026-10-10T19:52:40.000Z");
     const status = remark("ci-bot", "2026-10-10T19:52:40.000Z");
     let next = watch({
@@ -666,44 +666,49 @@ describe("evaluatePullRequestWatch", () => {
       remarksThrough: summary.createdAt,
       remarkIds: [summary.id, status.id],
     });
-    // One read sees the edit and holds it; the next finds it unchanged and reports it.
-    const sweep = (headSha: string, edited: ReadonlyArray<PullRequestComment>) => {
-      const held = evaluatePullRequestWatch(next, detail({ headSha }), edited);
-      const settled = evaluatePullRequestWatch(held.next, detail({ headSha }), edited);
-      next = settled.next;
-      return [...held.changes, ...settled.changes].filter((change) => change.kind === "remarks");
-    };
-    const at = (minute: string) => ({ ...summary, editedAt: `2026-10-10T20:${minute}:00.000Z` });
-    // A rate-limited bot rewrites its countdown every few minutes on the same head.
-    assert.deepEqual(sweep("aaaaaaaaaa", [at("00")]), [
-      { kind: "remarks", remarks: [at("00")], edited: true },
+    const time = (minute: number) => `2026-10-10T20:${String(minute).padStart(2, "0")}:00.000Z`;
+    // Reads at each minute, returning the remark changes they report.
+    const reads = (
+      headSha: string,
+      seen: ReadonlyArray<PullRequestComment>,
+      minutes: ReadonlyArray<number>,
+    ) =>
+      minutes.flatMap((minute) => {
+        const report = evaluate(next, detail({ headSha }), seen, Date.parse(time(minute)));
+        next = report.next;
+        return report.changes.filter((change) => change.kind === "remarks");
+      });
+    const at = (minute: number) => ({ ...summary, editedAt: time(minute) });
+    // A remark's first edit on a head wakes once it reads unchanged.
+    assert.deepEqual(reads("aaaaaaaaaa", [at(0)], [1, 3]), [
+      { kind: "remarks", remarks: [at(0)], edited: true },
     ]);
-    for (const minute of ["05", "10", "15"]) {
-      assert.deepEqual(sweep("aaaaaaaaaa", [at(minute)]), []);
+    // A rate-limited bot rewriting its countdown stays quiet until the rewrites stop.
+    for (const minute of [5, 10, 15]) {
+      assert.deepEqual(reads("aaaaaaaaaa", [at(minute)], [minute + 1, minute + 3]), []);
     }
-    assert.isUndefined(next.pendingEdits);
+    assert.deepEqual(reads("aaaaaaaaaa", [at(15)], [26]), [
+      { kind: "remarks", remarks: [at(15)], edited: true },
+    ]);
     // Another remark's first edit on this head is still news.
-    const statusEdit = { ...status, editedAt: "2026-10-10T20:16:00.000Z" };
-    assert.deepEqual(sweep("aaaaaaaaaa", [at("15"), statusEdit]), [
+    const statusEdit = { ...status, editedAt: time(27) };
+    assert.deepEqual(reads("aaaaaaaaaa", [at(15), statusEdit], [28, 30]), [
       { kind: "remarks", remarks: [statusEdit], edited: true },
     ]);
-    // A bot re-reviewing a push by editing its summary is reported again.
-    assert.deepEqual(sweep("bbbbbbbbbb", [at("20"), statusEdit]), [
-      { kind: "remarks", remarks: [at("20")], edited: true },
+    // After a push the bot edits its summary to reviewing, then to its finished review.
+    assert.deepEqual(reads("bbbbbbbbbb", [at(31), statusEdit], [32, 34]), [
+      { kind: "remarks", remarks: [at(31)], edited: true },
     ]);
-    assert.deepEqual(sweep("bbbbbbbbbb", [at("25"), statusEdit]), []);
+    assert.deepEqual(reads("bbbbbbbbbb", [at(35), statusEdit], [36, 38]), []);
+    assert.deepEqual(reads("bbbbbbbbbb", [at(35), statusEdit], [46]), [
+      { kind: "remarks", remarks: [at(35)], edited: true },
+    ]);
     // An edit held on the old head does not spend the new head's report.
-    const held = evaluatePullRequestWatch(next, detail({ headSha: "bbbbbbbbbb" }), [
-      { ...status, editedAt: "2026-10-10T20:30:00.000Z" },
-    ]);
-    assert.deepEqual(held.changes, []);
-    next = held.next;
-    assert.deepEqual(
-      sweep("cccccccccc", [{ ...status, editedAt: "2026-10-10T20:30:00.000Z" }]),
-      [],
-    );
-    const finding = { ...status, editedAt: "2026-10-10T20:35:00.000Z" };
-    assert.deepEqual(sweep("cccccccccc", [finding]), [
+    const stale = { ...status, editedAt: time(47) };
+    assert.deepEqual(reads("bbbbbbbbbb", [at(35), stale], [48]), []);
+    assert.deepEqual(reads("cccccccccc", [at(35), stale], [50, 52]), []);
+    const finding = { ...status, editedAt: time(53) };
+    assert.deepEqual(reads("cccccccccc", [at(35), finding], [54, 56]), [
       { kind: "remarks", remarks: [finding], edited: true },
     ]);
   });
