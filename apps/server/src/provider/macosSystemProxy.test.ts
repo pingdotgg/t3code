@@ -72,6 +72,28 @@ describe("macosSystemProxyEnv", () => {
     assert.isFalse(npmBypasses(noProxy, "registry.npmjs.org"));
   });
 
+  it.each([
+    { name: "an HTTPS-only proxy", lines: ["HTTPEnable : 0"], http: undefined },
+    { name: "an HTTP-only proxy", lines: ["HTTPSEnable : 0"], https: undefined },
+    {
+      name: "different HTTP and HTTPS proxies",
+      lines: ["HTTPPort : 8080"],
+      http: "http://proxy.corp:8080",
+    },
+  ])("maps $name per scheme", ({ lines, ...expected }) => {
+    const env = macosSystemProxyEnv(scutil(...PROXY, ...lines));
+    const proxies = {
+      http: "http://proxy.corp:3128",
+      https: "http://proxy.corp:3128",
+      ...expected,
+    };
+    assert.strictEqual(env.HTTP_PROXY, proxies.http);
+    assert.strictEqual(env.http_proxy, proxies.http);
+    assert.strictEqual(env.HTTPS_PROXY, proxies.https);
+    assert.strictEqual(env.https_proxy, proxies.https);
+    assert.isTrue(npmBypasses(env.no_proxy ?? "", "127.0.0.2"));
+  });
+
   it("brackets an IPv6 proxy host", () => {
     assert.strictEqual(
       macosSystemProxyEnv(
@@ -91,8 +113,6 @@ describe("macosSystemProxyEnv", () => {
   it.each([
     { name: "no proxy", lines: [] },
     { name: "a disabled proxy", lines: [...PROXY, "HTTPEnable : 0", "HTTPSEnable : 0"] },
-    { name: "an HTTPS-only proxy", lines: [...PROXY, "HTTPEnable : 0"] },
-    { name: "different HTTP and HTTPS proxies", lines: [...PROXY, "HTTPPort : 8080"] },
     { name: "a proxy without a port", lines: PROXY.filter((line) => !line.includes("Port")) },
     { name: "an authenticated proxy", lines: [...PROXY, "HTTPUser : julia"] },
     { name: "a PAC file", lines: [...PROXY, "ProxyAutoConfigEnable : 1"] },

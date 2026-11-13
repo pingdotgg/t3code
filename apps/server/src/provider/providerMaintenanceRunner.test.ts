@@ -630,7 +630,8 @@ describe("providerMaintenanceRunner", () => {
       const updaterEnv = spawns[1]?.env;
       assert.strictEqual(updaterEnv?.CODEX_HOME, "/work/codex-home");
       assert.strictEqual(updaterEnv?.HTTPS_PROXY, "http://127.0.0.1:7890");
-      assert.strictEqual(updaterEnv?.http_proxy, "http://127.0.0.1:7890");
+      assert.strictEqual(updaterEnv?.https_proxy, "http://127.0.0.1:7890");
+      assert.strictEqual(updaterEnv?.HTTP_PROXY, undefined);
       assert.match(updaterEnv?.no_proxy ?? "", /^registry\.corp,localhost,127\.0\.0\.1,/);
     }).pipe(
       Effect.provide(
@@ -650,9 +651,7 @@ describe("providerMaintenanceRunner", () => {
                       "    0 : *.local",
                       "    1 : 169.254/16",
                       "  }",
-                      "  HTTPEnable : 1",
-                      "  HTTPPort : 7890",
-                      "  HTTPProxy : 127.0.0.1",
+                      "  HTTPEnable : 0",
                       "  HTTPSEnable : 1",
                       "  HTTPSPort : 7890",
                       "  HTTPSProxy : 127.0.0.1",

@@ -47,11 +47,18 @@ function readScutilProxy(output: string) {
   return { fields, exceptions, hasDomainProxies };
 }
 
-function proxyUrl(fields: ReadonlyMap<string, string>, scheme: "HTTP" | "HTTPS"): string | null {
+/** One scheme's proxy URL, undefined when it is off, null when a variable cannot express it. */
+function proxyUrl(
+  fields: ReadonlyMap<string, string>,
+  scheme: "HTTP" | "HTTPS",
+): string | null | undefined {
+  if (fields.get(`${scheme}Enable`) !== "1") {
+    return undefined;
+  }
   const host = fields.get(`${scheme}Proxy`) ?? "";
   const port = fields.get(`${scheme}Port`) ?? "";
   // The password of an authenticated proxy is in the keychain, out of reach.
-  if (fields.get(`${scheme}Enable`) !== "1" || fields.has(`${scheme}User`) || !/^\d+$/.test(port)) {
+  if (fields.has(`${scheme}User`) || !/^\d+$/.test(port)) {
     return null;
   }
   if (host.includes(":")) {
@@ -83,12 +90,13 @@ export function macosSystemProxyEnv(
   existingNoProxy: ReadonlyArray<string> = [],
 ): Record<string, string> {
   const { fields, exceptions, hasDomainProxies } = readScutilProxy(scutilOutput);
-  const proxy = proxyUrl(fields, "HTTP");
+  const http = proxyUrl(fields, "HTTP");
+  const https = proxyUrl(fields, "HTTPS");
   const exceptionEntries = exceptions.map(noProxyEntries);
   if (
-    !proxy ||
-    // npm sends http requests through https_proxy, so two proxies cannot keep macOS's routing.
-    proxy !== proxyUrl(fields, "HTTPS") ||
+    (!http && !https) ||
+    http === null ||
+    https === null ||
     fields.get("ProxyAutoConfigEnable") === "1" ||
     fields.get("ProxyAutoDiscoveryEnable") === "1" ||
     // A VPN's per-domain proxies; one set of variables cannot route by domain.
@@ -107,11 +115,10 @@ export function macosSystemProxyEnv(
       ...IPV4_DIRECT,
     ]),
   ].join(",");
+  // Each scheme keeps its own proxy, except in npm, which sends http requests through https_proxy.
   return {
-    HTTP_PROXY: proxy,
-    http_proxy: proxy,
-    HTTPS_PROXY: proxy,
-    https_proxy: proxy,
+    ...(http ? { HTTP_PROXY: http, http_proxy: http } : {}),
+    ...(https ? { HTTPS_PROXY: https, https_proxy: https } : {}),
     NO_PROXY: noProxy,
     no_proxy: noProxy,
   };
