@@ -26,6 +26,8 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+# examples/replay_server.rs: the scripted provider instead of Claude.
+conn-engine = { workspace = true, features = ["fake-provider"] }
 # Paused clock: tests wait for "all tasks idle" instead of real time.
 tokio = { workspace = true, features = ["test-util"] }
 
