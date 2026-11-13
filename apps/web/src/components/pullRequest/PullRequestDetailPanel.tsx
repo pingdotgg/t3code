@@ -1282,7 +1282,10 @@ export function PullRequestDetailPanel({
       isDraft: detail.isDraft,
       mergeability: detail.mergeability,
       checksState,
-      reviewDecision: sharedSummary?.reviewDecision,
+      reviewDecision:
+        sharedSummary?.reviewDecision === undefined
+          ? detail.reviewDecision
+          : sharedSummary.reviewDecision,
       autoMergeEnabled: detail.autoMergeEnabled,
     });
   const primaryAction = detail

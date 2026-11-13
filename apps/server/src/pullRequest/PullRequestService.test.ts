@@ -149,6 +149,31 @@ it.effect("reads maintainer edits and changes them through the update command", 
   }),
 );
 
+it.effect.each([
+  { reported: "approved" as const, expected: "approved" },
+  { reported: null, expected: null },
+  { reported: undefined, expected: undefined },
+])("carries the host's review decision ($reported) on the detail", ({ reported, expected }) =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("Body"), reviewDecision: reported }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.strictEqual(detail.reviewDecision, expected);
+    assert.strictEqual("reviewDecision" in detail, expected !== undefined);
+  }),
+);
+
 it.effect("refuses maintainer edits on a host without the capability", () =>
   Effect.gen(function* () {
     let writes = 0;

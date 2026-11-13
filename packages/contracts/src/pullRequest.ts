@@ -650,6 +650,8 @@ export const PullRequestDetail = Schema.Struct({
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
+  /** Null means the host requires no review; absent means the read did not report one. */
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   mergeCapabilities: PullRequestMergeCapabilities,
   viewer: Schema.optional(TrimmedNonEmptyString),
   baseComparison: Schema.optional(PullRequestBaseComparison),
