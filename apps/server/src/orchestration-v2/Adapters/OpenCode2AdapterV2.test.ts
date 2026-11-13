@@ -174,14 +174,14 @@ const withInstructions = (
         "rpc.call",
       ].includes(String(entry.frame.type)),
   );
-  const after = entries.findIndex(
+  const after = entries.findLastIndex(
     (entry, index) =>
       index < first &&
       entry.type === "emit_inbound" &&
       typeof entry.frame === "object" &&
       entry.frame !== null &&
       "operation" in entry.frame &&
-      entry.frame.operation === "mcp.add",
+      (entry.frame.operation === "mcp.add" || entry.frame.operation === "mcp.list"),
   );
   const at = after < 0 ? first : after + 1;
   return first < 0
@@ -4702,6 +4702,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           oauth: false,
         },
       });
+      const listed = (status: "connected" | "pending") => [
+        out("mcp.list", { "location[directory]": WORK }),
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status } }],
+        }),
+      ];
       const turn = [
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
@@ -4713,9 +4720,23 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [
           add,
           reply("mcp.add", null),
+          ...listed("connected"),
+          ...turn,
+          // A reconnect that finished inside the add looks the same as a server that never dropped.
+          add,
+          reply("mcp.add", null),
+          ...listed("connected"),
+          ...turn,
+          // A recreated Location answers the add while the server is still connecting.
+          add,
+          reply("mcp.add", null),
+          ...listed("pending"),
+          ...listed("connected"),
           ...turn,
           add,
           reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
           out("session.instructions.entry.put", {
             sessionID: SESSION,
             key: "t3-code",
@@ -4723,19 +4744,17 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
           reply("session.instructions.entry.put", null),
           ...turn,
-          out("mcp.remove", { server, "location[directory]": WORK }),
-          reply("mcp.remove", null),
         ],
         { onPrompt: (input) => prompts.push(input) },
       );
-      for (let index = 0; index < 2; index++) {
+      // OpenCode before 2.2.6 loads a connected server's tools after a debounce.
+      for (const [index, wait] of [250, 250, 350, 0].entries()) {
         const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
         const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
-        // OpenCode before 2.2.6 loads a newly added server's tools after a debounce.
-        if (index === 0) {
-          yield* TestClock.adjust("249 millis");
-          assert.lengthOf(prompts, 0, "prompted before OpenCode loaded the new MCP server's tools");
-          yield* TestClock.adjust("1 millis");
+        if (wait > 0) {
+          yield* TestClock.adjust(wait - 1);
+          assert.lengthOf(prompts, index, "prompted before OpenCode loaded the MCP server's tools");
+          yield* TestClock.adjust(1);
         }
         yield* Fiber.join(started);
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
@@ -4785,6 +4804,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           },
         }),
         reply("mcp.add", null),
+        out("mcp.list", { "location[directory]": WORK }),
+        reply("mcp.list", {
+          location: { directory: WORK },
+          data: [{ name: server, status: { status: "connected" } }],
+        }),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
