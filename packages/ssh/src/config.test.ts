@@ -306,6 +306,48 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("keeps known_hosts ports that a configured alias for the address does not use", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(sshDir);
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        [
+          "[192.0.2.10]:2222 ssh-ed25519 AAAA",
+          "[192.0.2.10]:2223 ssh-ed25519 AAAA",
+          "[192.0.2.20]:2222 ssh-ed25519 AAAA",
+          "[box]:2200 ssh-ed25519 AAAA",
+          "box ssh-ed25519 AAAA",
+          "192.0.2.20 ssh-ed25519 AAAA",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config"),
+        [
+          "Host fixture",
+          "  HostName 192.0.2.10",
+          "  Port 22",
+          "Host prod",
+          "  HostName 192.0.2.20",
+          "  Port 2222",
+          "Host box",
+          "  Port 2200",
+          "",
+        ].join("\n"),
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map((host) => `${host.alias} ${host.port}`),
+        ["192.0.2.10 2222", "192.0.2.10 2223", "box null", "fixture null", "prod null"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("parses known_hosts entries without returning hashed hosts", () =>
     Effect.sync(() => {
       assert.deepEqual(
