@@ -48,6 +48,7 @@ import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const clientLaunchHarness = (input: {
+  readonly requireExplicitAgentModel?: boolean;
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly fallbackModel?: ModelSelection;
@@ -75,6 +76,9 @@ const clientLaunchHarness = (input: {
       getProviders: Effect.succeed(input.providers ?? []),
     }),
     ServerSettings.layerTest({
+      ...(input.requireExplicitAgentModel === undefined
+        ? {}
+        : { requireExplicitAgentModel: input.requireExplicitAgentModel }),
       fallbackModelSelection: input.fallbackModel ?? null,
       ...(input.defaultRuntimeMode === undefined
         ? {}
@@ -442,6 +446,36 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
     expect(ids[2]).not.toEqual(ids[0]);
     // Without a key every launch is new.
     expect(ids[3]).not.toEqual(ids[4]);
+  }),
+);
+
+it.effect("strict launches require an explicit model before creating a thread", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      requireExplicitAgentModel: true,
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = (model?: ModelSelection) =>
+      toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          projectId,
+          ...(model === undefined ? {} : { modelSelection: model }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    const refused = (yield* launch()).at(-1)?.result;
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(0);
+    yield* launch(modelSelection);
+    expect(launched).toHaveLength(1);
+    expect(launched[0]?.modelSelection).toEqual(modelSelection);
   }),
 );
 
