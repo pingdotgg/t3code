@@ -72,6 +72,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
         viewerCanMergeAsAdmin: false,
+        isMergeQueueEnabled: false,
         reviewDecision: null,
         additions: 0,
         deletions: 0,

@@ -408,6 +408,7 @@ describe("pull request detail decoding", () => {
             viewerDidAuthor: false,
             viewerCanUpdateBranch: false,
             viewerCanMergeAsAdmin: false,
+            isMergeQueueEnabled: false,
             baseRef: null,
             reviewRequests: { nodes: [] },
             labels: { nodes: [] },
@@ -552,7 +553,7 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
-  it("blocks merging a mergeable pull request with green checks that branch rules still hold, unless the viewer may bypass them", () => {
+  it("blocks merging a mergeable pull request with green checks that branch rules still hold, unless the viewer may bypass them or a merge queue takes it", () => {
     const passing = [check({ name: "build", status: "COMPLETED", conclusion: "SUCCESS" })];
 
     expect(detailOf(passing)).toMatchObject({
@@ -562,6 +563,7 @@ describe("pull request detail decoding", () => {
     });
     expect(detailOf(passing, { viewerCanMergeAsAdmin: true }).mergeBlocked).toBe(false);
     expect(detailOf(passing, { mergeStateStatus: "CLEAN" }).mergeBlocked).toBe(false);
+    expect(detailOf(passing, { isMergeQueueEnabled: true }).mergeBlocked).toBe(false);
   });
 
   it("reads an auto-merge request and strategy, and its null as off", () => {

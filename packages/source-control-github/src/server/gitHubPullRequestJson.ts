@@ -1117,8 +1117,9 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
     // BLOCKED is also the state while required checks or reviews are pending; whoever may bypass
-    // branch rules can still merge now.
-    mergeBlocked: pr.mergeStateStatus === "BLOCKED" && !pr.viewerCanMergeAsAdmin,
+    // branch rules can still merge now, and Merge on a merge-queue branch enqueues instead.
+    mergeBlocked:
+      pr.mergeStateStatus === "BLOCKED" && !pr.viewerCanMergeAsAdmin && !pr.isMergeQueueEnabled,
   };
 }
 
