@@ -528,6 +528,15 @@ function normalizeV1SessionUpdate(
           },
     };
   }
+  const update = notification.update;
+  // v1 defines a null tool name as unchanged; v2 consumers read null as a clear.
+  if (
+    (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
+    update.name === null
+  ) {
+    const { name: _name, ...rest } = update;
+    return { ...notification, update: rest } as unknown as AcpSchema.SessionNotification;
+  }
   if (notification.update.sessionUpdate !== "available_commands_update") {
     return notification as unknown as AcpSchema.SessionNotification;
   }
