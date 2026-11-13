@@ -21,6 +21,8 @@ use serde_json::Value;
 mod catalog;
 mod credentials;
 mod links;
+#[cfg(feature = "rmcp")]
+pub mod sdk;
 mod sessions;
 mod time;
 mod tools;

@@ -16,6 +16,14 @@ http = "1"
 # Already in the tree (conn-server): agent tokens from the OS random source, hashed at rest.
 getrandom = "0.3"
 sha2 = { version = "0.10", default-features = false }
+# Only for the transport comparison in README.md ("SDK or our own").
+rmcp = { version = "3.10", optional = true, default-features = false, features = [
+  "server",
+  "transport-streamable-http-server",
+] }
+
+[features]
+rmcp = ["dep:rmcp"]
 
 [dev-dependencies]
 conn-engine = { workspace = true, features = ["fake-provider"] }

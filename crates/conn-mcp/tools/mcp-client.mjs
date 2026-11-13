@@ -79,8 +79,8 @@ function readReply(contentType, text) {
   if (contentType?.startsWith("text/event-stream")) {
     const messages = text
       .split("\n")
-      .filter((line) => line.startsWith("data: "))
-      .map((line) => JSON.parse(line.slice(6)));
+      .filter((line) => line.startsWith("data:") && line.slice(5).trim() !== "")
+      .map((line) => JSON.parse(line.slice(5)));
     return messages.find((m) => "result" in m || "error" in m) ?? messages.at(-1);
   }
   return text.length === 0 ? undefined : JSON.parse(text);
