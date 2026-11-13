@@ -7,6 +7,8 @@ import {
   mcpToolPresentation,
   type McpToolPresentation,
 } from "../../provider/CodexToolPresentation.ts";
+import type { McpServerPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import {
   makeCodexTurnTokenUsageState,
   getCodexTurnAccumulator,
@@ -519,6 +521,7 @@ function codexMcpToolOutput(
 
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+const MCP_SERVER_STATUS_TIMEOUT = "20 seconds";
 
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
@@ -545,6 +548,7 @@ export function codexDynamicToolOutput(
 
 const projectCodexDynamicToolItem = Effect.fn("CodexAdapterV2.projectDynamicToolItem")(function* (
   item: CodexDynamicToolItem,
+  server?: McpServerPresentation,
 ): Effect.fn.Return<CodexDynamicToolProjection, never, Digest.Digest> {
   const output =
     item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
@@ -553,7 +557,7 @@ const projectCodexDynamicToolItem = Effect.fn("CodexAdapterV2.projectDynamicTool
       ? `${item.server}.${item.tool}`
       : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
   const presentation: McpToolPresentation =
-    item.type === "mcpToolCall" ? yield* mcpToolPresentation(item) : {};
+    item.type === "mcpToolCall" ? yield* mcpToolPresentation(item, server) : {};
   const title =
     dynamicToolTitle(toolName, item.arguments, presentation.title) ?? presentation.title;
   const toolSurface = presentation.toolSurface ?? dynamicToolSurface(toolName, item.arguments);
@@ -4082,6 +4086,72 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // Keyed by server, read once per session; null while the read is pending, or when it failed or named no server.
+        const mcpServerStatuses = new Map<
+          string,
+          {
+            readonly server: McpServerPresentation;
+            readonly toolIcons: ReadonlyMap<string, unknown>;
+          } | null
+        >();
+        // Off the notification reader, whose fiber must stay free to read the response.
+        const readMcpServerStatus = Effect.fn("CodexAdapterV2.readMcpServerStatus")(
+          function* (context: ActiveCodexTurnContext, server: string) {
+            const threadId = yield* getNativeThreadId(context.providerThread);
+            const response = yield* client.request("mcpServerStatus/list", {
+              threadId,
+              serverName: server,
+              detail: "toolsAndAuthOnly",
+            });
+            const status = response.data.find((entry) => entry.name === server);
+            mcpServerStatuses.set(
+              server,
+              status === undefined
+                ? null
+                : {
+                    server: {
+                      icons: status.serverInfo?.icons,
+                      websiteUrl: status.serverInfo?.websiteUrl,
+                      url: status.httpOrigin,
+                    },
+                    toolIcons: new Map(
+                      Object.values(status.tools).map((tool) => [tool.name, tool.icons]),
+                    ),
+                  },
+            );
+          },
+          Effect.timeout(MCP_SERVER_STATUS_TIMEOUT),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logDebug("Failed to read Codex MCP server status for tool icons.", {
+                cause,
+              }),
+          ),
+        );
+        /** A row projected before its server's first status read lands goes without an icon. */
+        const codexMcpServerPresentation = Effect.fn("CodexAdapterV2.mcpServerPresentation")(
+          function* (context: ActiveCodexTurnContext, item: CodexDynamicToolItem) {
+            if (
+              item.type !== "mcpToolCall" ||
+              resolveT3McpToolDefinition(`${item.server}.${item.tool}`) !== null
+            ) {
+              return undefined;
+            }
+            if (!mcpServerStatuses.has(item.server)) {
+              mcpServerStatuses.set(item.server, null);
+              yield* readMcpServerStatus(context, item.server).pipe(
+                Effect.forkIn(scope, { startImmediately: true }),
+              );
+              return undefined;
+            }
+            const status = mcpServerStatuses.get(item.server);
+            return status
+              ? { ...status.server, toolIcons: status.toolIcons.get(item.tool) }
+              : undefined;
+          },
+        );
+
         const buildDynamicToolArtifacts = Effect.fn("CodexAdapterV2.buildDynamicToolArtifacts")(
           function* (context: ActiveCodexTurnContext, item: CodexDynamicToolItem) {
             const updatedAt = yield* DateTime.now;
@@ -4096,9 +4166,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: item.id,
             });
             const { ordinal, startedAt } = yield* resolveItemPosition(context, item.id);
-            const projection = yield* projectCodexDynamicToolItem(item).pipe(
-              Effect.provideService(Digest.Digest, digest),
-            );
+            const projection = yield* projectCodexDynamicToolItem(
+              item,
+              yield* codexMcpServerPresentation(context, item),
+            ).pipe(Effect.provideService(Digest.Digest, digest));
             const node: OrchestrationV2ExecutionNode = {
               id: nodeId,
               threadId: context.projectionThreadId,

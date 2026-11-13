@@ -5911,6 +5911,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
+    {
+      name: "the icons its server declares",
+      status: {
+        serverInfo: {
+          name: "probe",
+          version: "1.0.0",
+          icons: [
+            { src: "https://probe.dev/light.svg", mimeType: "image/svg+xml", theme: "light" },
+            { src: "https://probe.dev/dark.svg", mimeType: "image/svg+xml", theme: "dark" },
+          ],
+        },
+        config: { type: "http", url: "https://mcp.probe.dev/mcp" },
+      },
+      icon: {
+        _tag: "themed-logo",
+        logoUrl: "https://probe.dev/light.svg",
+        logoUrlDark: "https://probe.dev/dark.svg",
+      },
+    },
+    {
+      name: "its HTTP server's site icon",
+      status: { config: { type: "http", url: "https://mcp.probe.dev/mcp?key=secret" } },
+      icon: { _tag: "website", pageUrl: "https://probe.dev" },
+    },
+    {
+      name: "no icon for a stdio server that declares none",
+      status: { config: { type: "stdio", command: "probe-mcp" } },
+      icon: undefined,
+    },
+  ] as const)("shows an MCP tool row with $name", ({ status, icon }) =>
+    Effect.gen(function* () {
+      const { item } = yield* runClaudeMcpAppToolTurn([], {
+        mcpServerStatus: Effect.succeed([{ ...PROBE_SERVER_STATUS, ...status }]),
+      });
+      assert.equal(item.type, "dynamic_tool");
+      if (item.type !== "dynamic_tool") return;
+      assert.deepEqual(item.toolSource?.icon, icon);
+      assert.deepEqual(item.toolIcon, icon);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
     { case: "no permission rules", rules: [], called: true, readOnly: true },
     {
       case: "an exact ask rule",
@@ -6217,7 +6269,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.gen(function* () {
       const { harness, item, mcpRequests } = yield* runClaudeMcpAppToolTurn([]);
       assert.isUndefined(mcpAppFromToolItem(item));
-      assert.deepEqual(mcpRequests, []);
+      // The one status read is the tool icon's; no app resource is read.
+      assert.deepEqual(mcpRequests, ["mcpServerStatus"]);
       const exit = yield* Effect.exit(
         harness.runtime.mcpApps!.callTool({
           providerThread: harness.providerThread,
@@ -6227,7 +6280,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       assert.isTrue(Exit.isFailure(exit));
-      assert.deepEqual(mcpRequests, []);
+      assert.deepEqual(mcpRequests, ["mcpServerStatus"]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

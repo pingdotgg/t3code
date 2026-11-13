@@ -7393,6 +7393,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         },
       },
       {
+        type: "expect_outbound",
+        label: "mcpServerStatus/list",
+        frame: {
+          id: 4,
+          method: "mcpServerStatus/list",
+          params: {
+            threadId: MCP_APP_NATIVE_THREAD,
+            serverName: "weather",
+            detail: "toolsAndAuthOnly",
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "mcpServerStatus/list",
+        frame: {
+          id: 4,
+          result: {
+            data: [
+              {
+                name: "weather",
+                authStatus: "unsupported",
+                httpOrigin: "https://mcp.weather.test",
+                serverInfo: {
+                  name: "weather",
+                  version: "1.0.0",
+                  icons: [{ src: "https://weather.test/icon.svg", mimeType: "image/svg+xml" }],
+                },
+                tools: { get_weather: { name: "get_weather", inputSchema: { type: "object" } } },
+                resources: [],
+                resourceTemplates: [],
+              },
+            ],
+            nextCursor: null,
+          },
+        },
+      },
+      {
         type: "emit_inbound",
         label: "item/completed/app-tool",
         frame: {
@@ -7420,7 +7458,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "expect_outbound",
         label: "mcpServer/resource/read",
         frame: {
-          id: 4,
+          id: 5,
           method: "mcpServer/resource/read",
           params: { threadId: MCP_APP_NATIVE_THREAD, server: "weather", uri: MCP_APP_RESOURCE },
         },
@@ -7429,7 +7467,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "emit_inbound",
         label: "mcpServer/resource/read",
         frame: {
-          id: 4,
+          id: 5,
           result: {
             contents: [
               {
@@ -7494,6 +7532,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         content: [{ type: "text", text: "Sunny" }],
         structuredContent: { temp: 21 },
       });
+      const serverIcon = { _tag: "themed-logo", logoUrl: "https://weather.test/icon.svg" } as const;
+      assert.deepEqual(
+        item.type === "dynamic_tool" ? item.toolSource?.icon : undefined,
+        serverIcon,
+      );
+      assert.deepEqual(item.type === "dynamic_tool" ? item.toolIcon : undefined, serverIcon);
 
       const fileSystem = yield* FileSystem.FileSystem;
       const stored = yield* fileSystem.readFileString(

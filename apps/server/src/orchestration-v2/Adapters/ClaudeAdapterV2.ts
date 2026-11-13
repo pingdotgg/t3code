@@ -217,6 +217,7 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
+  type McpServerPresentation,
   mcpToolPresentation,
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -877,6 +878,8 @@ const CLAUDE_MCP_APP_CAPABILITIES = [
 ] as const;
 // Captured inline, unlike Codex's shared app-server: a slow read delays only this session's stream, and only this long.
 const CLAUDE_MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+// Read inline before a tool row starts, so a slow status read only delays that row this long.
+const CLAUDE_MCP_SERVER_STATUS_TIMEOUT = "2 seconds";
 
 function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
   return CLAUDE_MCP_APP_CAPABILITIES.every((capability) => capabilities.has(capability));
@@ -915,6 +918,23 @@ function findClaudeMcpTool(
     claudeMcpServerPrefixOverlaps(statuses, match.server)
     ? undefined
     : match;
+}
+
+// The SDK types `serverInfo` as name and version only; the CLI forwards the rest of MCP's `Implementation`.
+function claudeMcpServerPresentation(
+  statuses: ReadonlyArray<ClaudeMcpServerStatus>,
+  toolName: string,
+): McpServerPresentation | undefined {
+  const match = findClaudeMcpTool(statuses, toolName);
+  const status = match && statuses.find((entry) => entry.name === match.server);
+  if (match === undefined || status === undefined) return undefined;
+  const { serverInfo, config } = status;
+  return {
+    icons: serverInfo && Reflect.get(serverInfo, "icons"),
+    websiteUrl: serverInfo && Reflect.get(serverInfo, "websiteUrl"),
+    toolIcons: Reflect.get(match.tool, "icons"),
+    url: config && "url" in config ? config.url : undefined,
+  };
 }
 
 // Only this adapter writes app references. Claude's normalised tool names cannot tie one in raw MCP output to its server.
@@ -3933,29 +3953,49 @@ function claudeToolUseBlocksFromAssistantMessage(
 
 type ClaudeToolPresentation = ReturnType<typeof mcpToolPresentation>;
 
+/** The MCP tools in a message whose server icons the adapter reads from `mcpServerStatus`. */
+export function claudeMcpServerStatusToolNames(message: SDKMessage): ReadonlyArray<string> {
+  return claudeToolUseBlocksFromAssistantMessage(message).flatMap((tool) =>
+    tool.name.startsWith("mcp__") && !tool.name.startsWith("mcp__t3-code__") ? [tool.name] : [],
+  );
+}
+
+function claudeMcpToolDisplayName(toolName: string): string {
+  return toolName.replace(/^mcp__claude_ai_/u, "mcp__");
+}
+
 function claudeToolPresentationsFromAssistantMessage(
   message: SDKMessage,
+  servers?: ReadonlyMap<string, McpServerPresentation | null>,
 ): ReadonlyMap<string, ClaudeToolPresentation> {
   const presentations = new Map<string, ClaudeToolPresentation>();
   const meta = message.type === "assistant" ? Reflect.get(message, "tool_use_meta") : undefined;
-  if (!Array.isArray(meta)) return presentations;
   const toolNames = new Map(
-    claudeToolUseBlocksFromAssistantMessage(message).map((tool) => [
-      tool.id,
-      tool.name.replace(/^mcp__claude_ai_/u, "mcp__"),
-    ]),
+    claudeToolUseBlocksFromAssistantMessage(message).map((tool) => [tool.id, tool.name]),
   );
-  for (const entry of meta) {
+  for (const entry of Array.isArray(meta) ? meta : []) {
     if (typeof entry !== "object" || entry === null) continue;
     const id = normalizeMcpText(Reflect.get(entry, "id"), 512);
     if (id === undefined) continue;
+    const toolName = toolNames.get(id);
     presentations.set(
       id,
       mcpToolPresentation({
-        toolName: toolNames.get(id),
+        toolName: toolName && claudeMcpToolDisplayName(toolName),
         title: Reflect.get(entry, "display_name"),
         serverDisplayName: Reflect.get(entry, "server_display_name"),
         iconUrl: Reflect.get(entry, "icon_url"),
+        server: toolName === undefined ? undefined : (servers?.get(toolName) ?? undefined),
+      }),
+    );
+  }
+  for (const [id, toolName] of toolNames) {
+    if (presentations.has(id)) continue;
+    presentations.set(
+      id,
+      mcpToolPresentation({
+        toolName: claudeMcpToolDisplayName(toolName),
+        server: servers?.get(toolName) ?? undefined,
       }),
     );
   }
@@ -4853,6 +4893,8 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  // Keyed by native MCP tool name, read once per process; null when the status names no server.
+  readonly mcpServerPresentations: Map<string, McpServerPresentation | null>;
 }
 
 interface ActiveClaudeToolCall {
@@ -8153,6 +8195,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           Effect.orDie,
         );
 
+        /** Reads server icons for a message's MCP tools once per process; a failed read leaves rows as before. */
+        const claudeMcpServerPresentations = Effect.fn("ClaudeAdapterV2.mcpServerPresentations")(
+          function* (liveQuery: ClaudeLiveQueryContext, message: SDKMessage) {
+            const cache = liveQuery.mcpServerPresentations;
+            const unresolved = claudeMcpServerStatusToolNames(message).filter(
+              (toolName) => !cache.has(toolName),
+            );
+            if (unresolved.length === 0) return cache;
+            const statuses = yield* liveQuery.query.mcpServerStatus;
+            for (const toolName of unresolved) {
+              cache.set(toolName, claudeMcpServerPresentation(statuses, toolName) ?? null);
+            }
+            return cache;
+          },
+          (effect, liveQuery) =>
+            effect.pipe(
+              Effect.timeout(CLAUDE_MCP_SERVER_STATUS_TIMEOUT),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logDebug("Failed to read Claude MCP server status for tool icons.", {
+                    cause,
+                  }).pipe(Effect.as(liveQuery.mcpServerPresentations)),
+              ),
+              Effect.orDie,
+            ),
+        );
+
         const settleToolCall = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext | null;
           readonly toolCall: ActiveClaudeToolCall;
@@ -8254,11 +8324,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeItemId: toolUse.id,
               toolName: toolUse.name,
               toolInput: claudeNativeToolInputFromUnknown(toolUse.input),
-              presentation:
-                presentations.get(toolUse.id) ??
-                mcpToolPresentation({
-                  toolName: toolUse.name.replace(/^mcp__claude_ai_/u, "mcp__"),
-                }),
+              presentation: presentations.get(toolUse.id),
               startedAt: at,
             });
           }
@@ -10840,7 +10906,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
-          const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
+          const toolPresentations = claudeToolPresentationsFromAssistantMessage(
+            message,
+            yield* claudeMcpServerPresentations(liveQuery, message),
+          );
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
@@ -10868,11 +10937,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               toolName: toolUse.name,
               toolInput: nativeToolInput,
               parentToolUseId: parentToolUseIdFromSdkMessage(message),
-              presentation:
-                toolPresentations.get(toolUse.id) ??
-                mcpToolPresentation({
-                  toolName: toolUse.name.replace(/^mcp__claude_ai_/u, "mcp__"),
-                }),
+              presentation: toolPresentations.get(toolUse.id),
             });
             const heldPlan = heldProposedPlansByToolUseId.get(toolUse.id);
             if (heldPlan !== undefined) {
@@ -12260,6 +12325,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            mcpServerPresentations: new Map(),
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
