@@ -318,3 +318,27 @@ it("waits for the read-aloud key lookup before allowing a save", async () => {
     await updateClientSettings({ readAloud: previous });
   }
 });
+
+it("shows a catalog transport failure when model controls are unavailable", async () => {
+  const previous = getClientSettings().readAloud;
+  await updateClientSettings({
+    readAloud: { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "xai", environmentId: id },
+  });
+  try {
+    await withVoicePanel(
+      (url) =>
+        url.pathname === "/api/voice/synthesis/xai/models"
+          ? Promise.resolve(new Response(null, { status: 500 }))
+          : null,
+      async (screen) => {
+        await expect
+          .element(screen.getByRole("alert"))
+          .toHaveTextContent(
+            "Could not load speech models. Check the selected environment and provider configuration.",
+          );
+      },
+    );
+  } finally {
+    await updateClientSettings({ readAloud: previous });
+  }
+});

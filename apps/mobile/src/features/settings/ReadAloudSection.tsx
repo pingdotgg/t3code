@@ -62,7 +62,10 @@ export function ReadAloudSection() {
   );
   const change = (patch: Partial<ReadAloudSettings>) => {
     readAloudController.stop();
-    if (patch.provider || patch.environmentId) setKey("");
+    if (patch.provider !== undefined || patch.environmentId !== undefined) {
+      setKey("");
+      setError("");
+    }
     update({ readAloud: { ...settings, ...patch } });
   };
   const cloud = catalog.apiKeyProvider !== null;
@@ -194,10 +197,12 @@ export function ReadAloudSection() {
               disabled={!key.trim()}
               onPress={() => {
                 if (!catalog.apiKeyProvider) return;
+                setError("");
                 void runSpeech(
                   setCloudSpeechKey(prepared, catalog.apiKeyProvider, key.trim()),
                 ).then(
                   () => {
+                    setError("");
                     setKey("");
                     setCatalogVersion((value) => value + 1);
                   },
@@ -210,8 +215,10 @@ export function ReadAloudSection() {
               size="compact"
               onPress={() => {
                 if (!catalog.apiKeyProvider) return;
+                setError("");
                 void runSpeech(setCloudSpeechKey(prepared, catalog.apiKeyProvider, null)).then(
                   () => {
+                    setError("");
                     setKey("");
                     setCatalogVersion((value) => value + 1);
                   },

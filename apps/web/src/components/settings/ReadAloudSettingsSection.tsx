@@ -290,10 +290,15 @@ export function ReadAloudSettingsSection() {
               onSaved={() => setCatalogVersion((value) => value + 1)}
             />
           )}
+          {remote && error && (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          )}
           {remote && catalog.supportsModelSelection && (
             <SettingsRow
               title="Speech model"
-              description={error || "Choose a speech model from the provider catalog."}
+              description="Choose a speech model from the provider catalog."
               control={
                 <Select
                   value={model}
