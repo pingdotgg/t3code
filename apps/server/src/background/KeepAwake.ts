@@ -74,6 +74,22 @@ export const holdWhileWanted = <E, R>(
     Stream.runDrain,
   );
 
+// Reads and the inhibitor retry until they succeed; the cap keeps a host without an
+// inhibitor (e.g. no logind) from retrying and warning constantly.
+const retryWithBackoff =
+  (message: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.tapCause((cause) => Effect.logWarning(message, { cause })),
+      Effect.retry(
+        Schedule.exponential("5 seconds").pipe(
+          Schedule.modifyDelay(({ duration }) =>
+            Effect.succeed(Duration.min(duration, Duration.minutes(10))),
+          ),
+        ),
+      ),
+    );
+
 class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
   "KeepAwakeInhibitorExited",
   { exitCode: Schema.Number },
@@ -94,15 +110,13 @@ export const layer = Layer.effectDiscard(
         WHERE status IN ('preparing', 'starting', 'running')
       ) AS active
     `.pipe(
-      Effect.map((rows) => [rows[0]?.active === 1]),
-      // A failed read keeps the last known state rather than guessing.
-      Effect.catchCause((cause) =>
-        Effect.logWarning("keep-awake could not read active runs", { cause }).pipe(Effect.as([])),
-      ),
+      Effect.map((rows) => rows[0]?.active === 1),
+      retryWithBackoff("keep-awake could not read active runs"),
     );
     // Read the cursor before the snapshot so a run changing in between is replayed, not missed.
     const active = Stream.unwrap(
       events.latestApplicationSequence.pipe(
+        retryWithBackoff("keep-awake could not read the event cursor"),
         Effect.map((afterSequence) =>
           Stream.concat(
             Stream.succeed(undefined),
@@ -118,10 +132,7 @@ export const layer = Layer.effectDiscard(
           ),
         ),
       ),
-    ).pipe(
-      Stream.mapEffect(() => hasActiveRun),
-      Stream.flattenIterable,
-    );
+    ).pipe(Stream.mapEffect(() => hasActiveRun));
     const enabled = Stream.unwrap(
       Effect.gen(function* () {
         const changes = yield* settings.subscribeChanges;
@@ -159,22 +170,8 @@ export const layer = Layer.effectDiscard(
         ),
         Effect.scoped,
       );
-    // An inhibitor that dies while agents still work is restarted; on hosts without one
-    // (e.g. no logind) the backoff keeps retries and warnings rare.
     const hold = holdOnce.pipe(
-      Effect.tapCause((cause) =>
-        Effect.logWarning("keep-awake sleep inhibitor stopped", {
-          command: command.command,
-          cause,
-        }),
-      ),
-      Effect.retry(
-        Schedule.exponential("5 seconds").pipe(
-          Schedule.modifyDelay(({ duration }) =>
-            Effect.succeed(Duration.min(duration, Duration.minutes(10))),
-          ),
-        ),
-      ),
+      retryWithBackoff("keep-awake sleep inhibitor stopped"),
       Effect.ignore,
     );
 
