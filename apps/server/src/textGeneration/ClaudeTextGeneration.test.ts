@@ -67,6 +67,8 @@ function withFakeClaudeEnv<A, E, R>(
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    /** Host variables that change after text generation is built, as a late desktop shell does. */
+    lateEnvironment?: Record<string, string>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -105,6 +107,7 @@ function withFakeClaudeEnv<A, E, R>(
       environment,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
+    Object.assign(environment, input.lateEnvironment);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -209,11 +212,15 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
       return yield* withFakeClaudeEnv(
         {
-          output: JSON.stringify({
-            structured_output: {
-              title: "Use Claude home",
-            },
-          }),
+          output: "{}",
+          // A custom home copies the environment, and the copy must still see a late host value.
+          lateEnvironment: {
+            T3_FAKE_CLAUDE_OUTPUT: JSON.stringify({
+              structured_output: {
+                title: "Use Claude home",
+              },
+            }),
+          },
           configDirMustBe: claudeConfigDir,
           claudeConfig: { homePath: claudeConfigDir },
         },
