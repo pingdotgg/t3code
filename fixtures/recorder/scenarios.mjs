@@ -189,4 +189,143 @@ async function remote(ctx) {
   await dump(ctx, "home");
 }
 
-export const SCENARIOS = { pairing, reconnect, turn, permission, interrupt, remote };
+/** Pairs the Rust conn-server from Settings › Connections, as `remote` does. Records only it. */
+async function pairRust(ctx) {
+  const target = await ctx.startRustServer();
+  await ctx.page.goto(`${ctx.server.origin}/settings/connections`);
+  await settle(ctx);
+  ctx.cap.only(new URL(target.origin).host);
+  await ctx.page.getByRole("button", { name: "Add environment" }).first().click();
+  const dialog = ctx.page.getByRole("dialog", { name: "Add Environment" });
+  const remoteCard = dialog.getByRole("button", { name: /Remote link/ });
+  if ((await remoteCard.getAttribute("aria-pressed")) !== "true") await remoteCard.click();
+  await dialog
+    .getByPlaceholder("backend.example.com")
+    .fill(`${target.origin}/pair#token=${target.token}`);
+  await dialog.getByRole("button", { name: "Add environment", exact: true }).click();
+  await dialog.waitFor({ state: "detached", timeout: 30_000 });
+  await settle(ctx, 3000, 30_000);
+  await dump(ctx, "rust-added");
+  await ctx.page.goto(`${ctx.server.origin}/`);
+  await settle(ctx, 3000, 30_000);
+  await dump(ctx, "rust-home");
+  return target;
+}
+
+/** On the Rust environment's draft: picks Claude Haiku 5.5 and, if given, a runtime mode. */
+async function rustHaikuDraft(ctx, runtimeLabel) {
+  await ctx.page
+    .getByRole("button", { name: "New thread in rust-project" })
+    .first()
+    .click()
+    .catch(() => {});
+  await ctx.page.waitForURL((u) => u.pathname.startsWith("/draft/"), { timeout: 15_000 });
+  await ctx.page
+    .getByRole("button", { name: /^Claude/ })
+    .first()
+    .click();
+  await ctx.page.getByPlaceholder("Search models...").fill("Haiku 5.5");
+  await ctx.page
+    .getByRole("option", { name: /Claude Haiku 5\.5/ })
+    .first()
+    .click();
+  if (runtimeLabel) {
+    await ctx.page.locator("[data-composer-permissions-trigger]").first().click();
+    await ctx.page.getByRole("menuitemradio", { name: runtimeLabel, exact: true }).click();
+    await ctx.page.keyboard.press("Escape");
+  }
+  await ctx.page.keyboard.press("Escape");
+  await dump(ctx, "draft");
+}
+
+async function rustTurn(ctx) {
+  const target = await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await send(ctx, "Reply with exactly: hello from haiku");
+  await waitTurnEnd(ctx);
+  await ctx.page.getByText("hello from haiku").last().waitFor({ timeout: 30_000 });
+  await ctx.shotAlways("turn");
+  ctx.rust = target;
+}
+
+/**
+ * After rust-turn: restarts the Rust server on the same state and port without reloading the
+ * page. The client must reconnect by itself, show the thread, and take a second message.
+ */
+async function rustRestart(ctx) {
+  await rustTurn(ctx);
+  await ctx.stopServer(ctx.rust);
+  const banner = ctx.page.getByText("conn-server is reconnecting");
+  await banner.first().waitFor({ timeout: 30_000 });
+  await ctx.shotAlways("server-down");
+  const sockets = ctx.cap.http.filter((h) => h.upgrade === "websocket").length;
+  ctx.rust = await ctx.startRustServer(ctx.rust);
+  await banner.first().waitFor({ state: "detached", timeout: 90_000 });
+  const reconnected = ctx.cap.http.filter((h) => h.upgrade === "websocket").length > sockets;
+  ctx.log(`reconnected on a new socket without a reload: ${reconnected}`);
+  if (!reconnected) throw new Error("the client did not open a new socket");
+  await ctx.page.getByText("hello from haiku").last().waitFor({ timeout: 30_000 });
+  await settle(ctx, 3000, 30_000);
+  await ctx.shotAlways("after-restart");
+  await send(ctx, "Reply with exactly: second turn after restart");
+  await waitTurnEnd(ctx);
+  await ctx.page.getByText("second turn after restart").last().waitFor({ timeout: 30_000 });
+  await ctx.shotAlways("after-restart-turn");
+}
+
+async function rustPermission(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, "Supervised");
+  await send(
+    ctx,
+    "Run the shell command `echo conn-recording` with your Bash tool, then reply with its output only.",
+  );
+  const approve = ctx.page.getByRole("button", { name: /^(Approve|Allow once)$/ }).first();
+  await approve.waitFor({ state: "visible", timeout: 120_000 });
+  await settle(ctx, 1500, 15_000);
+  await ctx.shotAlways("approval");
+  await approve.click();
+  await waitTurnEnd(ctx);
+  await ctx.shotAlways("permission");
+}
+
+async function rustStop(ctx) {
+  await pairRust(ctx);
+  await rustHaikuDraft(ctx, null);
+  await send(
+    ctx,
+    "Run the shell command `ping -c 30 127.0.0.1` with your Bash tool, then reply with: done",
+  );
+  await stopButton(ctx).first().waitFor({ state: "visible", timeout: 30_000 });
+  const approve = ctx.page.getByRole("button", { name: /^(Approve|Allow once)$/ }).first();
+  await approve.waitFor({ state: "visible", timeout: 20_000 }).then(
+    () => approve.click(),
+    () => {},
+  );
+  const deadline = Date.now() + 60_000;
+  while (
+    Date.now() < deadline &&
+    !ctx.cap.lines.some((l) => l.dir === "out" && JSON.stringify(l.frame).includes("ping -c 30"))
+  ) {
+    await ctx.page.waitForTimeout(200);
+  }
+  await ctx.page.waitForTimeout(2000);
+  await ctx.shotAlways("running");
+  await stopButton(ctx).first().click();
+  await stopButton(ctx).first().waitFor({ state: "detached", timeout: 60_000 });
+  await settle(ctx, 4000, 60_000);
+  await ctx.shotAlways("stopped");
+}
+
+export const SCENARIOS = {
+  pairing,
+  reconnect,
+  turn,
+  permission,
+  interrupt,
+  remote,
+  "rust-turn": rustTurn,
+  "rust-restart": rustRestart,
+  "rust-permission": rustPermission,
+  "rust-stop": rustStop,
+};

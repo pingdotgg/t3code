@@ -36,6 +36,7 @@ Line format, as the workspace README fixes it, with two additions:
 | `permission` | New thread in Supervised mode; Claude asks to run `echo conn-recording`; the user approves once  |
 | `interrupt`  | New thread; Claude runs `ping -c 30 127.0.0.1` (approved); the user stops the turn while it runs |
 | `remote`     | From Settings › Connections, pair a second fresh server as a remote environment                  |
+| `rust-*`     | As `remote`, with the Rust `conn-server` as the remote environment (`--rust <binary>`)           |
 
 The server starts with `--auto-bootstrap-project-from-cwd` in a scratch git repo, so it has one
 project and one empty thread before the client arrives. `pairing` therefore lands on that thread,
@@ -60,6 +61,12 @@ cargo test --manifest-path native/conn-server/fixtures/decode-check/Cargo.toml -
 node native/conn-server/fixtures/recorder/summarize.mjs turn
 git diff --stat native/conn-server/fixtures/sessions
 ```
+
+The `rust-*` scenarios (`rust-turn`, `rust-restart`, `rust-permission`, `rust-stop`) run only
+when named, after `pairing`, with `--rust native/conn-server/target/release/conn-server`. They
+record only the Rust server's traffic and always write a screenshot per checkpoint.
+`rust-restart` stops and restarts the Rust server on the same state and waits for the client to
+reconnect without a reload.
 
 Ids, timings and Claude's wording change on every run, so every file changes. Read the
 redaction checklist below before you commit.

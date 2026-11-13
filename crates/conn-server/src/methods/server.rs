@@ -52,6 +52,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("panels.requests", |_, _: Value| async {
         Ok(open_stream(Vec::new()))
     });
+    // The thread panel's Automations card; without it the card shows an error.
+    table.stream("scheduledTasks.subscribe", |_, _: Value| async {
+        Ok(open_stream(vec![json!({ "tasks": [] })]))
+    });
 
     let Some(environment) = deps.environment.clone() else {
         return;

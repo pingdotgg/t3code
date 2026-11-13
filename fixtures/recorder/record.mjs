@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Records real web-client sessions against the TypeScript server at this checkout.
 // Usage: node native/conn-server/fixtures/recorder/record.mjs [scenario ...] [--explore]
+//   [--rust <conn-server binary>]   (rust-* scenarios: that binary is the remote environment)
 // See ../README.md.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
@@ -20,9 +21,14 @@ const { chromium } = require("playwright-core");
 
 const args = process.argv.slice(2);
 const explore = args.includes("--explore");
+const rustAt = args.indexOf("--rust");
+const rustBinary = rustAt === -1 ? null : NodePath.resolve(args.splice(rustAt, 2)[1]);
 const wanted = args.filter((a) => !a.startsWith("--"));
 const order = Object.keys(SCENARIOS);
-const selected = wanted.length === 0 ? order : order.filter((n) => wanted.includes(n));
+const selected =
+  wanted.length === 0
+    ? order.filter((n) => !n.startsWith("rust-"))
+    : order.filter((n) => wanted.includes(n));
 
 const log = (...m) => console.error("[record]", ...m);
 
@@ -37,18 +43,9 @@ function freePort() {
   });
 }
 
-async function startServer() {
-  if (!NodeFS.existsSync(NodePath.join(repo, "apps/web/dist/index.html"))) {
-    log("building apps/web (no dist yet)");
-    NodeChildProcess.execFileSync("vp", ["build"], {
-      cwd: NodePath.join(repo, "apps/web"),
-      stdio: "inherit",
-    });
-  }
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rec-"));
-  const base = NodePath.join(root, "base");
-  const project = NodePath.join(root, "project");
-  NodeFS.mkdirSync(base);
+/** A git repo with one commit, in `root/project`. */
+function scratchProject(root, name = "project") {
+  const project = NodePath.join(root, name);
   NodeFS.mkdirSync(project);
   NodeFS.writeFileSync(NodePath.join(project, "README.md"), "# scratch\n");
   // The host's user Claude settings may allow Bash outright; an ask rule wins over allow, so the
@@ -62,6 +59,62 @@ async function startServer() {
   git("init", "-q", "-b", "main");
   git("-c", "user.name=rec", "-c", "user.email=rec@example.com", "add", ".");
   git("-c", "user.name=rec", "-c", "user.email=rec@example.com", "commit", "-qm", "init");
+  return project;
+}
+
+/**
+ * Starts the Rust conn-server on a scratch project. Pass an earlier result to restart it on the
+ * same state directory and port.
+ */
+async function startRustServer(previous) {
+  if (rustBinary === null) throw new Error("rust-* scenarios need --rust <conn-server binary>");
+  const root = previous?.root ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rust-"));
+  const project = previous?.project ?? scratchProject(root, "rust-project");
+  const port = previous?.port ?? (await freePort());
+  const child = NodeChildProcess.spawn(
+    rustBinary,
+    [
+      "--listen",
+      `127.0.0.1:${port}`,
+      "--state-dir",
+      NodePath.join(root, "state"),
+      "--project",
+      project,
+    ],
+    { cwd: project, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const logFile = NodeFS.createWriteStream(NodePath.join(root, "server.log"), { flags: "a" });
+  process.once("exit", () => child.exitCode === null && child.kill("SIGKILL"));
+  child.stderr.pipe(logFile);
+  const token = await new Promise((resolve, reject) => {
+    let out = "";
+    child.stdout.on("data", (d) => {
+      logFile.write(d);
+      out += d;
+      const m = out.match(/\/pair#token=([A-Za-z0-9_-]+)/);
+      if (m) resolve(m[1]);
+    });
+    child.once("exit", (code) =>
+      reject(new Error(`rust server exited ${code}; see ${root}/server.log`)),
+    );
+  });
+  addSecret(token);
+  log(`rust server pid ${child.pid} on ${port}, root ${root}`);
+  return { root, project, port, token, child, origin: `http://127.0.0.1:${port}`, rust: true };
+}
+
+async function startServer() {
+  if (!NodeFS.existsSync(NodePath.join(repo, "apps/web/dist/index.html"))) {
+    log("building apps/web (no dist yet)");
+    NodeChildProcess.execFileSync("vp", ["build"], {
+      cwd: NodePath.join(repo, "apps/web"),
+      stdio: "inherit",
+    });
+  }
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-rec-"));
+  const base = NodePath.join(root, "base");
+  NodeFS.mkdirSync(base);
+  const project = scratchProject(root);
 
   const port = await freePort();
   // env -i: the service launcher IPC channel of an outer T3 must not leak in.
@@ -280,6 +333,24 @@ try {
         extraServers.push(extra);
         return extra;
       },
+      startRustServer: async (previous) => {
+        const extra = await startRustServer(previous);
+        if (previous) extraServers[extraServers.indexOf(previous)] = extra;
+        else extraServers.push(extra);
+        return extra;
+      },
+      stopServer: (s) =>
+        new Promise((r) => {
+          if (s.child.exitCode !== null) return r();
+          s.child.once("exit", () => r());
+          s.child.kill("SIGTERM");
+        }),
+      shotAlways: async (label) => {
+        const file = NodePath.join(shots, `${label}.png`);
+        await page.screenshot({ path: file });
+        log(name, "shot", file);
+        return file;
+      },
     };
     try {
       log(`scenario ${name}`);
@@ -312,6 +383,16 @@ try {
         r();
       });
     });
+    if (s.rust) {
+      // Claude keeps a session folder per project path; remove the ones our turns made.
+      const real = NodeFS.realpathSync(s.project);
+      const dir = NodePath.join(
+        NodeOS.homedir(),
+        ".claude/projects",
+        real.replace(/[^A-Za-z0-9-]/g, "-"),
+      );
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
     if (explore || failed) log(`kept ${s.root} for inspection; remove it when done`);
     else NodeFS.rmSync(s.root, { recursive: true, force: true });
   }
