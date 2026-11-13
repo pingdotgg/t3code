@@ -556,18 +556,16 @@ const make = Effect.gen(function* () {
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         const unborn = yield* Effect.gen(function* () {
           const cwd = project.workspaceRoot;
-          // `:/text` is a commit search, which cannot be asked for a commit type.
-          if (startRef.startsWith(":") || (yield* git.hasCommit({ cwd, refName: "HEAD" })))
-            return false;
-          // Any local branch means Git can still resolve bases like `main...other` that rev-parse rejects.
-          if ((yield* git.listLocalBranchNames(cwd)).length > 0) return false;
-          return !(yield* git.hasCommit({ cwd, refName: startRef === "-" ? "@{-1}" : startRef }));
+          if (yield* git.hasCommit({ cwd, refName: "HEAD" })) return null;
+          // Only the unborn branch itself has nothing to check out; Git resolves any other base.
+          const current = yield* git.currentBranch(cwd);
+          if (startRef !== "HEAD" && startRef !== current) return null;
+          if (yield* git.hasCommit({ cwd, refName: startRef })) return null;
+          return { branch: current };
         }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        if (unborn) {
-          // A repository with no commits has nothing to check out; run in the project folder.
-          branch = yield* git
-            .currentBranch(project.workspaceRoot)
-            .pipe(Effect.orElseSucceed(() => null));
+        if (unborn !== null) {
+          // A branch with no commits has nothing to check out; run in the project folder.
+          branch = unborn.branch;
           yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, branch }));
           yield* setupTracker.stageStatus(threadId, "checkout", "skipped");
           yield* setupTracker.stageStatus(threadId, "submodules", "skipped");

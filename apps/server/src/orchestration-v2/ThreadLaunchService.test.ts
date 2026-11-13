@@ -1292,13 +1292,15 @@ it.effect.each(["stable", "upstream/release"])(
 it.effect.each([
   { name: "a repository with no commits", setup: [], baseRef: "main", worktree: false },
   {
-    name: "an orphan branch beside branches with commits",
+    name: "an orphan branch beside remote-tracking branches",
     setup: [
       ["commit", "--allow-empty", "-m", "initial"],
-      ["branch", "other"],
+      ["update-ref", "refs/remotes/origin/main", "HEAD"],
+      ["update-ref", "refs/remotes/origin/other", "HEAD"],
       ["checkout", "--orphan", "empty"],
+      ["branch", "-D", "main"],
     ],
-    baseRef: "main...other",
+    baseRef: "origin/main...origin/other",
     worktree: true,
   },
 ])("launches a new worktree thread from $name", (scenario) =>
@@ -1329,7 +1331,12 @@ it.effect.each([
             Effect.as(true),
             Effect.orElseSucceed(() => false),
           ),
-      git: { listLocalBranchNames: () => git.listLocalBranchNames(cwd) },
+      git: {
+        currentBranch: () =>
+          git
+            .execute({ operation: "launch-test", cwd, args: ["symbolic-ref", "--short", "HEAD"] })
+            .pipe(Effect.map((result) => result.stdout.trim())),
+      },
       createWorktree: (input, options) =>
         git.createWorktree({ ...input, cwd, path: `${directory}/worktree` }, options),
     });
