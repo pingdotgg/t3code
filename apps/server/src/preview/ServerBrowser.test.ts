@@ -1600,6 +1600,33 @@ it.live.each(["agent" as const, "client" as const])(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("a thread close leaves a tab opened during its unload open", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      desktopRendersNext = true;
+      yield* broker.invoke({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: false },
+      });
+      const page = desktopConnections[0]!.context.page;
+      page.beforeUnload = "listen";
+      page.unloadGate = Promise.withResolvers<void>();
+      const closing = yield* browser
+        .close({ threadId: scope.thread.threadId })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => page.pagehideWatched.promise);
+      const later = yield* manager.open({ threadId: scope.thread.threadId });
+      page.unloadGate.resolve();
+      yield* Fiber.join(closing);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toEqual([later.tabId]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a client close while the desktop page attaches lets the page unload first", () =>
   Effect.scoped(
     Effect.gen(function* () {

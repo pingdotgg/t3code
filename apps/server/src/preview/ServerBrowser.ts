@@ -3257,18 +3257,23 @@ const make = Effect.gen(function* () {
 
   // Uninterruptible: stopping after the unload starts would leave a closing tab open.
   const close = Effect.fn("ServerBrowser.close")(function* (input: PreviewCloseInput) {
-    const closes = (key: string) =>
+    // Targets are fixed before the wait, so a tab opened during the unload survives the close.
+    const tabIds =
       input.tabId === undefined
-        ? key.startsWith(tabKey(input.threadId, ""))
-        : key === tabKey(input.threadId, input.tabId);
+        ? (yield* manager.list({ threadId: input.threadId })).sessions.map(({ tabId }) => tabId)
+        : [input.tabId];
+    const keys = new Set(tabIds.map((tabId) => tabKey(input.threadId, tabId)));
     yield* Effect.promise(async () => {
-      await awaitAttaching([...pendingTabs.keys()].filter(closes));
-      const closing = [...tabs.entries()].flatMap(([key, tab]) =>
-        tab.desktop !== null && closes(key) ? [tab] : [],
-      );
+      await awaitAttaching([...pendingTabs.keys()].filter((key) => keys.has(key)));
+      const closing = [...keys].flatMap((key) => {
+        const tab = tabs.get(key);
+        return tab?.desktop ? [tab] : [];
+      });
       await Promise.all(closing.map(unloadDesktopTab));
     });
-    yield* manager.close(input);
+    yield* Effect.forEach(tabIds, (tabId) => manager.close({ threadId: input.threadId, tabId }), {
+      discard: true,
+    });
   }, Effect.uninterruptible);
 
   return ServerBrowser.of({
