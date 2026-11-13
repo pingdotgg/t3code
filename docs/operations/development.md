@@ -2,8 +2,20 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
-pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
+T3 Code uses [Vite+](https://viteplus.dev/guide/). Install its global `vp` command:
+
+```sh
+curl -fsSL https://vite.plus | bash
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://vite.plus/ps1 | iex
+```
+
+`vp` provides the Node version pinned in `package.json` (Node 26), so no separate Node install is
+needed. From the repository root:
 
 ```sh
 vp i
@@ -15,38 +27,21 @@ a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
 
-## GitCafe mirror (optional)
+## Forge mirror (optional)
 
-GitHub is the source of truth. [git.cafe/pingdotgg/t3code](https://git.cafe/pingdotgg/t3code) is a
-two-way synced mirror with much higher API rate limits, which helps when many agents work at once.
-You never need it to contribute.
-
-Pushes, PRs, comments, reviews, labels, and issue edits made on GitCafe sync to GitHub within
-about a minute, and PR and issue numbers match. CI runs on GitHub, and its checks show up on
-GitCafe.
+GitHub is the source of truth. [source.tanstack.com/@pingdotgg/t3code](https://source.tanstack.com/@pingdotgg/t3code)
+is a two-way synced mirror built for many agents working at once. You never need it to contribute.
 
 ```sh
-git remote set-url origin https://git.cafe/pingdotgg/t3code.git
+git remote set-url origin https://source.tanstack.com/@pingdotgg/t3code.git
 git remote add github https://github.com/pingdotgg/t3code.git
-gh repo set-default pingdotgg/t3code   # `gh` is still used for merging
-bun install -g @gitcafe/cli@latest   # `cafe` needs Bun 1.2 or newer
-cafe auth login && cafe auth http setup
-cafe skills install --global  # optional: cafe-* skills for coding agents
+src auth login --web && src auth setup-git
 ```
 
-With `origin` on git.cafe, work through GitCafe and leave GitHub's API alone:
-
-- Push to `origin`, open PRs with `cafe pr create` (`--head owner/repo:branch` from a fork) or
-  `cafe stack submit`, and use `cafe` for everything after that. Link the git.cafe PR URL, not the
-  github.com one, wherever a tool tracks the PR, so polling stays on GitCafe.
-- Read checks with `cafe pr status <n>`, and GitHub Actions logs with `cafe ci logs <run>` (run ids
-  from `cafe ci list --pr <n>`). `cafe ci rerun <run>` reruns one. These need `cafe` 0.11 or newer.
-- Write closing references as `Fixes pingdotgg/t3code#<n>`. GitCafe turns a bare `#<n>` in text it
-  syncs to GitHub into a git.cafe link, and GitHub does not close issues from those.
-- Merge with `gh pr merge <n> --match-head-commit <sha>`, because `cafe pr merge` cannot pin the
-  commit you reviewed.
-- `cafe` commands differ from `gh`: `cafe issue comments <n>` not `--comments`, `cafe pr status`
-  not `pr checks`.
+With `origin` on the mirror, use `src` (it takes `gh`'s commands and flags) and its `source` agent
+skill for PRs, issues, reviews, and CI, and leave GitHub's API alone. Pull requests into `main`
+merge on GitHub, so GitHub's required checks and reviews still apply. Numbers can differ between
+the two forges; in text that reaches GitHub, use the GitHub number.
 
 ## Choosing a dev process
 
@@ -129,7 +124,7 @@ Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through 
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. These traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
@@ -139,6 +134,9 @@ when changing this setup:
 - The app and its routes are lazy chunks, built on first request. A plugin pre-bundles the
   startup chain when the server starts. Renaming or moving a startup route or the app entry
   silently drops it from that list.
+- Bundled dev and `--built` hand Rolldown its own watcher, which skips Vite's default
+  `node_modules` ignore. Those files are pnpm-store hardlinks, so another worktree's install or
+  removal rebuilds every long-running server and leaks memory. Keep `node_modules` excluded.
 
 The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
 [Tailwind plugin](../../apps/web/vite/tailwind.ts), and
@@ -264,19 +262,26 @@ vp run dist:desktop:linux
 vp run dist:desktop:win
 ```
 
+`dist:desktop:linux` targets x64. For a native Linux ARM64 build, run:
+
+```sh
+vp run dist:desktop:artifact --platform linux --target AppImage --arch arm64
+```
+
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
 ### Prepared server bytecode
 
-Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
-Electron executable, after ASAR creation and before signing. Linux builds skip generation until
-native packaging and relocated AppImage reuse have been validated. macOS x64 builds on ARM64
-hosts run the packaged x64 Electron under Rosetta to generate the cache. Other cross-platform and
-cross-architecture builds skip generation explicitly. CLI, SEA and WSL runtimes keep their
-existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
-Worker-only modules compile normally.
+Native macOS and Windows desktop artifact builds, and native Linux x64 and ARM64 builds, generate server
+bytecode with the packaged Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
+module declarations without launching server services; worker-only modules compile normally.
+AppImage backends use temporary links for each mount and remove them on normal exit. Later launches
+reclaim abandoned cache directories whose links point to gone mounts; AppImage main-process caching
+stays disabled. macOS x64 builds on ARM64 hosts run the packaged x64 Electron
+under Rosetta to generate the cache. Other cross-platform and cross-architecture builds skip
+generation explicitly. CLI, SEA and WSL runtimes keep their existing behavior.
 
 Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
 name. The backend links individual prepared files into its writable cache with keys for the
@@ -286,7 +291,7 @@ differ or resource permissions prevent linking. Protected installations therefor
 prepared bytecode. No cache bytes are copied during startup.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
-packaged engine produced the expected CLI entry and fails the build if that format changes.
+packaged engine produced the expected CLI and server entries and fails the build if that format changes.
 The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
 Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
 explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
@@ -295,25 +300,30 @@ keeps the explicit flush needed when Windows force-kills the backend.
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install
-Rust, C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
+Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
+Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
+toolchain as release CI does.
 
-Ubuntu and Debian:
+Ubuntu 24.04 and Debian 13:
 
 ```sh
 sudo apt-get update
-sudo apt-get install cargo rustc build-essential libsecret-1-dev pkg-config imagemagick
+sudo apt-get install build-essential libsecret-1-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
 ```
+
+On Ubuntu 22.04 and Debian 12, use `libgtk-3-0` and `libasound2` instead of the `t64` packages.
 
 Fedora:
 
 ```sh
-sudo dnf install rust cargo gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick
+sudo dnf install gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
 ```
 
 Arch Linux:
 
 ```sh
-sudo pacman -S rust base-devel libsecret pkgconf imagemagick
+sudo pacman -S base-devel libsecret pkgconf imagemagick gtk3 nss alsa-lib mesa
 ```
 
 The C toolchain, pkg-config, and libsecret headers are also needed for Linux desktop development.

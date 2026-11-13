@@ -1642,6 +1642,73 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("keeps a steered message pending until the provider reports it read", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const runId = RunId.make("run:steer-read");
+      const messageId = MessageId.make("message:steer-read");
+      const steer: OrchestrationV2TurnItem = {
+        id: idAllocator.derive.userTurnItem({ messageId }),
+        threadId: threadEvent.threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        messageId,
+        inputIntent: "steer",
+        text: "Steer behind a command",
+        attachments: [],
+      };
+      yield* eventSink.write({ events: [threadEvent] });
+      const ingest = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event,
+        });
+      const projected = projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: steer.id,
+      });
+      const steerUpdated = (status: "pending" | "completed") =>
+        ingest({
+          type: "steer.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          runId,
+          messageId,
+          status,
+        });
+
+      yield* ingest({ type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: steer });
+      yield* steerUpdated("pending");
+      assert.deepInclude(yield* projected, { status: "pending", completedAt: null });
+      yield* steerUpdated("completed");
+      assert.equal((yield* projected)?.status, "completed");
+    }),
+  );
+
   it.effect("stores a bounded copy of a large file-change diff in both SQLite tables", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
@@ -1796,15 +1863,18 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect.each([
-    { parentMoved: false, failure: null },
-    { parentMoved: true, failure: null },
-    { parentMoved: false, failure: "write" },
-    { parentMoved: false, failure: "git" },
+    { parentMoved: false, failure: null, temporaryBranch: "t3/abcd1234" },
+    { parentMoved: true, failure: null, temporaryBranch: "t3/abcd1234" },
+    { parentMoved: false, failure: "write", temporaryBranch: "t3/abcd1234" },
+    { parentMoved: false, failure: "git", temporaryBranch: "t3/abcd1234" },
+    { parentMoved: false, failure: null, temporaryBranch: "my-prefix/abcd1234" },
   ])(
     "rechecks a pending native child's branch after the rename scan: %j",
-    ({ parentMoved, failure }) =>
+    ({ parentMoved, failure, temporaryBranch }) =>
       Effect.gen(function* () {
         const { worktreePath, command } = yield* makeSharedWorktree;
+        if (temporaryBranch !== "t3/abcd1234")
+          yield* command(worktreePath, ["branch", "-m", temporaryBranch]);
         const git = yield* GitVcsDriver.GitVcsDriver;
         const now = yield* DateTime.now;
         const eventSink = yield* EventSink.EventSinkV2;
@@ -1814,13 +1884,13 @@ layer("ProviderEventIngestorV2", (it) => {
         if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
         const parent = {
           ...rootEvent.payload,
-          branch: "t3/abcd1234",
+          branch: temporaryBranch,
           worktreePath,
         };
         yield* eventSink.write({ events: [{ ...rootEvent, payload: parent }] });
         const childId = ids.derive.threadFromProviderThread({
           driver: CODEX_DRIVER,
-          nativeThreadId: `child-created-during-rename:${parentMoved}:${failure}`,
+          nativeThreadId: `child-created-during-rename:${parentMoved}:${failure}:${temporaryBranch}`,
         });
         const beforeCommit = yield* Deferred.make<
           void,
@@ -1989,7 +2059,7 @@ layer("ProviderEventIngestorV2", (it) => {
         });
         assert.equal((yield* projections.getThread(childId)).branch, branch);
         assert.equal(stored.length, 1);
-        assert.equal(gitReads, scenario === "explicit" ? 0 : 1);
+        assert.equal(gitReads, 1);
       }),
   );
 
