@@ -553,6 +553,8 @@ export function resolvePromptInjectedEffort(
   return null;
 }
 
+export const CLAUDE_ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+
 export function applyClaudePromptEffortPrefix(
   text: string,
   effort: string | null | undefined,
@@ -568,5 +570,5 @@ export function applyClaudePromptEffortPrefix(
   if (trimmed.startsWith("Ultrathink:")) {
     return trimmed;
   }
-  return `Ultrathink:\n${trimmed}`;
+  return `${CLAUDE_ULTRATHINK_PROMPT_PREFIX}${trimmed}`;
 }

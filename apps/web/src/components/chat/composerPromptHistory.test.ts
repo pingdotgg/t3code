@@ -1,4 +1,5 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -48,10 +49,19 @@ describe("recallableComposerPrompt", () => {
       ),
     ).toBe("email@build:7");
   });
-  it("strips legacy send-time context blocks and the ultrathink prefix", () => {
+  it("strips legacy send-time context blocks", () => {
     const sent =
-      "Ultrathink:\nInvestigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";
+      "Investigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";
     expect(recallableComposerPrompt(sent)).toBe("Investigate this");
+    // A message with context records never carried context as text, so the same blocks were typed.
+    expect(recallableComposerPrompt(sent, {})).toBe(sent);
+  });
+
+  it("leaves out the ultrathink prefix only when the send recorded adding it", () => {
+    const sent = "Ultrathink:\nInvestigate this";
+    expect(recallableComposerPrompt(sent, { effortPrefix: true })).toBe("Investigate this");
+    expect(recallableComposerPrompt(sent, {})).toBe(sent);
+    expect(recallableComposerPrompt(`Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`)).toBe("");
   });
 
   it.each([
@@ -71,7 +81,8 @@ describe("recallableComposerPrompt", () => {
   });
 
   it("strips only review comments appended at the end", () => {
-    const block = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
+    const block =
+      '<review_comment sectionId="s1" sectionTitle="Review" filePath="src/app.ts" startIndex="1" endIndex="2" rangeLabel="lines 1-2">\nKeep this configurable.\n```diff\n+a\n```\n</review_comment>';
     expect(recallableComposerPrompt("Please update this.\n\n" + block)).toBe("Please update this.");
     const midPrompt = "Before\n\n" + block + "\n\nAfter";
     expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);

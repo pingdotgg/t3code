@@ -1139,9 +1139,12 @@ export function useComposerSend(input: ComposerSendInput) {
     const optimisticMessage: ChatMessage = {
       id: messageIdForSend,
       role: "user",
-      text: outgoingMessageText,
       ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-      ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
+      ...withMessageContext({
+        text: outgoingMessageText,
+        typedText: messageTextForSend,
+        context: outgoingMessageContext,
+      }),
       runId: null,
       createdAt: messageCreatedAt,
       updatedAt: messageCreatedAt,
@@ -1299,6 +1302,7 @@ export function useComposerSend(input: ComposerSendInput) {
             attachments: turnAttachmentsResult.value,
             ...withMessageContext({
               text: outgoingMessageText,
+              typedText: messageTextForSend,
               context: buildOutgoingMessageContext(
                 boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
               ),

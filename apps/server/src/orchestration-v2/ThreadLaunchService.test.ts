@@ -2271,6 +2271,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       messageId: MessageId.make("intake-second"),
       text: "Second",
       attachments: [attachment],
+      context: { version: 1, records: [], effortPrefix: true },
       dispatchMode: { type: "queue_after_active" },
       createdBy: "user",
       creationSource: "web",
@@ -2287,6 +2288,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(queuedMessage);
+    assert.isTrue(queuedMessage.context?.effortPrefix);
     const file: ChatAttachment = {
       type: "file",
       id: ChatAttachmentId.make(createPendingAttachmentId("pdf")),
@@ -2315,6 +2317,8 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(editedMessage);
+    // A text-only edit replaces the text the mark described.
+    assert.deepEqual(editedMessage.context, { version: 1, records: [] });
     assert.equal(editedMessage.attachments.length, 2);
     assert.deepEqual(editedMessage.attachments[0], queuedMessage.attachments[0]);
     assert.notEqual(editedMessage.attachments[1]?.id, file.id);

@@ -1220,11 +1220,25 @@ describe("withMessageContext", () => {
   >;
 
   it("sends the context inline", () => {
-    expect(withMessageContext({ text: "hi", context })).toEqual({ text: "hi", context });
+    expect(withMessageContext({ text: "hi", typedText: "hi", context })).toEqual({
+      text: "hi",
+      context,
+    });
   });
 
   it("sends the text alone without context", () => {
-    expect(withMessageContext({ text: "hi", context: undefined })).toEqual({ text: "hi" });
+    expect(withMessageContext({ text: "hi", typedText: "hi", context: undefined })).toEqual({
+      text: "hi",
+    });
+  });
+
+  it("records the effort prefix only when the send added it", () => {
+    const text = "Ultrathink:\nhi";
+    expect(withMessageContext({ text, typedText: " hi", context: undefined })).toEqual({
+      text,
+      context: { version: 1, records: [], effortPrefix: true },
+    });
+    expect(withMessageContext({ text, typedText: text, context: undefined })).toEqual({ text });
   });
 });
 

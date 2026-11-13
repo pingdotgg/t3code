@@ -312,6 +312,11 @@ export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
   guest: Schema.optional(GuestMessageAttribution),
+  /**
+   * The sending client put the effort prefix (`Ultrathink:\n`) in front of what the user typed.
+   * Absent when the user typed that line, so prompt recall leaves out only a prefix marked here.
+   */
+  effortPrefix: Schema.optional(Schema.Literal(true)),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

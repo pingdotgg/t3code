@@ -217,7 +217,7 @@ export async function rewindToMessage(input: {
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     });
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
-    const restoredPrompt = recallableComposerPrompt(message.text);
+    const restoredPrompt = recallableComposerPrompt(message.text, message.context);
     const nextPrompt =
       restoredPrompt.length === 0
         ? currentPrompt

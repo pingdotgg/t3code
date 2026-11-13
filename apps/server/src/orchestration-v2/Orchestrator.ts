@@ -11413,6 +11413,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const editedAttachments =
       command.attachments === undefined ? {} : { attachments: command.attachments };
+    // `effortPrefix` describes the text it was sent with, so it does not outlive that text.
+    const editedContext = (
+      current: import("@t3tools/contracts").OrchestrationMessageContext | undefined,
+    ) => {
+      if (command.context) return { context: command.context };
+      if (current === undefined) return {};
+      const { effortPrefix: _effortPrefix, ...context } = current;
+      return { context };
+    };
     yield* emitEvent({
       type: "message.updated",
       threadId: command.threadId,
@@ -11424,7 +11433,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...queuedMessage,
         text: command.text,
         ...editedAttachments,
-        ...(command.context ? { context: command.context } : {}),
+        ...editedContext(queuedMessage.context),
         updatedAt: now,
       }),
     });
@@ -11440,7 +11449,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...queuedTurnItem,
           text: command.text,
           ...editedAttachments,
-          ...(command.context ? { context: command.context } : {}),
+          ...editedContext(queuedTurnItem.context),
           updatedAt: now,
         }),
       });

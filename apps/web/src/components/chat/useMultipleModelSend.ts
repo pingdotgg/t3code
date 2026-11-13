@@ -169,6 +169,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                     attachments,
                     ...withMessageContext({
                       text: target.text,
+                      typedText: messageText,
                       context,
                     }),
                   },

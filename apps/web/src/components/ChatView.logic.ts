@@ -12,7 +12,11 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Option from "effect/Option";
 import type { SetStateAction } from "react";
-import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  CLAUDE_ULTRATHINK_PROMPT_PREFIX,
+  resolvePromptInjectedEffort,
+} from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../providerModels";
 import { sanitizeThreadErrorMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentThread, ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -1356,9 +1360,16 @@ export function boundAttachmentIds(
 
 export function withMessageContext(input: {
   readonly text: string;
+  /** The composer text that `formatOutgoingPrompt` turned into `text`. */
+  readonly typedText: string;
   readonly context: OrchestrationMessageContext | undefined;
 }): { readonly text: string; readonly context?: OrchestrationMessageContext } {
   const { text, context } = input;
+  // A typed "Ultrathink:" is never prefixed again, so this holds only for a prefix the send added.
+  const effortPrefix =
+    text.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX) &&
+    !input.typedText.trim().startsWith("Ultrathink:");
+  if (effortPrefix) return { text, context: { version: 1, records: [], ...context, effortPrefix } };
   if (context === undefined) return { text };
   return { text, context };
 }

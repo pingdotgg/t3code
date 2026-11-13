@@ -1,17 +1,22 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
+import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { CLAUDE_ULTRATHINK_PROMPT_PREFIX } from "@t3tools/shared/model";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
-const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
 const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
 const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
 
+type RecallContext = Pick<OrchestrationMessageContext, "effortPrefix">;
+
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
+  readonly context?: RecallContext | undefined;
 };
 
 interface ComposerPromptHistoryEntry {
@@ -43,6 +48,8 @@ function stripTrailingReviewComments(prompt: string): string {
   for (const match of [...prompt.matchAll(REVIEW_COMMENT_BLOCK_PATTERN)].toReversed()) {
     const blockEnd = match.index + match[0].length;
     if (prompt.slice(blockEnd, cut).trim().length > 0) break;
+    // Only a block the timeline shows as an attached comment was appended; any other is typed text.
+    if (upgradeLegacyContextMessage(match[0]).records.length === 0) break;
     cut = match.index;
   }
   return cut === prompt.length ? prompt : prompt.slice(0, cut).trimEnd();
@@ -70,13 +77,15 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
   return result;
 }
 
-export function recallableComposerPrompt(messageText: string): string {
+export function recallableComposerPrompt(messageText: string, context?: RecallContext): string {
   let prompt = messageText.trim();
-  if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
-    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
+  // The formatter keeps a typed "Ultrathink:" line, so the text alone cannot say who wrote it.
+  if (context?.effortPrefix && prompt.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX)) {
+    prompt = prompt.slice(CLAUDE_ULTRATHINK_PROMPT_PREFIX.length);
   }
 
-  while (prompt.length > 0) {
+  // Context went into the text only for messages without records; with them, a tag was typed.
+  while (context === undefined && prompt.length > 0) {
     const withoutReviewComments = stripTrailingReviewComments(prompt);
     if (withoutReviewComments !== prompt) {
       prompt = withoutReviewComments;
@@ -108,9 +117,13 @@ export function recallableComposerPrompt(messageText: string): string {
   }
 
   const trimmed = prompt.trim();
+  // Sends from before the prefix was recorded keep it, and it can lead a prompt that is hidden.
+  const body = trimmed.startsWith(CLAUDE_ULTRATHINK_PROMPT_PREFIX)
+    ? trimmed.slice(CLAUDE_ULTRATHINK_PROMPT_PREFIX.length)
+    : trimmed;
   if (
-    trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
-    trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
+    body === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
+    body.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
   ) {
     return "";
   }
@@ -125,7 +138,7 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    const prompt = recallableComposerPrompt(message.text);
+    const prompt = recallableComposerPrompt(message.text, message.context);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {
