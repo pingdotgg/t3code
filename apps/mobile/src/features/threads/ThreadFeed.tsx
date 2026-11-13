@@ -2850,6 +2850,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     // A v1 link names no environment, so it falls back to this message's.
     return scopeThreadRef(props.environmentId, link.threadId);
   };
+  // Relative media in a reply or tool call is relative to where the agent works.
+  const mediaRoot = props.agentCwd ?? props.workspaceRoot;
   // The file a chat link names: in this workspace, else in the one other project that has it.
   const findFileLinkTarget = async (
     linkPath: string,
@@ -2952,7 +2954,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const media = resolveMarkdownMediaPreview(href, {
       environmentId: props.environmentId,
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot: fromAgent ? mediaRoot : props.workspaceRoot,
       imageEmbed,
     });
     if (media && media.kind !== "file") {
@@ -3026,7 +3028,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,
     threadId: props.threadId,
-    workspaceRoot: props.workspaceRoot ?? null,
+    workspaceRoot: mediaRoot ?? null,
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
     fileEmbedLabel: (href, standalone) =>
@@ -3035,7 +3037,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         {
           environmentId: props.environmentId,
           threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
+          workspaceRoot: mediaRoot,
         },
         standalone,
       ),
@@ -3138,7 +3140,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const media = resolveMarkdownMediaPreview(image.href, {
       environmentId: props.environmentId,
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot: mediaRoot,
       imageEmbed: true,
     });
     if (media?.kind === "video") {
@@ -3181,7 +3183,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         </Text>
       );
     }
-    const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
+    const imageSource = classifyMarkdownImageSource(image.href, mediaRoot ?? null);
     if (imageSource._tag === "Direct") {
       return (
         <ThreadMarkdownImageView
@@ -3221,13 +3223,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const renderViewedImage: MarkdownImageRenderer = (image) => {
     const viewedImage = resolveViewedImageAsset(image.href, {
       threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
+      workspaceRoot: mediaRoot,
     });
     const media = viewedImage
       ? resolveMarkdownMediaPreview(image.href, {
           environmentId: props.environmentId,
           threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
+          workspaceRoot: mediaRoot,
           imageEmbed: true,
         })
       : null;
