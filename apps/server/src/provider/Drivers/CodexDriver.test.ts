@@ -580,6 +580,38 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "shares state from the environment CODEX_HOME in a shadow home",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const codexHome = NodePath.join(tempDir, "custom-codex");
+        const shadowHome = NodePath.join(tempDir, "shadow");
+        yield* fs.makeDirectory(codexHome, { recursive: true });
+        yield* fs.writeFileString(NodePath.join(codexHome, "config.toml"), 'model = "custom"\n');
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("env-shadow"),
+          displayName: "env-shadow",
+          enabled: false,
+          environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+          config: { ...CodexDriver.defaultConfig(), shadowHomePath: shadowHome },
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, NodePath.join(tempDir, "user")));
+        expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${codexHome}`);
+        expect(yield* fs.readLink(NodePath.join(shadowHome, "config.toml"))).toBe(
+          NodePath.join(codexHome, "config.toml"),
+        );
+        expect(yield* fs.readLink(NodePath.join(shadowHome, "sessions"))).toBe(
+          NodePath.join(codexHome, "sessions"),
+        );
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+  );
+
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",

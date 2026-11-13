@@ -516,10 +516,7 @@ export const codexUsageReader: ProviderUsageReader<
     const path = yield* Path.Path;
     const environmentHome = environment.CODEX_HOME?.trim();
     const layout = yield* resolveCodexHomeLayout(
-      config.setupMode !== "managed" &&
-        !config.homePath.trim() &&
-        !config.shadowHomePath.trim() &&
-        environmentHome
+      config.setupMode !== "managed" && !config.homePath.trim() && environmentHome
         ? { ...config, homePath: environmentHome }
         : config,
     );
