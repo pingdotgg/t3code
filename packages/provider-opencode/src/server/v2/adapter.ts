@@ -280,7 +280,8 @@ interface SubagentCall {
   agent: string | undefined;
   model: string | null;
   background: boolean;
-  joined: SubagentCall | undefined;
+  /** The child's turn this call prompted or steered; unset until that turn starts. */
+  run: number | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -1987,13 +1988,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         updatedAt: now,
       };
       const previous = threads.get(childId);
-      // Repeated subagent calls steer the same run; OpenCode reports it once for every joined call.
-      if (previous?.active !== undefined) {
-        call.joined = [...call.state.calls.values()].findLast(
-          (candidate) =>
-            candidate !== call && candidate.child === previous && candidate.joined === undefined,
-        );
-      }
+      // A call to a running child steers that run; OpenCode reports it once for all its calls.
+      if (previous?.active !== undefined) call.run = previous.subagent?.turns;
       const subagent = {
         call,
         appThread,
@@ -2059,6 +2055,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const subagent = child.subagent;
       if (subagent === undefined || child.active !== undefined) return;
       subagent.turns += 1;
+      for (const call of callsAttachedTo(child)) call.run ??= subagent.turns;
       const startedAt = yield* DateTime.now;
       const nativeTurnId = `${child.sessionId}:turn:${subagent.turns}`;
       const rootNodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2637,7 +2634,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
-        joined: undefined,
+        run: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -3019,12 +3016,31 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const call = [...state.calls.values()].find(
+      const open = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const calls = [...state.calls.values()].filter(
-        (candidate) => candidate === call || (call !== undefined && candidate.joined === call),
+      const child = threads.get(childId);
+      const running = child?.active === undefined ? undefined : child.subagent?.turns;
+      const started = open
+        .flatMap((candidate) =>
+          candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
+        )
+        .sort((a, b) => a.run - b.run);
+      const ended = started.filter((candidate) => candidate.run !== running);
+      const labelled = (candidates: typeof started) =>
+        candidates.findLast((candidate) => candidate.call.title === payload.description);
+      // The report names only the child. A run reports after it ends, labelled with one of its
+      // calls' descriptions; prefer the newest such run so a lost report cannot shift later ones.
+      const run = (labelled(ended) ?? labelled(started) ?? ended.at(-1))?.run;
+      const calls =
+        run === undefined
+          ? open.slice(0, 1)
+          : started.flatMap((candidate) => (candidate.run === run ? [candidate.call] : []));
+      // Runs are serial, so open calls of an earlier run have ended and their report is lost.
+      const lost = started.flatMap((candidate) =>
+        run !== undefined && candidate.run < run ? [candidate.call] : [],
       );
+      const call = calls[0];
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
@@ -3044,6 +3060,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           : outcome === "cancelled"
             ? "cancelled"
             : "completed";
+      for (const each of lost) yield* settleCall(each, "completed");
       for (const each of calls) yield* settleCall(each, status, subagentOutput(payload.text));
     });
 

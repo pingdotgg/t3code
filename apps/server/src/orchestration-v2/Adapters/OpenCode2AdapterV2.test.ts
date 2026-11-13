@@ -1561,8 +1561,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
   });
-  const callAgain = (input: Record<string, unknown>): ReadonlyArray<ProviderReplayEntry> => {
-    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
+  const callAgain = (
+    input: Record<string, unknown>,
+    { id = "call-again", writesRules = true } = {},
+  ): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id };
     return [
       event("session.tool.input.started", { ...tool, name: "subagent" }),
       event("session.tool.called", {
@@ -1575,20 +1578,25 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...tool,
         metadata: { sessionID: CHILD, status: "running" },
       }),
-      out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-      reply("session.update", null),
+      // The adapter writes a child's rules only when they changed.
+      ...(writesRules
+        ? [
+            out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+            reply("session.update", null),
+          ]
+        : []),
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (inboxID: string, text: string) =>
+  const childReport = (inboxID: string, text: string, description = "Sleep") =>
     event("session.inbox.enqueued", {
       inboxID,
       sessionID: SESSION,
       item: {
         type: "synthetic",
         payload: {
-          text: `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\n${text}\n</subagent>`,
-          description: "Sleep",
+          text: `<subagent sessionID="${CHILD}" state="completed" description="${description}">\n${text}\n</subagent>`,
+          description,
           metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
         },
         delivery: "steer",
@@ -1858,6 +1866,84 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
       assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
+    }),
+  );
+
+  it.effect.each([
+    {
+      // regression: #26319 the report settled the older run and left the resumed call running
+      name: "an earlier run's report never arrived",
+      replay: [
+        ...launchedAndRunning,
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_2", "SECOND_OK", "Again"),
+      ],
+      expected: {
+        Sleep: { status: "completed", result: null },
+        Again: { status: "completed", result: "SECOND_OK" },
+      },
+    },
+    {
+      name: "the previous run reports after the next one started",
+      replay: [
+        ...launchedAndRunning,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        ...callAgain({ background: true }),
+        event("session.execution.started", { sessionID: CHILD }),
+        childReport("msg_report_1", "FIRST_OK"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report_2", "SECOND_OK", "Again"),
+      ],
+      expected: {
+        Sleep: { status: "completed", result: "FIRST_OK" },
+        Again: { status: "completed", result: "SECOND_OK" },
+      },
+    },
+    {
+      name: "the call it joined already returned",
+      replay: [
+        ...backgroundLaunch(CHILD),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event(
+          "session.tool.success",
+          {
+            sessionID: SESSION,
+            assistantMessageID: "msg_assistant",
+            id: "call-background",
+            content: [{ type: "text", text: "FIRST_OK" }],
+            metadata: { sessionID: CHILD, status: "completed" },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        childReport("msg_report", "CHILD_OK", "Again"),
+      ],
+      expected: {
+        Sleep: { status: "completed", result: "FIRST_OK" },
+        Again: { status: "completed", result: "CHILD_OK" },
+      },
+    },
+  ])("settles a resumed subagent's calls when $name", ({ replay, expected }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(replay);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.state.roster?.length === 0 &&
+          Object.keys(expected).every((title) => watch.calls.get(title)?.status === "completed"),
+      );
+      assert.deepEqual(Object.fromEntries(watch.calls), expected);
     }),
   );
 
