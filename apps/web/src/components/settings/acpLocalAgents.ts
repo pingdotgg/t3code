@@ -48,14 +48,17 @@ export function isConfiguredAcpLocalAgent(
     }
     const config = instance.config as Record<string, unknown>;
     if (config.source !== "local") return false;
-    if (config.localPresetId === preset.id) return true;
     const executable =
       typeof config.commandPath === "string" ? (config.commandPath.split(/[\\/]/).pop() ?? "") : "";
     const args = Array.isArray(config.commandArgs) ? config.commandArgs : [];
-    return (
+    const launchesPreset =
       executable === preset.executable &&
       args.length === preset.args.length &&
-      args.every((argument, index) => argument === preset.args[index])
-    );
+      args.every((argument, index) => argument === preset.args[index]);
+    // Editing the command keeps the marker, so it only counts while the command still matches.
+    if (config.localPresetId === preset.id) {
+      return typeof config.commandPath !== "string" || launchesPreset;
+    }
+    return launchesPreset;
   });
 }

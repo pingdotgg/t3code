@@ -24,6 +24,7 @@ import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
 } from "../../hooks/useSettings";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
@@ -400,6 +401,7 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(false);
     setWizardStep(1);
   };
+  const stableHandleLocalPreset = useStableCallback(handleLocalPreset);
 
   // A policy that owns this driver's launch settings also rules out ChatGPT's own runtime.
   const driverLocks = managedInstanceLocks(managedPolicy, driver);
@@ -603,7 +605,7 @@ export function AddProviderInstanceDialog({
                             onPrepared={handleAcpPrepared}
                             onManualConfiguration={handleManualAcpConfiguration}
                             onLocalConfiguration={handleLocalAcpConfiguration}
-                            onLocalPreset={handleLocalPreset}
+                            onLocalPreset={stableHandleLocalPreset}
                           />
                           {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
                             <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>

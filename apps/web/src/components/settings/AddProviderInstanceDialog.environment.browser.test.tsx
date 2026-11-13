@@ -290,7 +290,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
       },
     });
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
-    expect(signInStep()).toBeNull();
+    await vi.waitFor(() => expect(signInStep()).toBeNull());
   });
 
   it("creates a local command in the selected environment without a sign-in step", async () => {

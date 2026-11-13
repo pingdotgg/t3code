@@ -146,7 +146,7 @@ it("offers a known local ACP agent for a matching query", async () => {
 
   await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("oh-my-pi");
 
-  expect(page.getByText("No compatible agents found").query()).toBeNull();
+  await expect.element(page.getByText("No compatible agents found")).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Add Oh My Pi" }).click();
   expect(onLocalPreset).toHaveBeenCalledWith(
     expect.objectContaining({ id: "oh-my-pi", executable: "omp", args: ["acp"] }),
@@ -160,8 +160,8 @@ it("keeps the empty state when no local agent matches", async () => {
 
   await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("kilo");
 
-  expect(page.getByRole("button", { name: "Add Oh My Pi" }).query()).toBeNull();
-  expect(page.getByText("No compatible agents found").query()).not.toBeNull();
+  await expect.element(page.getByRole("button", { name: "Add Oh My Pi" })).not.toBeInTheDocument();
+  await expect.element(page.getByText("No compatible agents found")).toBeInTheDocument();
 });
 
 it("marks a local preset that is already configured as added", async () => {
@@ -171,5 +171,7 @@ it("marks a local preset that is already configured as added", async () => {
 
   await page.getByRole("searchbox", { name: "Search ACP Registry" }).fill("omp");
 
-  expect(page.getByRole("button", { name: "Already added Oh My Pi" }).query()).not.toBeNull();
+  await expect
+    .element(page.getByRole("button", { name: "Already added Oh My Pi" }))
+    .toBeInTheDocument();
 });

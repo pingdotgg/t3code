@@ -34,6 +34,15 @@ describe("isConfiguredAcpLocalAgent", () => {
             driver: "acpRegistry",
             config: { source: "local", localPresetId: "oh-my-pi" },
           },
+          acpRegistry_oh_my_pi_full: {
+            driver: "acpRegistry",
+            config: {
+              source: "local",
+              localPresetId: "oh-my-pi",
+              commandPath: "/home/user/.local/bin/omp",
+              commandArgs: ["acp"],
+            },
+          },
         },
         ohMyPi,
       ),
@@ -73,6 +82,15 @@ describe("isConfiguredAcpLocalAgent", () => {
           acpRegistry_omp: {
             driver: "acpRegistry",
             config: { source: "local", commandPath: "omp", commandArgs: ["--mode", "acp"] },
+          },
+          acpRegistry_edited_marker: {
+            driver: "acpRegistry",
+            config: {
+              source: "local",
+              localPresetId: "oh-my-pi",
+              commandPath: "node",
+              commandArgs: ["acp"],
+            },
           },
         },
         ohMyPi,
