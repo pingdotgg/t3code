@@ -120,18 +120,28 @@ export function codexRateLimitsToLimits(input: {
     | null
     | undefined;
   readonly resetCredits?: CodexResetCreditsSummary | null | undefined;
+  readonly accountId?: string | null | undefined;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const selected = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(selected);
+  const planType = selected.planType ?? input.snapshot.planType ?? "";
+  const accountId = input.accountId?.trim();
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
       windows,
     }),
+    // A personal plan's account id names one person; team members share theirs.
+    ...(accountId && PERSONAL_PLANS.has(planType)
+      ? { credentialFingerprint: `chatgpt:${accountId}` }
+      : {}),
     ...(resetCredits ? { resetCredits } : {}),
   };
 }
+
+const PERSONAL_PLANS = new Set(["free", "go", "plus", "pro"]);
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,

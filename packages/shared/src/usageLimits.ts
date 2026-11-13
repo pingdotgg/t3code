@@ -234,14 +234,33 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const loginsByCredential = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
+    const credential = report.usageLimits?.credentialFingerprint;
+    if (key && report.email?.trim() && credential) {
+      const credentialKey = `${report.driver}:${credential}`;
+      loginsByCredential.set(
+        credentialKey,
+        (loginsByCredential.get(credentialKey) ?? new Set()).add(key),
+      );
+    }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    // A Codex instance on a custom model provider reports no login, yet its usage comes from the
+    // ChatGPT login on disk, which the server identifies by credential on personal plans.
+    const credential = report.usageLimits?.credentialFingerprint;
+    const logins =
+      !report.email?.trim() && credential
+        ? loginsByCredential.get(`${report.driver}:${credential}`)
+        : undefined;
+    const key =
+      logins?.size === 1
+        ? [...logins][0]!
+        : accountKey(report.driver, report.email, report.usageLimits);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
@@ -271,12 +290,46 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
+/**
+ * The badge that marks an account on every bar, legend and popover. It derives from the email
+ * whenever one is known, so a login reads the same in every window and environment whether a
+ * native instance or a hub reported it; instance names often just repeat the provider.
+ */
+export function limitAccountBadge(account: Pick<LimitAccount, "key" | "email" | "displayName">): {
+  readonly initials: string;
+  readonly hue: number;
+} {
+  const email = account.email?.trim().toLowerCase();
+  const name = account.displayName?.trim();
+  let initials: string;
+  if (email) {
+    const [local = "", domain = ""] = email.split("@");
+    initials = `${local[0] ?? ""}${domain[0] ?? ""}`;
+  } else if (name) {
+    const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    initials = words.length > 1 ? `${words[0]![0]}${words[1]![0]}` : (words[0] ?? "").slice(0, 2);
+  } else {
+    initials = "";
+  }
+  const seed = email ?? name?.toLowerCase() ?? account.key;
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) | 0;
+  }
+  return { initials: initials.toUpperCase() || "?", hue: Math.abs(hash) % 360 };
+}
+
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
+  const names = new Map<string, Set<string>>();
   const merge = (key: string, next: LimitAccount) => {
+    const seenNames = names.get(key) ?? new Set<string>();
+    if (next.environments.length > 0 && next.displayName) {
+      names.set(key, seenNames.add(next.displayName));
+    }
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -324,9 +377,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const displayName = previous.displayName ?? next.displayName;
     accounts.set(key, {
       ...previous,
+      email: previous.email ?? next.email,
+      // Instances that share a login under different names are one account, not either name.
       displayName:
-        hubEmail &&
-        displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()
+        (seenNames.size > 1 && (previous.email ?? next.email)) ||
+        (hubEmail &&
+          displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase())
           ? null
           : displayName,
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,

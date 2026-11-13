@@ -20,6 +20,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
+  limitAccountBadge,
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
@@ -743,6 +744,69 @@ describe("pools", () => {
     ]);
   });
 
+  it("joins Codex instances on a custom provider to the login the server identifies", () => {
+    const limits = (credentialFingerprint?: string) => ({
+      checkedAt,
+      windows: [window],
+      ...(credentialFingerprint ? { credentialFingerprint } : {}),
+    });
+    const routed = (instanceId: string, displayName: string, credential?: string) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        displayName,
+        auth: { status: "unknown", workspaceId: "acct-1" },
+        usageLimits: limits(credential),
+      });
+    const login = (email: string, credential?: string) =>
+      provider({
+        auth: { status: "authenticated", email, workspaceId: "acct-1" },
+        usageLimits: limits(credential),
+      });
+    const keys = (credential: string | undefined, ...logins: ServerProvider[]) => {
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                routed("pool", "Codex Pool", credential),
+                routed("repairs", "Automatic repairs", credential),
+              ],
+            },
+          },
+        ],
+      ]);
+      logins.forEach((entry, index) =>
+        input.set(EnvironmentId.make(`env-${index + 2}`), {
+          entry: { target: { label: `Desktop ${index + 2}` } },
+          serverConfig: { providers: [entry] },
+        }),
+      );
+      return collectLimitAccounts(input);
+    };
+    const personal = keys("chatgpt:acct-1", login("jai@example.com", "chatgpt:acct-1"));
+    expect(personal).toHaveLength(1);
+    expect(personal[0]).toMatchObject({ email: "jai@example.com", displayName: null });
+    expect(personal[0]?.environments.map((environment) => environment.label)).toEqual([
+      "Laptop",
+      "Desktop 2",
+    ]);
+    const named = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [routed("w", "Work", "chatgpt:acct-1")] } },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        { ...laptop, serverConfig: { providers: [login("jai@example.com", "chatgpt:acct-1")] } },
+      ],
+    ]);
+    expect(collectLimitAccounts(named)[0]?.displayName).toBe("Work");
+    // Team members share a workspace id, so without the server's credential nothing joins.
+    expect(keys(undefined, login("jai@example.com"))).toHaveLength(3);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",
@@ -766,6 +830,57 @@ describe("pools", () => {
     const accounts = collectLimitAccounts(input);
     expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    expect(limitAccountBadge(accounts[0]!).initials).toBe("CT");
+  });
+
+  it("badges every account by its email, even when its instance is named after the provider", () => {
+    const named = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "Work@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hubAccount = (email: string) => ({
+      id: `claude-${email}.json`,
+      driver: claude,
+      email,
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const pooled = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [named],
+              usageLimitSources: [{ ...source, accounts: [hubAccount("me@example.net")] }],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(pooled.map((account) => limitAccountBadge(account).initials).toSorted()).toEqual([
+      "ME",
+      "WE",
+    ]);
+    const hubOnly = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-b"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [{ ...source, accounts: [hubAccount("work@example.com")] }],
+            },
+          },
+        ],
+      ]),
+    );
+    const nativeWork = pooled.find((account) => account.displayName === "Claude")!;
+    expect(limitAccountBadge(hubOnly[0]!)).toEqual(limitAccountBadge(nativeWork));
   });
 
   it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {

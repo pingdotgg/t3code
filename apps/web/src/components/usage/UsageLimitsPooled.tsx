@@ -6,7 +6,9 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  formatDuration,
   formatResetsIn,
+  limitAccountBadge,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
@@ -39,83 +41,35 @@ import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
-import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
 
-function accountInitials(email: string): string {
-  const [local = "", domain = ""] = email.split("@");
-  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
-}
-
-function accountHue(email: string): number {
-  let hash = 0;
-  for (let index = 0; index < email.length; index += 1) {
-    hash = (hash * 31 + email.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash) % 360;
-}
-
-function AccountChip({ email }: { readonly email: string }) {
-  const hue = accountHue(email);
+function AccountChip({
+  account,
+  size = "default",
+}: {
+  readonly account: LimitAccount;
+  readonly size?: "default" | "sm";
+}) {
+  const { initials, hue } = limitAccountBadge(account);
   return (
     <span
       role="img"
-      aria-label={`Account ${accountInitials(email)}`}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
+      aria-label={`Account ${initials}`}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center rounded-full leading-none font-semibold tracking-tight",
+        size === "sm" ? "size-4 text-4xs" : "size-5 text-3xs",
+      )}
       style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
     >
-      {accountInitials(email)}
+      {initials}
     </span>
   );
 }
 
-function AccountAvatar({
-  account,
-  className,
-}: {
-  readonly account: LimitAccount;
-  readonly className?: string;
-}) {
-  if (account.redeem) {
-    return (
-      <ProviderInstanceIcon
-        driverKind={account.driver}
-        displayName={
-          account.displayName ??
-          providerClients.get(account.driver)?.label ??
-          String(account.driver)
-        }
-        accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
-        indicatorBackground="var(--popover)"
-        className={cn("size-5", className)}
-        iconClassName="size-4 text-foreground/80"
-      />
-    );
-  }
-  return account.email ? <AccountChip email={account.email} /> : null;
-}
-
-function AccountName({
-  account,
-  className,
-}: {
-  readonly account: LimitAccount;
-  readonly className?: string;
-}) {
-  if (account.displayName) return <span className={className}>{account.displayName}</span>;
-  if (account.email) {
-    return (
-      <span className={cn("inline-flex min-w-0 items-center", className)}>
-        <AccountChip email={account.email} />
-      </span>
-    );
-  }
+function accountTitle(account: LimitAccount): string {
   return (
-    <span className={className}>
-      {providerClients.get(account.driver)?.label ?? String(account.driver)}
-    </span>
+    account.displayName ?? providerClients.get(account.driver)?.label ?? String(account.driver)
   );
 }
 
@@ -159,10 +113,8 @@ function SegmentPopover({
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? providerClients.get(account.driver)?.label ?? account.driver}
-          </span>
+          <AccountChip account={account} />
+          <span className="truncate">{accountTitle(account)}</span>
         </span>
         {account.email ? (
           <RedactedSensitiveText
@@ -289,7 +241,7 @@ function PoolSegment({
   readonly color: string;
   readonly now: number;
   readonly index: number;
-  readonly showAccountName: boolean;
+  readonly single: boolean;
 }) {
   return account.redeem ? (
     <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
@@ -318,7 +270,7 @@ function RedeemableSegment({
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
       {redeem.busy || redeem.status ? (
         <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={props.account} className="font-medium text-foreground" />{" "}
+          <span className="font-medium text-foreground">{accountTitle(props.account)}</span>{" "}
           {redeem.busy ? "Using reset credit…" : redeem.status}
         </span>
       ) : null}
@@ -335,13 +287,13 @@ function SegmentTriggers({
   color,
   now,
   index,
-  showAccountName,
+  single,
 }: SegmentPayload & {
   readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
-  readonly showAccountName: boolean;
+  readonly single: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
   const payload: SegmentPayload = { account, window, reset, redeem };
@@ -361,7 +313,7 @@ function SegmentTriggers({
             ref={segmentRef}
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${single ? "" : `Segment ${index}, account ${limitAccountBadge(account).initials}: `}${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
@@ -393,58 +345,70 @@ function SegmentTriggers({
             style={paceMark.tick}
           />
         ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
-          {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
-          ) : null}
-          {/* A single-account bar repeats the headline percentage. */}
-          {showAccountName ? (
-            <span className="shrink-0 font-semibold text-foreground tabular-nums">
-              {remaining}%
-            </span>
-          ) : null}
-          {resetsIn || credits ? (
-            <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
-              {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-              {credits ? (
-                <>
-                  {resetsIn ? (
-                    <span aria-hidden className="text-muted-foreground">
-                      ·
-                    </span>
-                  ) : null}
-                  <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                    <TicketIcon className="size-3" aria-hidden />
-                    {credits}
-                  </span>
-                </>
-              ) : null}
-            </span>
-          ) : null}
-        </div>
+        {/* The narrow bar marks its account for the legend rows below; wide bars carry a caption. */}
+        {single ? null : (
+          <span aria-hidden className="relative flex h-full items-center px-0.5 @2xl/pool:hidden">
+            <AccountChip account={account} size="sm" />
+          </span>
+        )}
       </PopoverTrigger>
-      <LegendRow payload={payload} color={color} now={now} index={index} />
+      <span
+        aria-hidden
+        style={{ gridColumn: index, gridRow: 2 }}
+        className={cn(
+          "min-w-0 items-center gap-1.5 overflow-hidden px-0.5 text-2xs whitespace-nowrap text-muted-foreground tabular-nums",
+          single ? "flex" : "hidden @2xl/pool:flex",
+        )}
+      >
+        {/* A single-account caption skips the badge and the percentage the headline already shows. */}
+        {single ? null : (
+          <>
+            <AccountChip account={account} />
+            <span className="text-xs font-semibold text-foreground">{remaining}%</span>
+          </>
+        )}
+        <ResetSummary resetsIn={resetsIn} credits={credits} />
+      </span>
+      {single ? null : <LegendRow payload={payload} now={now} index={index} />}
     </>
+  );
+}
+
+function ResetSummary({
+  resetsIn,
+  credits,
+}: {
+  readonly resetsIn: string | null;
+  readonly credits: number;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+      {credits ? (
+        <>
+          {resetsIn ? <span aria-hidden>·</span> : null}
+          <span
+            aria-hidden
+            className="inline-flex items-center gap-0.5 font-semibold text-foreground"
+          >
+            <TicketIcon className="size-3" aria-hidden />
+            {credits}
+          </span>
+          <span className="sr-only">
+            {credits} reset {credits === 1 ? "credit" : "credits"} banked
+          </span>
+        </>
+      ) : null}
+    </span>
   );
 }
 
 function LegendRow({
   payload,
-  color,
   now,
   index,
 }: {
   readonly payload: SegmentPayload;
-  readonly color: string;
   readonly now: number;
   readonly index: number;
 }) {
@@ -461,34 +425,10 @@ function LegendRow({
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
-          style={{ backgroundColor: color }}
-        />
-        <span className="sr-only">Segment </span>
-        <span className="relative">{index}</span>
-      </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+      <AccountChip account={account} />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-      <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-        {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-        {credits ? (
-          <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
-            <span
-              aria-hidden
-              className="inline-flex items-center gap-0.5 font-semibold text-foreground"
-            >
-              <TicketIcon className="size-3" aria-hidden />
-              {credits}
-            </span>
-            <span className="sr-only">
-              {credits} reset {credits === 1 ? "credit" : "credits"} banked
-            </span>
-          </>
-        ) : null}
+      <span className="ms-auto flex shrink-0 items-center text-2xs text-muted-foreground tabular-nums">
+        <ResetSummary resetsIn={resetsIn} credits={credits} />
       </span>
     </PopoverTrigger>
   );
@@ -521,7 +461,7 @@ function PoolBar({
               color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
+              single={pool.columns.length === 1}
             />
           ) : null,
         )}
@@ -560,8 +500,9 @@ function PoolWindowCard({
           </span>
         </span>
         {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+          <span className="text-xs text-muted-foreground tabular-nums">
+            +{nextRefill.restoresPercent}% back{" "}
+            {nextRefill.at - now < 60_000 ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
           </span>
         ) : null}
       </div>
@@ -687,13 +628,13 @@ export function UsageLimitsPooled({
 function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
-    <Alert variant="warning" controlAlignment="first-line">
-      <AlertTriangleIcon />
+    <ul role="alert" className="flex flex-col gap-1.5 text-xs text-muted-foreground">
       {notices.map((notice) => (
-        <AlertTitle key={notice} className="break-words">
-          {notice}
-        </AlertTitle>
+        <li key={notice} className="flex min-w-0 gap-2">
+          <AlertTriangleIcon className="mt-px size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 break-words">{notice}</span>
+        </li>
       ))}
-    </Alert>
+    </ul>
   );
 }
