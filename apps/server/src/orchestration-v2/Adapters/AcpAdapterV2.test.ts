@@ -3153,12 +3153,13 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect.each([
-    { protocolVersion: 1, messageId: undefined },
-    { protocolVersion: 1, messageId: "source-message" },
-    { protocolVersion: 2, messageId: "source-message" },
+    { protocolVersion: 1, messageId: undefined, imagesWithoutId: false },
+    { protocolVersion: 1, messageId: "source-message", imagesWithoutId: false },
+    { protocolVersion: 1, messageId: "source-message", imagesWithoutId: true },
+    { protocolVersion: 2, messageId: "source-message", imagesWithoutId: false },
   ] as const)(
-    "handles inline images under protocol $protocolVersion with messageId $messageId",
-    ({ protocolVersion, messageId }) =>
+    "handles inline images under protocol $protocolVersion with messageId $messageId (images without id: $imagesWithoutId)",
+    ({ protocolVersion, messageId, imagesWithoutId }) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const config = yield* ServerConfig.ServerConfig;
@@ -3180,11 +3181,24 @@ describe("AcpAdapterV2", () => {
               { ...image, data: "", uri: `data:image/png;base64,${png}` },
               { type: "text", text: "after" },
             ] satisfies Array<EffectAcpSchema.ContentBlock>
-          ).map((content) => ({
-            sessionUpdate: "agent_message_chunk" as const,
-            ...(messageId === undefined ? {} : { messageId }),
-            content,
-          })),
+          ).flatMap((content) => [
+            // A reasoning chunk closes the assistant stream, so an id-less image has no source id.
+            ...(imagesWithoutId && content.type === "image"
+              ? [
+                  {
+                    sessionUpdate: "agent_thought_chunk" as const,
+                    content: { type: "text" as const, text: "thinking" },
+                  },
+                ]
+              : []),
+            {
+              sessionUpdate: "agent_message_chunk" as const,
+              ...(messageId === undefined || (imagesWithoutId && content.type === "image")
+                ? {}
+                : { messageId }),
+              content,
+            },
+          ]),
           {
             sessionUpdate: "tool_call",
             toolCallId: "image-tool",
@@ -3307,7 +3321,10 @@ describe("AcpAdapterV2", () => {
         const tool = [...items.values()].find((item) => item.type === "dynamic_tool");
         assert.isTrue(tool?.type === "dynamic_tool");
         if (tool?.type === "dynamic_tool")
-          assert.deepEqual(tool.output, [{ type: "text", text: "tool caption" }, image]);
+          assert.deepEqual(tool.output, [
+            { type: "content", content: { type: "text", text: "tool caption" } },
+            image,
+          ]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

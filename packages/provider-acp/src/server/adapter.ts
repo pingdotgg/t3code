@@ -1041,11 +1041,14 @@ function appendToolContentText(content: unknown, text: string): unknown[] {
   return next;
 }
 
+// Only image blocks are unwrapped, for the tool-image reader; text keeps its shape.
 function acpToolCallContentOutput(content: unknown): unknown {
   return Array.isArray(content)
     ? content.map((entry: unknown) => {
         const record = unknownRecord(entry);
-        return record?.type === "content" ? record.content : entry;
+        return record?.type === "content" && unknownRecord(record.content)?.type === "image"
+          ? record.content
+          : entry;
       })
     : content;
 }
@@ -3026,7 +3029,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             kind === "assistant" && sourceMessageId !== null
               ? (context.assistantImageSegments.get(sourceMessageId) ?? 0)
               : 0;
-          const messageItemId = `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`;
           // A new object, so a flush scheduled before the close stays a no-op.
           const segment: ActiveTextSegment =
             closed === undefined
@@ -3035,8 +3037,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     sourceMessageId === null
                       ? `${context.nativeTurnId}:${kind}:${stream.nextSegment}`
                       : imageSegment > 0
-                        ? `${messageItemId}:${imageSegment}`
-                        : messageItemId,
+                        ? `${context.nativeTurnId}:${kind}:message-segment:${encodeURIComponent(sourceMessageId)}:${imageSegment}`
+                        : `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`,
                   startedAt: yield* DateTime.now,
                   sourceMessageId,
                   text: "",
@@ -3132,21 +3134,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (Result.isSuccess(stored)) {
               const sourceMessageId =
                 messageId?.trim() || context.assistant.current?.sourceMessageId;
-              const imageSegment = sourceMessageId
-                ? (context.assistantImageSegments.get(sourceMessageId) ?? 0) + 1
-                : 0;
+              // Text after an image starts a new segment instead of reopening one from before it.
+              const startSegmentsAfterImage = () => {
+                for (const closedId of context.assistant.closedNamedSegments.keys()) {
+                  context.assistantImageSegments.set(
+                    closedId,
+                    (context.assistantImageSegments.get(closedId) ?? 0) + 1,
+                  );
+                }
+                context.assistant.closedNamedSegments.clear();
+              };
               yield* closeTextStreams(context);
-              // Text around an image gets its own segment instead of reopening the closed one.
-              if (sourceMessageId) {
-                context.assistant.closedNamedSegments.delete(sourceMessageId);
-                context.assistantImageSegments.set(sourceMessageId, imageSegment);
-              }
+              startSegmentsAfterImage();
               yield* appendText(context, "assistant", "", sourceMessageId, stored.success);
               yield* closeTextStream(context, "assistant");
-              if (sourceMessageId) {
-                context.assistant.closedNamedSegments.delete(sourceMessageId);
-                context.assistantImageSegments.set(sourceMessageId, imageSegment + 1);
-              }
+              startSegmentsAfterImage();
               return;
             }
             yield* appendText(
