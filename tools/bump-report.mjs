@@ -14,10 +14,10 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { repoRoot } from "./monorepo.mjs";
+import { binaryCoverage, registeredTags, servedCount as countOf } from "./served.mjs";
 
 const args = process.argv.slice(2);
 
@@ -572,72 +572,14 @@ if (!monorepo) {
 
 // ---- Coverage ----------------------------------------------------------------------------
 
-/**
- * Method tags the method table registers: every contract tag written as a string literal in
- * crates/conn-server/src/methods (tests and `table.get(..)` lookups left out). Registrations
- * put the tag on its own line or pass it through helpers, so this reads literals, not calls.
- * The binary's coverage line cross-checks the count.
- */
-function registeredTags(tags) {
-  const found = new Set();
-  const walk = (dir) => {
-    for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
-      const path = NodePath.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== "tests") walk(path);
-      } else if (entry.name.endsWith(".rs") && entry.name !== "tests.rs") {
-        const text = NodeFS.readFileSync(path, "utf8")
-          .split(/\n#\[cfg\(test\)\]/)[0]
-          .replace(/\.get\(\s*"[^"]*"\s*\)/g, "");
-        for (const m of text.matchAll(/"([A-Za-z][A-Za-z0-9_.-]*)"/g)) if (tags.has(m[1])) found.add(m[1]);
-      }
-    }
-  };
-  walk(NodePath.join(repoRoot, "crates/conn-server/src/methods"));
-  return found;
-}
-
-async function coverageLine(binary) {
-  if (!binary || !NodeFS.existsSync(binary)) return undefined;
-  const tmp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-bump-cov-"));
-  const project = NodePath.join(tmp, "project");
-  NodeFS.mkdirSync(project);
-  const child = NodeChildProcess.spawn(binary, ["--state-dir", NodePath.join(tmp, "state"), "--project", project], {
-    cwd: tmp,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  try {
-    return await new Promise((ok) => {
-      let text = "";
-      const timer = setTimeout(() => ok(undefined), 15000);
-      child.stdout.on("data", (d) => {
-        text += d;
-        const m = /^methods: (.+)$/m.exec(text);
-        if (m) {
-          clearTimeout(timer);
-          ok(m[1]);
-        }
-      });
-      child.on("exit", () => {
-        clearTimeout(timer);
-        ok(undefined);
-      });
-    });
-  } finally {
-    if (child.exitCode === null) child.kill("SIGTERM");
-    await new Promise((r) => (child.exitCode === null ? child.once("exit", r) : r()));
-    NodeFS.rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
 line();
 const all = newMethods?.methods ?? [];
 const registered = registeredTags(new Set(all.map((m) => m.tag)));
 const missing = all.filter((m) => !registered.has(m.tag));
 const servedCount = all.length - missing.length;
-const binaryLine = await coverageLine(option("--binary"));
+const binaryLine = await binaryCoverage(option("--binary"));
 line(`## Coverage: ${binaryLine ?? `${servedCount} of ${all.length} methods (from the sources; no binary run)`}`);
-const binaryServed = binaryLine && Number(/^(\d+) of/.exec(binaryLine)?.[1]);
+const binaryServed = binaryLine && countOf(binaryLine);
 if (binaryLine && binaryServed !== servedCount) {
   line(`  WARNING: the sources register ${servedCount}, the binary says ${binaryServed}; the list below may be off.`);
 }

@@ -69,6 +69,7 @@ monorepo_checks=(
   "effect-client (ack window)"
   "client-check"
   "replay"
+  "decode coverage"
   "parity"
 )
 
@@ -80,12 +81,24 @@ else
   run "gen-tools --check" node crates/conn-mcp/tools/gen-tools.mjs --check
   run "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs --check
   run "gen-upstream --check" node tools/gen-upstream.mjs --check
+  decoded="$scratch/decoded-tags"
+  : >"$decoded"
   run "effect-client (conn-server)" \
-    node crates/conn-server/tools/effect-client.mjs "$release/conn-server"
+    env DECODE_COVERAGE="$decoded" node crates/conn-server/tools/effect-client.mjs "$release/conn-server"
   run "effect-client (ack window)" \
     node crates/conn-server/tools/effect-client.mjs "$release/examples/effect_fixture" --fixture
   run "client-check" client_check
-  run "replay" node crates/conn-server/tools/replay.mjs "$release/examples/replay_server"
+  # Every recording in fixtures/sessions (about 15 s).
+  scenarios=()
+  for file in fixtures/sessions/*.ndjson; do
+    case "$file" in *.http.ndjson) continue ;; esac
+    name="${file##*/}"
+    scenarios+=("${name%.ndjson}")
+  done
+  run "replay" env DECODE_COVERAGE="$decoded" \
+    node crates/conn-server/tools/replay.mjs "$release/examples/replay_server" "${scenarios[@]}"
+  run "decode coverage" \
+    node crates/conn-server/tools/decode-coverage.mjs "$decoded" "$release/conn-server"
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
 fi
