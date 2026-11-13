@@ -495,7 +495,10 @@ describe("t3 pair", () => {
           ]);
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
-            assert.include(String(Cause.squash(exit.cause)), "t3@0.0.45 pair");
+            assert.include(
+              String(Cause.squash(exit.cause)),
+              `t3@0.0.45 pair --base-dir ${baseDir}`,
+            );
           }
         }),
       "127.0.0.1",

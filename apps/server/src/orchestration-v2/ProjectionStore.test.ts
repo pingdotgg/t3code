@@ -5049,8 +5049,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
       }
 
-      // A steer cancels the queued run before it starts while the steered run keeps writing, so
-      // the queued message leaves the window but its run is still the shell's latest run.
+      // A steer moves the cancelled queued message outside the window.
       const steeredItemId = "turn-item:bounded-sql-history:steered-output";
       const steeredRunId = RunId.make("run:bounded-sql-history:1000");
       yield* sql`
@@ -5088,7 +5087,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isFalse(
         steeredSnapshot.projection.turnItems.some((item) => item.runId === cancelledRunId),
       );
-      assert.isTrue(steeredSnapshot.projection.runs.some((run) => run.id === cancelledRunId));
+      const latestRunId = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )?.latestRunId;
+      assert.equal(latestRunId, hiddenRunId);
+      assert.isFalse(
+        steeredSnapshot.projection.turnItems.some((item) => item.runId === latestRunId),
+      );
+      assert.isTrue(steeredSnapshot.projection.runs.some((run) => run.id === latestRunId));
       yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${steeredItemId}`;
 
       const interruptRunId = RunId.make("run:bounded-sql-history:interrupt");
@@ -6098,6 +6104,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         for (const view of ["messages", "activity"] as const) {
           for (const afterPosition of [-1, Math.floor(totalItems / 3), totalItems - 5])
             yield* windowed(timeline({ view, afterPosition, limit: 20 }));
+          for (const beforePosition of [
+            Number.POSITIVE_INFINITY,
+            Math.floor(totalItems / 3),
+            totalItems - 5,
+          ])
+            yield* windowed(timeline({ view, beforePosition, limit: 20 }));
+          yield* windowed(timeline({ view, afterPosition: 3, beforePosition: 40, limit: 20 }));
         }
         for (const itemId of [newest.sourceItemId, ...tiedWithHidden])
           yield* windowed(timeline({ itemId, limit: 1 }));
@@ -7419,6 +7432,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           silent ? hidden : visible,
         ]);
 
+        // A follow-up removed before it started stays latest unless a visible run outlives it.
+        const removedRunId = RunId.make(`run:projection-shell-silent:${key}:removed`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:removed`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...(yield* projectionStore.getThreadProjection(threadId)).runs[0]!,
+            id: removedRunId,
+            ordinal: 2,
+            userMessageId: MessageId.make(`message:projection-shell-silent:${key}:removed`),
+            status: "cancelled",
+            startedAt: null,
+            completedAt: now,
+          },
+        });
+        assert.deepStrictEqual(
+          (yield* presented).map((shell) => shell.latestRunId),
+          silent ? [removedRunId, removedRunId] : [runId, runId],
+        );
+
         // A run that fails outright, e.g. on a provider error, needs the user too.
         const running = (yield* projectionStore.getThreadProjection(threadId)).runs[0]!;
         const setRunStatus = (status: "failed" | "running") =>
@@ -7657,8 +7692,26 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             value == null ? null : DateTime.toEpochMillis(value);
           assert.equal(timestamp(sqlShell.activityRunStartedAt), expected);
           assert.equal(timestamp(memoryShell.activityRunStartedAt), expected);
-          assert.equal(sqlShell.latestRunId, "run:clock:newer");
+          // A queued message steered or removed before it started never ran, so the run that did presents.
+          for (const shell of [sqlShell, memoryShell]) {
+            assert.equal(shell.latestRunId, status === "cancelled" ? runId : "run:clock:newer");
+          }
         }
+      }
+      // Removing a message after the earlier run ended leaves the cancelled run as the latest.
+      yield* projectionStore.apply({
+        id: EventId.make("event:clock:ended-before-cancel"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+      });
+      const endedBeforeCancelProjection = yield* projectionStore.getThreadProjection(threadId);
+      for (const shell of [
+        (yield* projectionStore.getShellSnapshot()).threads.find((row) => row.id === threadId)!,
+        ProjectionStore.threadShellFromProjection(endedBeforeCancelProjection),
+      ]) {
+        assert.equal(shell.latestRunId, "run:clock:newer");
       }
 
       yield* projectionStore.apply({
@@ -9788,6 +9841,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.deepEqual(followingPage.items, targetAfterRollback.visibleTurnItems.slice(2));
       assert.isFalse(followingPage.hasMore);
+      assert.isTrue(followingPage.hasEarlier);
+      const newestPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 2,
+        beforePosition: Number.POSITIVE_INFINITY,
+      });
+      assert.deepEqual(newestPage.items, targetAfterRollback.visibleTurnItems.slice(-2));
+      assert.isFalse(newestPage.hasMore);
+      assert.isTrue(newestPage.hasEarlier);
+      const earlierPage = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 10,
+        beforePosition: newestPage.items[0]!.position,
+      });
+      assert.deepEqual(earlierPage.items, targetAfterRollback.visibleTurnItems.slice(0, -2));
+      assert.isTrue(earlierPage.hasMore);
+      assert.isFalse(earlierPage.hasEarlier);
       const tracedTimelinePage = (limit: number) =>
         Effect.gen(function* () {
           const { statements, tracer } = traceSqlStatements();
