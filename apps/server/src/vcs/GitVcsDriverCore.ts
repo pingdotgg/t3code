@@ -5579,6 +5579,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     initRepo: initRepoWithListRefsInvalidation,
     invalidateRefs: Effect.fn("GitVcsDriver.invalidateRefs")(function* (cwd) {
+      // First, so a cached "not a repository" cannot end the ref invalidation early.
+      const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
+      yield* Cache.invalidate(repositoryPathsRefreshCache, cacheKey);
+      yield* Cache.invalidate(repositoryPathsCache, cacheKey);
       return yield* withListRefsInvalidation(cwd, Effect.void);
     }),
     listLocalBranchNames,

@@ -236,7 +236,10 @@ it.effect.each(["--bare", "source.git"])(
     ),
 );
 
-it.effect("lists the cloned branches after a ref list was read while the clone ran", () =>
+it.effect.each([
+  { readsWhen: "before git creates the repository", readBeforeInit: true },
+  { readsWhen: "while HEAD is unborn", readBeforeInit: false },
+])("lists the cloned branches after a ref list was read $readsWhen", ({ readBeforeInit }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -261,10 +264,12 @@ it.effect("lists the cloned branches after a ref list was read while the clone r
       .listRefs({ cwd: destinationPath })
       .pipe(Effect.map((result) => result.refs.map((ref) => ref.name)));
     let duringClone: ReadonlyArray<string> | null = null;
-    // Stands in for git clone so the read lands while HEAD is still unborn.
+    // Stands in for git clone so the read lands at a chosen point inside it.
     const cloneInTwoSteps = Effect.gen(function* () {
+      yield* fs.makeDirectory(destinationPath).pipe(Effect.orDie);
+      if (readBeforeInit) duringClone = yield* refNames;
       yield* run(parent, ["init", "--initial-branch=staging", destinationPath]);
-      duringClone = yield* refNames;
+      if (!readBeforeInit) duringClone = yield* refNames;
       return yield* run(destinationPath, ["pull", source, "staging"]);
     });
     yield* Effect.gen(function* () {
