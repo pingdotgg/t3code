@@ -6310,7 +6310,6 @@ body {
     --pane-join-rim-k: 1.6;
     /* The rim's run along the pane's top edge, out from each ear. */
     --pane-join-tail: 36px;
-    --workspace-chrome-controls-top: var(--pane-join-shift);
 
     & [data-pane-header] {
       padding-block: var(--pane-join-shift)
