@@ -53,9 +53,11 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  // Revoking only a standing grant keeps a block that repeats on every token tick a no-op.
+  // Recorded even without a grant, so a probe in flight cannot grant over it; a repeat stays a no-op.
   const revokesCredits =
-    update.continuesOnCredits === false && previous?.continuesOnCredits === true;
+    update.continuesOnCredits === false &&
+    previous !== undefined &&
+    previous.continuesOnCredits !== false;
   if (
     (update.windows.length === 0 && !revokesCredits) ||
     previous?.unavailable?.reason === "unsupported"

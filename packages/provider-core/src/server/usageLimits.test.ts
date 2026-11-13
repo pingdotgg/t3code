@@ -116,9 +116,25 @@ describe("applyUsageLimitsUpdate", () => {
     expect(applyUsageLimitsUpdate({ previous: revoked, checkedAt: later, update: revoke })).toBe(
       revoked,
     );
-    expect(applyUsageLimitsUpdate({ previous: published, checkedAt: later, update: revoke })).toBe(
-      published,
-    );
+    // No grant yet: a probe still in flight may be about to make one from an older read.
+    const blockedFirst = applyUsageLimitsUpdate({
+      previous: published,
+      checkedAt: later,
+      update: revoke,
+    });
+    expect(blockedFirst).toEqual({ ...published, checkedAt: later, continuesOnCredits: false });
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: blockedFirst,
+        probed: { ...published, continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
+    expect(
+      applyUsageLimitsUpdate({ previous: blockedFirst, checkedAt: later, update: revoke }),
+    ).toBe(blockedFirst);
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt: later, update: revoke }),
+    ).toBeUndefined();
 
     const granted = { ...published, continuesOnCredits: true };
     expect(
