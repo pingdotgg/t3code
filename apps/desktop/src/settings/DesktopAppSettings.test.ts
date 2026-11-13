@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 
@@ -156,6 +157,49 @@ describe("DesktopSettings", () => {
         yield* fileSystem.writeFileString(environment.desktopSettingsPath, "{not-json");
 
         assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("keeps saved preferences when a read fails before a bounds save", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* writeSettingsPatch({ serverExposureMode: "network-accessible" });
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          pathOrDescriptor: environment.desktopSettingsPath,
+        });
+        let failRead = true;
+        const settings = yield* DesktopAppSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (path) =>
+                Effect.suspend(() => {
+                  if (failRead && path === environment.desktopSettingsPath) {
+                    failRead = false;
+                    return Effect.fail(cause);
+                  }
+                  return fileSystem.readFileString(path);
+                }),
+            }),
+          ),
+        );
+
+        yield* Effect.exit(settings.load);
+        yield* Effect.exit(
+          settings.setMainWindowBounds({ x: 10, y: 20, width: 900, height: 600 }, false),
+        );
+
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+        );
+        assert.equal(persisted.serverExposureMode, "network-accessible");
       }),
     ),
   );
