@@ -38,4 +38,25 @@ describe("HtmlRenderFrame", () => {
     await screen.unmount();
     expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
   });
+
+  it("shows the inline page full screen instead of loading a second copy", async () => {
+    const onFullscreenChange = vi.fn();
+    await using screen = await render(
+      <HtmlRenderFrame
+        environmentId={EnvironmentId.make("environment")}
+        htmlRender={{ attachmentId: "attachment", title: "Report", height: 200 }}
+        threadRef={undefined}
+        onFullscreenChange={onFullscreenChange}
+      />,
+    );
+    const inlinePage = document.querySelector('iframe[title="Report"]');
+    expect(inlinePage).not.toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open full screen" }));
+    await vi.waitFor(() => expect(onFullscreenChange).toHaveBeenLastCalledWith(true));
+
+    // A second document would start from scratch and drop what the reader did in the first.
+    expect(document.querySelectorAll('iframe[title="Report"]')).toHaveLength(1);
+    expect(document.querySelector('iframe[title="Report"]')).toBe(inlinePage);
+  });
 });
