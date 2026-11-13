@@ -147,6 +147,31 @@ describe("DesktopSettings", () => {
       ),
   );
 
+  it.effect("preserves disableGpuAcceleration:false across unrelated settings writes", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          `${JSON.stringify({ disableGpuAcceleration: false })}\n`,
+        );
+        assert.equal((yield* settings.load).disableGpuAcceleration, false);
+        yield* settings.setMainWindowBounds({ x: 10, y: 20, width: 900, height: 600 }, true);
+        yield* settings.setServerExposureMode("network-accessible");
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.disableGpuAcceleration, false);
+        assert.equal(reloaded.serverExposureMode, "network-accessible");
+        const raw = yield* fileSystem.readFileString(environment.desktopSettingsPath);
+        assert.include(raw, `"disableGpuAcceleration":false`);
+        yield* settings.setWslBackendEnabled(true);
+        assert.equal((yield* settings.load).disableGpuAcceleration, false);
+      }),
+    ),
+  );
+
   it.effect("falls back to defaults when the settings file is malformed", () =>
     withSettings(
       Effect.gen(function* () {
@@ -223,6 +248,7 @@ describe("DesktopSettings", () => {
         );
 
         assert.deepEqual(yield* settings.load, {
+          disableGpuAcceleration: undefined,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
@@ -354,6 +380,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          disableGpuAcceleration: undefined,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
@@ -383,6 +410,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          disableGpuAcceleration: undefined,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,

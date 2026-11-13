@@ -138,6 +138,19 @@ export const make = Effect.gen(function* () {
       } catch {}
       // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
+      if (
+        DesktopEarlyElectronStartup.shouldDisableGpuOnNvidiaWayland({
+          env: process.env,
+          ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
+          homeDirectory,
+          joinPath: NodePath.posix.join,
+          existsSync: (path) => NodeFS.existsSync(path),
+          readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+          hasSwitch: (name) => Electron.app.commandLine.hasSwitch(name),
+        })
+      ) {
+        Electron.app.commandLine.appendSwitch("disable-gpu");
+      }
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }

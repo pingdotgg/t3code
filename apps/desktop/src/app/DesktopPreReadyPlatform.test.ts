@@ -16,6 +16,7 @@ const {
   copyFileSyncMock,
   execFileSyncMock,
   readFileSyncMock,
+  existsSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -27,6 +28,7 @@ const {
   copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
+  existsSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -51,6 +53,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
+  existsSync: existsSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -72,7 +75,79 @@ describe("DesktopPreReadyPlatform", () => {
     copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
+    existsSyncMock.mockReset().mockReturnValue(false);
   });
+
+  it.effect.each([
+    { settings: "{}", label: "disables GPU on NVIDIA Wayland", expected: true },
+    {
+      settings: JSON.stringify({ disableGpuAcceleration: false }),
+      label: "honors disableGpuAcceleration:false opt-out",
+      expected: false,
+    },
+  ])("pre-ready GPU switch: $label", ({ settings, expected }) => {
+    vi.stubEnv("T3CODE_HOME", "/isolated");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+    existsSyncMock.mockReturnValue(true);
+    readFileSyncMock.mockReturnValue(settings);
+    getSwitchValueMock.mockImplementation((name: string) =>
+      name === "ozone-platform" ? "wayland" : "",
+    );
+    hasSwitchMock.mockImplementation((name: string) => name === "ozone-platform");
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+          ),
+        );
+        const appended = appendSwitchMock.mock.calls.some(([name]) => name === "disable-gpu");
+        assert.equal(appended, expected);
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
+  it.effect.each([
+    { session: "wayland", platform: "wayland", hint: "x11", expected: true },
+    { session: "x11", platform: "x11", hint: "wayland", expected: false },
+  ])(
+    "pre-ready GPU switch: ignores stale hint=$hint on $session",
+    ({ session, platform, hint, expected }) => {
+      vi.stubEnv("T3CODE_HOME", "/isolated");
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      vi.stubEnv("XDG_SESSION_TYPE", session);
+      vi.stubEnv("XDG_DATA_HOME", "/xdg");
+      vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+      existsSyncMock.mockReturnValue(true);
+      readFileSyncMock.mockReturnValue("{}");
+      getSwitchValueMock.mockImplementation((name: string) =>
+        name === "ozone-platform" ? platform : name === "ozone-platform-hint" ? hint : "",
+      );
+      hasSwitchMock.mockImplementation(
+        (name: string) => name === "ozone-platform" || name === "ozone-platform-hint",
+      );
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            DesktopPreReadyPlatform.layer.pipe(
+              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+            ),
+          );
+          const appended = appendSwitchMock.mock.calls.some(([name]) => name === "disable-gpu");
+          assert.equal(appended, expected);
+          assert.isFalse(
+            getSwitchValueMock.mock.calls.some(([name]) => name === "ozone-platform-hint"),
+          );
+          assert.isFalse(hasSwitchMock.mock.calls.some(([name]) => name === "ozone-platform-hint"));
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+    },
+  );
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
     vi.stubEnv("T3CODE_HOME", "/isolated");
