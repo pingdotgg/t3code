@@ -114,6 +114,7 @@ export function useReviewSections(input: {
         ? {
             ...section,
             diff: activeTurnDiff.data?.diff ?? section.diff,
+            ...(activeTurnDiff.data?.source ? { turnSource: activeTurnDiff.data.source } : {}),
             isLoading: activeTurnDiff.isPending,
           }
         : section;

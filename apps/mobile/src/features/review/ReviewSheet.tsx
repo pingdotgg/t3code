@@ -50,6 +50,7 @@ import { useReviewDiffData } from "./useReviewDiffData";
 import { useReviewDiffPrewarming } from "./useReviewDiffPrewarming";
 import { useReviewFileVisibility } from "./reviewFileVisibility";
 import { useReviewSections } from "./useReviewSections";
+import { useReviewTurnDiffHighlightFiles } from "./useReviewTurnDiffHighlightFiles";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
 import { resolveReviewAvailability } from "./reviewAvailability";
@@ -432,11 +433,21 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectedSection,
     nativeReviewDiffData,
   });
+  const highlightFiles = useReviewTurnDiffHighlightFiles({
+    environmentId,
+    source: selectedSection?.kind === "turn" ? selectedSection.turnSource : undefined,
+    parsed: parsedDiff,
+    files: nativeReviewDiffData.files,
+  });
+  const highlightData =
+    highlightFiles === nativeReviewDiffData.files
+      ? nativeReviewDiffData
+      : { ...nativeReviewDiffData, files: highlightFiles };
   const nativeBridge = useNativeReviewDiffBridge({
     threadKey: reviewCache.threadKey,
     sectionId: selectedSection?.id ?? null,
     diff: selectedSection?.diff,
-    data: nativeReviewDiffData,
+    data: highlightData,
     collapsedFileIds,
     viewedFileIds,
     selectedRowIds: commentSelection.selectedRowIds,

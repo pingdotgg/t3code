@@ -4,7 +4,7 @@ import {
   checkpointFileTotals,
   type ThreadCheckpointSummary,
 } from "@t3tools/client-runtime/state/thread-checkpoints";
-import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type { OrchestrationGetTurnDiffResult, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -26,6 +26,7 @@ export interface ReviewSectionItem {
   readonly files?: ReviewDiffPreviewSource["files"];
   readonly truncated?: boolean;
   readonly source?: ReviewDiffPreviewSource;
+  readonly turnSource?: OrchestrationGetTurnDiffResult["source"];
 }
 
 export interface ReviewRenderableHunkRow {
