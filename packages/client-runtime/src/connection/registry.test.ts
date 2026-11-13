@@ -2134,6 +2134,75 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("pairing a new server at a saved address replaces the server saved there", () =>
+    Effect.gen(function* () {
+      const bearer = (id: string, connectionId: string, httpBaseUrl: string, learned = false) =>
+        [
+          new BearerConnectionTarget({
+            environmentId: EnvironmentId.make(id),
+            label: id,
+            connectionId,
+          }),
+          new BearerConnectionProfile({
+            connectionId,
+            environmentId: EnvironmentId.make(id),
+            label: id,
+            httpBaseUrl,
+            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+            ...(learned ? { learned: true } : {}),
+          }),
+        ] as const;
+      const loopback = "http://127.0.0.1:13774/";
+      const saved = [
+        // Reachable only at the address the new server now answers on.
+        bearer("sole", "bearer:sole", loopback),
+        // Its other paired address still reaches it.
+        bearer("two", "bearer:two", "https://two.example.test/"),
+        bearer("two", "bearer:two-other", "https://two-other.example.test/"),
+        // Its learned route borrows the login of the address taken over.
+        bearer("borrowed", "bearer:borrowed", "https://borrowed.example.test/"),
+        bearer(
+          "borrowed",
+          "learned:borrowed:http://100.101.102.103:3773@bearer:borrowed",
+          "http://100.101.102.103:3773/",
+          true,
+        ),
+        // A private HTTP address can be another machine on another network.
+        bearer("lan", "bearer:lan-only", LAN_PROFILE.httpBaseUrl),
+        bearer("edited", "bearer:edited", "https://edited.example.test/"),
+      ];
+      const harness = yield* makeHarness(
+        saved.map(([target]) => target),
+        saved.map(([, profile]) => profile),
+        saved.map(([target]) => [target.connectionId, BEARER_CREDENTIAL] as const),
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const register = (id: string, httpBaseUrl: string, paired: boolean) =>
+          registry.register(lanRegistration(...bearer(id, `bearer:${id}`, httpBaseUrl)), {
+            paired,
+          });
+        yield* register("new-sole", loopback, true);
+        yield* register("new-two", "https://two.example.test/", true);
+        yield* register("new-borrowed", "https://borrowed.example.test/", true);
+        yield* register("new-lan", LAN_PROFILE.httpBaseUrl, true);
+        // Typing an address into an edit confirms nothing about who answers there.
+        yield* register("new-edited", "https://edited.example.test/", false);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        const routeIds = (id: string) =>
+          routesOf(targets, EnvironmentId.make(id)).map(connectionRouteId);
+        expect(routeIds("sole")).toEqual([]);
+        expect(routeIds("two")).toEqual(["bearer:two-other"]);
+        expect(routeIds("borrowed")).toEqual(saved.slice(3, 5).map(([t]) => t.connectionId));
+        expect(routeIds("lan")).toEqual(["bearer:lan-only"]);
+        expect(routeIds("edited")).toEqual(["bearer:edited"]);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([EnvironmentId.make("sole")]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([EnvironmentId.make("sole")]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("re-pairing at another loopback address prefers the new route", () =>
     Effect.gen(function* () {
       const loopback = (connectionId: string, host: string) =>
