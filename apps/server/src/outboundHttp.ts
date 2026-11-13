@@ -25,18 +25,30 @@ export const hasProxyPatchKey = (patch: Readonly<Record<string, unknown>>): bool
 /** Preserves the EnvHttpProxyAgent installed by --use-env-proxy / NODE_USE_ENV_PROXY or proxy env vars. */
 export function installHttp1FetchDispatcher(env: NodeJS.ProcessEnv = process.env): void {
   const undici = requireUndici("undici") as typeof Undici;
+  const httpProxy = env.http_proxy?.trim() || env.HTTP_PROXY?.trim() || undefined;
+  const httpsProxy = env.https_proxy?.trim() || env.HTTPS_PROXY?.trim() || undefined;
+  const noProxy = env.no_proxy?.trim() || env.NO_PROXY?.trim() || undefined;
   // Node's agent comes from its internal undici copy, so `instanceof` against the npm class is false.
   const usesEnvProxy =
     undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent" || hasHttpProxyEnv(env);
-  undici.setGlobalDispatcher(
-    usesEnvProxy
-      ? new undici.EnvHttpProxyAgent({
+  if (usesEnvProxy) {
+    try {
+      undici.setGlobalDispatcher(
+        new undici.EnvHttpProxyAgent({
           allowH2: false,
+          ...(httpProxy ? { httpProxy } : {}),
+          ...(httpsProxy ? { httpsProxy } : {}),
+          ...(noProxy ? { noProxy } : {}),
           // ProxyAgent's connector forces h2 and ignores allowH2; replace it for HTTPS proxies.
           clientFactory: (origin) => new undici.Pool(origin, { allowH2: false }),
-        })
-      : new undici.Agent({ allowH2: false }),
-  );
+        }),
+      );
+      return;
+    } catch {
+      // Malformed proxy URLs (e.g. HTTPS_PROXY=not-a-url) must not abort startup or telemetry sync.
+    }
+  }
+  undici.setGlobalDispatcher(new undici.Agent({ allowH2: false }));
 }
 
 /** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936) and honors HTTP(S)_PROXY. */

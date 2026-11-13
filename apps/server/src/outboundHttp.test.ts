@@ -89,6 +89,11 @@ describe("installHttp1FetchDispatcher", () => {
     Undici.setGlobalDispatcher(new Undici.Agent());
     keepOutboundFetchOnHttp1({ HTTPS_PROXY: "http://127.0.0.1:7890" });
     expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
+
+    // Malformed proxy URLs fall back to direct HTTP/1.1 instead of throwing during startup.
+    keepOutboundFetchOnHttp1({ HTTPS_PROXY: "not-a-url" });
+    expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.Agent);
+
     expect(hasHttpProxyEnv({ http_proxy: "http://127.0.0.1:7890" })).toBe(true);
     expect(hasHttpProxyEnv({ HTTPS_PROXY: "  " })).toBe(false);
   });
