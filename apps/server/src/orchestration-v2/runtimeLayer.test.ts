@@ -8488,7 +8488,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const threadId = ThreadId.make(
-          `runtime-layer-queued-scheduled-selection-${newerSelection.instanceId}-${newerSelection.options === undefined}`,
+          `runtime-layer-queued-scheduled-selection-${newerSelection.instanceId}-${"options" in newerSelection}`,
         );
         const scheduledMessageId = MessageId.make(`${threadId}:scheduled`);
         yield* orchestrator.dispatch({
