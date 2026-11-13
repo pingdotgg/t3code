@@ -6486,8 +6486,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   );
                   return updated;
                 });
-                yield* flavor.onAvailableCommandsUpdate?.(advertisedCommands, input.runtimePolicy.cwd) ??
-                  Effect.void;
+                yield* (
+                  flavor.onAvailableCommandsUpdate?.(advertisedCommands, input.runtimePolicy.cwd) ??
+                    Effect.void
+                );
               }
               if (
                 notification.update.sessionUpdate === "config_option_update" ||
