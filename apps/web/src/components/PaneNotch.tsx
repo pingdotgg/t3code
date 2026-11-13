@@ -201,7 +201,7 @@ export function PaneNotch({
       {side === "left" ? (
         <>
           <span aria-hidden data-pane-bar-corner="start" data-sidebar-slide-stay="" />
-          <span aria-hidden data-pane-bar-corner="end" />
+          <span aria-hidden data-pane-bar-corner="end" data-sidebar-slide-track="end" />
         </>
       ) : null}
       <div
