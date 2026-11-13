@@ -175,6 +175,18 @@ impl Store {
         })
     }
 
+    /// `EXPLAIN QUERY PLAN` details, one per step, for tests that prove an index is used.
+    #[cfg(test)]
+    pub(crate) fn query_plan(&self, sql: &str, args: impl rusqlite::Params) -> Vec<String> {
+        let explain = format!("EXPLAIN QUERY PLAN {sql}");
+        let Ok(mut stmt) = self.conn.prepare(&explain) else {
+            return vec![];
+        };
+        stmt.query_map(args, |row| row.get::<_, String>(3))
+            .map(|rows| rows.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+    }
+
     /// The sequence of the last committed change.
     pub(crate) fn high_water(&self) -> u64 {
         self.next_seq - 1

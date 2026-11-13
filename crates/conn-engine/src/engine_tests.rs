@@ -1420,7 +1420,7 @@ async fn orchestration_reads_answer_from_the_store() {
     .unwrap();
     assert_eq!(item["item"]["type"], "user_message");
 
-    // Search: messages only (titles are the client's), FTS for 3+ characters, a scan for two.
+    // Search: messages only (titles are the client's), through the trigram index.
     let found = call(
         &engine,
         "orchestration.searchThreads",
@@ -1445,6 +1445,7 @@ async fn orchestration_reads_answer_from_the_store() {
             .unwrap()
             .contains("Unicode quotes")
     );
+    // A two-letter Latin word searches nothing, as `messageSearchTokens` (`paletteSearch.ts`).
     let found = call(
         &engine,
         "orchestration.searchThreads",
@@ -1452,7 +1453,7 @@ async fn orchestration_reads_answer_from_the_store() {
     )
     .await
     .unwrap();
-    assert_eq!(found["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(found["matches"], json!([]));
 
     // In-thread find: "the" once in the user message, once in its echo.
     let find = call(
@@ -2469,4 +2470,61 @@ async fn each_delegated_completion_wakes_with_its_own_message() {
         .map(|r| r["userMessageId"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(users, [wakes[0].0.clone(), wakes[1].0.clone()]);
+}
+
+async fn search(engine: &SqliteEngine, query: &str) -> Vec<String> {
+    let found = call(
+        engine,
+        "orchestration.searchThreads",
+        json!({"query": query}),
+    )
+    .await
+    .unwrap();
+    found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["threadId"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Search follows `ThreadSearch.ts`: every long word must match, `%` and `_` are plain
+/// characters, short words narrow, two CJK characters count as a word, and deleted or
+/// archived threads drop out in SQL.
+#[tokio::test(flavor = "current_thread")]
+async fn search_matches_words_and_skips_hidden_threads() {
+    let db = TempDb::new("search-words");
+    let (engine, _) = open(&db);
+    for (thread, text) in [
+        ("t1", "rate is 100% for snake_case names"),
+        ("t2", "rate is 100 for snakeXcase names"),
+        ("t3", "東京 weather report"),
+        ("t4", "deleted thread mentions zebra"),
+        ("t5", "archived thread mentions zebra"),
+    ] {
+        dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
+        dispatch(&engine, message(thread, &format!("{thread}:c2"), text)).await;
+        run_to_end(&engine, thread, &format!("run:{thread}:1")).await;
+    }
+    assert_eq!(search(&engine, "100%").await, ["t1"]);
+    assert_eq!(search(&engine, "snake_case").await, ["t1"]);
+    assert_eq!(search(&engine, "SNAKE_CASE names").await, ["t1"]);
+    assert_eq!(search(&engine, "names rate").await.len(), 2);
+    assert_eq!(search(&engine, "\"names\"").await.len(), 2);
+    // A short word only narrows the hits of the long ones.
+    assert_eq!(search(&engine, "names is").await.len(), 2);
+    assert_eq!(search(&engine, "names zz").await, Vec::<String>::new());
+    assert_eq!(search(&engine, "東京").await, ["t3"]);
+    assert_eq!(search(&engine, "zebra").await.len(), 2);
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "t4:c3", "threadId": "t4"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "t5:c3", "threadId": "t5"}),
+    )
+    .await;
+    assert_eq!(search(&engine, "zebra").await, Vec::<String>::new());
 }
