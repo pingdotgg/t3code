@@ -369,7 +369,7 @@ function hostRewroteEdit(sent: unknown, shown: unknown, edit: PullRequestPending
   );
 }
 
-/** Keeps an accepted edit in loaded readers once it stops being in flight. */
+/** Keeps an accepted edit in loaded readers once it stops being in flight; true when the host rewrote it. */
 function settleEdit(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
@@ -377,7 +377,8 @@ function settleEdit(
   readsAfterWrite = false,
   atSend?: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>>,
 ) {
-  if (edit === null) return;
+  if (edit === null) return false;
+  let rewritten = false;
   const pending = registry.get(pullRequestPendingEditsAtom(environmentId));
   for (const atom of registry.getNodes().keys()) {
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
@@ -401,6 +402,7 @@ function settleEdit(
         edit,
       );
     if (changed) {
+      rewritten = true;
       registry.refresh(writable);
       continue;
     }
@@ -409,6 +411,7 @@ function settleEdit(
       AsyncResult.map((value) => reader.edit(value, [edit], pending) as never),
     );
   }
+  return rewritten;
 }
 
 function pullRequestReference(input: PullRequestRef): PullRequestRef {
@@ -1436,8 +1439,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           return Effect.sync(() =>
             settleEdit(registry, target.environmentId, edit, false, atSend),
           ).pipe(
-            Effect.andThen(() =>
-              edit === null
+            Effect.andThen((rewritten) =>
+              edit === null || rewritten
                 ? Effect.void
                 : (onAnswer.acceptedEdit?.(target, edit, registry) ?? Effect.void),
             ),

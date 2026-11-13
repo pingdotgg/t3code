@@ -2802,7 +2802,13 @@ it.effect.each([
               failReads = timing === "rewrites the title but re-read fails";
             }),
         });
-        const { atoms, registry } = yield* makeTestRuntime(client);
+        let accepted: string | undefined;
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+          acceptedEdit: (_target: unknown, edit: { readonly title?: string }) =>
+            Effect.sync(() => {
+              accepted = edit.title;
+            }),
+        });
         const target = { environmentId: TARGET.environmentId, input: actionReference };
         const readers: ReadonlyArray<
           Atom.Atom<AsyncResult.AsyncResult<{ readonly title: string }, unknown>>
@@ -2845,6 +2851,8 @@ it.effect.each([
           ...readers.map((atom) => Option.getOrThrow(AsyncResult.value(registry.get(atom))).title),
           Option.getOrThrow(AsyncResult.value(registry.get(page))).entries[0]?.title,
         ]).toEqual(Array(3).fill(title));
+        // Text that changed during the write is re-read, so shared summaries do not take the edit.
+        expect(accepted).toBeUndefined();
       }),
     ),
 );
