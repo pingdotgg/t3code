@@ -27,6 +27,8 @@ export interface RepositoryIdentityResolverOptions {
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+  /** `SourceControlHost.canonicalRemoteUrl`; absent, remotes are read as written. */
+  readonly canonicalRemoteUrl?: (remoteUrl: string) => Effect.Effect<string>;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -128,28 +130,34 @@ function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
 
 function buildRepositoryOrigin(
   originUrl: string | undefined,
+  canonicalOriginUrl: string | undefined,
   canonicalKey: string,
 ): RepositoryIdentity["origin"] {
   if (!originUrl) return undefined;
-  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(originUrl);
+  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(
+    canonicalOriginUrl ?? originUrl,
+  );
   if (originKey === canonicalKey) return undefined;
   const displayName = repositoryPathOf(originKey, originUrl);
   return { canonicalKey: originKey, remoteUrl: originUrl, ...(displayName ? { displayName } : {}) };
 }
 
+// The key and host follow where ssh config sends an alias; the locator keeps git's own URL.
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  readonly canonicalRemoteUrl: string;
   readonly originUrl: string | undefined;
+  readonly canonicalOriginUrl: string | undefined;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.remoteUrl);
-  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.remoteUrl);
+  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.canonicalRemoteUrl);
+  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.canonicalRemoteUrl);
   const repositoryPath = repositoryPathOf(canonicalKey, input.remoteUrl);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
   const repositoryName = repositoryPathSegments.at(-1);
-  const origin = buildRepositoryOrigin(input.originUrl, canonicalKey);
+  const origin = buildRepositoryOrigin(input.originUrl, input.canonicalOriginUrl, canonicalKey);
 
   return {
     canonicalKey,
@@ -264,6 +272,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: RepositoryIdentityCacheKey,
+  canonicalRemoteUrl: (remoteUrl: string) => Effect.Effect<string>,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const env = gitEnv(yield* HostProcess.Platform);
@@ -291,13 +300,15 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
       ? resolvedResult.value.stdout
       : "";
   const remote = pickPrimaryRemote(remotes, resolved);
-  return remote
-    ? buildRepositoryIdentity({
-        ...remote,
-        originUrl: remotes.get("origin"),
-        rootPath: cacheKey.rootPath,
-      })
-    : null;
+  if (!remote) return null;
+  const originUrl = remotes.get("origin");
+  return buildRepositoryIdentity({
+    ...remote,
+    canonicalRemoteUrl: yield* canonicalRemoteUrl(remote.remoteUrl),
+    originUrl,
+    canonicalOriginUrl: originUrl === undefined ? undefined : yield* canonicalRemoteUrl(originUrl),
+    rootPath: cacheKey.rootPath,
+  });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
@@ -308,6 +319,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const path = yield* Path.Path;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
+  const canonicalRemoteUrl = options.canonicalRemoteUrl ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
@@ -330,7 +342,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     RepositoryIdentity | null
   >(
     (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+      resolveRepositoryIdentityFromCacheKey(cacheKey, canonicalRemoteUrl).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
         Effect.filterOrElse(
           (identity): identity is null => identity === null,

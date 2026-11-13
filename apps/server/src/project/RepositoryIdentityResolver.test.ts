@@ -68,6 +68,16 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
       expect(identity?.provider).toBe("github");
       expect(identity?.displayName).toBe("T3Tools/t3code");
+
+      // An alias is keyed by the host ssh config sends it to; git keeps the written remote.
+      yield* git(cwd, ["remote", "set-url", "origin", "git@gh-work:T3Tools/t3code.git"]);
+      const aliased = yield* RepositoryIdentityResolver.make({
+        canonicalRemoteUrl: (url) => Effect.succeed(url.replace("@gh-work:", "@github.com:")),
+      }).pipe(Effect.provide(ProcessRunner.layer));
+      const aliasIdentity = yield* aliased.resolve(cwd);
+      expect(aliasIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(aliasIdentity?.provider).toBe("github");
+      expect(aliasIdentity?.locator.remoteUrl).toBe("git@gh-work:T3Tools/t3code.git");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

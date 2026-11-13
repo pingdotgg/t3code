@@ -91,7 +91,10 @@ function makeRegistry(input: {
   readonly discovery?: ReadonlyArray<SourceControlProviderDiscoverySpec>;
   readonly run?: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
   readonly settings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+  /** `HostName` by `Host`, as `ssh -G` reports them; `run` is not asked. */
+  readonly sshConfig?: Readonly<Record<string, string>>;
 }) {
+  const run = input.run ?? (() => Effect.succeed(TestSourceControlHost.processOutput("")));
   const driver = {
     listRemotes: () =>
       Effect.succeed({
@@ -148,7 +151,14 @@ function makeRegistry(input: {
         }),
         TestSourceControlHost.layer({
           process: {
-            run: input.run ?? (() => Effect.succeed(TestSourceControlHost.processOutput(""))),
+            run: (args) =>
+              args.command === "ssh"
+                ? Effect.succeed(
+                    TestSourceControlHost.processOutput(
+                      `hostname ${input.sshConfig?.[args.args[1]!] ?? args.args[1]}\n`,
+                    ),
+                  )
+                : run(args),
           },
         }),
         input.settings
@@ -185,6 +195,44 @@ it.effect("routes an unknown remote to the integration that claims its server", 
       baseUrl: "https://self-hosted.example.test",
     });
     assert.deepStrictEqual(asked, ["gitlab-cli auth status --hostname self-hosted.example.test"]);
+  }),
+);
+
+it.effect("places an SSH host alias by the server ssh config sends it to", () =>
+  Effect.gen(function* () {
+    const asked: Array<string> = [];
+    const sshConfig = { "gitlab-work": "code.example.com", "gh-work": "github.com" };
+    const selfHosted = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@gitlab-work:group/project.git" }],
+      sshConfig,
+      run: (input) => {
+        asked.push([input.command, ...input.args].join(" "));
+        return signedIn("code.example.com")();
+      },
+    });
+    const handle = yield* selfHosted.resolveHandle({ cwd: "/repo" });
+    assert.deepStrictEqual(handle.context, {
+      provider: {
+        kind: kind("gitlab"),
+        name: "gitlab Self-Hosted",
+        baseUrl: "https://code.example.com",
+      },
+      remoteName: "origin",
+      remoteUrl: "git@gitlab-work:group/project.git",
+    });
+    assert.deepStrictEqual(asked, ["gitlab-cli auth status --hostname code.example.com"]);
+
+    // A caller's context, made from the written remote, is placed the same way.
+    const written = {
+      provider: { kind: kind("unknown"), name: "gh-work", baseUrl: "https://gh-work" },
+      remoteName: "origin",
+      remoteUrl: "git@gh-work:owner/repo.git",
+    };
+    const publicHost = yield* makeRegistry({ remotes: [], sshConfig });
+    const placed = yield* publicHost.resolveHandle({ cwd: "/repo", context: written });
+    assert.strictEqual(placed.context?.provider.kind, kind("github"));
+    assert.strictEqual(placed.context?.provider.baseUrl, "https://github.com");
+    assert.strictEqual(placed.context?.remoteUrl, written.remoteUrl);
   }),
 );
 

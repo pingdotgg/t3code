@@ -50,6 +50,10 @@
     "./server/SourceControlRateLimit": {
       "types": "./src/server/SourceControlRateLimit.ts",
       "import": "./src/server/SourceControlRateLimit.ts"
+    },
+    "./server/sshRemoteHost": {
+      "types": "./src/server/sshRemoteHost.ts",
+      "import": "./src/server/sshRemoteHost.ts"
     }
   },
   "scripts": {

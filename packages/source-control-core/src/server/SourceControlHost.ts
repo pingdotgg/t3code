@@ -85,6 +85,11 @@ export class SourceControlHost extends Context.Service<
         input: SourceControlProcessInput,
       ) => Effect.Effect<SourceControlProcessOutput, VcsError>;
     };
+    /**
+     * An SSH remote with its host replaced by the `HostName` ssh config gives it, for telling
+     * which server an alias leads to. Git is still given the remote as written.
+     */
+    readonly canonicalRemoteUrl: (remoteUrl: string) => Effect.Effect<string>;
     readonly git: {
       readonly execute: (input: {
         readonly operation: string;

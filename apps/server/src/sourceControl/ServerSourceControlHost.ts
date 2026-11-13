@@ -1,5 +1,6 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as SshRemoteHost from "@t3tools/source-control-core/server/sshRemoteHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -8,6 +9,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import { resolveSourceControlHostSecrets } from "./sourceControlHostSecrets.ts";
 
 export const layer = Layer.effect(
@@ -36,6 +38,11 @@ export const layer = Layer.effect(
         update: serverSettings.updateSettings,
       },
       process: { run: process.run },
+      canonicalRemoteUrl: yield* SshRemoteHost.make({
+        run: process.run,
+        isPublicHost: (hostName) =>
+          sourceControlDefinitions.findByPublicHost(hostName) !== undefined,
+      }),
       git: {
         execute: git.execute,
         resolveCommit: git.resolveCommit,

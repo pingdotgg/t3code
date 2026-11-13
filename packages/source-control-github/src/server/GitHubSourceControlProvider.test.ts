@@ -369,7 +369,16 @@ describe("GitHubSourceControlProvider repository resolution", () => {
         cwd: "/repo",
         context: { ...githubContext(host), remoteUrl },
       });
-      assert.deepStrictEqual(hosts, ["github.com repos/acme/web", "github.com repos/acme/web"]);
+      // A pasted alias remote is looked up on the host it leads to and cloned as written.
+      assert.deepStrictEqual(
+        yield* gh.getRepositoryCloneUrls({ cwd: "/repo", repository: ` ${remoteUrl} ` }),
+        { nameWithOwner: "acme/web", url: remoteUrl, sshUrl: remoteUrl },
+      );
+      assert.deepStrictEqual(hosts, [
+        "github.com repos/acme/web",
+        "github.com repos/acme/web",
+        "github.com repos/acme/web",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
