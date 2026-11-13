@@ -449,6 +449,9 @@ struct State {
     tickets: HashMap<Hash, Ticket>,
     /// Open sockets per session id.
     connections: HashMap<String, usize>,
+    /// When each session last opened a socket, kept in memory so a socket open writes no
+    /// file. Holds only ids of live sessions.
+    last_connected: HashMap<String, u64>,
     stamp: Option<Stamp>,
 }
 
@@ -471,6 +474,9 @@ impl State {
             keep
         });
         self.tickets.retain(|_, ticket| ticket.expires_at_ms > now);
+        let sessions = &self.sessions;
+        self.last_connected
+            .retain(|id, _| sessions.values().any(|s| &s.id == id));
         changes
     }
 
@@ -795,7 +801,7 @@ impl AuthStore {
         sessions.sort_by_key(|s| (std::cmp::Reverse(s.issued_at_ms), s.id.clone()));
         sessions
             .into_iter()
-            .map(|s| session_to_contract(s, &state.connections, current))
+            .map(|s| session_to_contract(s, &state, current))
             .collect()
     }
 
@@ -804,7 +810,7 @@ impl AuthStore {
         self.refresh(&mut state);
         state
             .session_by_id(id)
-            .map(|(_, s)| session_to_contract(s, &state.connections, current))
+            .map(|(_, s)| session_to_contract(s, &state, current))
     }
 
     pub fn revoke_pairing_link(&self, id: &str) -> io::Result<bool> {
@@ -865,19 +871,16 @@ impl AuthStore {
         Ok(removed.len())
     }
 
-    /// Marks a socket of `session_id` open until the guard drops. Records the connect time.
+    /// Marks a socket of `session_id` open until the guard drops. Records the connect time in
+    /// memory only: a socket open touches no file.
     pub fn connect(self: &Arc<Self>, session_id: &str) -> ConnectionGuard {
-        let result = self.write(|state| {
-            *state.connections.entry(session_id.to_owned()).or_default() += 1;
-            let now = now_ms();
-            if let Some(session) = state.sessions.values_mut().find(|s| s.id == session_id) {
-                session.last_connected_at_ms = Some(now);
-            }
-            vec![AccessChange::ClientUpserted(session_id.to_owned())]
-        });
-        if let Err(error) = result {
-            eprintln!("conn-server: could not save auth state: {error}");
+        let mut state = self.lock();
+        *state.connections.entry(session_id.to_owned()).or_default() += 1;
+        if state.session_by_id(session_id).is_some() {
+            state.last_connected.insert(session_id.to_owned(), now_ms());
         }
+        drop(state);
+        self.announce(vec![AccessChange::ClientUpserted(session_id.to_owned())]);
         ConnectionGuard {
             store: self.clone(),
             session_id: session_id.to_owned(),
@@ -1098,9 +1101,14 @@ fn pairing_to_contract(link: &StoredPairing) -> AuthPairingLink {
 
 fn session_to_contract(
     session: &StoredSession,
-    connections: &HashMap<String, usize>,
+    state: &State,
     current: Option<&str>,
 ) -> AuthClientSession {
+    let last_connected_at_ms = state
+        .last_connected
+        .get(&session.id)
+        .copied()
+        .max(session.last_connected_at_ms);
     AuthClientSession {
         session_id: session.id.clone(),
         subject: session.subject.clone(),
@@ -1111,8 +1119,8 @@ fn session_to_contract(
         client: session.client.to_contract(),
         issued_at: iso8601(session.issued_at_ms),
         expires_at: iso8601(session.expires_at_ms),
-        last_connected_at: session.last_connected_at_ms.map(iso8601),
-        connected: connections.get(&session.id).is_some_and(|n| *n > 0),
+        last_connected_at: last_connected_at_ms.map(iso8601),
+        connected: state.connections.get(&session.id).is_some_and(|n| *n > 0),
         current: current == Some(session.id.as_str()),
     }
 }
@@ -1544,6 +1552,49 @@ mod tests {
         assert!(listed.last_connected_at.is_some());
         drop(guard);
         assert!(!store.client_session(&id, None).unwrap().connected);
+    }
+
+    /// Opening a socket touches no file: the connect time lives in memory.
+    #[test]
+    fn connecting_does_not_write_the_file() {
+        let dir = temp_dir("auth-connect");
+        let file = dir.join("auth.json");
+        let store = AuthStore::open(file.clone()).unwrap();
+        let session = store
+            .exchange(
+                &store
+                    .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+                    .unwrap()
+                    .code,
+                None,
+                ClientInfo::default(),
+            )
+            .unwrap();
+        let saved = fs::read_to_string(&file).unwrap();
+        let id = session.principal.session_id.clone();
+        let mut changes = store.subscribe();
+        let guard = store.connect(&id);
+        assert_eq!(fs::read_to_string(&file).unwrap(), saved);
+        assert_eq!(
+            changes.try_recv().unwrap(),
+            AccessChange::ClientUpserted(id.clone())
+        );
+        let listed = store.client_session(&id, None).unwrap();
+        assert!(listed.connected);
+        assert!(listed.last_connected_at.is_some());
+        // Another process's write does not lose it.
+        let cli = AuthStore::open(file).unwrap();
+        cli.issue_pairing_code(None, PAIRING_CODE_TTL_MS).unwrap();
+        assert!(
+            store
+                .client_session(&id, None)
+                .unwrap()
+                .last_connected_at
+                .is_some()
+        );
+        drop(guard);
+        assert!(!store.client_session(&id, None).unwrap().connected);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
