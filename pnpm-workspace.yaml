@@ -240,6 +240,9 @@ patchedDependencies:
   "@effect/vitest@4.1.2": patches/@effect__vitest@4.1.2.patch
   expo-sharing@58.0.22: patches/expo-sharing@58.0.22.patch
   expo-widgets@58.0.27: patches/expo-widgets@58.0.27.patch
+  # Android: an RNHostView without a scrolling descendant (an app bar's buttons) is no longer the
+  # scroll target a Material bottom sheet picks, so sheet content can sit below its header.
+  "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and makes find
   # cover folded files and collapsed context (onRevealSearchMatch).
