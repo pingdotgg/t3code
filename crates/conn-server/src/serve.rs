@@ -1,7 +1,12 @@
 //! Builds and runs the whole server: engine, providers, auth, router. `main.rs` parses the
 //! command line (`cli.rs`); test binaries call [`serve`] with their own providers.
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use conn_engine::{Engine, EngineConfig, ProjectConfig, SqliteEngine};
 use conn_provider::Provider;
@@ -12,8 +17,9 @@ use crate::{
     cli::{self, Command, ServeArgs},
     environment::Environment,
     home::{self, OwnershipError, RuntimeState},
+    host::Host,
     method_table,
-    methods::Deps,
+    methods::{Deps, vcs::VcsShared},
     router,
 };
 
@@ -26,6 +32,8 @@ pub struct ServeOptions {
     pub cwd: PathBuf,
     /// Started by Conn desktop with its bootstrap credential.
     pub desktop: Option<DesktopBootstrap>,
+    /// How long an idle provider session stays open; `None` keeps it open.
+    pub session_idle: Option<Duration>,
 }
 
 impl ServeOptions {
@@ -72,6 +80,7 @@ impl ServeOptions {
             label: args.label,
             cwd: args.cwd,
             desktop,
+            session_idle: args.session_idle,
         }
     }
 }
@@ -86,6 +95,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         label,
         cwd,
         desktop,
+        session_idle,
     } = options;
     let _ownership = match home::acquire_ownership(&state_dir) {
         Ok(lock) => lock,
@@ -123,25 +133,44 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
         auth.set_desktop_bootstrap(desktop);
     }
 
+    let files = Some(Arc::new(
+        conn_files::Files::open(&state_dir).expect("files store"),
+    ));
+    let vcs = VcsShared::default();
+    let terminals = crate::methods::terminal::manager(Some(&environment));
+    let host = Arc::new(Host {
+        mcp: OnceLock::new(),
+        files: files.clone(),
+        vcs: vcs.clone(),
+        terminals: terminals.clone(),
+        environment: environment.clone(),
+    });
+
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = projects;
     config.providers = providers.clone();
+    config.idle_session = session_idle;
+    config.host = Some(host.clone());
+    config.turn_observer = Some(host.clone());
     let engine: Arc<dyn Engine> = Arc::new(SqliteEngine::open(config).expect("engine"));
     let mut deps = Deps {
         engine: Some(engine.clone()),
         providers,
         environment: Some(environment.clone()),
-        files: Some(Arc::new(
-            conn_files::Files::open(&state_dir).expect("files store"),
-        )),
+        files,
+        vcs,
+        terminals: Some(terminals.clone()),
         ..Deps::default()
     };
     deps.mcp = crate::routes::mcp::service(&deps);
+    if let Some(mcp) = &deps.mcp {
+        let _ = host.mcp.set(mcp.clone());
+    }
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
         descriptor: Arc::new(environment.descriptor.clone()),
-        engine: Some(engine),
+        engine: Some(engine.clone()),
         deps,
     };
 
@@ -194,6 +223,10 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
             let _ = tokio::time::timeout(Duration::from_secs(2), &mut server).await;
         }
     }
+    // Shells and provider processes end with their whole process groups, so nothing they
+    // started outlives the server.
+    terminals.shutdown().await;
+    engine.shutdown().await;
     runtime.clear(&state_dir);
 }
 

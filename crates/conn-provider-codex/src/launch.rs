@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use conn_contract::{ModelSelection, to_json};
-use conn_provider::RuntimePolicy;
+use conn_provider::{McpServer, RuntimePolicy};
 use conn_provider_support::process::LaunchSpec;
 use serde_json::{Value, json};
 
@@ -178,9 +178,11 @@ pub fn initialize_params() -> Value {
     })
 }
 
-/// `CODEX_THREAD_CONFIG` plus the per-thread shell variable. No T3 MCP servers: Conn Server
-/// has no `/mcp` endpoint for Codex yet.
-fn thread_config(app_thread_id: Option<&str>) -> Value {
+/// T3 waits can block for an hour; Codex's own MCP timeout must stay above that.
+const MCP_TOOL_TIMEOUT_SECS: u64 = 65 * 60;
+
+/// `CODEX_THREAD_CONFIG`, the per-thread shell variable, and the session's MCP servers.
+fn thread_config(app_thread_id: Option<&str>, mcp: &[McpServer]) -> Value {
     let mut config = json!({
         "tools.update_plan.enabled": true,
         "mcp_optional_startup_grace_ms": 10_000,
@@ -189,12 +191,58 @@ fn thread_config(app_thread_id: Option<&str>) -> Value {
     if let Some(thread_id) = app_thread_id {
         config[format!("shell_environment_policy.set.{AGENT_THREAD_ENV}")] = json!(thread_id);
     }
+    for (key, value) in mcp.iter().flat_map(mcp_server_config) {
+        config[key] = value;
+    }
     config
 }
 
+/// `mcp_servers.<name>` overrides for one server, as `codexThreadRuntimeParams` builds them.
+/// T3's own server (`t3-code`) splits in two: `t3_thread_wait` goes on a direct-only server,
+/// out of code mode, so a wait never runs inside a script.
+fn mcp_server_config(server: &McpServer) -> Vec<(String, Value)> {
+    let entry = |extra: Value| {
+        let mut entry = json!({
+            "url": server.url,
+            "tool_timeout_sec": MCP_TOOL_TIMEOUT_SECS,
+            "http_headers": server
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), json!(v)))
+                .collect::<serde_json::Map<String, Value>>(),
+        });
+        if let (Some(entry), Value::Object(extra)) = (entry.as_object_mut(), extra) {
+            entry.extend(extra);
+        }
+        entry
+    };
+    let name = &server.name;
+    if name != "t3-code" {
+        return vec![(format!("mcp_servers.{name}"), entry(json!({})))];
+    }
+    vec![
+        (
+            format!("mcp_servers.{name}"),
+            entry(json!({ "disabled_tools": ["t3_thread_wait"] })),
+        ),
+        (
+            format!("mcp_servers.{name}-direct"),
+            entry(json!({
+                "enabled_tools": ["t3_thread_wait"],
+                "omit_tools_from": ["code_mode", "deferred"],
+            })),
+        ),
+    ]
+}
+
 /// `thread/start` and `thread/resume` share these (`codexThreadRuntimeParams`).
-pub fn thread_params(app_thread_id: Option<&str>, cwd: Option<&str>, model: Option<&str>) -> Value {
-    let mut params = json!({ "config": thread_config(app_thread_id) });
+pub fn thread_params(
+    app_thread_id: Option<&str>,
+    cwd: Option<&str>,
+    model: Option<&str>,
+    mcp: &[McpServer],
+) -> Value {
+    let mut params = json!({ "config": thread_config(app_thread_id, mcp) });
     if let Some(cwd) = cwd {
         params["cwd"] = json!(cwd);
     }
@@ -381,6 +429,22 @@ fn is_amount(name: &str) -> bool {
 mod tests {
     use super::*;
     use conn_contract::from_json;
+
+    #[test]
+    fn t3_code_splits_its_wait_tool_onto_a_direct_server() {
+        let server = McpServer {
+            name: "t3-code".into(),
+            url: "http://127.0.0.1:3773/mcp".into(),
+            headers: vec![("Authorization".into(), "Bearer abc".into())],
+        };
+        let config = &thread_params(Some("t1"), None, None, &[server])["config"];
+        let main = &config["mcp_servers.t3-code"];
+        let direct = &config["mcp_servers.t3-code-direct"];
+        assert_eq!(main["disabled_tools"], json!(["t3_thread_wait"]));
+        assert_eq!(direct["enabled_tools"], json!(["t3_thread_wait"]));
+        assert_eq!(direct["http_headers"]["Authorization"], "Bearer abc");
+        assert_eq!(main["tool_timeout_sec"], MCP_TOOL_TIMEOUT_SECS);
+    }
 
     #[test]
     fn argv_and_environment_match_the_ts_launch() {

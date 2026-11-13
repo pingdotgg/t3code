@@ -177,9 +177,9 @@ subagent })` returns an `McpServerEntry { url, authorization, .. }` for one prov
 - Claude: `entry.claude_server()` is the `mcpServers["t3-code"]` value (`type: http`, `url`,
   `headers.Authorization`, `timeout` 65 min); `entry.claude_mcp_config()` is the whole
   `--mcp-config` JSON. Pre-approve `mcp__t3-code__*` as the T3 adapter does.
-- Codex: `entry.codex_config()` gives `mcp_servers.t3-code` (wait tool disabled) and
-  `mcp_servers.t3-code-direct` (only `t3_thread_wait`, out of code mode), each with `url`,
-  `tool_timeout_sec` and `http_headers.Authorization`.
+- Codex: the provider writes `mcp_servers.t3-code` (wait tool disabled) and
+  `mcp_servers.t3-code-direct` (only `t3_thread_wait`, out of code mode) into its thread
+  config (`conn-provider-codex/src/launch.rs`).
 - Call `revoke_provider_session` when the session ends and `touch_thread` when a turn starts.
 
 `crates/conn-server/examples/mcp_agent.rs` proves it: it serves one thread and writes that

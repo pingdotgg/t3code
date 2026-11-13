@@ -215,6 +215,7 @@ dependencies = [
 name = "conn-provider-support"
 version = "0.1.0"
 dependencies = [
+ "rustix",
  "tokio",
 ]
 
@@ -236,6 +237,7 @@ dependencies = [
  "futures-core",
  "getrandom",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

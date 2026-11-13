@@ -7,10 +7,16 @@ use conn_server::serve::{ServeOptions, serve};
 fn main() {
     // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
-    let mut providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ClaudeProvider::new(
-        "claudeAgent".into(),
-        ClaudeConfig::default(),
-    ))];
+    let claude = ClaudeConfig {
+        // `conn-files` stores attachments here; the CLI may read them.
+        attachments_dir: Some(options.state_dir.join("attachments")),
+        // The engine closes idle sessions (`--session-idle-timeout`), one rule for all.
+        idle_timeout: None,
+        mcp_instructions: Some(conn_mcp::AGENT_INSTRUCTIONS.to_owned()),
+        ..ClaudeConfig::default()
+    };
+    let mut providers: Vec<Arc<dyn Provider>> =
+        vec![Arc::new(ClaudeProvider::new("claudeAgent".into(), claude))];
     if let Some(codex) =
         conn_provider_codex::CodexProvider::detect("codex".into(), Default::default())
     {

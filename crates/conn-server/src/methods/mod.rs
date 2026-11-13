@@ -14,7 +14,7 @@ mod orchestration;
 mod projects;
 pub mod provider;
 pub mod server;
-mod terminal;
+pub mod terminal;
 pub mod vcs;
 
 /// Services handlers may use. `None` until the owning track wires it in `main.rs`.
@@ -27,6 +27,8 @@ pub struct Deps {
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
     pub mcp: Option<Arc<conn_mcp::McpService>>,
     pub vcs: vcs::VcsShared,
+    /// Shared with the engine host, so a thread's terminals close with it.
+    pub terminals: Option<conn_terminal::TerminalManager>,
     /// Files, assets and attachments; without it those methods and routes are not served.
     pub files: Option<Arc<conn_files::Files>>,
 }

@@ -5,6 +5,7 @@ pub mod cli;
 pub mod diagnostics;
 pub mod environment;
 pub mod home;
+pub mod host;
 pub mod http;
 pub mod keybindings;
 pub mod methods;

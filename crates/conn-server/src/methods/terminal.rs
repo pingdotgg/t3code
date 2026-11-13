@@ -25,15 +25,20 @@ use crate::{
 /// a chunk the session batches from them stays near the 64 KiB ack window.
 const STREAM_BUFFER: usize = 4;
 
-pub fn register(table: &mut MethodTable, deps: &Deps) {
-    let manager = TerminalManager::new(TerminalConfig {
-        history_dir: deps
-            .environment
-            .as_ref()
-            .map(|e| e.state_dir.join("terminals")),
+/// The manager terminals of this environment share; scrollback lives under the state folder.
+pub fn manager(environment: Option<&crate::environment::Environment>) -> TerminalManager {
+    TerminalManager::new(TerminalConfig {
+        history_dir: environment.map(|e| e.state_dir.join("terminals")),
         version: CONTRACT_SERVER_VERSION.into(),
         ..TerminalConfig::default()
-    });
+    })
+}
+
+pub fn register(table: &mut MethodTable, deps: &Deps) {
+    let manager = deps
+        .terminals
+        .clone()
+        .unwrap_or_else(|| manager(deps.environment.as_deref()));
 
     let m = manager.clone();
     table.unary("terminal.open", move |_, input: TerminalOpenInput| {

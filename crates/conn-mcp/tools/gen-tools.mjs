@@ -176,16 +176,31 @@ const catalog = implemented.map((name) => {
 });
 // One compact tool per line: conn-mcp splices these bytes into `tools/list` unparsed.
 const text = catalog.map((tool) => `${JSON.stringify(tool)}\n`).join("");
+// The orchestration text T3 appends to an agent's system prompt when it has `t3-code`.
+const { T3_CODE_ORCHESTRATION_INSTRUCTIONS } = await import(
+  NodeURL.pathToFileURL(
+    NodePath.join(repo, "packages/provider-core/src/server/orchestrationInstructions.ts"),
+  ).href
+);
+const instructionsOut = NodePath.join(here, "..", "src", "instructions.md");
+const outputs = [
+  [out, text, `${catalog.length} tools`],
+  [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],
+];
 if (process.argv.includes("--check")) {
-  const current = NodeFS.existsSync(out) ? NodeFS.readFileSync(out, "utf8") : "";
-  if (current !== text) {
-    console.error(
-      `${NodePath.relative(repo, out)} is stale: run gen-tools.mjs and review the diff.`,
-    );
-    process.exit(1);
+  for (const [file, content, what] of outputs) {
+    const current = NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : "";
+    if (current !== content) {
+      console.error(
+        `${NodePath.relative(repo, file)} is stale: run gen-tools.mjs and review the diff.`,
+      );
+      process.exit(1);
+    }
+    console.log(`${what} match ${NodePath.relative(repo, file)}`);
   }
-  console.log(`${catalog.length} tools match ${NodePath.relative(repo, out)}`);
 } else {
-  NodeFS.writeFileSync(out, text);
-  console.log(`wrote ${catalog.length} tools to ${NodePath.relative(repo, out)}`);
+  for (const [file, content, what] of outputs) {
+    NodeFS.writeFileSync(file, content);
+    console.log(`wrote ${what} to ${NodePath.relative(repo, file)}`);
+  }
 }

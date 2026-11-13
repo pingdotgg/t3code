@@ -11,8 +11,8 @@ use std::{
 
 use conn_contract::{ProviderInstanceId, ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, InterruptInput, ProviderError, ProviderEvent, ProviderResult,
-    ResumeThreadInput, RuntimeRequestResponse, Session, SteerInput, TurnInput,
+    BoxFuture, EnsureThreadInput, InterruptInput, McpServer, ProviderError, ProviderEvent,
+    ProviderResult, ResumeThreadInput, RuntimeRequestResponse, Session, SteerInput, TurnInput,
 };
 use conn_provider_support::ids::{self, Env, SystemEnv, iso_from_ms};
 use serde_json::{Value, json};
@@ -49,6 +49,8 @@ struct State {
     /// The native thread and the app-server generation it is loaded on.
     thread: Option<(String, Option<u64>)>,
     app_thread_id: Option<String>,
+    /// Passed to each `thread/start` and `thread/resume` (`set_mcp_servers`).
+    mcp_servers: Vec<McpServer>,
     closed: bool,
     logged: HashSet<String>,
 }
@@ -72,6 +74,7 @@ impl CodexSession {
                 events: Some(events),
                 thread: None,
                 app_thread_id: None,
+                mcp_servers: Vec::new(),
                 closed: false,
                 logged: HashSet::new(),
             }),
@@ -157,7 +160,8 @@ impl Inner {
         model: Option<&str>,
     ) -> ProviderResult<Value> {
         self.server.route(native, self.inbox.clone());
-        let mut params = launch::thread_params(app_thread, cwd, model);
+        let mcp = self.lock().mcp_servers.clone();
+        let mut params = launch::thread_params(app_thread, cwd, model, &mcp);
         params["threadId"] = json!(native);
         params["excludeTurns"] = json!(true);
         let result = match self.server.request("thread/resume", params.clone()).await {
@@ -284,10 +288,12 @@ impl Session for CodexSession {
                     .await;
             }
             let model = launch::selection_model(&input.model_selection);
+            let mcp = inner.lock().mcp_servers.clone();
             let params = launch::thread_params(
                 Some(input.thread_id.as_str()),
                 input.runtime_policy.cwd.as_deref(),
                 Some(&model),
+                &mcp,
             );
             let result = inner
                 .server
@@ -512,6 +518,13 @@ impl Session for CodexSession {
         })
     }
 
+    /// Codex reads MCP servers from the thread config, so they apply from the next
+    /// `thread/start` or `thread/resume` of this session.
+    fn set_mcp_servers(&self, servers: Vec<McpServer>) -> BoxFuture<'_, ProviderResult<()>> {
+        self.inner.lock().mcp_servers = servers;
+        Box::pin(std::future::ready(Ok(())))
+    }
+
     fn close(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let inner = &self.inner;
@@ -730,12 +743,7 @@ done
             "the event channel closes after close"
         );
         assert!(provider.app_server_pid().is_none());
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status()
-            .unwrap()
-            .success();
+        let alive = conn_provider_support::process::pid_alive(pid);
         assert!(!alive, "the app-server outlived its last session");
     }
 }

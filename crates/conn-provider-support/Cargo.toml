@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
+# Signals process groups without forking `/bin/kill`, which slim images may lack. Already in
+# the tree through conn-terminal (`pty-process`); safe wrappers, no `unsafe` here.
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 
 [lints]
 workspace = true

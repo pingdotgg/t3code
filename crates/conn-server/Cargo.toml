@@ -34,6 +34,8 @@ tokio = { workspace = true, features = ["signal", "fs"] }
 # The ownership lock shared with the T3 server (`server-owner.sqlite`); already in the tree
 # through conn-engine, same version and features.
 rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
+# Signals a process (`signalProcess`) without forking `/bin/kill`; already in the tree.
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 # Already in the tree through axum: the Stream trait an asset response body implements.
 futures-core = "0.3"
 

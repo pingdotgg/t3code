@@ -243,29 +243,31 @@ fn exit_signal(_: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
-/// `kill -KILL -<pgid>` for the group created at spawn (pgid = the pid captured at spawn).
+/// SIGKILL to the group created at spawn (pgid = the pid captured at spawn).
 #[cfg(unix)]
 async fn kill_group(pgid: u32) {
-    if pgid == 0 {
-        return;
-    }
-    let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pgid}")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await;
+    signal_group(pgid, rustix::process::Signal::KILL);
 }
 
-/// Whether a process with this pid exists (`kill -0`). For checking that a child ended.
+/// Sends `signal` to the process group `pgid`. A group already gone is not an error.
+#[cfg(unix)]
+pub fn signal_group(pgid: u32, signal: rustix::process::Signal) {
+    let Some(pgid) = i32::try_from(pgid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return;
+    };
+    let _ = rustix::process::kill_process_group(pgid, signal);
+}
+
+/// Whether a process with this pid exists (signal 0). For checking that a child ended.
 #[cfg(unix)]
 pub fn pid_alive(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
 }
 
 fn spawn_stderr_tail(

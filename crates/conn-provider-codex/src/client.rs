@@ -442,12 +442,7 @@ read never
         let pid = server.pid().unwrap();
         server.remove_session("s1").await;
         assert!(server.generation().is_none());
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status()
-            .unwrap()
-            .success();
+        let alive = conn_provider_support::process::pid_alive(pid);
         assert!(!alive, "the app-server outlived its last session");
     }
 

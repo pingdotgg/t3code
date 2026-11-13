@@ -213,9 +213,16 @@ pub fn signal_process(pid: i64, started_at_ms: i64, signal: &str) -> Value {
             "Process {pid} is not a signalable Conn Server descendant."
         ));
     }
-    let flag = if signal == "SIGKILL" { "-KILL" } else { "-INT" };
-    match Command::new("kill").args([flag, &pid.to_string()]).status() {
-        Ok(status) if status.success() => {
+    let signal_number = if signal == "SIGKILL" {
+        rustix::process::Signal::KILL
+    } else {
+        rustix::process::Signal::INT
+    };
+    let target = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw);
+    match target.map(|pid| rustix::process::kill_process(pid, signal_number)) {
+        Some(Ok(())) => {
             json!({ "pid": pid, "signal": signal, "signaled": true, "message": { "_tag": "None" } })
         }
         _ => refuse("Failed to signal process.".into()),

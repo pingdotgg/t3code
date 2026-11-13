@@ -597,7 +597,6 @@ async fn an_agent_delegates_a_task_and_is_woken() {
         entry.claude_mcp_config()["mcpServers"]["t3-code"]["headers"]["Authorization"],
         entry.authorization.as_str()
     );
-    assert_eq!(entry.codex_config()[1].0, "mcp_servers.t3-code-direct");
 
     let mut c = Client::open(&f.service, agent).await;
     let mine = c.ok("t3_thread_list", json!({})).await;
