@@ -167,6 +167,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
+    readonly omits?: string;
+    readonly json?: object;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -271,11 +273,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       installed: true,
       status: { current: false, otherBaseDir: "/srv/t3 home" },
       reportStatus: true,
+      json: {
+        service: { otherBaseDir: "/srv/t3 home" },
+        lan: { enabled: false, inheritedDefault: false },
+      },
       env: "",
       args: ["--json"],
       installs: 0,
       restarts: 0,
       envAfter: "",
+    },
+    {
+      label: "a host override gets no --no-lan hint it would ignore",
+      installed: true,
+      reportStatus: true,
+      prints: "overridden · T3CODE_HOST=0.0.0.0",
+      omits: "t3 up --no-lan",
+      env: "T3CODE_HOST=0.0.0.0\n",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_HOST=0.0.0.0\n",
     },
     {
       label: "no service manager still records the choice",
@@ -371,11 +389,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       if (input.prints !== undefined) {
         expect(lines.join("\n")).toContain(input.prints.replace("<baseDir>", baseDir));
       }
-      if (input.reportStatus) {
-        expect(JSON.parse(lines.join("\n"))).toMatchObject({
-          service: { otherBaseDir: "/srv/t3 home" },
-          lan: { enabled: false, inheritedDefault: false },
-        });
+      if (input.omits !== undefined) {
+        expect(lines.join("\n")).not.toContain(input.omits);
+      }
+      if (input.json !== undefined) {
+        expect(JSON.parse(lines.join("\n"))).toMatchObject(input.json);
       }
       expect(exit._tag).toBe(
         input.restartFails === true || input.fails === true ? "Failure" : "Success",
@@ -395,4 +413,18 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
     ["# my settings", "T3CODE_PORT=4000", "T3CODE_LAN=true", ""].join("\n"),
   );
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
+  expect(
+    upsertServiceEnv('T3CODE_LAN="a\nb"\nCUSTOM="x\nT3CODE_LAN=y"\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM="x\nT3CODE_LAN=y"\n');
+  expect(
+    upsertServiceEnv('T3CODE_LAN=\u00a0"unused\nCUSTOM=keep\nEND="\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM=keep\nEND="\n');
+  const long = `CUSTOM="${"\n".repeat(130_000)}"\n`;
+  expect(upsertServiceEnv(`${long}T3CODE_LAN=true\n`, { T3CODE_LAN: "false" })).toBe(
+    `${long}T3CODE_LAN=false\n`,
+  );
 });

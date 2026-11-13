@@ -186,6 +186,9 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),
 }));
+vi.mock("../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
+}));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({}));
 vi.mock("../state/v2-item-support", () => ({}));
@@ -297,6 +300,10 @@ vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () =>
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {
   const { createContext } = await import("react");
   return { MarkdownImageAvailableWidthContext: createContext(390) };
+});
+vi.mock("../features/threads/ZoomableImagePressable", async () => {
+  const { Pressable } = await import("react-native");
+  return { ZoomableImagePressable: Pressable };
 });
 vi.mock("../features/review/ReviewCommentCard", () => ({ useReviewCommentColors: () => ({}) }));
 vi.mock("../features/prompt-links/prompt-link-actions", () => ({}));
