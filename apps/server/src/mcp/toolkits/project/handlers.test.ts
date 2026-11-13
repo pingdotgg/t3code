@@ -604,6 +604,78 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
   }),
 );
 
+it.effect("a launch into a new worktree creates nothing when its branch collides", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
+        Effect.fail(
+          new ThreadLaunch.ThreadLaunchBranchConflictError({
+            projectId,
+            projectTitle: "Client target",
+            branch: workspaceStrategy.branch ?? "",
+            conflictingBranch: "werkstatt",
+          }),
+        ),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const refused = (yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "werkstatt/baseline" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies))).at(-1)?.result;
+
+    expect(refused).toMatchObject({
+      code: "invalid_request",
+      message:
+        'Branch "werkstatt/baseline" cannot be created in project "Client target": branch "werkstatt" exists. No thread was created. Use a name that does not nest under or contain an existing branch, such as "werkstatt-baseline".',
+    });
+    expect(launched).toHaveLength(0);
+  }),
+);
+
+it.effect("a launch into an unknown project says the project was not found", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    for (const workspaceStrategy of [
+      undefined,
+      { type: "worktree", baseRef: "main", startFromOrigin: false } as const,
+    ]) {
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          message: "Fix the bug",
+          projectId: ProjectId.make("current"),
+          modelSelection,
+          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(result.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: "The project was not found.",
+      });
+    }
+    expect(launched).toHaveLength(0);
+  }),
+);
+
 it.effect("a retried worktree launch replays after its base ref is gone", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
