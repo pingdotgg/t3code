@@ -38,12 +38,12 @@ const readRecord = (recordPath: string) => {
 
 export const ProviderProcesses = Context.Reference<{
   readonly register?: (pid: number) => () => void;
-  readonly hasOtherLiveOwner?: boolean;
-}>("t3/process/ProviderProcesses", { defaultValue: () => ({}) });
+  readonly hasOtherLiveOwner: boolean;
+}>("t3/process/ProviderProcesses", { defaultValue: () => ({ hasOtherLiveOwner: false }) });
 
 const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  if (platform !== "linux") return {};
+  if (platform !== "linux") return { hasOtherLiveOwner: false };
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const directory = NodePath.join(stateDir, "provider-processes");
   const hostname = NodeOS.hostname();
@@ -57,13 +57,10 @@ const make = Effect.gen(function* () {
   };
   const matches = (expected: typeof ProcessIdentity.Type) =>
     identity(expected.pid)?.startTime === expected.startTime;
-  // A failed signal only matters while the recorded process is still the same one.
   const kill = (survivor: typeof ProcessIdentity.Type) => {
     try {
       controller.signalProcess(survivor.pid, "SIGKILL");
-    } catch (cause) {
-      if (matches(survivor)) throw cause;
-    }
+    } catch {}
   };
   const owner = identity(process.pid);
   if (owner === undefined) return yield* Effect.die(new Error("Cannot identify provider owner"));
@@ -105,18 +102,23 @@ const make = Effect.gen(function* () {
       if (record.owner.pid !== process.pid) hasOtherLiveOwner = true;
       continue;
     }
+    let survived = false;
     for (const survivor of record.processes) {
       if (survivor.pid === process.pid || !matches(survivor)) continue;
       // Never infer ownership from argv, executable names, or group membership.
       // As in the ACP controller, starttime blocks reuse between observations.
       // Node has no pidfd_send_signal, so the final read-to-signal race remains.
       kill(survivor);
-      for (let attempt = 0; matches(survivor); attempt++) {
-        if (attempt === 100) {
-          return yield* Effect.die(new Error("Recorded provider survived restart cleanup"));
-        }
-        yield* Effect.sleep("10 millis");
+      for (let attempt = 0; matches(survivor) && !survived; attempt++) {
+        survived = attempt === 100;
+        if (!survived) yield* Effect.sleep("10 millis");
       }
+    }
+    // Like a failed slice stop, an unkillable CLI must not keep the server down;
+    // its record stays so the next start retries.
+    if (survived) {
+      yield* Effect.logWarning("Could not stop a provider left by a previous server", { file });
+      continue;
     }
     NodeFS.rmSync(recordPath, { force: true });
   }
