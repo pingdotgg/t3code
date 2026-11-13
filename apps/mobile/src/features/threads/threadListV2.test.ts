@@ -458,6 +458,21 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.thread.id)).toEqual(["open"]);
     expect(layout.items[0]?.snoozed).toBe(true);
     expect(layout.snoozedCount).toBe(2);
+
+    const pins = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("pin-open"), title: "Pin open", pinnedAt: NOW }),
+        makeThread({ id: ThreadId.make("pin-other"), title: "Pin other", pinnedAt: NOW }),
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      pinnedShelfExpanded: false,
+      selectedThreadKey: `${environmentId}:pin-open`,
+    });
+    expect(pins.items.map((item) => item.thread.id)).toEqual(["pin-open", "active"]);
+    expect(pins.pinnedCount).toBe(2);
   });
 
   it("keeps snoozed threads visible on environments without the snooze capability", () => {
@@ -1730,6 +1745,7 @@ describe("Working section beta", () => {
   it("places the shelf after queued tasks and before snoozed and settled threads", () => {
     const layout = buildThreadListV2Items({
       threads: [
+        makeThread({ id: ThreadId.make("pinned"), title: "pinned", pinnedAt: NOW }),
         makeThread({ id: ThreadId.make("active"), title: "active" }),
         makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
         makeThread({
@@ -1756,6 +1772,7 @@ describe("Working section beta", () => {
     const items = buildThreadListV2ListItems({
       items: layout.items,
       pendingTasks: [makePendingTask("queued")],
+      pinnedCount: layout.pinnedCount,
       workingCount: layout.workingCount,
       workingShelfExpanded: true,
       workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
@@ -1775,6 +1792,8 @@ describe("Working section beta", () => {
       ),
     ).toEqual([
       "queued",
+      "v2-pinned-shelf",
+      "pinned",
       "active",
       "v2-working-shelf",
       "working",

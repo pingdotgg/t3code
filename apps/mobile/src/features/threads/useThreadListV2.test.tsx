@@ -55,6 +55,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     now: "2026-01-02T00:00:00.000Z",
     pendingOrder: null,
     shelfPreferencesLoaded: true,
+    pinnedShelfExpanded: true,
     workingShelfEnabled: true,
     workingShelfExpanded: false,
     snoozedShelfExpanded: false,
