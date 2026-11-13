@@ -8062,6 +8062,67 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     };
   };
 
+  it.effect(
+    "ends a running native child when Codex closes its thread without a turn completion",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "native-child-thread-closed",
+            entries: [
+              ...lateChildPrefix().spawned,
+              ...lateChildPrefix().rootFinished,
+              // The unsubscribe reply fences notification handling on the same protocol reader.
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 4,
+                  method: "thread/unsubscribe",
+                  params: { threadId: RESUME_NATIVE_THREAD },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: { method: "thread/closed", params: { threadId: RESUME_CHILD_THREAD } },
+              },
+              { type: "emit_inbound", frame: { id: 4, result: { status: "notSubscribed" } } },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-child-closed"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "running");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.until(
+          () => harness.subagentUpdates().at(-1)?.subagent.status === "interrupted",
+        );
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each(["completed", "failed", "interrupted", "starting", "replied-last"] as const)(
     "handles a late native child after the capacity retry %s",
     (parentStatus) =>
