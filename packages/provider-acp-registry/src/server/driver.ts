@@ -527,8 +527,8 @@ export interface GlmUsageLimitsCache {
     readonly limits: ServerProviderUsageLimits | undefined;
     readonly expired: boolean;
   }>;
-  /** Reads past the cache and stores the result; recovery and forced refreshes use it. */
-  readonly readFresh: Effect.Effect<ServerProviderUsageLimits>;
+  /** Reads past the cache and stores the result; undefined when an account change overtook the read. */
+  readonly readFresh: Effect.Effect<ServerProviderUsageLimits | undefined>;
   readonly invalidate: Effect.Effect<void>;
   /** Drops the reading; another account's limits must not show even briefly. */
   readonly clear: Effect.Effect<void>;
@@ -540,36 +540,47 @@ const GLM_USAGE_CACHE_TTL_MS = 10 * 60_000;
 
 export const makeGlmUsageLimitsCache = Effect.fn("AcpRegistryDriver.makeGlmUsageLimitsCache")(
   (input: {
-    readonly read: Effect.Effect<ServerProviderUsageLimits>;
+    /** `current` turns false once an account change has overtaken this read. */
+    readonly read: (current: Effect.Effect<boolean>) => Effect.Effect<ServerProviderUsageLimits>;
   }): Effect.Effect<GlmUsageLimitsCache> =>
     Effect.gen(function* () {
-      const entry = yield* Ref.make<{
-        readonly limits: ServerProviderUsageLimits;
-        readonly expiresAt: number;
-      } | null>(null);
+      const state = yield* Ref.make<{
+        readonly generation: number;
+        readonly entry: {
+          readonly limits: ServerProviderUsageLimits;
+          readonly expiresAt: number;
+        } | null;
+      }>({ generation: 0, entry: null });
       const readFresh = Effect.gen(function* () {
-        const limits = yield* input.read;
-        yield* Ref.set(entry, {
-          limits,
-          expiresAt: (yield* Clock.currentTimeMillis) + GLM_USAGE_CACHE_TTL_MS,
-        });
-        return limits;
+        const { generation } = yield* Ref.get(state);
+        const limits = yield* input.read(
+          Ref.get(state).pipe(Effect.map((current) => current.generation === generation)),
+        );
+        const expiresAt = (yield* Clock.currentTimeMillis) + GLM_USAGE_CACHE_TTL_MS;
+        // A read that outlived an account change belongs to the previous account.
+        return yield* Ref.modify(state, (current) =>
+          current.generation === generation
+            ? ([limits, { ...current, entry: { limits, expiresAt } }] as const)
+            : ([undefined, current] as const),
+        );
       });
       return {
         get: Effect.gen(function* () {
-          const cached = yield* Ref.get(entry);
+          const { entry } = yield* Ref.get(state);
           const now = yield* Clock.currentTimeMillis;
-          return {
-            limits: cached?.limits,
-            expired: cached === null || cached.expiresAt <= now,
-          };
+          return { limits: entry?.limits, expired: entry === null || entry.expiresAt <= now };
         }),
         readFresh,
         // A forced refresh keeps showing the last reading until the fresh one lands.
-        invalidate: Ref.update(entry, (cached) =>
-          cached === null ? null : { ...cached, expiresAt: 0 },
+        invalidate: Ref.update(state, (current) =>
+          current.entry === null
+            ? current
+            : { ...current, entry: { ...current.entry, expiresAt: 0 } },
         ),
-        clear: Ref.set(entry, null),
+        clear: Ref.update(state, (current) => ({
+          generation: current.generation + 1,
+          entry: null,
+        })),
       };
     }),
 );
@@ -729,39 +740,44 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           );
     });
     const refreshScope = yield* Effect.scope;
-    const glmUsageReader = isZaiUsageLimitsInstance(effectiveConfig)
-      ? scopedGlmUsageLimitsReader({
-          instanceId,
-          displayName,
-          setAuthentication: (confirmed) =>
-            confirmedAuthentication.set(confirmed).pipe(
-              Effect.andThen(
-                confirmed
-                  ? Effect.void
-                  : // A signed-out reading is stale by definition, so refresh everything it came from.
-                    Effect.suspend(() =>
-                      clearLiveState.pipe(
-                        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
-                        Effect.andThen(snapshot.refresh),
-                      ),
-                    ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
-              ),
-            ),
-          read: (input) =>
-            readAcpRegistryGlmUsageLimits(input).pipe(
-              Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              Effect.provideService(SecureRandom.SecureRandom, random),
-            ),
-        })({
-          instanceId,
-          settings: effectiveConfig,
-          cwd: host.paths.cwd,
-          environment: processEnvironment,
+    const setGlmAuthentication = (confirmed: boolean) =>
+      confirmedAuthentication.set(confirmed).pipe(
+        Effect.andThen(
+          confirmed
+            ? Effect.void
+            : // A signed-out reading is stale by definition, so refresh everything it came from.
+              Effect.suspend(() =>
+                clearLiveState.pipe(
+                  Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+                  Effect.andThen(snapshot.refresh),
+                ),
+              ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
+        ),
+      );
+    const glmUsageCache = isZaiUsageLimitsInstance(effectiveConfig)
+      ? yield* makeGlmUsageLimitsCache({
+          read: (current) =>
+            scopedGlmUsageLimitsReader({
+              instanceId,
+              displayName,
+              setAuthentication: (confirmed) =>
+                Effect.flatMap(current, (isCurrent) =>
+                  isCurrent ? setGlmAuthentication(confirmed) : Effect.void,
+                ),
+              read: (input) =>
+                readAcpRegistryGlmUsageLimits(input).pipe(
+                  Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  Effect.provideService(SecureRandom.SecureRandom, random),
+                ),
+            })({
+              instanceId,
+              settings: effectiveConfig,
+              cwd: host.paths.cwd,
+              environment: processEnvironment,
+            }),
         })
       : null;
-    const glmUsageCache =
-      glmUsageReader === null ? null : yield* makeGlmUsageLimitsCache({ read: glmUsageReader });
     const applyGlmReading = (limits: ServerProviderUsageLimits) =>
       Effect.suspend(() =>
         snapshot.applyUsageLimits({
@@ -903,7 +919,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 const { expired } = yield* glmUsageCache.get;
                 // Reading limits resolves the agent, which can install packages; only a ready agent is safe to spawn.
                 if (!expired || !snapshot.installed || snapshot.status !== "ready") return;
-                yield* applyGlmReading(yield* glmUsageCache.readFresh);
+                const limits = yield* glmUsageCache.readFresh;
+                if (limits === undefined) return;
+                yield* applyGlmReading(limits);
                 // A successful read confirms the sign-in; live state shows it without another refresh.
                 yield* liveSnapshotSemaphore.withPermit(
                   getSnapshot.pipe(

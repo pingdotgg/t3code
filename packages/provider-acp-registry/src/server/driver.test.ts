@@ -12,6 +12,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -624,7 +625,7 @@ describe("glmUsageLimitsCache", () => {
     Effect.gen(function* () {
       const readings = [limits("2026-11-05T22:20:00.000Z"), limits("2026-11-05T22:40:00.000Z")];
       const cache = yield* makeGlmUsageLimitsCache({
-        read: Effect.sync(() => readings.shift()!),
+        read: () => Effect.sync(() => readings.shift()!),
       });
 
       expect(yield* cache.readFresh).toEqual(limits("2026-11-05T22:20:00.000Z"));
@@ -656,9 +657,12 @@ describe("glmUsageLimitsCache", () => {
     Effect.gen(function* () {
       const reads = yield* Ref.make(0);
       const cache = yield* makeGlmUsageLimitsCache({
-        read: Ref.updateAndGet(reads, (count) => count + 1).pipe(
-          Effect.map((count) => limits(`2026-11-05T22:${String(count).padStart(2, "0")}:00.000Z`)),
-        ),
+        read: () =>
+          Ref.updateAndGet(reads, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              limits(`2026-11-05T22:${String(count).padStart(2, "0")}:00.000Z`),
+            ),
+          ),
       });
 
       yield* cache.readFresh;
@@ -676,6 +680,34 @@ describe("glmUsageLimitsCache", () => {
       expect(yield* Ref.get(reads)).toBe(2);
 
       yield* cache.clear;
+      expect(yield* cache.get).toEqual({ limits: undefined, expired: true });
+    }),
+  );
+
+  it.effect("drops a read that an account change overtook", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const currents: boolean[] = [];
+      const cache = yield* makeGlmUsageLimitsCache({
+        read: (current) =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(current),
+            Effect.map((isCurrent) => {
+              currents.push(isCurrent);
+              return limits("2026-11-05T22:20:00.000Z");
+            }),
+          ),
+      });
+
+      const stale = yield* cache.readFresh.pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* cache.clear;
+      yield* Deferred.succeed(release, undefined);
+
+      expect(yield* Fiber.join(stale)).toBeUndefined();
+      expect(currents).toEqual([false]);
       expect(yield* cache.get).toEqual({ limits: undefined, expired: true });
     }),
   );
