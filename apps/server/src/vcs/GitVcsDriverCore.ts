@@ -1495,23 +1495,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       : null;
   });
 
+  const readCurrentBranch = (operation: string, cwd: string) =>
+    executeGit(operation, cwd, ["symbolic-ref", "--quiet", "HEAD"], {
+      timeoutMs: 5_000,
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => (result.exitCode === 0 ? branchNameFromHeadRef(result.stdout) : null)),
+    );
+
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
     const gitCommonDir = yield* readGitCommonDir(cwd);
     if (gitCommonDir === null) return null;
-    const [worktreeRoot, currentBranchResult] = yield* Effect.all(
+    const [worktreeRoot, currentBranch] = yield* Effect.all(
       [
         readWorktreeRoot(cwd),
-        executeGit(
-          "GitVcsDriver.resolveRepositoryPaths.currentBranch",
-          cwd,
-          ["symbolic-ref", "--quiet", "HEAD"],
-          {
-            timeoutMs: 5_000,
-            allowNonZeroExit: true,
-          },
-        ),
+        readCurrentBranch("GitVcsDriver.resolveRepositoryPaths.currentBranch", cwd),
       ],
       { concurrency: 2 },
     );
@@ -1523,8 +1523,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
             Effect.orElseSucceed(() => undefined),
           );
-    const currentBranch =
-      currentBranchResult.exitCode === 0 ? branchNameFromHeadRef(currentBranchResult.stdout) : null;
 
     return {
       gitCommonDir,
@@ -4448,22 +4446,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
       }
 
-      const snapshot = yield* resolveListRefsSnapshot(
-        repositoryPaths.gitCommonDir,
-        input.refresh === true,
+      // Both caches outlive a checkout made outside T3 Code, so this checkout's branch is read
+      // on every call and replaces whatever the cached snapshot claims for it.
+      const [snapshot, currentBranch] = yield* Effect.all(
+        [
+          resolveListRefsSnapshot(repositoryPaths.gitCommonDir, input.refresh === true),
+          readCurrentBranch("GitVcsDriver.listRefs.currentBranch", input.cwd).pipe(
+            Effect.orElseSucceed(() => repositoryPaths.currentBranch),
+          ),
+        ],
+        { concurrency: 2 },
       );
-      const hasCurrentWorktreeBranch =
-        repositoryPaths.worktreeRoot !== null &&
-        snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
-      const localBranches = snapshot.localBranches.map((ref) => ({
-        ...ref,
-        worktreePath:
-          ref.worktreePath ??
-          (ref.name === repositoryPaths.currentBranch ? repositoryPaths.worktreeRoot : null),
-        current: hasCurrentWorktreeBranch
-          ? ref.worktreePath === repositoryPaths.worktreeRoot
-          : ref.name === repositoryPaths.currentBranch,
-      }));
+      const { worktreeRoot } = repositoryPaths;
+      const localBranches = snapshot.localBranches.map((ref) => {
+        const current = ref.name === currentBranch;
+        return {
+          ...ref,
+          worktreePath:
+            worktreeRoot === null
+              ? ref.worktreePath
+              : current
+                ? worktreeRoot
+                : ref.worktreePath === worktreeRoot
+                  ? null
+                  : ref.worktreePath,
+          current,
+        };
+      });
       const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...snapshot.remoteBranches]
         : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...snapshot.remoteBranches]);
