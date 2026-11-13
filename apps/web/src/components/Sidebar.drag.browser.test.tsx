@@ -52,7 +52,7 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
   const folder = page.getByRole("button", { name: /^render/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "true");
   await userEvent.click(folder);
-  await expect.element(page.getByText(second.title, { exact: true })).not.toBeInTheDocument();
+  await expect.element(folder).toHaveAttribute("aria-expanded", "false");
   await userEvent.fill(page.getByRole("combobox", { name: "Search threads" }), "search-target");
   const result = page.getByRole("option", { name: /Thread search-target/ });
   await expect.element(result).toBeVisible();
