@@ -10,6 +10,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   OrchestrationV2AppThread,
   OrchestrationV2Run,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -115,6 +116,29 @@ const rolledBackRun = Schema.decodeSync(OrchestrationV2Run)({
   completedAt: now,
   checkpointId: null,
   contextHandoffId: null,
+});
+
+const finishedRemoteTask = Schema.decodeSync(OrchestrationV2Subagent)({
+  id: "node:remote-task",
+  threadId: "task-parent",
+  runId: null,
+  parentNodeId: "node:task-parent-root",
+  origin: "app_owned",
+  createdBy: "agent",
+  driver: "remote",
+  providerInstanceId: "codex",
+  providerThreadId: null,
+  childThreadId: null,
+  remoteChild: { environmentId: "environment:box", threadId: "thread:on-the-box", label: "Box" },
+  nativeTaskRef: null,
+  prompt: "Run the suite there.",
+  title: null,
+  model: null,
+  status: "completed",
+  result: "Done",
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
 });
 
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
@@ -340,7 +364,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
   }),
 );
 
-it.effect("leaves older settled threads out of the HTTP shell only when asked", () =>
+it.effect("trims the HTTP shell only when asked", () =>
   Effect.gen(function* () {
     const { eventSink, handler } = yield* serveOrchestrationHttp(() => true);
     yield* eventSink.write({
@@ -392,5 +416,56 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
     for (const cursor of [full.snapshotSequence + 1, "x"]) {
       expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
     }
+
+    // Two idle chains under the source thread. `task-parent` once delegated a task to a linked
+    // environment; that task's thread there still names it after the task finished.
+    const subagent = (id: string, parent: string) => {
+      const threadId = ThreadId.make(id);
+      return {
+        id: EventId.make(`create-${id}`),
+        type: "thread.created" as const,
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          id: threadId,
+          lineage: {
+            rootThreadId: thread.id,
+            parentThreadId: ThreadId.make(parent),
+            relationshipToParent: "subagent" as const,
+          },
+        },
+      };
+    };
+    yield* eventSink.write({
+      events: [
+        subagent("above-task-parent", thread.id),
+        subagent("task-parent", "above-task-parent"),
+        subagent("under-task-parent", "task-parent"),
+        subagent("idle-parent", thread.id),
+        subagent("idle-leaf", "idle-parent"),
+        {
+          id: EventId.make("create-remote-task"),
+          type: "subagent.updated",
+          threadId: finishedRemoteTask.threadId,
+          occurredAt: now,
+          payload: finishedRemoteTask,
+        },
+      ],
+    });
+    const unsettledIds = (query: string) =>
+      shell(query).pipe(
+        Effect.map((snapshot) =>
+          snapshot.threads
+            .flatMap((row) => (row.id.startsWith("settled-") ? [] : [row.id]))
+            .toSorted(),
+        ),
+      );
+    expect(yield* unsettledIds("?omitIdleSubagents=1")).toEqual(
+      ["above-task-parent", "idle-parent", "task-parent", thread.id].toSorted(),
+    );
+    expect(yield* unsettledIds("?omitIdleSubagents=1&omitIdleSubagentParents=1")).toEqual(
+      ["above-task-parent", "task-parent", thread.id].toSorted(),
+    );
   }),
 );

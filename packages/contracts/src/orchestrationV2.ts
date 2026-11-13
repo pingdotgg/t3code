@@ -3900,6 +3900,13 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    */
   omitIdleSubagents: Schema.optionalKey(Schema.Boolean),
   /**
+   * With `omitIdleSubagents`, snapshots also leave out an idle subagent whose subagents are all
+   * left out. A subagent that wakes later arrives without the idle rows above it, so send this
+   * only from a client that reads the family of a row whose parent is missing. Older servers
+   * ignore it.
+   */
+  omitIdleSubagentParents: Schema.optionalKey(Schema.Boolean),
+  /**
    * Snapshots leave out older settled threads and count them in `olderSettled`; read them with
    * `getOlderSettledThreads`. Send only to servers that advertise `shellOlderSettled`.
    */

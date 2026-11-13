@@ -188,6 +188,8 @@ type ShellTrimRow = Pick<
  */
 interface ShellTrimFacts {
   readonly subagentParentIds: ReadonlySet<string>;
+  /** Parents of a side chat or a fork. */
+  readonly otherChildParentIds: ReadonlySet<string>;
   readonly subagentThreadIds: Set<string>;
   /** Only the store's index knows these; shells alone leave it empty. */
   readonly remoteTaskParentIds: ReadonlySet<string>;
@@ -200,6 +202,7 @@ const NEWEST_SETTLED_KEPT = 25;
 
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const subagentParentIds = new Set<string>();
+  const otherChildParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
   const remoteTaskParentIds = new Set<string>();
   const settledTimes: Array<number> = [];
@@ -208,7 +211,10 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
     if (row.lineage.relationshipToParent === "subagent") {
       subagentThreadIds.add(row.id);
       if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
-    } else if (
+      continue;
+    }
+    if (row.lineage.parentThreadId) otherChildParentIds.add(row.lineage.parentThreadId);
+    if (
       isListedThreadLineage(row.lineage) &&
       row.settledOverride === "settled" &&
       row.settledAt !== null
@@ -229,6 +235,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   }
   return {
     subagentParentIds,
+    otherChildParentIds,
     subagentThreadIds,
     remoteTaskParentIds,
     olderSettledBeforeMs,
@@ -248,16 +255,70 @@ function hiddenChildAncestorIds(
   return ancestorIds;
 }
 
+/**
+ * The subagents `holds` accepts and every subagent above one of them, so a kept subagent keeps
+ * its chain to the root. `rows` must hold each accepted subagent's subagent ancestors.
+ */
+function heldSubagentChainIds<T extends Pick<ShellTrimRow, "id" | "lineage">>(
+  rows: ReadonlyArray<T>,
+  holds: (row: T) => boolean,
+): ReadonlySet<string> {
+  const subagents = new Map<string, T>();
+  for (const row of rows) {
+    if (row.lineage.relationshipToParent === "subagent") subagents.set(row.id, row);
+  }
+  const held = new Set<string>();
+  for (const row of subagents.values()) {
+    if (!holds(row)) continue;
+    // A held subagent's ancestors are held already, which also ends a malformed cycle.
+    let current: T | undefined = row;
+    while (current !== undefined && !held.has(current.id)) {
+      held.add(current.id);
+      const parentId: string | null = current.lineage.parentThreadId;
+      current = parentId === null ? undefined : subagents.get(parentId);
+    }
+  }
+  return held;
+}
+
+type SubagentTrimFacts = Pick<
+  ShellTrimFacts,
+  "subagentParentIds" | "otherChildParentIds" | "remoteTaskParentIds"
+>;
+
+/**
+ * Which subagents an idle-subagent trim keeps, given `isLive`. Without `omitIdleParents` every
+ * parent of a subagent stays. With it an idle parent stays only above a subagent that is live,
+ * the parent of a side chat or a fork, or the parent of a task in a linked environment.
+ */
+function keptSubagentIds<T extends Pick<ShellTrimRow, "id" | "lineage">>(
+  rows: ReadonlyArray<T>,
+  facts: SubagentTrimFacts,
+  omitIdleParents: boolean,
+  isLive: (row: T) => boolean,
+): ReadonlySet<string> {
+  const holds = (row: T) => isLive(row) || facts.remoteTaskParentIds.has(row.id);
+  if (omitIdleParents) {
+    return heldSubagentChainIds(rows, (row) => holds(row) || facts.otherChildParentIds.has(row.id));
+  }
+  return new Set(
+    rows.flatMap((row) =>
+      row.lineage.relationshipToParent === "subagent" &&
+      (holds(row) || facts.subagentParentIds.has(row.id))
+        ? [row.id]
+        : [],
+    ),
+  );
+}
+
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-  facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
+  facts: SubagentTrimFacts,
+  omitIdleParents = false,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
+  const kept = keptSubagentIds(threads, facts, omitIdleParents, isLiveSubagentShell);
   return threads.filter(
-    (thread) =>
-      thread.lineage.relationshipToParent !== "subagent" ||
-      isLiveSubagentShell(thread) ||
-      facts.subagentParentIds.has(thread.id) ||
-      facts.remoteTaskParentIds.has(thread.id),
+    (thread) => thread.lineage.relationshipToParent !== "subagent" || kept.has(thread.id),
   );
 }
 
@@ -346,6 +407,12 @@ export function omitOlderSettledShells(input: {
 
 interface ShellSubscriberOptions {
   readonly omitIdleSubagents: boolean;
+  /**
+   * With `omitIdleSubagents`, also leaves out an idle subagent whose subagents are all left out.
+   * Only the store's index knows the parents of tasks in linked environments, which stay, so no
+   * trim over shells alone offers this.
+   */
+  readonly omitIdleSubagentParents: boolean;
   readonly omitOlderSettled: boolean;
 }
 
@@ -355,7 +422,7 @@ function trimShellSnapshot(
   options: ShellSubscriberOptions & { readonly now: DateTime.Utc },
 ): OrchestrationV2ShellSnapshot {
   const threads = options.omitIdleSubagents
-    ? omitIdleSubagentShellsWith(base.threads, facts)
+    ? omitIdleSubagentShellsWith(base.threads, facts, options.omitIdleSubagentParents)
     : base.threads;
   if (!options.omitOlderSettled) return { ...base, threads };
   const older = omitOlderSettledShellsWith(
@@ -374,23 +441,16 @@ function shellSubscriberThreadIds(
   options: ShellSubscriberOptions,
 ): ReadonlyArray<ThreadId> {
   const facts = shellTrimFacts(index);
-  const subagents = index.filter(
-    (entry) =>
-      entry.lineage.relationshipToParent === "subagent" &&
-      (!options.omitIdleSubagents ||
-        entry.mayBeLive ||
-        entry.hasRemoteTasks ||
-        facts.subagentParentIds.has(entry.id)),
+  const kept = options.omitIdleSubagents
+    ? keptSubagentIds(index, facts, options.omitIdleSubagentParents, (entry) => entry.mayBeLive)
+    : facts.subagentThreadIds;
+  const ancestorIds = hiddenChildAncestorIds(
+    index.filter((entry) => kept.has(entry.id) || entry.lineage.sideChat === true),
   );
-  const ancestorIds = hiddenChildAncestorIds([
-    ...subagents,
-    ...index.filter((entry) => entry.lineage.sideChat === true),
-  ]);
-  const keptSubagentIds = new Set(subagents.map((entry) => entry.id));
   const beforeMs = facts.olderSettledBeforeMs;
   return index.flatMap((entry) =>
     entry.lineage.relationshipToParent === "subagent"
-      ? keptSubagentIds.has(entry.id)
+      ? kept.has(entry.id)
         ? [entry.id]
         : []
       : !options.omitOlderSettled ||

@@ -718,9 +718,31 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("old", null, null, 30),
       shell("remote-parent", null, null, 40),
       shell("remote-child-parent", "parent", null),
+      // Nested chains: all idle, above a live subagent, at and above a task in a linked
+      // environment, and above a side chat.
+      shell("chain-top", "parent", null),
+      shell("chain-leaf", "chain-top", null),
+      shell("woken-top", "parent", null),
+      shell("woken-mid", "woken-top", null),
+      shell("woken-leaf", "woken-mid", "running"),
+      shell("above-remote", "parent", null),
+      shell("remote-nested", "above-remote", null),
+      shell("under-remote", "remote-nested", null),
+      shell("chat-top", "parent", null),
+      shell("chat-parent", "chat-top", null),
+      {
+        ...shell("side-chat", "chat-parent", null),
+        lineage: {
+          parentThreadId: ThreadId.make("chat-parent"),
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("parent"),
+          sideChat: true,
+        },
+      } as OrchestrationV2ThreadShell,
     ];
     const firstSnapshot = (input: {
       readonly omitIdleSubagents?: boolean;
+      readonly omitIdleSubagentParents?: boolean;
       readonly omitOlderSettled?: boolean;
     }) =>
       subscribeOrchestrationV2Shell(input).pipe(
@@ -769,6 +791,11 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       );
 
     const recent = threads.slice(3, 28).map((thread) => thread.id);
+    const kept = ["parent", "live", ...recent];
+    const keptRemote = ["remote-parent", "remote-child-parent"];
+    const woken = ["woken-top", "woken-mid", "woken-leaf"];
+    const remoteChain = ["above-remote", "remote-nested"];
+    const chat = ["chat-top", "side-chat"];
     const full = yield* firstSnapshot({});
     assert.deepEqual(
       full?.threads.map((thread) => thread.id),
@@ -778,14 +805,37 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
     assert.deepEqual(
       withoutChildren?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old", "remote-parent", "remote-child-parent"],
+      [...kept, "old", ...keptRemote, "chain-top", ...woken, ...remoteChain, ...chat],
+    );
+    // An idle parent stays only above a subagent that is live, has a side chat, or has a task in
+    // a linked environment: that task names its parent whether or not it has finished.
+    const withoutIdleParents = yield* firstSnapshot({
+      omitIdleSubagents: true,
+      omitIdleSubagentParents: true,
+    });
+    assert.deepEqual(
+      withoutIdleParents?.threads.map((thread) => thread.id),
+      [
+        ...kept,
+        "old",
+        ...keptRemote,
+        ...woken,
+        ...remoteChain,
+        "chat-top",
+        "chat-parent",
+        "side-chat",
+      ],
+    );
+    assert.deepEqual(
+      (yield* firstSnapshot({ omitIdleSubagentParents: true }))?.threads.map((thread) => thread.id),
+      threads.map((thread) => thread.id),
     );
     // A linked environment's clients nest its task under its parent, so that parent stays: an
     // older settled thread or an idle subagent.
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "remote-parent", "remote-child-parent"],
+      [...kept, ...keptRemote, "chain-top", ...woken, ...remoteChain, ...chat],
     );
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
       { projectId: ProjectId.make("project"), count: 2 },
