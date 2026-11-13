@@ -1238,6 +1238,13 @@ function ConnectionsSettingsContent({
             ) : canManageLocalBackend ? (
               renderDisabledNetworkAccessRow()
             ) : null}
+            {accessServerConfig?.tailscaleServeProblem &&
+            !(canManageLocalBackend && desktopBridge) ? (
+              <SettingsRow
+                title={searchableSetting("tailscale-https").title}
+                description={accessServerConfig.tailscaleServeProblem}
+              />
+            ) : null}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow
                 environmentId={accessEnvironmentId}
