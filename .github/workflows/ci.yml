@@ -659,7 +659,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -681,14 +681,14 @@ jobs:
       # Release's keys, read-only, so most runs skip the Rust builds.
       - name: Restore resource monitor
         id: resource_monitor_cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/aarch64-unknown-linux-gnu/release/t3-resource-monitor
           key: resource-monitor-aarch64-unknown-linux-gnu-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Restore Linux capture helpers
         id: capture_helper_cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/kde-snap-shot/target/aarch64-unknown-linux-gnu/release/t3-kde-snap-shot
@@ -732,7 +732,7 @@ jobs:
 
       - name: Upload launch check
         if: ${{ failure() && steps.launch_check.outcome == 'failure' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-arm64-launch-check
           path: ${{ runner.temp }}/linux-arm64-launch-check
