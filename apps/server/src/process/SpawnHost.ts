@@ -4,6 +4,7 @@ import * as NodeEvents from "node:events";
 import type * as NodeNet from "node:net";
 import type * as NodeStream from "node:stream";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -14,6 +15,11 @@ import type { SpawnHostEvent, SpawnHostSpawnRequest } from "./spawnHostProcess.t
 // A blocked native spawn occupies its host; already-running children share available hosts.
 const MAX_IDLE_HOSTS = 1;
 const HOST_READY_TIMEOUT_MS = 10_000;
+
+export const HostPids = Context.Reference<() => ReadonlySet<number>>(
+  "t3/process/SpawnHost/HostPids",
+  { defaultValue: () => () => new Set() },
+);
 
 class HostedChild
   extends NodeEvents.EventEmitter
@@ -288,7 +294,22 @@ export const layerHost = (command: string, args: ReadonlyArray<string>) =>
     Effect.acquireRelease(
       Effect.sync(() => new SpawnPool(command, args)),
       (pool) => Effect.sync(() => pool.close()),
-    ).pipe(Effect.map((pool) => NodeChildProcessSpawner.layerWithSpawn(pool.spawn))),
+    ).pipe(
+      Effect.map((pool) =>
+        Layer.merge(
+          NodeChildProcessSpawner.layerWithSpawn(pool.spawn),
+          Layer.succeed(
+            HostPids,
+            () =>
+              new Set(
+                [...pool.hosts].flatMap((host) =>
+                  host.process.pid === undefined ? [] : [host.process.pid],
+                ),
+              ),
+          ),
+        ),
+      ),
+    ),
   );
 
 export const layer = Layer.unwrap(

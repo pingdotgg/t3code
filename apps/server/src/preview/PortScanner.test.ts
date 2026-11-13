@@ -929,6 +929,12 @@ effectIt.effect("stops only a job's own process group", () =>
       { pid: 401, ppid: 400, pgid: 400 },
       { pid: 500, ppid: serverPid, pgid: 500 }, // terminal shell
       { pid: 600, ppid: 500, pgid: 600 }, // terminal job
+      { pid: 700, ppid: serverPid, pgid: 10 }, // scoped spawn host
+      { pid: 710, ppid: 700, pgid: 710 }, // hosted agent CLI
+      { pid: 720, ppid: 710, pgid: 710 }, // preview sharing the agent's group
+      { pid: 730, ppid: 710, pgid: 730 }, // separately grouped preview job
+      { pid: 800, ppid: serverPid, pgid: 800 }, // ordinary child, not a spawn host
+      { pid: 810, ppid: 800, pgid: 810 }, // separately grouped grandchild
     ];
     const table = new Map(rows.map((row) => [row.pid, row]));
     expect(PortScanner.stoppableProcessGroup(table, 401, serverPid)).toBe(400);
@@ -936,6 +942,10 @@ effectIt.effect("stops only a job's own process group", () =>
     for (const pid of [20, 210, 500, 999]) {
       expect(PortScanner.stoppableProcessGroup(table, pid, serverPid)).toBeNull();
     }
+    const spawnHostPids = new Set([700]);
+    expect(PortScanner.stoppableProcessGroup(table, 720, serverPid, spawnHostPids)).toBeNull();
+    expect(PortScanner.stoppableProcessGroup(table, 730, serverPid, spawnHostPids)).toBe(730);
+    expect(PortScanner.stoppableProcessGroup(table, 810, serverPid, spawnHostPids)).toBe(810);
   }),
 );
 

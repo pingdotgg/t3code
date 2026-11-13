@@ -12,6 +12,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "./config.ts";
+import * as SpawnHost from "./process/SpawnHost.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import { layerHttpServer, layerPlatformServices, layerProcessRunner } from "./server.ts";
 
@@ -29,6 +30,8 @@ describe.each(["linux", "darwin", "win32"] as const)(
           const parents = yield* Effect.gen(function* () {
             const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
             const runner = yield* ProcessRunner.ProcessRunner;
+            const getHostPids = yield* SpawnHost.HostPids;
+            expect([...getHostPids()]).toEqual([]);
             const child = yield* spawner.spawn(
               ChildProcess.make(process.execPath, ["-e", parentScript]),
             );
@@ -39,7 +42,8 @@ describe.each(["linux", "darwin", "win32"] as const)(
               args: ["-e", parentScript],
             });
             expect(result.code).toBe(0);
-            return { http: Number(httpParent), runner: Number(result.stdout) };
+            expect([...getHostPids()]).toEqual(platform === "linux" ? [Number(httpParent)] : []);
+            return { http: Number(httpParent), runner: Number(result.stdout), getHostPids };
           }).pipe(
             Effect.scoped,
             Effect.provide(
@@ -56,6 +60,7 @@ describe.each(["linux", "darwin", "win32"] as const)(
               }),
             ),
           );
+          expect([...parents.getHostPids()]).toEqual([]);
           expect(parents.http).toBe(parents.runner);
           expect({
             httpHosted: parents.http !== process.pid,

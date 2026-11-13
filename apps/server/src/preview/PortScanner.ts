@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as SpawnHost from "../process/SpawnHost.ts";
 import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -396,12 +397,13 @@ const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> =>
 /**
  * The process group stopping `pid` signals. Shells with job control and agent tool shells give
  * every job its own group, so the group is the job. Null when the group also holds this server,
- * a direct child of it (agent CLIs and terminal shells), or one of its ancestors.
+ * a direct child of it or its scoped spawn hosts (agent CLIs and terminal shells), or an ancestor.
  */
 export const stoppableProcessGroup = (
   table: ReadonlyMap<number, ProcessTableRow>,
   pid: number,
   serverPid: number,
+  spawnHostPids: ReadonlySet<number> = new Set(),
 ): number | null => {
   const group = table.get(pid)?.pgid;
   if (group === undefined || group <= 1) return null;
@@ -414,7 +416,11 @@ export const stoppableProcessGroup = (
     guarded.add(parent);
   }
   for (const row of table.values()) {
-    if (row.pgid === group && (guarded.has(row.pid) || row.ppid === serverPid)) return null;
+    if (
+      row.pgid === group &&
+      (guarded.has(row.pid) || row.ppid === serverPid || spawnHostPids.has(row.ppid))
+    )
+      return null;
   }
   return group;
 };
@@ -453,6 +459,7 @@ const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
 /** @public */
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const getSpawnHostPids = yield* SpawnHost.HostPids;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
   const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
@@ -1062,7 +1069,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const table = yield* readProcessTable;
     // It exited after the scan, so there is nothing left to stop.
     if (!table.has(input.pid)) return;
-    const group = stoppableProcessGroup(table, input.pid, process.pid);
+    const group = stoppableProcessGroup(table, input.pid, process.pid, getSpawnHostPids());
     if (group === null) return yield* new PreviewStopLocalServerError({ reason: "shared-group" });
     // False when the whole group already exited.
     const signalGroup = (signal: "SIGTERM" | "SIGKILL") =>
