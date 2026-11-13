@@ -179,9 +179,9 @@ const make = Effect.gen(function* () {
       }
       return { threadId: launched.threadId, turnId: run.id };
     }),
-    result: Effect.fn("WorkflowAgentThreads.result")(function* (turn) {
+    result: Effect.fn("WorkflowAgentThreads.result")(function* (turn, options) {
       const environment = elsewhere(turn.environment);
-      if (environment !== undefined) return yield* linked.result(turn, environment);
+      if (environment !== undefined) return yield* linked.result(turn, environment, options);
       const threadId = ThreadId.make(turn.threadId);
       const shell = yield* threads
         .getThreadShell(threadId)
@@ -191,6 +191,8 @@ const make = Effect.gen(function* () {
           reason: `Thread ${turn.threadId} no longer exists.`,
         });
       }
+      // The newest turn already seen to end without the result, so quiet is not restarted by it.
+      let quietSince = -1;
       while (true) {
         const waited = yield* threads
           .waitForThread({
@@ -200,8 +202,40 @@ const make = Effect.gen(function* () {
             timeoutMs: Duration.toMillis(WAIT_SLICE),
           })
           .pipe(Effect.mapError(failed("Could not wait for the turn")));
-        const run = waited.run;
+        let run = waited.run;
         if (waited.timedOut || run === null) continue;
+        // The agent may have ended its turn to wait for something that will wake it.
+        const quiet = options?.quiet;
+        const owes = (candidate: NonNullable<typeof waited.run>) =>
+          candidate.status === "completed" &&
+          candidate.outputSchema !== undefined &&
+          candidate.output === undefined;
+        while (owes(run)) {
+          if (quiet === undefined) break;
+          const owed: ThreadManagement.ThreadManagementWaitResult = yield* threads
+            .waitForThread({
+              projectId: shell.projectId,
+              threadId,
+              runId: run.id,
+              untilOutput: true,
+              timeoutMs: Duration.toMillis(quiet),
+            })
+            .pipe(Effect.mapError(failed("Could not wait for the turn's result")));
+          if (owed.run === null) break;
+          run = owed.run;
+          if (!owed.timedOut) continue;
+          // Quiet is counted from the thread's last turn, so one under way is waited out first.
+          const latest = yield* threads
+            .waitForThread({
+              projectId: shell.projectId,
+              threadId,
+              timeoutMs: Duration.toMillis(WAIT_SLICE),
+            })
+            .pipe(Effect.mapError(failed("Could not wait for the thread")));
+          if (latest.run === null || latest.run.id === run.id) break;
+          if (!latest.timedOut && latest.run.ordinal <= quietSince) break;
+          quietSince = latest.timedOut ? quietSince : latest.run.ordinal;
+        }
         if (run.status !== "completed") {
           // Interrupted or cancelled is someone stopping it; the rest is the turn dying.
           const ending = run.status === "failed" ? ("failed" as const) : ("stopped" as const);

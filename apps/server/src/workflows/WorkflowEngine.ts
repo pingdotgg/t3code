@@ -300,7 +300,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           reason: row.detail ?? undefined,
         }),
       ),
-      Effect.provideContext(forStep(keyValues, link, `${row.run_id}/${END_STEP}`)),
+      Effect.provideContext(forStep(keyValues, link, row.run_id, END_STEP)),
       Effect.matchCauseEffect({
         onSuccess: () => store.stepEnded(row.run_id, END_STEP, "completed", null),
         onFailure: (cause) =>
@@ -432,6 +432,22 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       return "buffered" as const;
     },
   );
+  const signalAll = Effect.fn("WorkflowEngine.signalAll")(function* (
+    address: { readonly key: string; readonly workflow?: string | undefined },
+    value: Schema.Json,
+  ) {
+    const valueJson = WorkflowStore.jsonText(value);
+    let woken = 0;
+    for (const wait of yield* store.waitsOn(address.key, address.workflow)) {
+      const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
+      // A wait this value does not fit was not waiting for it; the others are still woken.
+      if (Result.isFailure(yield* checkOutput(schema, valueJson))) continue;
+      if (!(yield* store.waitSignalled(wait.run_id, wait.name))) continue;
+      yield* wake(wait, { expired: false, value });
+      woken++;
+    }
+    return woken;
+  });
   /** Tell the run that invoked this one, if one did, how it ended. */
   const ended = Effect.fn("WorkflowEngine.ended")(function* (runId: string) {
     const row = yield* store.run(runId);
@@ -479,7 +495,25 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   );
 
   // Steps were registered before this engine existed; now they can reach it.
-  link.current = { signal, start, ended };
+  link.current = {
+    signal,
+    signalAll,
+    start,
+    ended,
+    cancel: (runId, reason) => cancel(runId, reason),
+    list: Effect.fn("WorkflowEngine.list")(function* (filter) {
+      return (yield* store.runsWhere(filter)).map((row) => ({
+        id: row.run_id,
+        workflow: row.workflow,
+        key: row.idempotency_key,
+        title: row.title,
+        status: row.status,
+        detail: row.detail,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+      }));
+    }),
+  };
 
   return Workflows.of({
     start,

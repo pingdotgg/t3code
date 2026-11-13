@@ -75,8 +75,8 @@ export default ({
 ];
 ```
 
-The API object holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`, `ask`, `store`,
-`signal`, `invoke`, `start`, the
+The API object holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`,
+`ask`, `store`, `signal`, `signalAll`, `invoke`, `start`, `cancel`, `runs`, the
 triggers `every`, `daily`, `webhook` with their payload schemas `Tick` and `WebhookRequest`, and
 Effect's `Effect`, `Schema`, `Option`, `Duration`, `Schedule`. Take everything from it, and list each name you use in the function's parameter: a name that is
 not listed, `Option` for example, is not defined. An
@@ -114,15 +114,15 @@ Every call takes a name first. Names are how results are stored, so each must be
 workflow, across all kinds: an `ask("fix", …)` and an `agent("fix", …)` in one workflow collide and
 pause the run. Name the question `approve-fix` and the agent `fix`.
 
-| Call                                                                                   | Does                                                                                                                                                                                                      | Gives back                                                                                             |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `step(name, { returns, retry? }, effect)`                                              | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                             |
-| `agent(name, { brief, project? \| thread?, environment?, output?, model?, timeout? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
-| `ask(name, { title, choices, data?, timeout? })`                                       | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                              |
-| `wait(name, { returns, timeout?, key? })`                                              | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                 |
-| `sleep(name, duration)`                                                                | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
-| `title(name, text)`                                                                    | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
-| `stop(reason)`                                                                         | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
+| Call                                                                                           | Does                                                                                                                                                                                                      | Gives back                                                                                             |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `step(name, { returns, retry? }, effect)`                                                      | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                             |
+| `agent(name, { brief, project? \| thread?, environment?, output?, model?, timeout?, quiet? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
+| `ask(name, { title, choices, data?, timeout? })`                                               | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                              |
+| `wait(name, { returns, timeout?, key? })`                                                      | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                 |
+| `sleep(name, duration)`                                                                        | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
+| `title(name, text)`                                                                            | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
+| `stop(reason)`                                                                                 | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
 
 `step` retries three times with a growing delay, then pauses the run. Pass
 `retry: { times: 0 }` for something that must not be repeated blindly. A step whose failure the
@@ -135,6 +135,25 @@ Find a project's id with the `t3_project_list` tool.
 are the model's own, as `{ id, value }` pairs: `[{ id: "reasoningEffort", value: "high" }]`.
 `timeout: "2 hours"` is how long the agent has: past it the thread is stopped and the run pauses
 at this step, where `resume` gives a fresh agent the job.
+
+An agent that must wait for something, such as the checks of a pull request it watches or work it
+left running, ends its turn and is woken later. Give that step `quiet: "45 minutes"`, and say in
+the brief to end a waiting turn without submitting. The step then waits across turns for the
+result, and asks for it only when the thread has done nothing for that long. Without `quiet`, a
+turn that ends without the result is asked for it at once. Keep a `timeout` on such a step.
+
+`agent.try` takes what `agent` takes (it is a method of `agent`, so list only `agent`) and never pauses the run. It gives
+`{ outcome: "done", value, thread }`, or `{ outcome: "failed", reason, thread? }` for an agent
+that could not be started, died twice, ran out of time or never gave its result. Use it when the
+workflow has a next move: another model, another machine, or `stop`.
+
+```ts
+let fix = yield * agent.try("fix", { project, brief, output: Fix, timeout: "2 hours" });
+if (fix.outcome === "failed") {
+  fix = yield * agent.try("fix-again", { project, brief, output: Fix, model: stronger });
+}
+if (fix.outcome === "failed") return yield * stop(`no fix: ${fix.reason}`);
+```
 
 Agents run side by side with Effect's own `Effect.all([agent("a", …), agent("b", …)], {
 concurrency: 2 })`.
@@ -222,10 +241,16 @@ export default ({ workflow, invoke, stop, Effect, Schema }) => {
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `invoke(name, workflow, payload, { key? })` | In the body. Runs it as part of this run and waits. Gives `{ outcome: "completed", value }`, or `{ outcome: "stopped" \| "cancelled", reason }`. A paused run is waited for. |
 | `start(workflow, payload, { key })`         | Inside `step`. Starts it and goes on without it. Gives `{ runId }`. The same `key` is the same run.                                                                          |
+| `runs({ workflow?, status?, keyPrefix? })`  | Inside `step`. Finds runs, newest first: `{ id, workflow, key, title, status, detail, startedAt, endedAt }`. `key` is what the run was started with.                         |
+| `cancel(runId, reason)`                     | Inside `step`. Cancels another run as a person would: its agents stop, its questions go, its `onEnd` runs. A run that has ended is left alone.                               |
 
 The invoked run is a run of its own in `t3 workflow list`, and is resumed by itself when it
 pauses. Cancelling the run that invoked it cancels it too; a run started with `start` is on its
 own. To fan out, `start` one run per item from a step, each with a key made from the item.
+
+Start each run with a key that names its subject, `issue/412` for example. A later step then finds
+it with `runs({ workflow: fix, keyPrefix: "issue/412" })`, and cancels it when the subject is gone.
+A run cannot cancel itself; it ends itself with `stop`.
 
 ## The store
 
@@ -250,13 +275,21 @@ const fresh =
   );
 ```
 
-| Call                              | Does                                                                                     |
-| --------------------------------- | ---------------------------------------------------------------------------------------- |
-| `store.entry(key, Schema)`        | One key. `.get` gives an `Option`; `.set(value)`; `.delete`.                             |
-| `entry.update((current) => next)` | Reads and writes as one action; `current` is an `Option`. Returning `undefined` deletes. |
-| `store.entries(prefix, Schema)`   | Every `{ key, value }` whose key starts with `prefix`, in key order.                     |
-| `store.transaction(effect)`       | Everything the effect reads and writes happens together, or not at all if it fails.      |
-| `signal(address, value)`          | Wakes a `wait`: `{ runId, wait }` or `{ workflow, key }`. Inside `step` or `onEnd` only. |
+| Call                                   | Does                                                                                                           |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `store.entry(key, Schema)`             | One key. `.get` gives an `Option`; `.set(value)`; `.delete`.                                                   |
+| `entry.update((current) => next)`      | Reads and writes as one action; `current` is an `Option`. Returning `undefined` deletes.                       |
+| `store.entries(prefix, Schema)`        | Every `{ key, value }` whose key starts with `prefix`, in key order.                                           |
+| `store.transaction(effect)`            | Everything the effect reads and writes happens together, or not at all if it fails.                            |
+| `signal(address, value)`               | Wakes a `wait`: `{ runId, wait }` or `{ workflow, key }`. Inside `step` or `onEnd` only.                       |
+| `signalAll({ key, workflow? }, value)` | Wakes every run that waits on `key`, in one workflow or in all. Gives how many. Inside `step` or `onEnd` only. |
+
+`signal` wakes one wait and is kept for a wait that opens later. `signalAll` wakes all who wait
+now and keeps nothing. To hold runs while something is true, each run reads the switch in a
+`step` and, while it is on, calls `wait("released", { key: "main-green", timeout: "10 minutes",
+returns: Schema.Null })` and reads the switch again. Whoever turns the switch off calls
+`signalAll({ key: "main-green" }, null)`, and the timeout covers a run that began to wait just
+after.
 
 Use `update` or `transaction` whenever a write depends on a read: several runs share the store.
 A step that fails after writing is run again, so write what is safe to write twice, or put the

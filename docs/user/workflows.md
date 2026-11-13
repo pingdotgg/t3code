@@ -4,7 +4,7 @@ A workflow is a script that ties agents, plain code, schedules, webhooks and que
 one run that survives restarts. Each step's result is stored: a restart continues the run where it
 was, and a step that fails pauses the run until it is resumed, instead of losing the work before
 it. Workflows are an early feature: you start them from the `t3` command and follow them in
-Settings.
+the app.
 
 For one prompt on a timer or from a webhook, use a scheduled task. Reach for a workflow when the
 work has stages, such as triage, then a fix, then your approval, then a release.
