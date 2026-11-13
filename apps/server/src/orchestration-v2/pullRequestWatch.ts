@@ -477,12 +477,19 @@ export function combinePullRequestWatchWakes(
 
 /** Tells the agent not to read again what the wake already says in full. */
 function rereadAdvice(state: PullRequestWatchState): Array<string> {
+  const told = (count: number) => count <= LISTED_ITEMS;
   const complete = [
     // Some hosts return no checks when the read fails, so an empty list is not a complete one.
-    ...(state.checks.length === 0 || state.checks.some((check) => check.placeholder === true)
+    ...(state.checks.length === 0 ||
+    state.checks.some((check) => check.placeholder === true) ||
+    !told(state.checks.filter(isFailedCheck).length)
       ? []
       : ["the checks"]),
-    ...(state.reviewThreads === null || state.reviewThreads.truncated ? [] : ["review threads"]),
+    ...(state.reviewThreads === null ||
+    state.reviewThreads.truncated ||
+    !told(state.reviewThreads.threads.filter((thread) => !thread.isResolved).length)
+      ? []
+      : ["review threads"]),
   ];
   return complete.length === 0
     ? []

@@ -759,6 +759,16 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(settled, "- No checks have reported.\n- No unresolved review threads.");
     // Some hosts return no checks when their read fails, so the agent may still read them.
     assert.include(settled, "do not read review threads again");
+    // Past the listed ten, the wake names no more, so the agent may read them again.
+    const many = message({
+      checks: Array.from({ length: 11 }, (_, i) => check(`job-${i}`, "failure")),
+      reviewThreads: {
+        threads: Array.from({ length: 11 }, (_, i) => reviewThread(`open-${i}`, false, i + 1)),
+        truncated: false,
+      },
+    });
+    assert.include(many, "  - and 1 more");
+    assert.notInclude(many, "do not read");
     assert.include(
       message({
         checks,
