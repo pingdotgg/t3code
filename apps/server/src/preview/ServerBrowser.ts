@@ -593,11 +593,12 @@ const make = Effect.gen(function* () {
     if (tab.desktop) return dropTab(tab, true);
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
-    tab.crash = {
+    const crash = {
       url: ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048),
       code: -2,
       description: "Page crashed",
     };
+    tab.crash = crash;
     const reopening = (async () => {
       // The session must name the crash before a new page reads it, or it would load the URL again.
       await runPromise(
@@ -606,7 +607,7 @@ const make = Effect.gen(function* () {
             threadId: tab.threadId,
             tabId: tab.tabId,
             serverControlled: true,
-            navStatus: { _tag: "LoadFailed", title: "", ...tab.crash },
+            navStatus: { _tag: "LoadFailed", title: "", ...crash },
             canGoBack: false,
             canGoForward: false,
           })
