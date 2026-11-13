@@ -1212,6 +1212,52 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
+  it.effect("keeps a checkout two top-level threads store through a symlinked parent", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeSettledAfterDays: 8,
+      });
+      const linkedParent = `${yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+      yield* fixture.fs.symlink(fixture.config.worktreesDir, linkedParent);
+      const settled = { branch: "feature", settledAt: at(-20 * DAY_MS) };
+      fixture.setThreads([
+        shell({ ...settled, worktreePath: fixture.worktree }),
+        shell({ ...settled, id: ThreadId.make("other"), worktreePath: `${linkedParent}/feature` }),
+      ]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries).toEqual([
+        expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
+      ]);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
+  it.effect("keeps a checkout two top-level threads store in different case on Windows", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeSettledAfterDays: 8,
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      const settled = { branch: "feature", settledAt: at(-20 * DAY_MS) };
+      fixture.setThreads([
+        shell({ ...settled, worktreePath: fixture.worktree }),
+        shell({
+          ...settled,
+          id: ThreadId.make("other"),
+          worktreePath: fixture.worktree.toUpperCase(),
+        }),
+      ]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries).toEqual([
+        expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
+      ]);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
   it.live.each([
     "running",
     "pending",
@@ -2299,18 +2345,30 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live.each(["before-check", "while-measuring"] as const)(
-    "keeps a worktree protected by a missing project root (%s)",
-    (timing) =>
+  it.live.each([
+    ["before-check", "stored"],
+    ["while-measuring", "stored"],
+    ["before-check", "symlinked parent"],
+    ["while-measuring", "symlinked parent"],
+  ] as const)(
+    "keeps a worktree protected by a missing project root (%s, %s spelling)",
+    ([timing, spelling]) =>
       runCleanupTest(
         Effect.gen(function* () {
           const fixture = yield* pausedMeasurementFixture();
+          let worktree = fixture.worktree;
+          if (spelling === "symlinked parent") {
+            const linkedParent = `${yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+            yield* fixture.fs.symlink(fixture.config.worktreesDir, linkedParent);
+            worktree = `${linkedParent}/feature`;
+            fixture.setThreads([shell({ branch: "feature", worktreePath: worktree })]);
+          }
           if (timing === "before-check")
-            fixture.setProjectRoots([fixture.repo, `${fixture.worktree}/removed-checkout`]);
+            fixture.setProjectRoots([fixture.repo, `${worktree}/removed-checkout`]);
           const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
           if (timing === "while-measuring") {
             yield* Deferred.await(fixture.measuring);
-            fixture.setProjectRoots([fixture.repo, `${fixture.worktree}/removed-checkout`]);
+            fixture.setProjectRoots([fixture.repo, `${worktree}/removed-checkout`]);
           }
           yield* Deferred.succeed(fixture.resume, undefined);
           const report = yield* Fiber.join(cleanup);
@@ -2612,6 +2670,23 @@ describe("storage cleanup reports and local file policies", () => {
         expect(removed.entries[0]).toMatchObject({ outcome: "removed" });
         expect(removed.entries[0]?.bytes).toBeGreaterThan(0);
         expect(walked).toContain(root);
+      }),
+    ),
+  );
+  it.live("keeps a worktree for a live session in a missing folder under its stored alias", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const linkedParent = `${yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+        yield* fixture.fs.symlink(fixture.config.worktreesDir, linkedParent);
+        fixture.setThreads([shell({ branch: "feature", worktreePath: `${linkedParent}/feature` })]);
+        fixture.setOpenSessionCwd(`${linkedParent}/feature/removed-folder`);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
       }),
     ),
   );
