@@ -439,7 +439,7 @@ export function UsageLimitsSection({
           <Fragment key={pool.id}>
             <View className="gap-3">
               <View className="flex-row items-center gap-2 px-1">
-                <ProviderIcon provider={pool.driver} size={18} />
+                <ProviderIcon provider={pool.driver} size={18} iconUrl={pool.iconUrl} />
                 <Text className="text-base font-t3-medium text-foreground">{pool.title}</Text>
               </View>
               {windows.map((window) => {
@@ -552,7 +552,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
           <>
             <View className="gap-2">
               <View className="flex-row items-center gap-2">
-                <ProviderIcon provider={account.driver} size={24} />
+                <ProviderIcon provider={account.driver} size={24} iconUrl={account.iconUrl} />
                 <Text className="flex-1 text-xl font-t3-bold text-foreground">
                   {account.displayName ??
                     providerClients.get(account.driver)?.label ??

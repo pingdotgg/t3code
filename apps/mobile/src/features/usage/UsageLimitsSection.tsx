@@ -160,6 +160,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
 export function AccountLimits(props: {
   readonly driver: Driver;
   readonly accentColor?: string | undefined;
+  readonly iconUrl?: string | undefined;
   readonly label: string;
   readonly instanceLabel: string;
   readonly detail: string | undefined;
@@ -184,7 +185,7 @@ export function AccountLimits(props: {
       }
     >
       <View className="flex-row items-center gap-2">
-        <ProviderIcon provider={props.driver} size={16} />
+        <ProviderIcon provider={props.driver} size={16} iconUrl={props.iconUrl} />
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
           <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
           {props.instanceLabel !== props.label ? (

@@ -272,6 +272,7 @@ export interface LimitAccount {
   readonly email: string | undefined;
   readonly plan: string | undefined;
   readonly accentColor: string | undefined;
+  readonly iconUrl: string | undefined;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
@@ -344,6 +345,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           : displayName,
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
+      iconUrl: previous.iconUrl ?? next.iconUrl,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
@@ -376,6 +378,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         email: provider.auth.email,
         plan: provider.auth.label,
         accentColor: provider.accentColor,
+        iconUrl: provider.iconUrl,
         environments: [{ environmentId, label }],
         sourceLabel: null,
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
@@ -399,6 +402,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           email: account.email,
           plan: account.plan,
           accentColor: undefined,
+          iconUrl: undefined,
           environments: [],
           sourceLabel,
           redeem: account.usageLimits.resetCredits?.nextCreditId
@@ -470,6 +474,7 @@ export interface LimitPool {
   readonly driver: ServerProvider["driver"];
   readonly id: string;
   readonly title: string;
+  readonly iconUrl: string | undefined;
   readonly accounts: readonly LimitAccount[];
   readonly windows: readonly LimitPoolWindow[];
 }
@@ -559,7 +564,14 @@ export function collectLimitPools(
         left.key.localeCompare(right.key),
     );
     const title = members[0]?.limits.group?.label ?? driverTitle(driver);
-    return { driver, id, title, accounts: sorted, windows: poolWindows(sorted, now) };
+    return {
+      driver,
+      id,
+      title,
+      iconUrl: sorted[0]?.iconUrl,
+      accounts: sorted,
+      windows: poolWindows(sorted, now),
+    };
   });
 }
 
