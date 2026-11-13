@@ -949,7 +949,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (npmPrefix) {
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
-    return makeProviderMaintenanceCapabilities({
+    const capabilities = makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "npm",
@@ -970,6 +970,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         Effect.provideContext(services),
       ),
     });
+    return {
+      ...capabilities,
+      latestVersionCacheKey: [
+        "npm-global",
+        normalizeCommandPath(npmPrefix),
+        packageName,
+        environmentCacheKey(context.env),
+      ].join("\0"),
+    };
   }
 
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);

@@ -513,7 +513,7 @@ it.layer(
               ChildProcessSpawner.ChildProcessSpawner,
               stdoutSpawner(() => {
                 probes++;
-                return JSON.stringify(version);
+                return JSON.stringify({ "@example/package-tool": { latest: version } });
               }),
             ),
             Effect.tap((capabilities) =>
@@ -685,6 +685,7 @@ it.layer(
           packageName: "@example/package-tool",
           latestVersion: null,
           lookupLatestVersion: expect.anything(),
+          latestVersionCacheKey: expect.any(String),
           update: {
             command: `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
             executable: "npm",
