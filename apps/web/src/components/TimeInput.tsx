@@ -36,7 +36,6 @@ export function TimeInput({ value, onChange, ...props }: TimeInputProps) {
       {...props}
       nativeInput
       type="text"
-      inputMode="text"
       autoComplete="off"
       placeholder={hour12 ? "h:mm AM" : "HH:MM"}
       aria-invalid={draft !== null && parseTimeOfDay(draft) === null ? true : undefined}
