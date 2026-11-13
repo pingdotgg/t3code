@@ -83,7 +83,8 @@ The most common defect in this repo is a change that works on the path you teste
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
-- Stop what you started, by the PID you tracked. See rule 1.
+- Stop what you started, by the PID you tracked. See rule 1. `vp` does not pass SIGTERM on, so signalling the `vp run dev` PID alone leaves Vite and the server running. Stop the background task with your harness's own stop, which ends the whole tree.
+- Run dev servers, Metro, and builds from your own shell so they end with your session. Do not detach them with `systemd-run`, `nohup`, `setsid`, or `tmux` unless the user asks for one that outlives the session. Detached servers ran for weeks and filled RAM and swap. The dev runner stops itself above `--memory-limit-gb` (half of RAM, at most 16 GiB) on Linux.
 - Need a second checkout? `git worktree add` it next to this worktree, not in `/tmp`. Remove it when done.
 
 ## Test data
@@ -149,7 +150,7 @@ For mobile verification, a missing or outdated native client is an install step,
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
-- If `origin` is git.cafe, follow [GitCafe mirror](docs/operations/development.md#gitcafe-mirror-optional): push to `origin`, open and track PRs with `cafe` and their git.cafe URLs, and keep `gh` for merging.
+- `origin` is not always GitHub. Check `git remote get-url origin` before your first forge command and use that forge's CLI and skill. See [Forge mirror](docs/operations/development.md#forge-mirror-optional).
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.
