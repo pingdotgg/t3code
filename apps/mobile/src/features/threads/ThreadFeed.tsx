@@ -277,6 +277,7 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
+import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
@@ -471,6 +472,8 @@ function MessageImage(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly accessibilityLabel: string;
+  readonly onPress: () => void;
   readonly onLoad?: () => void;
   readonly onError?: () => void;
 }) {
@@ -485,11 +488,13 @@ function MessageImage(props: {
         })
       : null;
   return (
-    <ExpoImage
-      source={props.source}
-      cachePolicy="memory-disk"
+    <ZoomableImagePressable
+      accessibilityRole="imagebutton"
+      accessibilityLabel={props.accessibilityLabel}
+      onPress={props.onPress}
       style={[
         imageStyle,
+        { overflow: "hidden" },
         props.maxWidth !== undefined
           ? (displaySize ?? {
               width: Math.min(props.maxWidth, MARKDOWN_IMAGE_MAX_WIDTH),
@@ -499,13 +504,19 @@ function MessageImage(props: {
             ? { height: props.height }
             : undefined,
       ]}
-      contentFit={props.maxWidth === undefined ? "cover" : "contain"}
-      onLoad={(event) => {
-        if (props.maxWidth !== undefined) setSize(event.source);
-        props.onLoad?.();
-      }}
-      onError={props.onError}
-    />
+    >
+      <ExpoImage
+        source={props.source}
+        cachePolicy="memory-disk"
+        style={{ width: "100%", height: "100%" }}
+        contentFit={props.maxWidth === undefined ? "cover" : "contain"}
+        onLoad={(event) => {
+          if (props.maxWidth !== undefined) setSize(event.source);
+          props.onLoad?.();
+        }}
+        onError={props.onError}
+      />
+    </ZoomableImagePressable>
   );
 }
 
@@ -550,8 +561,12 @@ function MessageAttachmentImage(props: {
 
   return (
     <PresentationSource identifier={sourceIdentifier}>
-      <Pressable
-        accessibilityRole="imagebutton"
+      <MessageImage
+        key={props.attachmentId}
+        source={assetImageSource(props.environmentId, resource, uri)}
+        className={props.className}
+        maxWidth={props.maxWidth}
+        height={props.height}
         accessibilityLabel={`Open ${props.name}`}
         onPress={() =>
           props.onPressPreview(
@@ -570,22 +585,15 @@ function MessageAttachmentImage(props: {
             }),
           )
         }
-      >
-        <MessageImage
-          source={assetImageSource(props.environmentId, resource, uri)}
-          className={props.className}
-          maxWidth={props.maxWidth}
-          height={props.height}
-          onLoad={() => {
-            retriedImage.current = false;
-          }}
-          onError={() => {
-            if (retriedImage.current) return;
-            retriedImage.current = true;
-            void refreshAssetUrl();
-          }}
-        />
-      </Pressable>
+        onLoad={() => {
+          retriedImage.current = false;
+        }}
+        onError={() => {
+          if (retriedImage.current) return;
+          retriedImage.current = true;
+          void refreshAssetUrl();
+        }}
+      />
     </PresentationSource>
   );
 }
@@ -960,21 +968,18 @@ function PendingMessageMedia(props: {
   if (isImageAttachment(attachment)) {
     const uri = fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri);
     return (
-      <Pressable
-        accessibilityRole="imagebutton"
+      <MessageImage
+        key={attachment.id}
+        source={uri === null ? undefined : { uri }}
+        className={props.className}
+        maxWidth={props.maxWidth}
+        height={props.height}
         accessibilityLabel={`Open ${attachment.name}`}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
           if (source) props.onPressPreview(withGallery(source));
         }}
-      >
-        <MessageImage
-          source={uri === null ? undefined : { uri }}
-          className={props.className}
-          maxWidth={props.maxWidth}
-          height={props.height}
-        />
-      </Pressable>
+      />
     );
   }
   if (preview.uri === null) {
