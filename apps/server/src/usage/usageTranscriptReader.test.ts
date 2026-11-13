@@ -7,15 +7,15 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
-import { totalTokens, type TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
+import {
+  EMPTY_TOTALS,
+  totalTokens,
+  type TranscriptUsageFormat,
+} from "@t3tools/provider-core/server/usage";
 import * as Schema from "effect/Schema";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
-import {
-  listTranscriptFiles,
-  readTranscriptRecords,
-  transcriptLineGate,
-} from "./usageTranscriptReader.ts";
+import { listTranscriptFiles, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -559,20 +559,47 @@ describe("readTranscriptRecords resume", () => {
   });
 });
 
-describe("transcriptLineGate", () => {
-  const gates = {
-    one: transcriptLineGate(['"usage"']),
-    several: transcriptLineGate(['"token_count"', '"session_meta"', '"a.b(c)"']),
-  };
+describe("usage marker gate", () => {
   const markers = { one: ['"usage"'], several: ['"token_count"', '"session_meta"', '"a.b(c)"'] };
+  // Returns the indexes of the lines the gate let through to the parser.
+  const gatedLines = async (kind: keyof typeof markers, lines: readonly Buffer[]) => {
+    const path = NodePath.join(dir, `${kind}.jsonl`);
+    await NodeFSP.writeFile(
+      path,
+      Buffer.concat(lines.flatMap((line) => [line, Buffer.from("\n")])),
+    );
+    const format: TranscriptUsageFormat<unknown> = {
+      ...TEST_FORMATS.claude,
+      usageMarkers: markers[kind] as [string, ...string[]],
+      parseLine: (line) => [
+        {
+          provider: "claude",
+          timestampMs: 0,
+          model: "",
+          sessionId: line,
+          totals: EMPTY_TOTALS,
+          reportedCostUsd: null,
+          speed: "standard",
+          dedupeKey: null,
+        },
+      ],
+    };
+    const result = await readTranscriptRecords(path, format);
+    return result!.records.map((record) =>
+      lines.findIndex((line) => line.toString("utf8") === record.sessionId),
+    );
+  };
 
-  it("matches markers beside multi-byte and malformed UTF-8", () => {
+  it("matches markers beside multi-byte and malformed UTF-8", async () => {
     const invalid = Buffer.from([0xff, 0xc3]);
     for (const kind of ["one", "several"] as const) {
       for (const marker of markers[kind]) {
-        assert.isTrue(gates[kind](Buffer.from(`{"text":"日本語 é",${marker}:1}`)));
-        assert.isTrue(gates[kind](Buffer.concat([invalid, Buffer.from(marker), invalid])));
-        assert.isFalse(gates[kind](Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`)));
+        const lines = [
+          Buffer.from(`{"text":"日本語 é",${marker}:1}`),
+          Buffer.concat([invalid, Buffer.from(marker), invalid]),
+          Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`),
+        ];
+        assert.deepStrictEqual(await gatedLines(kind, lines), [0, 1]);
       }
     }
   });
