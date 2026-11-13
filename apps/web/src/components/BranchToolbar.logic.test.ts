@@ -1,13 +1,15 @@
-import { type VcsRef } from "@t3tools/contracts";
+import { ProviderInstanceId, RunId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  isWorktreeChangeBlocked,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
+  resolveLockedWorkspaceLabel,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -92,6 +94,16 @@ describe("resolveEffectiveEnvMode", () => {
   });
 });
 
+describe("resolveLockedWorkspaceLabel", () => {
+  it.each([
+    ["/home/me/.t3/worktrees/app/t3-ff466c42", "t3-ff466c42"],
+    ["/home/me/.t3/worktrees/app/t3-ff466c42/", "t3-ff466c42"],
+    ["C:\\Users\\me\\worktrees\\feature-x", "feature-x"],
+  ])("names the worktree at %s", (path, label) => {
+    expect(resolveLockedWorkspaceLabel(path, "worktree")).toBe(label);
+  });
+});
+
 describe("deriveLocalBranchNameFromRemoteRef", () => {
   it("supports remote names that contain slashes", () => {
     expect(deriveLocalBranchNameFromRemoteRef("my-org/upstream/feature/demo")).toBe(
@@ -101,16 +113,23 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
 });
 
 describe("dedupeRemoteBranchesWithLocalMatches", () => {
-  it("hides remote refs when the matching local ref exists", () => {
+  it.each([
+    ["feature/demo", "origin/feature/demo", true],
+    ["feature/demo", "feature/demo", false],
+    ["demo", "demo", true],
+    ["origin/", "origin/", true],
+    ["/demo", "/demo", true],
+    ["", "", false],
+  ])("filters origin ref %s / %s (hidden: %s)", (localName, remoteName, hidden) => {
     const input: VcsRef[] = [
       {
-        name: "feature/demo",
+        name: localName,
         current: false,
         isDefault: false,
         worktreePath: null,
       },
       {
-        name: "origin/feature/demo",
+        name: remoteName,
         isRemote: true,
         remoteName: "origin",
         current: false,
@@ -127,10 +146,12 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
       },
     ];
 
-    expect(dedupeRemoteBranchesWithLocalMatches(input).map((ref) => ref.name)).toEqual([
-      "feature/demo",
-      "origin/feature/remote-only",
-    ]);
+    const result = dedupeRemoteBranchesWithLocalMatches(input);
+    const expected = hidden ? [input[0], input[2]] : input;
+    expect(result).toEqual(expected);
+    for (const [index, ref] of result.entries()) {
+      expect(ref).toBe(expected[index]);
+    }
   });
 
   it("keeps non-origin remote refs visible when git tracks with first-slash local naming", () => {
@@ -232,6 +253,35 @@ describe("resolveBranchSelectionTarget", () => {
       reuseExistingWorktree: false,
     });
   });
+});
+
+describe("isWorktreeChangeBlocked", () => {
+  const runtime = (status: "preparing" | "running" | "completed") => ({
+    status,
+    activeRunId: status === "completed" ? null : RunId.make("run"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: null,
+    lastError: null,
+  });
+
+  it.each([
+    ["preparing", "/repo/wt-a", null, true],
+    ["running", "/repo/wt-a", "/repo/wt-b", true],
+    ["running", null, "/repo/wt-b", true],
+    ["running", "/repo/wt-a", "/repo/wt-a", false],
+    ["completed", "/repo/wt-a", null, false],
+  ] as const)(
+    "a %s turn moving %s -> %s is blocked: %s",
+    (status, currentWorktreePath, nextWorktreePath, blocked) => {
+      expect(
+        isWorktreeChangeBlocked({
+          runtime: runtime(status),
+          currentWorktreePath,
+          nextWorktreePath,
+        }),
+      ).toBe(blocked);
+    },
+  );
 });
 
 describe("shouldIncludeBranchPickerItem", () => {

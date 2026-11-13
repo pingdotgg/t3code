@@ -1,5 +1,6 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import { resolveHighlightLanguage } from "../../lib/highlightLanguage";
@@ -15,9 +16,10 @@ export interface SourceHighlightInput {
 
 class SourceHighlightCacheKey extends Data.Class<SourceHighlightInput> {}
 
-class SourceHighlightError extends Data.TaggedError("SourceHighlightError")<{
-  readonly cause: unknown;
-}> {}
+class SourceHighlightError extends Schema.TaggedError<SourceHighlightError>()(
+  "SourceHighlightError",
+  { cause: Schema.Defect() },
+) {}
 
 // Highlighting is synchronous, so a cold atom resolves on its first read. The
 // family keeps results for files the user moves between.

@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type CustomModelSetting,
   type ModelCapabilities,
@@ -28,7 +29,7 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
@@ -128,7 +129,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const GROK_EFFORT_RANK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
+export function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
     label: string;
@@ -313,7 +314,7 @@ const probeGrokModels = Effect.fn("GrokProviderStatus.probeGrokModels")(function
   environment: NodeJS.ProcessEnv,
 ) {
   const modelsResult = yield* runGrokCliCommand(grokSettings, ["models"], environment).pipe(
-    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(resolveProviderProbeTimeoutMs("grok", AUTH_PROBE_TIMEOUT_MS, environment)),
     Effect.result,
   );
   // Only a clean exit is parsed. Failed invocations print help or error text that
@@ -429,7 +430,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     grokSettings,
     ["--version"],
     probeEnvironment,
-  ).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
+  ).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("grok", VERSION_PROBE_TIMEOUT_MS, environment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
@@ -470,7 +476,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
       exitCode: versionOutput.code,
@@ -517,7 +523,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   );
 
   const acpExit = yield* discoverGrokMetadataViaAcpInitialize(grokSettings, probeEnvironment).pipe(
-    Effect.timeoutOption(GROK_ACP_INITIALIZE_TIMEOUT_MS),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("grok", GROK_ACP_INITIALIZE_TIMEOUT_MS, environment),
+    ),
     Effect.exit,
   );
   const acpMetadata = Exit.isSuccess(acpExit) ? Option.getOrUndefined(acpExit.value) : undefined;
