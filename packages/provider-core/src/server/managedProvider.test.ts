@@ -926,6 +926,54 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect("publishes a complete reading's group and unavailable state", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const group = { id: "glm", label: "Z.ai" };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed(refreshedSnapshot),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const windows = [
+          { id: "session", kind: "session", label: "Session", usedPercent: 70 },
+        ] as const;
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          complete: true,
+          group,
+          windows,
+        });
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          group,
+          windows,
+        });
+
+        const unavailable = { reason: "unsupported", message: "Update the agent." } as const;
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:05.000Z",
+          complete: true,
+          group,
+          unavailable,
+          windows: [],
+        });
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
+          checkedAt: "2026-04-10T00:00:05.000Z",
+          group,
+          unavailable,
+          windows: [],
+        });
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("keeps sparse usage unavailable after probe failure until a full probe recovers", () =>
     Effect.scoped(
       Effect.gen(function* () {

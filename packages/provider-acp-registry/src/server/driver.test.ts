@@ -18,12 +18,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import type { AcpRegistryConfigurationProbeInput } from "./probe.ts";
 import type { GlmUsageRead } from "./zaiUsageLimits.ts";
 import {
   AcpRegistryDriver,
@@ -33,6 +34,7 @@ import {
   checkAcpRegistryProvider,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  makeGlmUsageLimitsCache,
   scopedGlmUsageLimitsReader,
 } from "./driver.ts";
 import { normalizeAcpRegistryLiveConfiguration } from "./probe.ts";
@@ -502,67 +504,62 @@ describe("acpRegistrySnapshotReadiness", () => {
     }),
   );
 
-  it.effect("attaches GLM usage limits only to a ready registry glm-acp-agent instance", () =>
-    Effect.gen(function* () {
-      const readCwds: string[] = [];
-      const glmLimits: ServerProviderUsageLimits = {
-        checkedAt: "2026-11-05T22:29:01.960Z",
-        windows: [
-          {
-            id: "tokens_limit-3-5",
-            kind: "session",
-            label: "5-hour Model quota",
-            usedPercent: 27,
-            windowDurationMins: 300,
-          },
-        ],
-      };
-      const readUsageLimits = (input: AcpRegistryConfigurationProbeInput) =>
-        Effect.sync(() => {
-          readCwds.push(input.cwd);
-          return glmLimits;
+  it.effect(
+    "reattaches cached GLM usage limits only to a ready registry glm-acp-agent instance",
+    () =>
+      Effect.gen(function* () {
+        const glmLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-11-05T22:29:01.960Z",
+          windows: [
+            {
+              id: "tokens_limit-3-5",
+              kind: "session",
+              label: "5-hour Model quota",
+              usedPercent: 27,
+              windowDurationMins: 300,
+            },
+          ],
+        };
+        const readyCatalog = catalogWithInspection({
+          status: "ready",
+          agentId: "glm-acp-agent",
+          version: "1.17.0",
+          distribution: "npx",
         });
-      const readyCatalog = catalogWithInspection({
-        status: "ready",
-        agentId: "glm-acp-agent",
-        version: "1.17.0",
-        distribution: "npx",
-      });
-      const unpreparedCatalog = catalogWithInspection({
-        status: "unprepared",
-        agentId: "glm-acp-agent",
-        version: "1.17.0",
-        distribution: "binary",
-      });
-      const check = (settings: ReturnType<typeof decodeSettings>, catalog = readyCatalog) =>
-        checkAcpRegistryProvider({
-          ...identity,
-          settings,
-          cwd: "/worktree",
-          environment: {},
-          readUsageLimits,
-        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+        const unpreparedCatalog = catalogWithInspection({
+          status: "unprepared",
+          agentId: "glm-acp-agent",
+          version: "1.17.0",
+          distribution: "binary",
+        });
+        const check = (settings: ReturnType<typeof decodeSettings>, catalog = readyCatalog) =>
+          checkAcpRegistryProvider({
+            ...identity,
+            settings,
+            environment: {},
+            usageLimits: glmLimits,
+          }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
 
-      const glm = yield* check(decodeSettings({ agentId: "glm-acp-agent" }));
-      expect(glm.usageLimits).toEqual(glmLimits);
+        const glm = yield* check(decodeSettings({ agentId: "glm-acp-agent" }));
+        expect(glm.usageLimits).toEqual(glmLimits);
 
-      const kimi = yield* check(decodeSettings({ agentId: "kimi-acp" }));
-      expect(kimi.usageLimits).toBeUndefined();
+        const kimi = yield* check(decodeSettings({ agentId: "kimi-acp" }));
+        expect(kimi.usageLimits).toBeUndefined();
 
-      const local = yield* check(decodeSettings({ source: "local", commandPath: "glm-acp-agent" }));
-      expect(local.usageLimits).toBeUndefined();
+        const local = yield* check(
+          decodeSettings({ source: "local", commandPath: "glm-acp-agent" }),
+        );
+        expect(local.usageLimits).toBeUndefined();
 
-      const disabled = yield* check(decodeSettings({ agentId: "glm-acp-agent", enabled: false }));
-      expect(disabled.usageLimits).toBeUndefined();
+        const disabled = yield* check(decodeSettings({ agentId: "glm-acp-agent", enabled: false }));
+        expect(disabled.usageLimits).toBeUndefined();
 
-      const unprepared = yield* check(
-        decodeSettings({ agentId: "glm-acp-agent" }),
-        unpreparedCatalog,
-      );
-      expect(unprepared.usageLimits).toBeUndefined();
-
-      expect(readCwds).toEqual(["/worktree"]);
-    }),
+        const unprepared = yield* check(
+          decodeSettings({ agentId: "glm-acp-agent" }),
+          unpreparedCatalog,
+        );
+        expect(unprepared.usageLimits).toBeUndefined();
+      }),
   );
 
   it.effect("scopes GLM limits to the instance and sets sign-in from the agent's reply", () =>
@@ -606,6 +603,77 @@ describe("acpRegistrySnapshotReadiness", () => {
       });
       expect([usable.group, failed.group, signedOut.group]).toEqual([group, group, group]);
       expect(signIns).toEqual([true, false]);
+    }),
+  );
+});
+
+describe("glmUsageLimitsCache", () => {
+  const limits = (checkedAt: string): ServerProviderUsageLimits => ({
+    checkedAt,
+    windows: [
+      {
+        id: "tokens_limit-3-5",
+        kind: "session",
+        label: "5-hour Model quota",
+        usedPercent: 27,
+      },
+    ],
+  });
+
+  it.effect("reattaches a fresh reading without reading again until the TTL expires", () =>
+    Effect.gen(function* () {
+      const readings = [limits("2026-11-05T22:20:00.000Z"), limits("2026-11-05T22:40:00.000Z")];
+      const cache = yield* makeGlmUsageLimitsCache({
+        read: Effect.sync(() => readings.shift()!),
+      });
+
+      expect(yield* cache.readFresh).toEqual(limits("2026-11-05T22:20:00.000Z"));
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:20:00.000Z"),
+        expired: false,
+      });
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:20:00.000Z"),
+        expired: false,
+      });
+      expect(readings).toHaveLength(1);
+
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:20:00.000Z"),
+        expired: true,
+      });
+
+      expect(yield* cache.readFresh).toEqual(limits("2026-11-05T22:40:00.000Z"));
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:40:00.000Z"),
+        expired: false,
+      });
+    }),
+  );
+
+  it.effect("reads fresh after a forced refresh invalidates the cache", () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      const cache = yield* makeGlmUsageLimitsCache({
+        read: Ref.updateAndGet(reads, (count) => count + 1).pipe(
+          Effect.map((count) => limits(`2026-11-05T22:${String(count).padStart(2, "0")}:00.000Z`)),
+        ),
+      });
+
+      yield* cache.readFresh;
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:01:00.000Z"),
+        expired: false,
+      });
+
+      yield* cache.invalidate;
+      expect(yield* cache.get).toEqual({
+        limits: limits("2026-11-05T22:01:00.000Z"),
+        expired: true,
+      });
+      yield* cache.readFresh;
+      expect(yield* Ref.get(reads)).toBe(2);
     }),
   );
 });

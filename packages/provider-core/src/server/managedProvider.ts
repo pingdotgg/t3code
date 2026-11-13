@@ -251,9 +251,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
     function* (update) {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-        const complete = update.complete && update.windows.length > 0;
+        const complete =
+          update.complete === true &&
+          (update.windows.length > 0 || update.unavailable !== undefined);
         const usageLimits = complete
-          ? makeUsageLimits(update)
+          ? {
+              ...makeUsageLimits(update),
+              ...(update.group === undefined ? {} : { group: update.group }),
+              ...(update.unavailable === undefined ? {} : { unavailable: update.unavailable }),
+            }
           : applyUsageLimitsUpdate({
               previous: state.snapshot.usageLimits,
               update,

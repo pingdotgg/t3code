@@ -6,6 +6,7 @@ import {
   type AcpRegistryOperationError,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -502,28 +503,73 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
 export const checkAcpRegistryProvider = Effect.fn("AcpRegistryDriver.checkProvider")(function* (
   input: SnapshotIdentity & {
     readonly settings: AcpRegistrySettings;
-    readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
-    readonly readUsageLimits: AcpRegistryUsageLimitsReader;
+    /** The last GLM reading, attached without I/O; fresh readings fill in off the refresh path. */
+    readonly usageLimits?: ServerProviderUsageLimits;
   },
 ): Effect.fn.Return<ServerProvider, never, AcpRegistrySupport.AcpRegistryCatalog> {
   const provider = yield* checkAcpRegistryProviderReadiness(input);
-  // Reading limits resolves the agent, which can install packages; only a ready agent is safe to spawn.
+  // Only a ready agent's reading is trustworthy enough to keep attaching.
   if (
+    input.usageLimits === undefined ||
     !isZaiUsageLimitsInstance(input.settings) ||
     !provider.installed ||
     provider.status !== "ready"
   ) {
     return provider;
   }
-  const usageLimits = yield* input.readUsageLimits({
-    instanceId: input.instanceId,
-    settings: input.settings,
-    cwd: input.cwd,
-    environment: input.environment,
-  });
-  return { ...provider, usageLimits };
+  return { ...provider, usageLimits: input.usageLimits };
 });
+
+export interface GlmUsageLimitsCache {
+  /** The last reading and whether it expired; the caller decides when to read fresh. */
+  readonly get: Effect.Effect<{
+    readonly limits: ServerProviderUsageLimits | undefined;
+    readonly expired: boolean;
+  }>;
+  /** Reads past the cache and stores the result; recovery and forced refreshes use it. */
+  readonly readFresh: Effect.Effect<ServerProviderUsageLimits>;
+  readonly invalidate: Effect.Effect<void>;
+}
+
+// Twice the default provider-health refresh, so routine refreshes reattach a cached reading
+// as often as they spawn the agent, and quota windows move far slower than this.
+const GLM_USAGE_CACHE_TTL_MS = 10 * 60_000;
+
+export const makeGlmUsageLimitsCache = Effect.fn("AcpRegistryDriver.makeGlmUsageLimitsCache")(
+  (input: {
+    readonly read: Effect.Effect<ServerProviderUsageLimits>;
+  }): Effect.Effect<GlmUsageLimitsCache> =>
+    Effect.gen(function* () {
+      const entry = yield* Ref.make<{
+        readonly limits: ServerProviderUsageLimits;
+        readonly expiresAt: number;
+      } | null>(null);
+      const readFresh = Effect.gen(function* () {
+        const limits = yield* input.read;
+        yield* Ref.set(entry, {
+          limits,
+          expiresAt: (yield* Clock.currentTimeMillis) + GLM_USAGE_CACHE_TTL_MS,
+        });
+        return limits;
+      });
+      return {
+        get: Effect.gen(function* () {
+          const cached = yield* Ref.get(entry);
+          const now = yield* Clock.currentTimeMillis;
+          return {
+            limits: cached?.limits,
+            expired: cached === null || cached.expiresAt <= now,
+          };
+        }),
+        readFresh,
+        // A forced refresh keeps showing the last reading until the fresh one lands.
+        invalidate: Ref.update(entry, (cached) =>
+          cached === null ? null : { ...cached, expiresAt: 0 },
+        ),
+      };
+    }),
+);
 
 export function scopedGlmUsageLimitsReader(input: {
   readonly instanceId: ProviderInstance["instanceId"];
@@ -679,32 +725,60 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
-    const makeUsageLimitsReader = (onSignedOut: Effect.Effect<void>) =>
-      scopedGlmUsageLimitsReader({
-        instanceId,
-        displayName,
-        setAuthentication: (confirmed) =>
-          confirmedAuthentication
-            .set(confirmed)
-            .pipe(Effect.andThen(confirmed ? Effect.void : onSignedOut)),
-        read: (input) =>
-          readAcpRegistryGlmUsageLimits(input).pipe(
-            Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provideService(SecureRandom.SecureRandom, random),
-          ),
-      });
-    const readUsageLimits = makeUsageLimitsReader(Effect.void);
     const refreshScope = yield* Effect.scope;
-    const checkProvider = checkAcpRegistryProvider({
-      ...readinessInput,
-      cwd: host.paths.cwd,
-      readUsageLimits,
-    }).pipe(
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.flatMap(withLiveRuntimeState),
-    );
-    // The initial snapshot stays local: the forced refresh right after creation reads GLM usage in the background.
+    const glmUsageReader = isZaiUsageLimitsInstance(effectiveConfig)
+      ? scopedGlmUsageLimitsReader({
+          instanceId,
+          displayName,
+          setAuthentication: (confirmed) =>
+            confirmedAuthentication.set(confirmed).pipe(
+              Effect.andThen(
+                confirmed
+                  ? Effect.void
+                  : // A signed-out reading is stale by definition, so refresh everything it came from.
+                    Effect.suspend(() =>
+                      clearLiveState.pipe(
+                        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+                        Effect.andThen(snapshot.refresh),
+                      ),
+                    ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
+              ),
+            ),
+          read: (input) =>
+            readAcpRegistryGlmUsageLimits(input).pipe(
+              Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(SecureRandom.SecureRandom, random),
+            ),
+        })({
+          instanceId,
+          settings: effectiveConfig,
+          cwd: host.paths.cwd,
+          environment: processEnvironment,
+        })
+      : null;
+    const glmUsageCache =
+      glmUsageReader === null ? null : yield* makeGlmUsageLimitsCache({ read: glmUsageReader });
+    const applyGlmReading = (limits: ServerProviderUsageLimits) =>
+      Effect.suspend(() =>
+        snapshot.applyUsageLimits({
+          checkedAt: limits.checkedAt,
+          windows: limits.windows,
+          complete: true,
+          ...(limits.group === undefined ? {} : { group: limits.group }),
+          ...(limits.unavailable === undefined ? {} : { unavailable: limits.unavailable }),
+        }),
+      );
+    const checkProvider = Effect.gen(function* () {
+      const cached = glmUsageCache === null ? { limits: undefined } : yield* glmUsageCache.get;
+      return yield* checkAcpRegistryProvider({
+        ...readinessInput,
+        ...(cached.limits === undefined ? {} : { usageLimits: cached.limits }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.flatMap(withLiveRuntimeState),
+      );
+    });
     const initialProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
@@ -774,24 +848,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: () => initialProvider,
       checkProvider,
-      ...(isZaiUsageLimitsInstance(effectiveConfig)
-        ? {
-            // This read holds the refresh permit and republishes only limits, so a sign-out refreshes after it.
-            checkUsageLimits: makeUsageLimitsReader(
-              Effect.suspend(() =>
-                clearLiveState.pipe(
-                  Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
-                  Effect.andThen(snapshot.refresh),
-                ),
-              ).pipe(Effect.forkIn(refreshScope), Effect.asVoid),
-            )({
-              instanceId,
-              settings: effectiveConfig,
-              cwd: host.paths.cwd,
-              environment: processEnvironment,
-            }),
-          }
-        : {}),
+      ...(glmUsageCache === null
+        ? {}
+        : {
+            // Recovery reads fresh, and a forced usage refresh bypasses the cache entirely.
+            checkUsageLimits: glmUsageCache.readFresh,
+            invalidateUsageCache: glmUsageCache.invalidate,
+          }),
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,
         getSnapshot,
@@ -824,7 +887,30 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           ),
         );
-        if (Option.isNone(runtimeCoordinator)) return publishEnrichment;
+        const publishGlmUsage =
+          glmUsageCache === null
+            ? null
+            : Effect.gen(function* () {
+                const { expired } = yield* glmUsageCache.get;
+                // Reading limits resolves the agent, which can install packages; only a ready agent is safe to spawn.
+                if (!expired || !snapshot.installed || snapshot.status !== "ready") return;
+                yield* applyGlmReading(yield* glmUsageCache.readFresh);
+                // A successful read confirms the sign-in; live state shows it without another refresh.
+                yield* liveSnapshotSemaphore.withPermit(
+                  getSnapshot.pipe(
+                    Effect.flatMap(withLiveRuntimeState),
+                    Effect.flatMap(publishSnapshot),
+                  ),
+                );
+              });
+        if (Option.isNone(runtimeCoordinator)) {
+          return publishGlmUsage === null
+            ? publishEnrichment
+            : Effect.all([publishEnrichment, publishGlmUsage], {
+                concurrency: "unbounded",
+                discard: true,
+              });
+        }
 
         const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
           instanceId,
@@ -865,7 +951,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             ),
         );
         return Effect.all(
-          [publishEnrichment, publishLiveCommands, publishLiveConfiguration, publishUrlAuthAction],
+          [
+            publishEnrichment,
+            publishLiveCommands,
+            publishLiveConfiguration,
+            publishUrlAuthAction,
+            ...(publishGlmUsage === null ? [] : [publishGlmUsage]),
+          ],
           {
             concurrency: "unbounded",
             discard: true,

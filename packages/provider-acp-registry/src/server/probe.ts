@@ -1,4 +1,7 @@
-import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  providerProbeEnvironment,
+  resolveProviderProbeTimeoutMs,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -492,7 +495,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
 );
 
 const MANAGEMENT_TIMEOUT = Duration.seconds(60);
-// The read runs inside the provider refresh, so a hung agent must not hold it for long.
+// A hung agent must not hold its background read or the refresh permit for long.
 const GLM_USAGE_TIMEOUT = Duration.seconds(15);
 
 const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagementRuntime")(
@@ -642,7 +645,11 @@ const glmUsageReadFailed = DateTime.now.pipe(
 // A background read must never install the agent; the configuration probe prepares it.
 export const readAcpRegistryGlmUsageLimits = Effect.fn("AcpRegistryProbe.readGlmUsageLimits")(
   function* (input: AcpRegistryManagementInput) {
-    const runtime = yield* makeAcpRegistryManagementRuntime(input, { install: false });
+    // The read spawns the agent like a probe, so it shares the probe's offline environment.
+    const runtime = yield* makeAcpRegistryManagementRuntime(
+      { ...input, environment: providerProbeEnvironment(input.environment) },
+      { install: false },
+    );
     const initialized = yield* runtime.initialize();
     if (!readGlmUsageCapability(initialized)) {
       const limits = glmUpdateRequiredLimits({
