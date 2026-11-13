@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   ProviderDriverKind,
   settingsSecretLiteral,
@@ -398,6 +399,7 @@ export const OpenCodeDriver: ProviderDriver<
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
       openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>
@@ -441,6 +443,7 @@ export const OpenCodeDriver: ProviderDriver<
                 ),
             // OpenCode answers provider.list for a location only once its skill scan has ended.
             client.provider.list({ location }).pipe(Effect.timeout("10 seconds"), Effect.ignore),
+            processEnv,
           );
         }).pipe(Effect.scoped),
       );
@@ -514,6 +517,7 @@ export const OpenCodeDriver: ProviderDriver<
           host.paths.cwd,
           runtimeProbe.refresh,
           loadOpenCode2Models,
+          processEnv,
         ).pipe(
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
@@ -542,7 +546,7 @@ export const OpenCodeDriver: ProviderDriver<
         {
           skills: openCodeRuntime.loadOpenCodeSkills(client),
           commandInventory: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
-            Effect.timeoutOption("10 seconds"),
+            Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv)),
             Effect.map((commands) => ({
               commands: Option.getOrElse(commands, () => []),
               slashCommandsPending: Option.isNone(commands),
@@ -706,6 +710,7 @@ export const OpenCodeDriver: ProviderDriver<
                         openCode2Server.withConnection(({ client }) =>
                           loadOpenCode2DirectoryCatalog(client, cwd),
                         ),
+                        processEnv,
                       ).pipe(
                         Effect.map(
                           Option.map((catalog) =>
@@ -714,7 +719,10 @@ export const OpenCodeDriver: ProviderDriver<
                         ),
                       ),
                       listOpenCode2Workspace(cwd).pipe(
-                        Effect.timeout("20 seconds"),
+                        // Leaves room for the reads around the scan wait, which uses the same override.
+                        Effect.timeout(
+                          2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
+                        ),
                         Effect.mapError(
                           (cause) =>
                             new ProviderDriverError({
@@ -740,7 +748,12 @@ export const OpenCodeDriver: ProviderDriver<
                   ),
                   v1: Effect.all([
                     snapshot.getSnapshot,
-                    loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
+                    loadWorkspaceForCwd(cwd).pipe(
+                      // Leaves room for connection setup before the command fallback below.
+                      Effect.timeout(
+                        2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
+                      ),
+                    ),
                   ]).pipe(
                     Effect.map(
                       ([machineSnapshot, { skills, models, commands, slashCommandsPending }]) => ({

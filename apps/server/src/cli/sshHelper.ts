@@ -7,10 +7,12 @@ import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { Argument, Command } from "effect/cli";
 
 import { bootServiceBaseDirOf, bootServiceUnitPath } from "../cloud/bootService.ts";
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -176,7 +178,22 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
+const updateRemaining = Command.make("update-remaining", {
+  markerFile: Argument.String("marker-file"),
+}).pipe(
+  Command.withHandler(({ markerFile }) =>
+    DesktopUpdateMarker.DesktopUpdateMarker.use((marker) => marker.remainingWait(markerFile)).pipe(
+      Effect.flatMap((remaining) =>
+        Effect.sync(() => {
+          process.stdout.write(Option.match(remaining, { onNone: () => "", onSome: String }));
+        }),
+      ),
+    ),
+  ),
+  Command.provide(DesktopUpdateMarker.layer),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort, homeDir]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, updateRemaining, homeDir]),
 );
