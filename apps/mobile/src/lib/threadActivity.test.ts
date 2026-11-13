@@ -54,7 +54,36 @@ it("shows a captured MCP app for a failed deferred write", () => {
     input: {},
     output: { t3McpApp: mcpApp, result: { content: [], isError: true } },
   };
-  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([{ type: "mcp-app", app: mcpApp }]);
+  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([
+    { type: "activity-group" },
+    { type: "mcp-app", app: mcpApp },
+  ]);
+});
+
+it("keeps an MCP app call's tool activity beside its app card", () => {
+  const mcpApp = {
+    attachmentId: "repro-app-html",
+    server: "repro",
+    tool: "aggregate_rum_events",
+    resourceUri: "ui://repro/dataviz",
+  };
+  const item: OrchestrationV2TurnItem = {
+    ...base("repro-app", "2026-08-29T00:00:00.000Z", 1),
+    type: "dynamic_tool",
+    toolName: "repro.aggregate_rum_events",
+    input: { query: "@type:view" },
+    output: {
+      t3McpApp: mcpApp,
+      result: { content: [{ type: "text", text: "Notice\nview\tcount\n/home\t42" }] },
+    },
+  };
+  const feed = buildThreadFeed([projected(item, 0)]);
+  expect(feed).toContainEqual(expect.objectContaining({ type: "mcp-app", app: mcpApp }));
+  const activities = feed.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+  expect(activities).toHaveLength(1);
+  expect(activities[0]?.getFullDetail()).toContain("@type:view");
 });
 
 it("keeps historical plan detail accessible from its paged turn item", () => {
@@ -896,16 +925,20 @@ describe("buildThreadFeed", () => {
           projected(runless ? { ...item, runId: null } : item, position),
         ),
       );
-      const foldRunId = messageFoldRunId(feed, "message-middle");
-      expect(foldRunId, String(runless)).toBe(runless ? "runless:message-user" : runId);
       const ids = (expanded: ReadonlySet<RunId>) =>
         deriveThreadFeedPresentation(feed, null, expanded).map((entry) => entry.id);
+      const foldRunId = messageFoldRunId(
+        feed,
+        "message-middle",
+        deriveThreadFeedPresentation(feed, null, new Set()),
+      );
+      expect(foldRunId, String(runless)).toBe(runless ? "runless:message-user" : runId);
       expect(ids(new Set())).not.toContain("message-middle");
       expect(ids(new Set([foldRunId!]))).toContain("message-middle");
     }
-    expect(messageFoldRunId(buildThreadFeed([projected(userMessage(), 0)]), "message-user")).toBe(
-      null,
-    );
+    expect(
+      messageFoldRunId(buildThreadFeed([projected(userMessage(), 0)]), "message-user", []),
+    ).toBe(null);
   });
 
   it("folds progress messages while keeping the final assistant answer visible", () => {
@@ -1008,6 +1041,66 @@ describe("buildThreadFeed", () => {
       "run-fold:run-1",
       "message-assistant",
     ]);
+  });
+
+  it("splits a settled turn's work fold at a steer", () => {
+    const steer = {
+      ...userMessage("2026-06-20T00:00:04.000Z"),
+      id: TurnItemId.make("item-steer"),
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer" as const,
+    };
+    const after = { ...command("2026-06-20T00:00:06.000Z"), id: TurnItemId.make("item-after") };
+    const progress = {
+      ...assistantMessage("2026-06-20T00:00:07.000Z"),
+      id: TurnItemId.make("item-progress"),
+      messageId: MessageId.make("message-progress"),
+    };
+    const feed = buildThreadFeed(
+      [
+        userMessage(),
+        command(),
+        steer,
+        after,
+        progress,
+        assistantMessage("2026-06-20T00:00:09.000Z"),
+      ].map((item, position) => projected(item, position)),
+    );
+
+    expect(
+      deriveThreadFeedPresentation(feed, null, new Set()).map((entry) =>
+        entry.type === "message" ? entry.id : entry.type,
+      ),
+    ).toEqual(["message-user", "run-fold", "message-steer", "run-fold", "message-assistant"]);
+    const foldRunId = messageFoldRunId(
+      feed,
+      "message-progress",
+      deriveThreadFeedPresentation(feed, null, new Set()),
+    );
+    expect(
+      deriveThreadFeedPresentation(feed, null, new Set([foldRunId!])).map((entry) =>
+        entry.type === "message" ? entry.id : entry.type,
+      ),
+    ).toEqual([
+      "message-user",
+      "run-fold",
+      "message-steer",
+      "run-fold",
+      "activity-group",
+      "message-progress",
+      "message-assistant",
+    ]);
+
+    // Hiding tools leaves no output before the steer, so nothing splits there.
+    const hideAll = (expanded: ReadonlySet<RunId>) =>
+      deriveThreadFeedPresentation(feed, null, expanded, new Set(), null, false, undefined, {
+        toolCallVisibility: "hideAll",
+        revealedMessageId: null,
+      });
+    const hiddenToolsFoldRunId = messageFoldRunId(feed, "message-progress", hideAll(new Set()));
+    expect(hideAll(new Set([hiddenToolsFoldRunId!])).map((entry) => entry.id)).toContain(
+      "message-progress",
+    );
   });
 
   it("folds subagents while keeping created-thread and fork cards visible", () => {
