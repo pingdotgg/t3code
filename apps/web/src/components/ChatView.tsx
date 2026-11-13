@@ -843,9 +843,7 @@ export default function ChatView(props: ChatViewProps) {
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
       true;
   const resumableRunId =
-    !isServerThread || serverProjection === null
-      ? null
-      : deriveResumableRunId(serverProjection, serverRuntime);
+    !isServerThread || serverProjection === null ? null : deriveResumableRunId(serverProjection);
   const canResume =
     serverProjection !== null &&
     canResumeThread(serverProjection, resumableRunId, hasHeldQueuedRuns);

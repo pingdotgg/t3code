@@ -305,18 +305,10 @@ export function formatProviderSubagentStatus(
   return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
 }
 
-/** The run a manual continuation resumes; the server holds the queue until it does. */
-export function deriveResumableRunId(
-  projection: Pick<ThreadStructure, "runs" | "turnItems">,
-  runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
-): RunId | null {
+/** The stopped or failed run a manual continuation resumes. */
+export function deriveResumableRunId(projection: Pick<ThreadStructure, "runs">): RunId | null {
   const run = latestExecutedRun(projection.runs);
-  if (run?.status === "interrupted") return run.id;
-  return run?.status === "failed" &&
-    runtime?.lastErrorClass === "usage_limit" &&
-    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
-    ? run.id
-    : null;
+  return run?.status === "interrupted" || run?.status === "failed" ? run.id : null;
 }
 
 /**

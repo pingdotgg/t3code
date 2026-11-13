@@ -400,7 +400,7 @@ export function useThreadComposerState(input: {
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
   const resumableRunId = selectedThreadProjection
-    ? deriveResumableRunId(selectedThreadProjection.projection, selectedThreadRuntime)
+    ? deriveResumableRunId(selectedThreadProjection.projection)
     : null;
   const canResume = selectedThreadProjection
     ? canResumeThread(selectedThreadProjection.projection, resumableRunId, queueHeld)
