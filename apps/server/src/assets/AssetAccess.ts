@@ -878,6 +878,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
+  /** Keeps an expired token working, such as one an open Browser tab still shows. */
+  stillInUse: Effect.Effect<boolean> = Effect.succeed(false),
 ) {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
@@ -890,7 +892,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (!verified) return null;
 
   const claims = decodeClaims(encodedPayload);
-  if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+  if (!claims) return null;
+  if (claims.expiresAt <= (yield* Clock.currentTimeMillis) && !(yield* stillInUse)) return null;
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

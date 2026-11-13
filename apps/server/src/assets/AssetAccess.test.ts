@@ -203,6 +203,14 @@ describe("AssetAccess", () => {
         mimeType: "image/png",
         bytes: Buffer.from(screenshotPng),
       });
+      yield* TestClock.adjust("2 hours");
+      const token = suffix.slice(0, separator);
+      const fileName = suffix.slice(separator + 1);
+      expect(yield* resolveAsset(token, fileName)).toBeNull();
+      expect(yield* resolveAsset(token, fileName, Effect.succeed(true))).toMatchObject({
+        kind: "bytes",
+      });
+      expect(yield* resolveAsset(`${token}tampered`, fileName, Effect.succeed(true))).toBeNull();
       const missing = yield* issueAssetUrl({ resource: { ...resource, index: 1 } }).pipe(
         Effect.flip,
       );
