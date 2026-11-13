@@ -28,6 +28,10 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+/**
+ * A row from an earlier search is refused, except for a query with a space: its rows are only
+ * offered when they contain the typed text, so one from a search still catching up is right.
+ */
 export function isPathSuggestionCurrent(
   searchTarget: ComposerPathSearchTarget,
   trigger: ComposerTrigger | null,
@@ -38,7 +42,7 @@ export function isPathSuggestionCurrent(
     trigger?.kind === "path" &&
     searchTarget.environmentId === environmentId &&
     searchTarget.cwd === cwd &&
-    searchTarget.query === trigger.query.trim()
+    (searchTarget.query === trigger.query.trim() || trigger.query.includes(" "))
   );
 }
 

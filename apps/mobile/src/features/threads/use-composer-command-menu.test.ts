@@ -1,10 +1,18 @@
+import { act, createElement, useLayoutEffect } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
-  useComposerPathSearch: () => ({ entries: [], isPending: false }),
+  useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
+  useComposerPathSearch: vi.fn(() => ({ entries: [], isPending: false, truncated: false })),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
@@ -21,11 +29,13 @@ vi.mock("../../state/server", () => ({
 }));
 
 import type { ModelOption } from "../../lib/modelOptions";
+import { useComposerPathSearch } from "../../state/queries";
 import {
   buildComposerModelItems,
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
   resolveComposerMenuSelection,
+  useComposerCommandMenu,
 } from "./use-composer-command-menu";
 
 describe("resolveComposerMenuSelection", () => {
@@ -172,5 +182,88 @@ describe("mobile model mentions", () => {
     ["unavailable", [provider("traex", { availability: "unavailable" })]],
   ] as const)("does not suggest a preserved selection whose provider is %s", (_, providers) => {
     expect(buildComposerModelItems([option("traex:gpt-6.1")], "gpt", providers)).toEqual([]);
+  });
+});
+
+describe("a mention search with spaces", () => {
+  type MenuInput = Parameters<typeof useComposerCommandMenu>[0];
+
+  async function mountMenu(options: Partial<MenuInput> = {}) {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const root = createRoot(document.createElement("div"));
+    let menu: ReturnType<typeof useComposerCommandMenu> | null = null;
+    function Probe(props: { readonly text: string; readonly ownerKey: string }) {
+      const value = useComposerCommandMenu({
+        draftMessage: props.text,
+        ownerKey: props.ownerKey,
+        environmentId: null,
+        projectCwd: null,
+        selectedProviderStatus: null,
+        hasThread: false,
+        hasCompactableConversation: false,
+        onChangeDraftMessage: () => {},
+        ...options,
+      });
+      useLayoutEffect(() => {
+        menu = value;
+      });
+      return null;
+    }
+    return {
+      /** Renders the draft with the caret at its end, as typing leaves it. */
+      type: async (text: string, ownerKey = "draft-a") => {
+        await act(() => root.render(createElement(Probe, { text, ownerKey })));
+        await act(() => menu!.onSelectionChange({ start: text.length, end: text.length }));
+        return menu!;
+      },
+      [Symbol.asyncDispose]: async () => {
+        await act(() => root.unmount());
+        vi.unstubAllGlobals();
+        vi.mocked(useComposerPathSearch).mockReset();
+      },
+    };
+  }
+
+  const pathSearch = (isPending: boolean, paths: ReadonlyArray<string>) =>
+    vi.mocked(useComposerPathSearch).mockReturnValue({
+      entries: paths.map((path) => ({ path, kind: "file" as const })),
+      error: null,
+      isPending,
+      truncated: false,
+      refresh: vi.fn(),
+    });
+
+  it("stays open across a space while a result contains the typed text", async () => {
+    pathSearch(false, ["Foreign Subsidiaries/Script Notes.md", "Foreign.md"]);
+    await using menu = await mountMenu({
+      environmentId: EnvironmentId.make("local"),
+      environments: [
+        { environmentId: EnvironmentId.make("remote"), label: "Foreign Server", machine: "server" },
+      ],
+    });
+    await menu.type("Open @Foreign");
+    const spaced = await menu.type("Open @Foreign S");
+    expect(spaced.trigger).toMatchObject({ query: "Foreign S", rangeStart: 5, rangeEnd: 15 });
+    expect(spaced.items.map((item) => item.label)).toEqual(["Foreign Server", "Script Notes.md"]);
+    // Another draft's search is not continued into this one.
+    expect((await menu.type("Open @Foreign S", "draft-b")).trigger).toBeNull();
+  });
+
+  it("refuses a fuzzy result for prose and ends the search once results settle", async () => {
+    const onChangeDraftMessage = vi.fn();
+    pathSearch(false, ["ChatComposer.tsx"]);
+    await using menu = await mountMenu({ onChangeDraftMessage });
+    const stale = (await menu.type("Fix @ChatComposer")).items[0]!;
+
+    pathSearch(true, ["ChatComposer.tsx"]);
+    const pending = await menu.type("Fix @ChatComposer so");
+    expect(pending.trigger?.query).toBe("ChatComposer so");
+    expect(pending.items).toEqual([]);
+    await act(() => pending.onSelect(stale));
+    expect(onChangeDraftMessage).not.toHaveBeenCalled();
+
+    pathSearch(false, ["ChatComposer.tsx"]);
+    expect((await menu.type("Fix @ChatComposer so")).trigger).toBeNull();
+    expect((await menu.type("Fix @ChatComposer so that")).trigger).toBeNull();
   });
 });

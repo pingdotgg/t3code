@@ -67,6 +67,17 @@ describe("isPathSuggestionCurrent", () => {
     ).toBe(true);
   });
 
+  it("allows a suggestion for a spaced query while its search catches up", () => {
+    expect(
+      isPathSuggestionCurrent(
+        searchedTarget,
+        { kind: "path", query: "alpha beta", rangeStart: 0, rangeEnd: 11 },
+        searchedTarget.environmentId,
+        searchedTarget.cwd,
+      ),
+    ).toBe(true);
+  });
+
   it.each([
     ["query", { ...searchedTarget, query: "beta" }],
     ["cwd", { ...searchedTarget, cwd: "/other-repo" }],

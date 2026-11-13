@@ -31,6 +31,8 @@ import {
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  composerItemAnswersTrigger,
+  continueComposerPathTrigger,
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
@@ -329,11 +331,21 @@ export function useComposerCommandMenu({
     setSelection(nextSelection);
   };
 
+  // The `@` search of the last render, which a space in this one continues.
+  const [carried, setCarried] = useState<{
+    readonly ownerKey: string | null;
+    readonly trigger: ComposerTrigger | null;
+  }>({ ownerKey, trigger: null });
   const trigger = (() => {
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
-    return detectComposerTrigger(draftMessage, selection.end);
+    return continueComposerPathTrigger({
+      text: draftMessage,
+      cursor: selection.end,
+      detected: detectComposerTrigger(draftMessage, selection.end),
+      previous: carried.ownerKey === ownerKey ? carried.trigger : null,
+    });
   })();
   const pathSearch = useComposerPathSearch({
     environmentId,
@@ -341,7 +353,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "path" ? trigger.query : null,
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(
+  const threadSearch = useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
     trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
@@ -515,7 +527,7 @@ export function useComposerCommandMenu({
         modelOptions && modelProviders
           ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
           : [];
-      return [
+      const pathItems: ComposerCommandItem[] = [
         ...threadItems,
         ...environmentItems,
         ...modelItems,
@@ -531,13 +543,34 @@ export function useComposerCommandMenu({
           };
         }),
       ];
+      return pathItems.filter((item) => composerItemAnswersTrigger(item, trigger));
     }
 
     return [];
   })();
 
+  // A query with a space ends once its search settles with nothing containing it, so prose
+  // after `@word` stops searching. A capped list waits for the next word instead.
+  const ruledOut =
+    trigger?.kind === "path" &&
+    trigger.query.includes(" ") &&
+    items.length === 0 &&
+    !pathSearch.isPending &&
+    !threadSearch.isPending &&
+    !(pathSearch.truncated && trigger.query.endsWith(" "));
+  const nextCarried = ruledOut ? null : trigger;
+  if (
+    carried.ownerKey !== ownerKey ||
+    carried.trigger?.kind !== nextCarried?.kind ||
+    carried.trigger?.query !== nextCarried?.query ||
+    carried.trigger?.rangeStart !== nextCarried?.rangeStart ||
+    carried.trigger?.rangeEnd !== nextCarried?.rangeEnd
+  ) {
+    setCarried({ ownerKey, trigger: nextCarried });
+  }
+
   const onSelect = (item: ComposerCommandItem) => {
-    if (!trigger) return;
+    if (!trigger || !composerItemAnswersTrigger(item, trigger)) return;
     if (item.type === "environment") {
       if (!ownerKey || trigger.kind !== "path") return;
       const record = environmentComposerContext(item.environmentId, item.label);

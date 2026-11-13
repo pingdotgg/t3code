@@ -158,6 +158,46 @@ export function detectComposerTrigger(
   };
 }
 
+/**
+ * A query with a space offers only results that contain exactly what was typed, so prose
+ * after an `@word` is never replaced by a fuzzy or stale suggestion.
+ */
+export function composerItemAnswersTrigger(
+  item: { readonly label: string; readonly path?: string },
+  trigger: { readonly kind: string; readonly query: string },
+): boolean {
+  if (trigger.kind !== "path" || !trigger.query.includes(" ")) return true;
+  const query = trigger.query.toLowerCase();
+  return (
+    item.label.toLowerCase().includes(query) || item.path?.toLowerCase().includes(query) === true
+  );
+}
+
+/**
+ * Carries the `@` search that was active before an edit across spaces, so a name with spaces
+ * can be typed out. Only that search continues: an `@` further back in prose is never
+ * reopened.
+ */
+export function continueComposerPathTrigger<Trigger extends ComposerTrigger>(input: {
+  readonly text: string;
+  readonly cursor: number;
+  readonly detected: Trigger | null;
+  readonly previous: Trigger | null;
+}): Trigger | null {
+  const { text, detected, previous } = input;
+  if (detected !== null || previous?.kind !== "path") return detected;
+  const cursor = clampCursor(text, input.cursor);
+  const query = text.slice(previous.rangeStart + 1, cursor);
+  if (
+    text[previous.rangeStart] !== "@" ||
+    !/^[^\s\uFFFC][^\n\r\t\uFFFC]*$/.test(query) ||
+    !(query.startsWith(previous.query) || previous.query.startsWith(query))
+  ) {
+    return null;
+  }
+  return { ...previous, query, rangeEnd: cursor };
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

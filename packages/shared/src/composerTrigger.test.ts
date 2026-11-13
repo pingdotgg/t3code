@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  composerItemAnswersTrigger,
+  continueComposerPathTrigger,
   detectComposerTrigger,
   parseSideChatCommand,
   serializeComposerFileLink,
@@ -75,6 +77,89 @@ describe("detectComposerTrigger", () => {
       kind: "skill",
       query: text.slice(1),
     });
+  });
+});
+
+describe("continueComposerPathTrigger", () => {
+  const continued = (text: string, previousText: string | null) =>
+    continueComposerPathTrigger({
+      text,
+      cursor: text.length,
+      detected: detectComposerTrigger(text, text.length),
+      previous: previousText === null ? null : detectComposerTrigger(previousText, Infinity),
+    });
+
+  it.each([
+    ["Open @Foreign ", "Foreign "],
+    ["Open @Foreign Sub", "Foreign Sub"],
+  ])("carries the active search into %j", (text, query) => {
+    expect(continued(text, "Open @Foreign")).toEqual({
+      kind: "path",
+      query,
+      rangeStart: 5,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("stays in the search while the caret moves back through the query", () => {
+    const spaced = continued("Open @Foreign Sub", "Open @Foreign");
+    expect(
+      continueComposerPathTrigger({
+        text: "Open @Foreign Sub",
+        cursor: "Open @Foreign ".length,
+        detected: null,
+        previous: spaced,
+      }),
+    ).toMatchObject({ query: "Foreign ", rangeStart: 5, rangeEnd: 14 });
+  });
+
+  it.each([
+    ["no search was active", "Open @Foreign Sub", null],
+    ["the query was replaced", "Open @Other thing", "Open @Foreign"],
+    ["the at sign was deleted", "Open Foreign Sub", "Open @Foreign"],
+    ["a newline ends the line", "Open @Foreign\n", "Open @Foreign"],
+    ["a tab follows", "Open @Foreign\tSub", "Open @Foreign"],
+    ["a terminal context follows", "Open @Foreign \uFFFC", "Open @Foreign"],
+    ["only a space follows the at sign", "Open @ ", "Open @"],
+    ["the active trigger is not a mention", "Run $skill now", "Run $skill"],
+  ])("ends the search when %s", (_name, text, previousText) => {
+    expect(continued(text, previousText)).toBeNull();
+  });
+
+  it("prefers a trigger detected at the caret", () => {
+    expect(continued("Open @Foreign and @Sub", "Open @Foreign and")).toMatchObject({
+      query: "Sub",
+      rangeStart: 18,
+    });
+  });
+});
+
+describe("composerItemAnswersTrigger", () => {
+  const spaced = { kind: "path", query: "Foreign Sub" };
+
+  it("offers any result for a query without a space", () => {
+    expect(
+      composerItemAnswersTrigger({ label: "README.md" }, { kind: "path", query: "rdme" }),
+    ).toBe(true);
+  });
+
+  it("offers a result for a spaced query only when it contains the typed text", () => {
+    expect(composerItemAnswersTrigger({ label: "foreign subsidiaries" }, spaced)).toBe(true);
+    expect(
+      composerItemAnswersTrigger(
+        { label: "Notes.md", path: "Foreign Subsidiaries/Notes.md" },
+        spaced,
+      ),
+    ).toBe(true);
+    expect(
+      composerItemAnswersTrigger(
+        { label: "ChatComposer.tsx", path: "src/ChatComposer.tsx" },
+        { kind: "path", query: "ChatComposer so" },
+      ),
+    ).toBe(false);
+    expect(
+      composerItemAnswersTrigger({ label: "README.md" }, { kind: "path", query: "README " }),
+    ).toBe(false);
   });
 });
 
