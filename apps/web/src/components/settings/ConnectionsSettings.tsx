@@ -399,6 +399,7 @@ function ConnectionsSettingsContent({
     reportFailure: false,
   });
   const revokeClient = useAtomCommand(authEnvironment.revokeClient, { reportFailure: false });
+  const renameClient = useAtomCommand(authEnvironment.renameClient, { reportFailure: false });
   const revokeOtherClients = useAtomCommand(authEnvironment.revokeOtherClients, {
     reportFailure: false,
   });
@@ -618,6 +619,34 @@ function ConnectionsSettingsContent({
       );
     }
     setRevokingDesktopClientSessionId(null);
+  };
+
+  const handleRenameDesktopClientSession = async (
+    sessionId: ServerClientSessionRecord["sessionId"],
+    label: string,
+  ) => {
+    if (
+      accessEnvironmentId === null ||
+      !readEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope)
+    )
+      return false;
+    const result = await renameClient({
+      environmentId: accessEnvironmentId,
+      input: { sessionId, label },
+    });
+    if (result._tag === "Success" && result.value.renamed) return true;
+    if (result._tag === "Success" || !isAtomCommandInterrupted(result)) {
+      const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not rename client",
+          description:
+            error instanceof Error ? error.message : "This client is no longer authorized.",
+        }),
+      );
+    }
+    return false;
   };
 
   const handleRevokeOtherDesktopClients = async () => {
@@ -1050,7 +1079,8 @@ function ConnectionsSettingsContent({
       revokingClientSessionId={revokingDesktopClientSessionId}
       onRevokePairingLink={handleRevokeDesktopPairingLink}
       onRevokeClientSession={handleRevokeDesktopClientSession}
-      canRevoke={canWriteAccess}
+      onRenameClientSession={handleRenameDesktopClientSession}
+      canManageAccess={canWriteAccess}
     />
   );
   const renderAuthorizedClients = () => (

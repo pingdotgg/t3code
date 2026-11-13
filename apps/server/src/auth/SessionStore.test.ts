@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -592,5 +593,40 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
         expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
       }
     }).pipe(Effect.provide(layerSessionStore())),
+  );
+
+  it.effect("renames an active session and publishes the new label", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue({
+        subject: "one-time-token",
+        client: { label: "iPhone", deviceType: "mobile" },
+      });
+      const upserted = yield* sessions.streamChanges.pipe(
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+
+      expect(yield* sessions.rename(client.sessionId, "Kitchen iPad")).toBe(true);
+      const change = yield* Fiber.join(upserted);
+      expect(Option.getOrThrow(change)).toMatchObject({
+        type: "clientUpserted",
+        clientSession: { sessionId: client.sessionId, client: { label: "Kitchen iPad" } },
+      });
+      const [listed] = yield* sessions.listActive();
+      expect(listed?.client.label).toBe("Kitchen iPad");
+      expect(yield* sessions.rename(client.sessionId, "Kitchen iPad")).toBe(true);
+
+      const relay = yield* sessions.issue(relaySessionInput);
+      expect(yield* sessions.rename(relay.sessionId, "Renewals would drop this")).toBe(false);
+      expect(yield* sessions.rename(relay.sessionId, relaySessionInput.client.label)).toBe(false);
+
+      const expiring = yield* sessions.issue({ ttl: Duration.minutes(1) });
+      yield* TestClock.adjust(Duration.minutes(2));
+      expect(yield* sessions.rename(expiring.sessionId, "Expired")).toBe(false);
+
+      yield* sessions.revoke(client.sessionId);
+      expect(yield* sessions.rename(client.sessionId, "Gone")).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 });

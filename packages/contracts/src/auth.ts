@@ -442,6 +442,12 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
 });
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
 
+export const AuthRenameClientSessionInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
+});
+export type AuthRenameClientSessionInput = typeof AuthRenameClientSessionInput.Type;
+
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),

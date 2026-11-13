@@ -29,6 +29,7 @@ import {
   AuthMcpTokenResult,
   AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
+  AuthRenameClientSessionInput,
   AuthRevokePairingLinkInput,
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
@@ -140,6 +141,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  "client_session_rename_failed",
   "project_snapshot_failed",
   "project_mutation_failed",
   "orchestration_snapshot_failed",
@@ -548,6 +550,11 @@ export const AuthClientSessionRevokeResult = Schema.Struct({
 });
 export type AuthClientSessionRevokeResult = typeof AuthClientSessionRevokeResult.Type;
 
+export const AuthClientSessionRenameResult = Schema.Struct({
+  renamed: Schema.Boolean,
+});
+export type AuthClientSessionRenameResult = typeof AuthClientSessionRenameResult.Type;
+
 export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
   revokedCount: Schema.Number,
 });
@@ -619,6 +626,14 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       payload: AuthRevokeClientSessionInput,
       success: AuthClientSessionRevokeResult,
       error: EnvironmentSessionRevokeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("renameClient", "/api/auth/clients/rename", {
+      headers: OptionalBearerHeaders,
+      payload: AuthRenameClientSessionInput,
+      success: AuthClientSessionRenameResult,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

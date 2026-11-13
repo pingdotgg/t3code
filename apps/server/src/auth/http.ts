@@ -508,6 +508,23 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "renameClient",
+        Effect.fn("environment.auth.renameClient")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const renamed = yield* serverAuth.renameSession(
+              args.payload.sessionId,
+              args.payload.label,
+            );
+            return { renamed };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_session_rename_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "revokeOtherClients",
         Effect.fn("environment.auth.revokeOtherClients")(
           function* (args) {

@@ -73,6 +73,8 @@ import {
   endpointShareHint,
 } from "./ConnectionsSettings.logic";
 
+const CLIENT_LABEL_MAX_LENGTH = 120;
+
 function AccessScopeSummary({
   scopes,
   label,
@@ -135,7 +137,7 @@ type PairingLinkListRowProps = {
   defaultEndpointKey: string | null;
   revokingPairingLinkId: string | null;
   onRevoke: (id: string) => void;
-  canRevoke: boolean;
+  canManageAccess: boolean;
 };
 
 const PairingLinkListRow = memo(function PairingLinkListRow({
@@ -148,7 +150,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   defaultEndpointKey,
   revokingPairingLinkId,
   onRevoke,
-  canRevoke,
+  canManageAccess,
 }: PairingLinkListRowProps) {
   const nowMs = useNowSecond();
   const expiresAtMs = new Date(pairingLink.expiresAt).getTime();
@@ -393,7 +395,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           <Button
             size="xs"
             variant="destructive-outline"
-            disabled={!canRevoke || revokingPairingLinkId === pairingLink.id}
+            disabled={!canManageAccess || revokingPairingLinkId === pairingLink.id}
             onClick={() => void onRevoke(pairingLink.id)}
           >
             {revokingPairingLinkId === pairingLink.id ? "Revoking…" : "Revoke"}
@@ -493,18 +495,110 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
 });
 
+type RenameClientSessionHandler = (
+  sessionId: ServerClientSessionRecord["sessionId"],
+  label: string,
+) => Promise<boolean>;
+
+function RenameClientDialog({
+  sessionId,
+  currentLabel,
+  disabled,
+  onRename,
+}: {
+  sessionId: ServerClientSessionRecord["sessionId"];
+  currentLabel: string;
+  disabled: boolean;
+  onRename: RenameClientSessionHandler;
+}) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState(currentLabel);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const trimmedLabel = label.trim();
+  const canSave =
+    !disabled && trimmedLabel.length > 0 && trimmedLabel !== currentLabel && !isRenaming;
+
+  const handleRename = async () => {
+    if (!canSave) return;
+    setIsRenaming(true);
+    const renamed = await onRename(sessionId, trimmedLabel);
+    setIsRenaming(false);
+    if (renamed) setOpen(false);
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) setLabel(currentLabel);
+      }}
+    >
+      <DialogTrigger
+        render={
+          <Button size="xs" variant="outline" disabled={disabled}>
+            Rename
+          </Button>
+        }
+      />
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename client</DialogTitle>
+          <DialogDescription>
+            Choose how this client appears under Authorized clients.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleRename();
+          }}
+        >
+          <DialogPanel>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">Client label</span>
+              <Input
+                value={label}
+                onChange={(event) => setLabel(event.target.value)}
+                maxLength={CLIENT_LABEL_MAX_LENGTH}
+                disabled={isRenaming}
+                autoFocus
+              />
+            </label>
+          </DialogPanel>
+          <DialogFooter variant="bare">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isRenaming}
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSave}>
+              {isRenaming ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 type ConnectedClientListRowProps = {
   clientSession: ServerClientSessionRecord;
   revokingClientSessionId: string | null;
   onRevokeSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
-  canRevoke: boolean;
+  onRenameSession: RenameClientSessionHandler;
+  canManageAccess: boolean;
 };
 
 const ConnectedClientListRow = memo(function ConnectedClientListRow({
   clientSession,
   revokingClientSessionId,
   onRevokeSession,
-  canRevoke,
+  onRenameSession,
+  canManageAccess,
 }: ConnectedClientListRowProps) {
   const nowMs = useNowSecond();
   const isLive = clientSession.current || clientSession.connected;
@@ -557,11 +651,19 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {clientSession.method !== "dpop-access-token" ? (
+            <RenameClientDialog
+              sessionId={clientSession.sessionId}
+              currentLabel={primaryLabel}
+              disabled={!canManageAccess}
+              onRename={onRenameSession}
+            />
+          ) : null}
           {!clientSession.current ? (
             <Button
               size="xs"
               variant="destructive-outline"
-              disabled={!canRevoke || revokingClientSessionId === clientSession.sessionId}
+              disabled={!canManageAccess || revokingClientSessionId === clientSession.sessionId}
               onClick={() => void onRevokeSession(clientSession.sessionId)}
             >
               {revokingClientSessionId === clientSession.sessionId ? "Revoking…" : "Revoke"}
@@ -814,7 +916,8 @@ type PairingClientsListProps = {
   revokingClientSessionId: string | null;
   onRevokePairingLink: (id: string) => void;
   onRevokeClientSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
-  canRevoke: boolean;
+  onRenameClientSession: RenameClientSessionHandler;
+  canManageAccess: boolean;
 };
 
 export const PairingClientsList = memo(function PairingClientsList({
@@ -831,7 +934,8 @@ export const PairingClientsList = memo(function PairingClientsList({
   revokingClientSessionId,
   onRevokePairingLink,
   onRevokeClientSession,
-  canRevoke,
+  onRenameClientSession,
+  canManageAccess,
 }: PairingClientsListProps) {
   return (
     <>
@@ -847,7 +951,7 @@ export const PairingClientsList = memo(function PairingClientsList({
           defaultEndpointKey={defaultEndpointKey}
           revokingPairingLinkId={revokingPairingLinkId}
           onRevoke={onRevokePairingLink}
-          canRevoke={canRevoke}
+          canManageAccess={canManageAccess}
         />
       ))}
 
@@ -857,7 +961,8 @@ export const PairingClientsList = memo(function PairingClientsList({
           clientSession={clientSession}
           revokingClientSessionId={revokingClientSessionId}
           onRevokeSession={onRevokeClientSession}
-          canRevoke={canRevoke}
+          onRenameSession={onRenameClientSession}
+          canManageAccess={canManageAccess}
         />
       ))}
 

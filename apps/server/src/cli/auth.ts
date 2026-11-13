@@ -1,4 +1,8 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthRenameClientSessionInput,
+  AuthSessionId,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -243,9 +247,40 @@ const sessionRevokeCommand = Command.make("revoke", {
   ),
 );
 
+const sessionRenameCommand = Command.make("rename", {
+  ...authLocationFlags,
+  sessionId: Argument.String("session-id").pipe(
+    Argument.withDescription("Session id to rename."),
+    Argument.withSchema(AuthSessionId),
+  ),
+  label: Argument.String("label").pipe(
+    Argument.withDescription("New client label."),
+    Argument.withSchema(AuthRenameClientSessionInput.fields.label),
+  ),
+}).pipe(
+  Command.withDescription("Rename an active session's client label."),
+  Command.withHandler((flags) =>
+    runWithEnvironmentAuth(flags, (environmentAuth) =>
+      Effect.gen(function* () {
+        const renamed = yield* environmentAuth.renameSession(flags.sessionId, flags.label);
+        yield* Console.log(
+          renamed
+            ? `Renamed session ${flags.sessionId} to ${flags.label}.\n`
+            : `No renamable active session found for ${flags.sessionId}. T3 Connect sessions renew hourly and cannot be renamed.\n`,
+        );
+      }),
+    ),
+  ),
+);
+
 const sessionCommand = Command.make("session").pipe(
   Command.withDescription("Manage bearer sessions."),
-  Command.withSubcommands([sessionIssueCommand, sessionListCommand, sessionRevokeCommand]),
+  Command.withSubcommands([
+    sessionIssueCommand,
+    sessionListCommand,
+    sessionRevokeCommand,
+    sessionRenameCommand,
+  ]),
 );
 
 export const authCommand = Command.make("auth").pipe(

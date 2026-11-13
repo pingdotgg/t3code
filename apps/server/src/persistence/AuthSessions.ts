@@ -92,6 +92,12 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const SetAuthSessionClientLabelInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  label: Schema.String,
+});
+export type SetAuthSessionClientLabelInput = typeof SetAuthSessionClientLabelInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -119,6 +125,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly setClientLabel: (
+      input: SetAuthSessionClientLabelInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
 
@@ -321,6 +330,20 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const setClientLabelRows = SqlSchema.findAll({
+    Request: SetAuthSessionClientLabelInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId, label }) =>
+      sql`
+        UPDATE auth_sessions
+        SET client_label = ${label}
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+          AND method <> 'dpop-access-token'
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
   const revokeSessionRows = SqlSchema.findAll({
     Request: RevokeAuthSessionInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -480,6 +503,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const setClientLabel: AuthSessionRepository["Service"]["setClientLabel"] = (input) =>
+    setClientLabelRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.setClientLabel:query",
+          "AuthSessionRepository.setClientLabel:decodeRows",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
   return {
     create,
     createReplacingActive,
@@ -489,6 +524,7 @@ export const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
+    setClientLabel,
   } satisfies AuthSessionRepository["Service"];
 });
 
