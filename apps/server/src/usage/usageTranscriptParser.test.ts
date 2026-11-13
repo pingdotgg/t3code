@@ -199,6 +199,11 @@ describe("makeTranscriptParser", () => {
 
   it.live.each([
     {
+      name: "a synchronous spawn failure",
+      environment: { ...process.env, USAGE_TEST_INVALID: "\0" },
+      isExecutable: false,
+    },
+    {
       name: "a worker that cannot start",
       environment: process.env,
       // The executable then treats the worker command as a script path and exits.

@@ -74,7 +74,12 @@ export const makeTranscriptParser = Effect.gen(function* () {
   const stop = (worker: Worker) => worker.process.stop();
 
   const start = async (): Promise<Worker | undefined> => {
-    const process = makeUsageTranscriptWorker(command);
+    let process: UsageTranscriptWorker;
+    try {
+      process = makeUsageTranscriptWorker(command);
+    } catch {
+      return undefined;
+    }
     const worker: Worker = { process, idleTimer: undefined };
     live.add(worker);
     void process.exited.then(() => {

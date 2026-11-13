@@ -72,7 +72,8 @@ export function makeUsageTranscriptWorker(
     clearTimeout(readyTimer);
     ready.resolve(false);
     settle(undefined);
-    child.kill();
+    // Workers only read files, so teardown needs no graceful phase or inherited signal handlers.
+    child.kill("SIGKILL");
     return exited.promise;
   };
   const readyTimer = setTimeout(() => void stop(), WORKER_READY_MS);

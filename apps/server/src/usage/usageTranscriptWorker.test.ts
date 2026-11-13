@@ -84,3 +84,26 @@ it.live("settles a job when the IPC send throws", () =>
     yield* Effect.promise(() => worker.exited);
   }),
 );
+
+it.live("stops a worker that ignores SIGTERM", () =>
+  Effect.gen(function* () {
+    const command = yield* serverSubcommand(USAGE_TRANSCRIPT_WORKER_COMMAND, 2048).pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...process.env,
+        NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(
+          'process.on("SIGTERM", () => {}); process.on("disconnect", () => process.exit(0)); process.send({ ready: true }); await new Promise(() => {});',
+        )}`,
+      }),
+    );
+    const worker = yield* Effect.acquireRelease(
+      Effect.sync(() => makeUsageTranscriptWorker(command)),
+      (worker) => Effect.promise(() => worker.stop()),
+    );
+    assert.isTrue(yield* Effect.promise(() => worker.ready));
+    yield* Effect.promise(() => worker.stop());
+    yield* Effect.promise(() => worker.stop());
+    assert.isUndefined(
+      yield* worker.parse({ path: "unused", provider: "codex", resumeFrom: undefined }),
+    );
+  }),
+);

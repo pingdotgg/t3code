@@ -3465,28 +3465,34 @@ describe("UsageService", () => {
       }),
   );
 
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "interrupts a running scan and its callers when the service closes",
-    () =>
-      Effect.gen(function* () {
-        const { transcript, settings, home } = yield* setup;
-        const hold = NodePath.join(NodePath.dirname(transcript), "hold.jsonl");
-        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-        yield* makeGate(hold, BEFORE_NARROW_WINDOW);
-        yield* Effect.gen(function* () {
-          const scope = yield* Scope.make();
-          const service = yield* UsageService.make.pipe(Scope.provide(scope));
-          const reading = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-          // Opening the write end waits for the scan to open the gate; held open, its read waits.
-          const writer = yield* Effect.promise(() => NodeFSP.open(hold, "w"));
-          yield* Scope.close(scope, Exit.void);
-          yield* Effect.promise(() => writer.close());
-          assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(reading)));
-          assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(service.readSummary(WINDOW))));
-        }).pipe(
-          Effect.provide(layerService({ prefix: "usage-service-close-test", home, settings })),
+  it.effect("interrupts a running scan and its callers when the service closes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const transcriptDir = yield* Effect.promise(() =>
+        NodeFSP.realpath(NodePath.join(home, "claude", "projects")),
+      );
+      yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const entered = yield* Deferred.make<void>();
+        const scope = yield* Scope.make();
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            exists: (path) =>
+              path === transcriptDir
+                ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+                : fileSystem.exists(path),
+          }),
+          Scope.provide(scope),
         );
-      }),
+        const reading = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* Scope.close(scope, Exit.void);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(reading)));
+        assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(service.readSummary(WINDOW))));
+      }).pipe(Effect.provide(layerService({ prefix: "usage-service-close-test", home, settings })));
+    }),
   );
 
   it.effect(
