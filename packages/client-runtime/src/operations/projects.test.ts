@@ -12,10 +12,19 @@ import {
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  it("offers only GitHub until other hosts are turned on", () => {
+    const ready = () => ({ ready: true, hint: null });
+    expect(sortAddProjectProviderSources(ready, {})).toEqual(["github"]);
+    expect(sortAddProjectProviderSources(ready, { gitlab: true, github: false })).toEqual([
+      "gitlab",
+    ]);
+  });
+
   it("asks for a repository name when GitHub input is only an owner path", () => {
     const github = SourceControlProviderKind.make("github");
     expect(githubIncompleteOwnerRepositoryMessage(github, "pingdotgg/")).toBe(
