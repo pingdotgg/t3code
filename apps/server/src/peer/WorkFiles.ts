@@ -64,27 +64,12 @@ const isWorkFilesError = Schema.is(WorkFilesError);
 
 const failed = (message: string) => new WorkFilesError({ reason: "failed", message });
 
-/** Files that look like credentials never leave the machine they are on. */
-const looksLikeSecret = (path: string) => {
-  const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
-  return (
-    name.startsWith(".env") ||
-    name.endsWith(".pem") ||
-    name.endsWith(".key") ||
-    name.endsWith(".p12") ||
-    name.startsWith("id_rsa") ||
-    name === ".npmrc" ||
-    name === ".netrc"
-  );
-};
-
 export interface WorkFilesSelection {
   readonly root: string;
   /** The commit the files apply to; null outside git, "" in a repository with no commits. */
   readonly head: string | null;
   readonly files: ReadonlyArray<{ readonly path: string; readonly size: number }>;
   readonly deletions: ReadonlyArray<string>;
-  readonly leftBehind: ReadonlyArray<string>;
   readonly totalBytes: number;
   /** Why the set cannot go, with the numbers; nothing is sent when set. */
   readonly refusal: string | null;
@@ -180,15 +165,11 @@ const gitTrackedPaths = Effect.fn("WorkFiles.gitTrackedPaths")(function* (cwd: s
   return new Set(nulSeparated(tracked.stdout));
 });
 
-/**
- * Every file under `root` outside skipped directories, stopping once past the
- * count limit. Secrets stay behind, so they do not count toward it.
- */
+/** Every file under `root` outside skipped directories, stopping once past the count limit. */
 const walk = Effect.fn("WorkFiles.walk")(function* (root: string) {
   const found: string[] = [];
   const pending = [""];
-  let eligible = 0;
-  while (pending.length > 0 && eligible <= WORK_FILES_MAX_COUNT) {
+  while (pending.length > 0 && found.length <= WORK_FILES_MAX_COUNT) {
     const directory = pending.pop()!;
     const entries = yield* fileSystemCall("read the working directory", () =>
       NodeFSP.readdir(NodePath.join(root, directory), { withFileTypes: true }),
@@ -201,7 +182,6 @@ const walk = Effect.fn("WorkFiles.walk")(function* (root: string) {
         }
       } else if (entry.isFile()) {
         found.push(relative);
-        if (!looksLikeSecret(relative)) eligible += 1;
       }
     }
   }
@@ -214,7 +194,6 @@ export const selectWorkFiles = Effect.fn("WorkFiles.select")(function* (root: st
   const candidates = head === null ? yield* walk(root) : [...(yield* gitChangedPaths(root))];
   const files: Array<{ path: string; size: number }> = [];
   const deletions: string[] = [];
-  const leftBehind: string[] = [];
   const inodes = new Map<string, string>();
   let totalBytes = 0;
   for (const path of candidates.toSorted()) {
@@ -223,11 +202,6 @@ export const selectWorkFiles = Effect.fn("WorkFiles.select")(function* (root: st
     const stat = yield* lstatOrNull(NodePath.join(root, path));
     // Symlinks and submodule directories are not work files.
     if (stat !== null && !stat.isFile()) continue;
-    // A secret is neither sent nor deleted there.
-    if (looksLikeSecret(path)) {
-      leftBehind.push(path);
-      continue;
-    }
     if (stat === null) {
       if (head !== null) deletions.push(path);
       continue;
@@ -255,7 +229,6 @@ export const selectWorkFiles = Effect.fn("WorkFiles.select")(function* (root: st
     head,
     files,
     deletions,
-    leftBehind,
     totalBytes,
     refusal,
   } satisfies WorkFilesSelection;
@@ -748,12 +721,6 @@ export const applyWorkFiles = Effect.fn("WorkFiles.apply")(function* (input: App
   for (const path of input.deletions) {
     if (!isSafeRelativePath(path)) {
       return yield* invalid(`A deletion names an unsafe path: "${path}".`);
-    }
-  }
-  // The sender keeps these behind, so another sender is not T3.
-  for (const path of [...files.map((file) => file.path), ...input.deletions]) {
-    if (looksLikeSecret(path)) {
-      return yield* invalid(`The work files name a credential file: "${path}".`);
     }
   }
   const lock = yield* checkoutLock(input.root);

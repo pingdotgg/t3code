@@ -89,7 +89,6 @@ export const summaryOf = (selection: WorkFilesSelection): WorkFilesSummary => ({
   fileCount: selection.files.length,
   totalBytes: selection.totalBytes,
   deletionCount: selection.deletions.length,
-  leftBehindCount: selection.leftBehind.length,
   refusal: selection.refusal,
 });
 

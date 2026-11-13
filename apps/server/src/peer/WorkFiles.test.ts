@@ -94,7 +94,7 @@ const writeArchive = (root: string, files: ReadonlyArray<string>, archivePath: s
   );
 
 it.live(
-  "a git checkout carries its changed, staged, untracked and deleted files, not its secrets",
+  "a git checkout carries its changed, staged, untracked and deleted files, secrets included",
   () =>
     Effect.gen(function* () {
       const root = yield* tempDir;
@@ -113,25 +113,25 @@ it.live(
       write(root, ".env.local", "TOKEN=1");
       write(root, "certs/server.pem", "pem");
       NodeFS.rmSync(NodePath.join(root, "src/old.ts"));
-      // A deleted secret stays where it is on both sides.
       NodeFS.rmSync(NodePath.join(root, "config/.env"));
       NodeFS.symlinkSync("README.md", NodePath.join(root, "link.md"));
 
       const selection = yield* selectWorkFiles(root);
       expect(selection.head).toBe(head);
       expect(selection.files.map((file) => file.path)).toEqual([
+        ".env.local",
+        "certs/server.pem",
         "notes/new.md",
         "src/app.ts",
         "src/staged.ts",
       ]);
-      expect(selection.deletions).toEqual(["src/old.ts"]);
-      expect(selection.leftBehind).toEqual([".env.local", "certs/server.pem", "config/.env"]);
-      expect(selection.totalBytes).toBe(3 + 3 + 6);
+      expect(selection.deletions).toEqual(["config/.env", "src/old.ts"]);
+      expect(selection.totalBytes).toBe(7 + 3 + 3 + 3 + 6);
       expect(selection.refusal).toBeNull();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("a folder outside git carries every file but dependencies, build output and secrets", () =>
+it.live("a folder outside git carries every file but dependencies and build output", () =>
   Effect.gen(function* () {
     const root = yield* tempDir;
     write(root, "index.html", "<p>");
@@ -145,9 +145,13 @@ it.live("a folder outside git carries every file but dependencies, build output 
 
     const selection = yield* selectWorkFiles(root);
     expect(selection.head).toBeNull();
-    expect(selection.files.map((file) => file.path)).toEqual(["index.html", "src/main.js"]);
+    expect(selection.files.map((file) => file.path)).toEqual([
+      "deploy/.netrc",
+      "id_rsa",
+      "index.html",
+      "src/main.js",
+    ]);
     expect(selection.deletions).toEqual([]);
-    expect(selection.leftBehind).toEqual(["deploy/.netrc", "id_rsa"]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -168,17 +172,6 @@ it.live("refuses a set over either limit with its numbers", () =>
     expect((yield* selectWorkFiles(many)).refusal).toMatch(
       /^The work files are more than 5,000 files and 0\.0 MiB; the limit is 5,000 files/,
     );
-
-    // Secrets stay behind and do not count, so they cannot push later files out of the walk.
-    const secrets = yield* tempDir;
-    for (let folder = 0; folder < 10; folder++) {
-      for (let index = 0; index < 400; index++) write(secrets, `d${folder}/${index}`, "");
-      for (let index = 0; index < 200; index++) write(secrets, `d${folder}/${index}.pem`, "");
-    }
-    const underLimit = yield* selectWorkFiles(secrets);
-    expect(underLimit.refusal).toBeNull();
-    expect(underLimit.files).toHaveLength(4_000);
-    expect(underLimit.leftBehind).toHaveLength(2_000);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -490,7 +483,7 @@ it.live("an apply interrupted while it copies finishes the copy before it ends",
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("refuses deletions from a folder outside git, and secret names from any sender", () =>
+it.live("refuses deletions from a folder outside git, and applies a secret file's deletion", () =>
   Effect.gen(function* () {
     const target = yield* tempDir;
     const scratch = yield* tempDir;
@@ -518,15 +511,15 @@ it.live("refuses deletions from a folder outside git, and secret names from any 
       "a.ts": "a",
       "config/.env": "TOKEN=0",
     });
-    const secret = yield* applyWorkFiles({
+    const applied = yield* applyWorkFiles({
       ...input,
       stagingDir,
       root: checkout,
       head: git(source, "rev-parse", "HEAD"),
       deletions: ["config/.env"],
-    }).pipe(Effect.flip);
-    expect(secret.reason).toBe("invalid_archive");
-    expect(NodeFS.existsSync(NodePath.join(checkout, "config/.env"))).toBe(true);
+    });
+    expect(applied).toEqual({ files: 1, deletions: 1 });
+    expect(NodeFS.existsSync(NodePath.join(checkout, "config/.env"))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

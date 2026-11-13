@@ -61,11 +61,7 @@ function workFilesDescription(summary: WorkFilesSummary): string {
     summary.deletionCount === 0
       ? ""
       : ` and ${summary.deletionCount.toLocaleString()} ${summary.deletionCount === 1 ? "deletion" : "deletions"}`;
-  const secrets =
-    summary.leftBehindCount === 0
-      ? "Files that look like secrets stay on this machine."
-      : `${summary.leftBehindCount.toLocaleString()} ${summary.leftBehindCount === 1 ? "file that looks" : "files that look"} like secrets ${summary.leftBehindCount === 1 ? "stays" : "stay"} on this machine.`;
-  return `${files}${deletions} (${formatBytes(summary.totalBytes)}) from ${summary.directory}. ${secrets}`;
+  return `${files}${deletions} (${formatBytes(summary.totalBytes)}) from ${summary.directory}. Every uncommitted and untracked file goes, secrets included. Git-ignored files stay on this machine.`;
 }
 
 function ContinueOnMachineDialog({

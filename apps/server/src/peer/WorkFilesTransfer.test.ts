@@ -161,16 +161,15 @@ it.live("sends a checkout's work to the same commit on the box, leaving no archi
     const { peer, receiveDir } = yield* serveBox(target);
     write(source, "app.ts", "v2");
     write(source, "src/new.ts", "new");
-    write(source, ".env", "SECRET=1");
+    write(source, ".env.local", "TOKEN=1");
     NodeFS.rmSync(NodePath.join(source, "old.ts"));
 
     const send = yield* laptopSending(peer, source, "auto");
-    expect(yield* send).toEqual({ files: 2, deletions: 1 });
+    expect(yield* send).toEqual({ files: 3, deletions: 1 });
     expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v2");
     expect(NodeFS.readFileSync(NodePath.join(target, "src/new.ts"), "utf8")).toBe("new");
     expect(NodeFS.existsSync(NodePath.join(target, "old.ts"))).toBe(false);
-    // The secret stayed here.
-    expect(NodeFS.existsSync(NodePath.join(target, ".env"))).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(target, ".env.local"), "utf8")).toBe("TOKEN=1");
     expect(leftovers(receiveDir)).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );

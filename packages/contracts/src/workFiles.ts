@@ -12,8 +12,6 @@ export const WorkFilesSummary = Schema.Struct({
   fileCount: Schema.Int,
   totalBytes: Schema.Int,
   deletionCount: Schema.Int,
-  /** Files that look like secrets, which stay on this machine. */
-  leftBehindCount: Schema.Int,
   /** Why the files cannot go, with the numbers; null when they can. */
   refusal: Schema.NullOr(Schema.String),
 });

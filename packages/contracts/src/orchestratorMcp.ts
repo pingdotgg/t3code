@@ -198,7 +198,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   workFiles: Schema.optional(
     WorkFilesMode.annotate({
       description:
-        "Remote target only. 'transfer': first copy your uncommitted files (not secrets) to that checkout, which must be on your commit.",
+        "Remote target only. 'transfer': first copy your uncommitted files to that checkout, which must be on your commit.",
     }),
   ),
 });
