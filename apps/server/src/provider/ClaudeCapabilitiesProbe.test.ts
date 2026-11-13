@@ -42,8 +42,14 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
       { skills: [], slashCommands: [] } as unknown as ServerProvider,
       "/nonexistent/t3-deleted-worktree",
       { HOME: "/nonexistent/t3-home" },
+      [{ name: "handoffs" }, { name: "Compact", description: "duplicate of the built-in" }],
     );
     assert.strictEqual(snapshot.slashCommandsPending, false);
+    // The hookless probe cannot list what a session's hooks registered, so a live session does.
+    assert.deepEqual(
+      snapshot.slashCommands.map((command) => command.name),
+      ["compact", "handoffs"],
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

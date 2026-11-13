@@ -344,7 +344,7 @@ function parseClaudeEffortCapSources(
   return sources.length > 0 ? sources : undefined;
 }
 
-function parseClaudeInitializationCommands(
+export function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   return dedupeSlashCommands(
@@ -588,6 +588,8 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   machineSnapshot: ServerProvider,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  /** The probe runs without hooks, so a live session in `cwd` supplies what its hooks registered. */
+  sessionSlashCommands: ReadonlyArray<ServerProviderSlashCommand> = [],
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
@@ -605,6 +607,7 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
       ...(capabilities?.slashCommands ?? []),
+      ...sessionSlashCommands,
     ]),
     slashCommandsPending: cwdExists && !capabilities,
   };

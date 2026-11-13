@@ -1098,6 +1098,105 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+// regression: #17418 hookless capability probes never list commands a SessionStart hook registers
+it.effect("reports a live session's slash commands for its folder", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-commands-cwd-" });
+    const reported = yield* Deferred.make<{
+      readonly cwd: string;
+      readonly names: ReadonlyArray<string>;
+    }>();
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment: {},
+      attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-commands-" }),
+      fileSystem,
+      path: yield* Path.Path,
+      random: yield* SecureRandom.SecureRandom,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      onSessionSlashCommands: (commandCwd, commands) =>
+        Deferred.succeed(reported, {
+          cwd: commandCwd,
+          names: commands.map((command) => command.name),
+        }).pipe(Effect.asVoid),
+      queryRunner: {
+        allocateSessionId: Effect.succeed("native-thread-claude-commands"),
+        open: () =>
+          Effect.succeed({
+            messages: Stream.concat(
+              Stream.make({
+                type: "system",
+                subtype: "init",
+                uuid: "00000000-0000-4000-8000-000000017418",
+                session_id: "native-thread-claude-commands",
+              } as unknown as SDKMessage),
+              Stream.never,
+            ),
+            offer: () => Effect.void,
+            setModel: () => Effect.void,
+            applyFlagSettings: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            backgroundTasks: () => Effect.succeed(false),
+            mcpServerStatus: Effect.succeed([]),
+            readMcpResource: () => Effect.die("unexpected MCP resource read"),
+            callMcpTool: () => Effect.die("unexpected MCP tool call"),
+            listPermissionRules: Effect.die("unexpected permission rules read"),
+            supportedCommands: Effect.succeed([
+              { name: "handoffs", description: "Show handoffs", argumentHint: "" },
+            ]),
+            stopTask: () => Effect.void,
+            interrupt: Effect.void,
+            close: Effect.void,
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd,
+    });
+    const threadId = ThreadId.make("thread-claude-commands");
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-claude-commands"),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    yield* runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-commands"),
+        text: "hello",
+        attachments: [],
+        runtimePolicy,
+      }),
+    );
+    assert.deepEqual(yield* Deferred.await(reported), { cwd, names: ["handoffs"] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
+  ),
+);
+
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
   const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
     const fileSystem = yield* FileSystem.FileSystem;
