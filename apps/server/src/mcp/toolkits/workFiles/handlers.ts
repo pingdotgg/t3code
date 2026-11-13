@@ -18,7 +18,13 @@ export const layer = McpToolAccess.toLayer(WorkFilesToolkit, {
             message: "Only a linked environment can send work files here.",
           });
         }
-        const refusal = WorkFilesTransfer.receiveAccessRefusal(scope.client.access);
+        // A request the link narrowed (`T3-Mode-Limit`) is held to its narrower mode.
+        const narrowed = McpInvocationContext.clientModeCeiling(scope.client).runtimeMode;
+        const refusal =
+          WorkFilesTransfer.receiveAccessRefusal(scope.client.access) ??
+          (WorkFilesTransfer.receiveAccessRefusal(narrowed) === null
+            ? null
+            : `The thread sending these files runs in ${narrowed} mode, which cannot change files here; sending work files needs auto-accept-edits or broader.`);
         if (refusal !== null) {
           return yield* new OrchestratorMcpFailure({ code: "capability_denied", message: refusal });
         }

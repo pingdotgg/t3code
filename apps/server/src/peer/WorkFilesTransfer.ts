@@ -163,7 +163,8 @@ const writeCapped = (body: Stream.Stream<Uint8Array, Error>, path: string, maxBy
           }),
           Stream.runForEach((chunk) =>
             Effect.tryPromise({
-              try: () => file.write(chunk),
+              // `write` may store only part of a chunk; `writeFile` loops until all of it is.
+              try: () => file.writeFile(chunk),
               catch: () => receiveFailed("Could not store the archive here."),
             }),
           ),

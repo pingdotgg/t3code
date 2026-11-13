@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type AuthMcpClientAccess,
   ProjectId,
+  type RuntimeMode,
   WorkFilesReceiveInput,
   WorkFilesReceiveResult,
 } from "@t3tools/contracts";
@@ -124,6 +125,7 @@ const laptopSending = (
   peer: Effect.Success<ReturnType<typeof serveBox>>["peer"],
   source: string,
   access: AuthMcpClientAccess,
+  runtimeMode: RuntimeMode = "full-access",
 ) =>
   Effect.gen(function* () {
     const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
@@ -145,7 +147,7 @@ const laptopSending = (
           environmentId: box.environmentId,
           tool: "t3_work_files_receive",
           arguments: encodeReceiveInput(request) as Record<string, unknown>,
-          limits: { runtimeMode: "full-access", interactionMode: "default" },
+          limits: { runtimeMode, interactionMode: "default" },
           success: WorkFilesReceiveResult,
         }),
     });
@@ -226,20 +228,23 @@ it.live("refuses before sending anything when the box is on another commit", () 
   }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.live.each(["read-only", "approval-required"] as const)(
-  "refuses files from a link with %s access",
-  (access) =>
-    Effect.gen(function* () {
-      const { source, target } = yield* checkouts;
-      const { peer } = yield* serveBox(target);
-      write(source, "app.ts", "v2");
+it.live.each([
+  ["read-only", "full-access", "read-only"],
+  ["approval-required", "full-access", "approval-required"],
+  // An auto link calling for a thread that runs in approval-required mode.
+  ["auto", "approval-required", "approval-required mode"],
+] as const)("refuses files from a link with %s access for a %s thread", ([access, mode, named]) =>
+  Effect.gen(function* () {
+    const { source, target } = yield* checkouts;
+    const { peer } = yield* serveBox(target);
+    write(source, "app.ts", "v2");
 
-      const send = yield* laptopSending(peer, source, access);
-      const refused = yield* send.pipe(Effect.flip);
-      expect(refused.code).toBe("capability_denied");
-      if (access !== "read-only") expect(refused.message).toContain(access);
-      expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v1");
-    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+    const send = yield* laptopSending(peer, source, access, mode);
+    const refused = yield* send.pipe(Effect.flip);
+    expect(refused.code).toBe("capability_denied");
+    if (access !== "read-only") expect(refused.message).toContain(named);
+    expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v1");
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live("the upload route takes nothing without a link session and its own token", () =>
