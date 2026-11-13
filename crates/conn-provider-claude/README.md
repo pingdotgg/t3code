@@ -1,65 +1,70 @@
 # conn-provider-claude
 
-The Claude provider for the Conn Server. It drives the `claude` CLI over its stdio stream-JSON
-protocol and implements `Provider` and `Session` from `conn-provider`. Reference behaviour:
-`ClaudeAdapterV2.ts` in the Conn monorepo at the pinned contract commit.
+The Claude provider for the Conn Server. It runs Claude through Anthropic's official Agent SDK
+(`@anthropic-ai/claude-agent-sdk` 0.3.321, as the T3 server) in the SDK host, a small Node
+program (`helpers/sdk-host`, driver `claude`), and implements `Provider` and `Session` from `conn-provider`. The SDK
+starts the `claude` CLI and speaks its protocol; this crate builds the same `query()` options
+the T3 server builds and maps the SDK's messages to events. Reference: `ClaudeAdapterV2.ts`
+in the Conn monorepo at the pinned commit.
 
 ## Layout
 
-| Module             | Holds                                                                                 |
-| ------------------ | ------------------------------------------------------------------------------------- |
-| `protocol`         | Typed CLI messages; unknown kinds and changed shapes fall back to raw JSON            |
-| `launch`           | Executable, argv, environment, `initialize`, runtime mode → permission mode           |
-| `mapper`           | Pure state machine: CLI messages → `ProviderEvent`s and CLI replies                   |
-| `mapper/subagents` | Subagent rows and their child threads                                                 |
-| `mapper/notices`   | Todo lists, API retries, usage limits, failure classes                                |
-| `attachments`      | Image blocks and attachment paths in a user message                                   |
-| `session`          | `Session`: lazy start, control requests, a driver and an idle watcher per process     |
-| `ids`              | Re-export of `conn-provider-support::ids`; `DRIVER` (`claudeAgent`) lives in `lib.rs` |
+| Module             | Holds                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| `helper`           | The shared SDK host process: start on first query, stop after the last, a router per process |
+| `launch`           | The `query()` option object, its environment, the runtime policy → permission mode       |
+| `catalog`          | `compileClaudeModelSelection` over T3's bundled catalog (`model_catalog.json`, generated) |
+| `ordered`          | JSON with T3's key order for what the SDK writes to the CLI verbatim                    |
+| `protocol`         | Typed SDK messages; unknown kinds and changed shapes fall back to raw JSON              |
+| `mapper`           | Pure state machine: SDK messages → `ProviderEvent`s and callback answers                |
+| `mapper/subagents` | Subagent rows and their child threads                                                   |
+| `mapper/notices`   | Todo lists, API retries, usage limits, failure classes                                  |
+| `attachments`      | Image blocks and attachment paths in a user message                                     |
+| `session`          | `Session`: lazy query, SDK calls, a driver and an idle watcher per query                |
 
-The child process (bounded line reader, stdin writer, stderr tail, reaping, group kill), id
-formats and the clock come from `conn-provider-support`, shared with the Codex provider. A
-`session` driver decodes each stdout line with `Inbound::decode`.
-
-No crate replaces `protocol`. The closest, `claude-codes` 2.1.323 (tracks CLI 2.1.322), is about
-23k lines, pulls in `chrono` and `uuid`, breaks with nearly every CLI release, and lacks typed
-`initialize` fields, `set_model`, `set_permission_mode`, `mcp_set_servers`, `mcp_status`,
-`stop_task`, `elicitation` and `request_user_dialog`. The other Rust SDKs need `futures`,
-`async-trait` or a multi-thread runtime. Checked on crates.io and GitHub on 2026-11-13.
+The SDK yields the CLI's own stream messages, so the mapper is unchanged from the CLI days:
+SDK callbacks (`canUseTool`, `onElicitation`, `onUserDialog`) become the control requests it
+reads, and its replies become the callback results (`session::callback_request`,
+`callback_answer`). The eight replays still pass.
 
 ## Launch policy
 
-- **Executable:** `ClaudeConfig.binary`, default `claude` on PATH.
-- **Setting sources:** `ClaudeConfig.setting_sources`. `None` (the default) passes no flag, so
-  the CLI loads user, project and local settings, hooks and MCP helpers, as under T3.
-  `Some(vec![])` loads none: use it in containers, where auth comes from the environment.
-- **Environment:** inherit the host environment, then:
-  - remove a parent Claude session's variables (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, ...),
-    plus `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `DEBUG`
-  - set `CLAUDE_CODE_ENTRYPOINT=t3-code`, `CLAUDE_CONFIG_DIR` when `home_path` is set, the
-    instance's own env, `MCP_CONNECTION_NONBLOCKING=0` on resume, `T3CODE_THREAD_ID`, and the
-    SDK's `CLAUDE_AGENT_SDK_VERSION` and `CLAUDE_CODE_SDK_READS_SESSION_STATE=1`
-- **argv:** the SDK's order and `--flag=value` form, plus:
-  - `--resume=<id>` or `--session-id=<id>`; `--resume-session-at=<uuid>` after a rollback;
-    `--resume=<source> --fork-session --session-id=<new>` for a fork's first turn
-  - `--allowedTools=mcp__t3-code__*` when the session has a `t3-code` MCP server
-- **`initialize`:** `appendSystemPrompt` (T3's runtime instructions, plus
-  `ClaudeConfig.mcp_instructions` with a `t3-code` server), `title`, `promptSuggestions: false`,
-  `supportedDialogKinds: ["resume_return"]`.
-- **MCP servers:** `Session::set_mcp_servers` (name, URL, headers). Sent after `initialize` as
-  `mcp_set_servers`, as the TS query runner does, so credentials stay out of argv. A server
-  that fails to connect is logged by name only. A list change on a live process is sent at
-  once; gaining or losing `t3-code` needs a new process (`--allowedTools`).
-- **Model and effort:** a model change is `set_model`; an effort change is
-  `apply_flag_settings {effortLevel}`; clearing an effort or changing bypass needs a new
-  process. Permission mode changes are `set_permission_mode`.
+Everything below is what `makeClaudeQueryOptions`, `createClaudeAdapterV2` and the query runner
+pass; the SDK turns it into argv, environment and `initialize`. `tools/conformance` proves the
+result equal, byte for byte.
+
+- **Helper:** `ClaudeConfig.helper`; the server sets it from `--sdk-host`, else
+  `$CONN_SDK_HOST`, else `conn-sdk-host` beside the binary, else this checkout's
+  `helpers/sdk-host/index.mjs` under `node`. A missing helper is a provider error in the turn.
+- **Executable:** `ClaudeConfig.binary` as `pathToClaudeCodeExecutable` (default `claude`).
+  The helper spawns it like T3: `/bin/sh` watchdog with argv0 `t3-claude`, its own process
+  group, an fd 3 pipe whose EOF stops the group, and the descendant tracker.
+- **Options:** model, effort and settings from the catalog; `title`; tools preset;
+  `permissionMode` (+ `allowDangerouslySkipPermissions` for bypass); `includePartialMessages`;
+  `promptSuggestions: false`; `sessionId` or `resume` (+ `resumeSessionAt`); `allowedTools`
+  with `mcp__t3-code__*` when the session has `t3-code`; adaptive thinking with summaries;
+  `settings`; `supportedDialogKinds: ["resume_return"]`; `env`; the `claude_code` system prompt
+  preset with T3's append text (runtime info, pull request linking, and with `t3-code` the
+  orchestration and background-wait text); `extraArgs {"thinking-display": "summarized"}`;
+  `additionalDirectories` (cwd, attachments); `cwd`.
+- **Environment:** the host environment, `CLAUDE_CODE_ENTRYPOINT=t3-code` (or the user's or
+  managed settings' `env.CLAUDE_CODE_ENTRYPOINT`), the parent Claude session's variables and
+  `ELECTRON_RUN_AS_NODE` removed, the instance's own env, `CLAUDE_CONFIG_DIR` for `homePath`,
+  `MCP_CONNECTION_NONBLOCKING=0` on resume, `T3CODE_THREAD_ID`. The SDK adds its own.
+- **Bypass downgrade:** when bypass is asked, the SDK's `resolveSettings` plus the home's and
+  remote settings decide; settings that forbid bypass give `auto` (or `default`), as T3.
+- **MCP servers:** `setMcpServers` after `initializationResult`, as the query runner does.
+- **Live changes:** model by `setModel` (only when the CLI opened in the policy's mode) then
+  `applyFlagSettings`; permission mode by `setPermissionMode`; anything else a new query.
+- **Fork:** the SDK's `forkSession` at fork time; the fork's first turn resumes it.
+- **Prompts:** trimmed, `Ultrathink:` for the ultrathink effort, as T3.
 
 ## Idle children
 
 T3's session manager releases an idle provider session after 30 minutes
 (`DEFAULT_IDLE_TIMEOUT_MS`), unless background work holds it (up to 4 hours,
-`DEFAULT_MAX_IDLE_PIN_MS`); the next turn resumes with `--resume`. Here the session keeps its
-state and only the child ends: `ClaudeConfig.idle_timeout` (default 30 minutes) and
+`DEFAULT_MAX_IDLE_PIN_MS`); the next turn resumes. Here the session keeps its state and only
+the query ends (and the helper, when it was the last): `ClaudeConfig.idle_timeout` (default 30 minutes) and
 `idle_max_hold` (default 4 hours). A running subagent or output held for a continuation
 counts as background work (`Session::has_pending_background_work`).
 
@@ -121,40 +126,32 @@ Normalized in the comparison:
 - **Continuation timing:** TS asks for the continuation turn when the background task's
   notification arrives; this provider asks when Claude starts writing. The events match.
 - **Subagents:** no workflow subagents (`local_workflow`), no recovery of running subagents
-  after a restart (`getSubagentMessages`), model slugs not canonicalized through a catalog,
-  `stopSubagent` not offered.
+  after a restart (`getSubagentMessages` is offered by the helper but not used), `stopSubagent`
+  and `stop_task` / `background_tasks` not sent.
 - **Task list:** starts from the task tools it sees; TS first reads the list Claude saved on
   disk.
-- **Attachments:** PDFs stay path-only (TS embeds one only when its strict page scanner
-  succeeds). No captured-window context for snap-shot images. The 28 MiB inline budget lives in
-  memory and starts over after a restart.
-- **Context window:** a small table of the current models, from T3's bundled
-  `model-manifest.json`, then the CLI's reported window. No downloaded catalog.
-- **Models:** the provider entry uses a static model list.
+- **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB
+  inline budget lives in memory and starts over after a restart.
+- **Read-only sandbox and `dontAsk`:** implemented in `launch::query_policy`, but the provider
+  trait carries no `approvalPolicy` or `sandboxPolicy`, so they never apply.
+- **Not passed:** `launchArgs` and their `--settings`/append-file text, `autoCompactWindow`,
+  `ENABLE_TOOL_SEARCH`, the delegated child's prompt cache TTL, prompt suggestions, the
+  device-tool text and hook (no device tools), custom models.
+- **Process:** no Linux `systemd-run` agent scope (T3's `AgentScope`; macOS and containers
+  without systemd have none either).
 - **Interrupt** returns when the CLI acknowledges; TS waits for the terminal.
 - **Elicitation:** only field-less forms; TS fills simple forms.
-- **Bypass downgrade** when settings forbid bypass is not done (needs `resolveSettings`).
-- **Process cleanup:** the CLI runs in its own process group, killed after the CLI exits.
 - **No `/mcp` instructions text** in this crate: the server passes it as `mcp_instructions`.
 
 ## History operations
 
 | Operation          | Here                                                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| rollback to a turn | `nativeConversationHeadRef` = the turn's assistant uuid; the next launch adds `--resume-session-at`; cleared after a turn runs past it |
+| rollback to a turn | `nativeConversationHeadRef` = the turn's assistant uuid; the next query passes `resumeSessionAt`; cleared after a turn runs past it  |
 | rollback to start  | a new native session id; the old transcript stays on disk (as TS)                                                                      |
-| fork               | lazy: the new thread records source and cut point; its first launch uses `--fork-session`                                              |
+| fork               | the SDK's `forkSession` (up to the fork turn); the new thread resumes the copy                                                         |
 | thread snapshot    | unsupported, as in TS                                                                                                                  |
 | history injection  | unsupported, as in TS                                                                                                                  |
-
-The SDK's disk helpers, decided one by one:
-
-| Helper                | Decision                                                                                                                                              |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `forkSession`         | CLI flags (`--resume --fork-session --resume-session-at`): the CLI makes the copy; no file format to track                                            |
-| `getSessionMessages`  | not needed: the fork's head is the cut point we pass, not a remapped uuid read back from disk                                                         |
-| `getSubagentMessages` | not done: only resume recovery of running subagents and forked-skill models use it; reading Claude's transcript files ties us to their private format |
-| `resolveSettings`     | not done: only the bypass downgrade and a delegated child's cache TTL use it; T3's settings merge would have to be re-implemented                     |
 
 ## Memory (macOS arm64, CLI 2.1.322, Haiku)
 
@@ -172,15 +169,23 @@ after turn 1, 4.9 MiB after turn 12, the same after the child closed and the ses
 A test replays 200 rounds of subagent, steer and permission recordings into one mapper and
 checks that every per-session collection keeps its size.
 
+These child-tree figures are from the CLI-only provider before the SDK helper; the CLI's own
+memory does not depend on who starts it. The helper adds one process for all sessions while
+any query is open: 43 to 44 MB footprint (88 MiB RSS), flat over 10 turns, and none once the
+last query closed (`helpers/sdk-host/README.md`). The host process stayed at 4.6 MiB RSS /
+2.8 MB footprint after 10 turns through the helper.
+
 ## Tests
 
 ```sh
-cargo test -p conn-provider-claude                          # offline: recordings, process, launch
-cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1   # real CLI, Haiku
-cargo run --release -p conn-provider-claude --example rss   # memory
+cargo test -p conn-provider-claude                                        # offline
+cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1    # real CLI, Haiku
+tools/conformance/run.sh                                                  # vs the T3 server, no model
+tools/gen-catalog/run.sh                                                  # regenerate model_catalog.json
+cargo run --release -p conn-provider-claude --example helper_memory -- <claude> <cwd> 10
 ```
 
-The live tests cover one turn, a permission round trip, interrupt, resume in a new session,
-steer, idle close then resume, an MCP tool call through a tiny in-test HTTP MCP server, fork
-and rollback. They run in an empty temporary folder and delete it and its session folder
-under `~/.claude/projects`.
+The live tests (11, about 20 Haiku turns) cover one turn, a permission round trip, interrupt,
+resume in a new session, steer, idle close then resume (the helper stops), an MCP tool call,
+fork, rollback, a foreground subagent running Bash, and an image. They need `npm ci` in
+`helpers/sdk-host`.

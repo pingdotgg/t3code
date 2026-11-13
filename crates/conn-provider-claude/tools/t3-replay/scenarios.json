@@ -1,0 +1,23 @@
+{
+  "note": "The T3 server's Claude transcripts (testkit/fixtures/<name>/claude_transcript.ndjson) and the steps of their input.ts that the Conn Server can drive. Prompt texts come from the transcript's prompt.offer frames. Steps: message; interrupt (optional waitForTurnItemType); approve (decision, default accept).",
+  "scenarios": {
+    "simple": ["message"],
+    "multi_turn": ["message", "message"],
+    "command_output_streaming": ["message"],
+    "subagent": ["message"],
+    "claude_local_bash_task": ["message"],
+    "claude_mcp_tool_presentation": ["message"],
+    "claude_nested_subagent_model": ["message"],
+    "claude_result_is_error": ["message", "message"],
+    "web_search": ["message"],
+    "tool_call_workspace_never": ["message"],
+    "tool_call_read_only": ["message"],
+    "tool_call_denied_write": ["message", {"approve": "decline"}],
+    "tool_call_read_only_on_request": ["message", {"approve": "accept"}],
+    "tool_call_restricted_granular": ["message", {"approve": "accept"}],
+    "turn_interrupt": ["message", {"interrupt": null}],
+    "turn_interrupt_mid_tool": ["message", {"interrupt": "command_execution"}],
+    "turn_interrupt_restart": ["message", {"interrupt": "command_execution"}, "message"],
+    "claude_background_task_interrupt": ["message", {"interrupt": "command_execution"}]
+  }
+}

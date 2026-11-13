@@ -1,6 +1,6 @@
 [package]
 name = "conn-provider-claude"
-description = "The Claude provider: drives the claude CLI over stdio."
+description = "The Claude provider: runs Claude through the Agent SDK in a Node helper."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,6 +18,8 @@ tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "r
 [dev-dependencies]
 # The live MCP test serves a tiny HTTP MCP server.
 tokio = { workspace = true, features = ["net"] }
+# The conformance example sends the server's own MCP instructions text.
+conn-mcp = { path = "../conn-mcp" }
 
 [lints]
 workspace = true

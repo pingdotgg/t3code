@@ -119,7 +119,17 @@ pub fn prompt_content(
         if kind != "image" || !SUPPORTED_IMAGES.contains(&mime.as_str()) {
             continue;
         }
-        let Some(bytes) = path.and_then(|p| std::fs::read(p).ok()) else {
+        let Some(path) = path else {
+            continue;
+        };
+        // The budget is checked on the file size, before the file is read.
+        let Ok(size) = std::fs::metadata(&path).map(|m| m.len()) else {
+            continue;
+        };
+        if *budget_used + 4 * size.div_ceil(3) + 128 > BUDGET_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
         let cost = 4 * (bytes.len() as u64).div_ceil(3) + 128;

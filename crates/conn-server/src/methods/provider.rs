@@ -82,13 +82,7 @@ fn open_with(state: Value) -> mpsc::Receiver<Result<Value, Failure>> {
 pub fn server_providers(deps: &Deps, checked_at: &str) -> Vec<Value> {
     deps.providers
         .iter()
-        .filter(|p| p.driver() == conn_provider_claude::DRIVER)
-        .map(|p| conn_provider_claude::server_provider_entry(p.instance_id().as_str(), checked_at))
-        .chain(
-            deps.providers
-                .iter()
-                .filter_map(|p| p.server_provider_entry(checked_at)),
-        )
+        .filter_map(|p| p.server_provider_entry(checked_at))
         .collect()
 }
 

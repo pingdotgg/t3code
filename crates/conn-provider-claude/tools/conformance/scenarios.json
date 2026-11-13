@@ -1,0 +1,167 @@
+{
+  "note": "Inputs for the conformance check. Each scenario runs through the T3 server's ClaudeAdapterV2 and through conn-provider-claude, both against stub-claude. `scripts` are the transcripts (testdata/cli) the stub replays, one per CLI start. Steps: turn (text, optional image, answers to permission prompts in order, interrupt after the first output), reopen (a new provider session on the same thread: the next start resumes), fork (fork the thread after its last turn; later turns run on the fork), model (the turn's model). model_change_live runs where the CLI's init reports the policy's mode, so the model changes live; model_change_restart runs where it does not, so T3 opens a new CLI. claudeSettings is written to $CLAUDE_CONFIG_DIR/settings.json for that scenario only.",
+  "model": "claude-haiku-5-5",
+  "scenarios": [
+    {
+      "name": "fresh_turn",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ]
+    },
+    {
+      "name": "resumed_turn",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e01_turn",
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        },
+        {
+          "reopen": true
+        },
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ]
+    },
+    {
+      "name": "mcp_turn",
+      "runtimeMode": "full-access",
+      "mcp": true,
+      "scripts": [
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ]
+    },
+    {
+      "name": "permission",
+      "runtimeMode": "approval-required",
+      "scripts": [
+        "e06_permissions"
+      ],
+      "steps": [
+        {
+          "turn": "Use the Bash tool twice, one call each, in this order: `touch denied.txt` then `touch allowed.txt`. If a call is denied, do not retry it; go on to the next. Then reply: done",
+          "answers": [
+            "decline",
+            "accept"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "interrupt",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e03_interrupt"
+      ],
+      "steps": [
+        {
+          "turn": "Write the numbers 1 to 400 as words, one per line. No other text.",
+          "interrupt": true
+        },
+        {
+          "turn": "Reply only: alive"
+        }
+      ]
+    },
+    {
+      "name": "model_change_live",
+      "runtimeMode": "approval-required",
+      "scripts": [
+        "e04_set_model"
+      ],
+      "steps": [
+        {
+          "turn": "Reply only: ok"
+        },
+        {
+          "turn": "Reply only: ok",
+          "model": "claude-sonnet-5-5"
+        }
+      ]
+    },
+    {
+      "name": "model_change_restart",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e04_set_model",
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply only: ok"
+        },
+        {
+          "turn": "Reply with exactly: pong",
+          "model": "claude-sonnet-5-5"
+        }
+      ]
+    },
+    {
+      "name": "fork",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e01_turn",
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        },
+        {
+          "fork": true
+        },
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ]
+    },
+    {
+      "name": "image",
+      "runtimeMode": "full-access",
+      "scripts": [
+        "e15_image"
+      ],
+      "steps": [
+        {
+          "turn": "What colour is this image? One word.",
+          "image": true
+        }
+      ]
+    },
+    {
+      "name": "settings_bypass_disabled",
+      "runtimeMode": "full-access",
+      "claudeSettings": {
+        "env": {
+          "CLAUDE_CODE_ENTRYPOINT": "custom-entry"
+        },
+        "permissions": {
+          "disableBypassPermissionsMode": "disable"
+        }
+      },
+      "scripts": [
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ]
+    }
+  ]
+}

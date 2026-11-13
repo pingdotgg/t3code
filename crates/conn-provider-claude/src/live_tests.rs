@@ -104,7 +104,7 @@ fn policy(mode: &str, cwd: &str) -> Value {
 }
 
 fn model() -> Value {
-    json!({"instanceId": "claudeAgent", "model": "haiku"})
+    json!({"instanceId": "claudeAgent", "model": "claude-haiku-5-5"})
 }
 
 async fn open(
@@ -305,9 +305,13 @@ async fn live_interrupt_then_continue() {
     let scratch = Scratch::new("interrupt");
     // The concrete session, to check which process served each turn.
     let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let config = provider().config().clone();
+    let helper = crate::Helper::new(config.helper.clone(), "claudeAgent");
     let session = ClaudeSession::open(
         "provider-session-live".into(),
-        provider().config().clone(),
+        "claudeAgent",
+        config,
+        helper,
         tx,
     );
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
@@ -346,8 +350,8 @@ async fn live_interrupt_then_continue() {
             .clone(),
     )
     .unwrap();
-    let pid = session.live_pid();
-    assert!(pid.is_some());
+    let query = session.live_query();
+    assert!(query.is_some());
     session
         .start_turn(turn(
             2,
@@ -362,9 +366,9 @@ async fn live_interrupt_then_continue() {
     assert_eq!(seen.last().unwrap()["status"], "completed");
     assert!(assistant_text(&seen).to_lowercase().contains("alive"));
     assert_eq!(
-        pid,
-        session.live_pid(),
-        "the same process served both turns"
+        query,
+        session.live_query(),
+        "the same query served both turns"
     );
     session.close().await;
 }
@@ -450,10 +454,18 @@ fn thread_of(events: &[Value]) -> conn_contract::ProviderThread {
     from_json(last_of(events, "provider_thread.updated")["providerThread"].clone()).unwrap()
 }
 
-fn concrete(config: ClaudeConfig) -> (ClaudeSession, mpsc::Receiver<ProviderEvent>) {
+fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiver<ProviderEvent>) {
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let helper = crate::Helper::new(config.helper.clone(), "claudeAgent");
     (
-        ClaudeSession::open("provider-session-live".into(), config, tx),
+        ClaudeSession::open(
+            "provider-session-live".into(),
+            "claudeAgent",
+            config,
+            helper.clone(),
+            tx,
+        ),
+        helper,
         events,
     )
 }
@@ -478,7 +490,7 @@ async fn run_turn(
 #[ignore = "runs the real claude CLI"]
 async fn live_steer_is_taken_into_the_running_turn() {
     let scratch = Scratch::new("steer");
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
         .start_turn(turn(
@@ -535,7 +547,7 @@ async fn live_idle_close_then_resume() {
         idle_timeout: Some(Duration::from_secs(3)),
         ..provider().config().clone()
     };
-    let (session, mut events) = concrete(config);
+    let (session, helper, mut events) = concrete(config);
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     let prompt = format!("Remember the word {word}. Reply only: ok");
     let seen = run_turn(
@@ -544,13 +556,15 @@ async fn live_idle_close_then_resume() {
         turn(1, &thread, &prompt, "full-access", &scratch.cwd()),
     )
     .await;
-    let first = session.live_pid().expect("a live process after the turn");
+    let first = session.live_query().expect("a live query after the turn");
+    let helper_pid = helper.pid().expect("the helper runs during the query");
     // The live test waits on the real idle timer; nothing else can signal it.
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    assert_eq!(session.live_pid(), None, "the idle child was closed");
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    assert_eq!(session.live_query(), None, "the idle query was closed");
+    assert_eq!(helper.pid(), None, "the idle helper stopped");
     assert!(
-        !conn_provider_support::process::pid_alive(first),
-        "the idle child exited"
+        !conn_provider_support::process::pid_alive(helper_pid),
+        "the helper exited"
     );
     let seen = run_turn(
         &session,
@@ -565,7 +579,7 @@ async fn live_idle_close_then_resume() {
     )
     .await;
     assert!(assistant_text(&seen).to_lowercase().contains(&word));
-    assert_ne!(session.live_pid(), Some(first), "a new process resumed it");
+    assert_ne!(session.live_query(), Some(first), "a new query resumed it");
     session.close().await;
 }
 
@@ -697,7 +711,7 @@ mod mcp {
 async fn live_mcp_server_tool_call() {
     let scratch = Scratch::new("mcp");
     let server = mcp::start().await;
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     session
         .set_mcp_servers(vec![McpServer {
             name: "probe".into(),
@@ -784,7 +798,7 @@ const ASK_WORDS: &str = "List every secret word I told you in this conversation,
 #[ignore = "runs the real claude CLI"]
 async fn live_fork_from_a_turn() {
     let scratch = Scratch::new("fork");
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     let (a, b, source, turns) = two_words(&session, &mut events, &scratch.cwd()).await;
     let forked = session
         .fork_thread(ForkThreadInput {
@@ -821,7 +835,7 @@ async fn live_fork_from_a_turn() {
 #[ignore = "runs the real claude CLI"]
 async fn live_rollback_to_a_turn() {
     let scratch = Scratch::new("rollback");
-    let (session, mut events) = concrete(provider().config().clone());
+    let (session, _helper, mut events) = concrete(provider().config().clone());
     let (a, b, thread, turns) = two_words(&session, &mut events, &scratch.cwd()).await;
     let snapshot = session
         .rollback_thread(RollbackThreadInput {
@@ -857,4 +871,142 @@ async fn live_rollback_to_a_turn() {
     // The head is cleared once a turn ran past it, so a later relaunch does not rewind again.
     assert!(to_json(&thread_of(&seen))["nativeConversationHeadRef"].is_null());
     session.close().await;
+}
+
+/// A subagent that runs Bash under Full access. Prints every approval Claude forwards, to see
+/// whether a subagent's tool call reaches `canUseTool` under bypass (answered with accept).
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_subagent_runs_bash() {
+    let scratch = Scratch::new("subagent");
+    let (session, _helper, mut events) = concrete(provider().config().clone());
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    session
+        .start_turn(turn(
+            1,
+            &thread,
+            "Use the Agent tool once, in the foreground (run_in_background false), to start a general-purpose subagent. Tell it to run the Bash command `echo subagent-ok` and report the output. Wait for its result, then reply with that output only.",
+            "full-access",
+            &scratch.cwd(),
+        ))
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    loop {
+        let batch = until(&mut events, |e| {
+            is_terminal(e)
+                || (e["type"] == "runtime_request.updated"
+                    && e["runtimeRequest"]["status"] == "pending")
+        })
+        .await;
+        let last = batch.last().unwrap().clone();
+        seen.extend(batch);
+        if is_terminal(&last) {
+            break;
+        }
+        eprintln!(
+            "approval forwarded under full access: {}",
+            last["runtimeRequest"]
+        );
+        session
+            .respond_to_runtime_request(RuntimeRequestResponse {
+                request_id: last["runtimeRequest"]["id"].as_str().unwrap().into(),
+                decision: Some(from_json(json!("accept")).unwrap()),
+                feedback: None,
+                answers: None,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(seen.last().unwrap()["status"], "completed");
+    assert!(
+        seen.iter().any(|e| e["type"] == "subagent.updated"),
+        "a subagent ran"
+    );
+    let bash_rows: Vec<&Value> = seen
+        .iter()
+        .filter(|e| {
+            e["type"] == "turn_item.updated" && e["turnItem"]["type"] == "command_execution"
+        })
+        .collect();
+    eprintln!(
+        "command rows: {}",
+        bash_rows
+            .iter()
+            .map(|e| format!("{} {}", e["turnItem"]["status"], e["turnItem"]["threadId"]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let text = assistant_text(&seen).to_lowercase();
+    eprintln!("subagent answer: {text}");
+    assert!(text.contains("subagent-ok"));
+    session.close().await;
+}
+
+/// An image attachment, read from the attachments directory as T3 stores it.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "runs the real claude CLI"]
+async fn live_image_turn() {
+    let scratch = Scratch::new("image");
+    let attachments = scratch.0.join("attachments");
+    std::fs::create_dir_all(&attachments).unwrap();
+    let png = crate::testdata::cli("e15_image")
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find_map(|r| {
+            r["msg"]["message"]["content"]
+                .as_array()?
+                .iter()
+                .find(|b| b["type"] == "image")
+                .and_then(|b| b["source"]["data"].as_str().map(str::to_string))
+        })
+        .unwrap();
+    let bytes = base64_decode(&png);
+    std::fs::write(attachments.join("attach-1.png"), &bytes).unwrap();
+    let config = ClaudeConfig {
+        attachments_dir: Some(attachments),
+        ..provider().config().clone()
+    };
+    let (session, _helper, mut events) = concrete(config);
+    let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
+    let mut input = turn(
+        1,
+        &thread,
+        "What colour is this image? One word.",
+        "full-access",
+        &scratch.cwd(),
+    );
+    input.message.attachments = vec![
+        from_json(json!({"type": "image", "id": "attach-1", "name": "red.png",
+            "mimeType": "image/png", "sizeBytes": bytes.len()}))
+        .unwrap(),
+    ];
+    let seen = run_turn(&session, &mut events, input).await;
+    let text = assistant_text(&seen).to_lowercase();
+    eprintln!("image answer: {text}");
+    assert!(text.contains("red"));
+    session.close().await;
+}
+
+fn base64_decode(text: &str) -> Vec<u8> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => c - b'A',
+        b'a'..=b'z' => c - b'a' + 26,
+        b'0'..=b'9' => c - b'0' + 52,
+        b'+' => 62,
+        _ => 63,
+    };
+    let clean: Vec<u8> = text
+        .bytes()
+        .filter(|c| *c != b'=' && !c.is_ascii_whitespace())
+        .collect();
+    let mut out = Vec::new();
+    for chunk in clean.chunks(4) {
+        let v: Vec<u32> = chunk.iter().map(|c| u32::from(value(*c))).collect();
+        let n = v.iter().fold(0u32, |acc, x| (acc << 6) | x) << (6 * (4 - v.len() as u32));
+        for i in 0..v.len().saturating_sub(1) {
+            out.push((n >> (16 - 8 * i)) as u8);
+        }
+    }
+    out
 }

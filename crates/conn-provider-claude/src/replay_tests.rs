@@ -83,7 +83,11 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
         .find_map(|l| l["msg"]["session_id"].as_str().filter(|s| !s.is_empty()))
         .unwrap()
         .to_string();
-    let mode = crate::launch::permission_mode(runtime_mode, "default");
+    let mode = crate::launch::permission_mode_for(&crate::launch::PolicyInput {
+        runtime_mode,
+        interaction_mode: "default",
+        ..Default::default()
+    });
     let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
     let mut thread = provider_thread(&native);
     let mut replay = Replay {

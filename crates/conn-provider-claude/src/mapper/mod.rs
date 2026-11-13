@@ -71,6 +71,8 @@ pub struct Mapper<E: Env> {
     task_list: Option<Vec<TaskEntry>>,
     /// Context window sizes the CLI reported per model (`modelUsage[model].contextWindow`).
     context_windows: HashMap<String, u64>,
+    /// Set by the session from its query policy; see [`Mapper::set_policy_asks`].
+    policy_asks: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,7 +197,14 @@ impl<E: Env> Mapper<E> {
             plan_ids: HashMap::new(),
             task_list: None,
             context_windows: HashMap::new(),
+            policy_asks: None,
         }
+    }
+
+    /// `requiresClaudeApproval` from the query policy. Unset, the live permission mode decides
+    /// (only `auto` lets a forwarded request through).
+    pub fn set_policy_asks(&mut self, asks: bool) {
+        self.policy_asks = Some(asks);
     }
 
     /// Subagents still running, or Claude output waiting for a continuation turn.
@@ -1165,7 +1174,10 @@ impl<E: Env> Mapper<E> {
             out.push(Out::Write(control_success(&cli_id, deny)));
             return;
         }
-        if !launch::asks_user(&turn.permission_mode) {
+        let asks = self
+            .policy_asks
+            .unwrap_or_else(|| launch::asks_user_mode(&turn.permission_mode));
+        if !asks {
             let allow =
                 json!({"behavior": "allow", "updatedInput": req.input, "toolUseID": tool_use_id});
             out.push(Out::Write(control_success(&cli_id, allow)));

@@ -1,5 +1,7 @@
-//! The `claude` CLI's stdio protocol: one JSON object per line both ways.
-//! See `~/apps/conn-rust-claude-probe/PROTOCOL.md` (CLI 2.1.322, Agent SDK 0.3.x).
+//! The messages the Agent SDK yields (the CLI's stream-JSON messages, which the SDK passes
+//! through), and the CLI control-request shapes the mapper reads and answers. The session turns
+//! SDK callbacks into those control requests and the mapper's answers back into callback
+//! results (`session::callback_request`, `session::callback_answer`).
 //!
 //! Every inbound line decodes to [`Inbound`]. Known kinds are typed with lenient structs
 //! (unknown fields ignored, most fields optional). A kind we do not know, or a known kind whose
@@ -48,7 +50,7 @@ pub enum Inbound {
 }
 
 impl Inbound {
-    /// Decodes one stdout line. Never fails: unreadable input becomes `Other`.
+    /// Decodes one line of JSON text. Never fails: unreadable input becomes `Other`.
     pub fn decode(line: &str) -> Inbound {
         let value: Value = match serde_json::from_str(line) {
             Ok(value) => value,
@@ -553,8 +555,9 @@ pub enum Delivery {
     Steer,
 }
 
-/// A user message. `content` is a string, or blocks when the message carries images.
-pub fn user_message(content: Value, uuid: &str, delivery: Delivery) -> String {
+/// A user message (`SDKUserMessage`), as T3's `claudeUserMessage` builds it. `content` is a
+/// string, or blocks when the message carries images.
+pub fn user_message_value(content: Value, uuid: &str, delivery: Delivery) -> Value {
     let mut message = json!({
         "type": "user",
         "message": {"role": "user", "content": content},
@@ -564,11 +567,7 @@ pub fn user_message(content: Value, uuid: &str, delivery: Delivery) -> String {
     if delivery == Delivery::Steer {
         message["priority"] = json!("now");
     }
-    message.to_string()
-}
-
-pub fn control_request(request_id: &str, request: Value) -> String {
-    json!({"type": "control_request", "request_id": request_id, "request": request}).to_string()
+    message
 }
 
 pub fn control_success(request_id: &str, response: Value) -> String {

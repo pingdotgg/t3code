@@ -1,3 +1,5 @@
 /target
 **/target
 /.conn
+node_modules/
+/helpers/sdk-host/dist/
