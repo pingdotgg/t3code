@@ -84,7 +84,7 @@ const usersThread = ThreadId.make("thread:box-users-own");
 const boxThreads = (
   seen: Ref.Ref<Seen>,
   linkSession: Ref.Ref<string>,
-  blockedWait?: Deferred.Deferred<void>,
+  blockedWait?: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> },
 ) => {
   const base = { ...liveThreadShell(boxThread, { runtimeMode: "auto" }), projectId: boxProject };
   const linked = Ref.get(linkSession).pipe(
@@ -144,7 +144,9 @@ const boxThreads = (
       Ref.updateAndGet(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
         Effect.tap(() =>
           blockedWait !== undefined && input.timeoutMs > 1
-            ? Deferred.succeed(blockedWait, undefined).pipe(Effect.andThen(Effect.never))
+            ? Deferred.succeed(blockedWait.started, undefined).pipe(
+                Effect.andThen(Deferred.await(blockedWait.release)),
+              )
             : Effect.void,
         ),
         Effect.map(({ waits }) => ({
@@ -233,7 +235,7 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
 const serveBox = (
   seen: Ref.Ref<Seen>,
   linkSession: Ref.Ref<string>,
-  blockedWait?: Deferred.Deferred<void>,
+  blockedWait?: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> },
 ) =>
   servePeer(
     box,
@@ -314,7 +316,7 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
+    Layer.provideMerge(PeerForwarding.layer),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(
@@ -396,7 +398,14 @@ const makeLaptop = Effect.gen(function* () {
         ),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call, inputs, inputSubscribed };
+  return {
+    links: Context.get(linking, PeerLinks.PeerLinks),
+    call,
+    inputs,
+    inputSubscribed,
+    forwarding: Context.get(here, PeerForwarding.PeerForwarding),
+    scopeOf,
+  };
 });
 
 const failureOf = (result: McpSchema.CallToolResult) => {
@@ -409,7 +418,10 @@ it.effect("incoming local steering releases a forwarded wait without stopping re
     Effect.gen(function* () {
       const seen = yield* Ref.make<Seen>(nothingSeen);
       const linkSession = yield* Ref.make("");
-      const blocked = yield* Deferred.make<void>();
+      const blocked = {
+        started: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
       const b = yield* serveBox(seen, linkSession, blocked);
       const a = yield* makeLaptop;
       yield* linkTo(a.links, b, "auto");
@@ -421,8 +433,9 @@ it.effect("incoming local steering releases a forwarded wait without stopping re
           timeoutMs: 600_000,
         })
         .pipe(Effect.forkChild);
+      yield* Effect.addFinalizer(() => Deferred.succeed(blocked.release, undefined));
       yield* Deferred.await(a.inputSubscribed);
-      yield* Deferred.await(blocked);
+      yield* Deferred.await(blocked.started);
       yield* Queue.offer(a.inputs, {
         sequence: 1,
         event: {
@@ -443,6 +456,36 @@ it.effect("incoming local steering releases a forwarded wait without stopping re
       const observed = yield* Ref.get(seen);
       expect(observed.stops).toEqual([]);
       expect(observed.waits.map((wait) => wait.timeoutMs)).toEqual([50_000, 1]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+// A delegated task's background follower runs under its parent's scope; its wait must not end on the parent's steering.
+it.effect("a task follower's forwarded wait does not watch its parent's input", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const blocked = {
+        started: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const b = yield* serveBox(seen, linkSession, blocked);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "auto");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+      const waiting = yield* a.forwarding
+        .waitForThread(a.scopeOf("thread:laptop-full"), box.environmentId, {
+          threadId: boxThread,
+          timeoutMs: 600_000,
+          untilDelegatedWorkSettled: true,
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.addFinalizer(() => Deferred.succeed(blocked.release, undefined));
+      yield* Deferred.await(blocked.started);
+      expect(yield* Deferred.isDone(a.inputSubscribed)).toBe(false);
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      expect((yield* Ref.get(seen)).waits.map((wait) => wait.timeoutMs)).toEqual([50_000]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

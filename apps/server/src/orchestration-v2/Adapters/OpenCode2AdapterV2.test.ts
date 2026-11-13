@@ -1656,11 +1656,17 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     event("session.execution.started", { sessionID: CHILD }),
   ];
 
-  it.effect.each([false, true])(
-    "answers steering while foreground subagents keep running, active goal=%s",
-    (goal) =>
+  it.effect.each([
+    { goal: false, late: false, fails: false },
+    { goal: true, late: false, fails: false },
+    { goal: false, late: true, fails: false },
+    { goal: true, late: true, fails: false },
+    { goal: false, late: true, fails: true },
+  ])(
+    "answers steering while foreground subagents keep running, active goal=$goal, child starts after steer=$late, background fails=$fails",
+    ({ goal, late, fails }) =>
       Effect.gen(function* () {
-        const gate = makeProviderReplayGate(["release-child"]);
+        const gate = makeProviderReplayGate(["release-child", "start-child"]);
         const requests: Array<string> = [];
         const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
         const foreground = backgroundLaunch(CHILD).map((entry) => {
@@ -1675,7 +1681,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         });
         const { runtime, thread } = yield* resumed(
           [
-            ...foreground,
+            ...(late ? foreground.slice(0, 3) : foreground),
             ...(goal
               ? [
                   event("rpc.opencode.goal.changed", {
@@ -1684,7 +1690,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   }),
                 ]
               : []),
-            event("session.execution.started", { sessionID: CHILD }),
+            ...(!late ? [event("session.execution.started", { sessionID: CHILD })] : []),
             out("session.prompt", { sessionID: SESSION, id: steerId, delivery: "steer" }),
             replyData("session.prompt", {
               id: steerId,
@@ -1694,8 +1700,25 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               payload: { text: "Also say STEERED." },
               delivery: "steer",
             }),
+            ...(late
+              ? [
+                  ...foreground
+                    .slice(3)
+                    .map((entry, index) =>
+                      entry.type === "emit_inbound" && index === 0
+                        ? { ...entry, label: "start-child" }
+                        : entry,
+                    ),
+                  event("session.execution.started", { sessionID: CHILD }),
+                ]
+              : []),
             out("session.background", { sessionID: SESSION }),
-            reply("session.background", null),
+            reply(
+              "session.background",
+              fails
+                ? { status: 500, body: { _tag: "UnknownError", message: "background failed" } }
+                : null,
+            ),
             returnedRunning("call-background"),
             event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
             event("session.text.ended", {
@@ -1755,7 +1778,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           Effect.forkScoped,
         );
         yield* runtime.startTurn(withLineage(thread));
-        yield* Deferred.await(childStarted);
+        if (!late) yield* Deferred.await(childStarted);
         yield* runtime.steerTurn({
           threadId,
           runId: RunId.make("run:opencode2-adapter"),
@@ -1767,6 +1790,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             text: "Also say STEERED.",
           },
         });
+        if (late) {
+          gate.release("start-child");
+          yield* Deferred.await(childStarted);
+        }
         assert.isTrue(requests.some((path) => path.endsWith("/background")));
         assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
         yield* Deferred.await(answered);
