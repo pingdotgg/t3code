@@ -17,6 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,7 +39,9 @@ import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import {
   filterProjectScopes,
+  filterScratchEnvironmentsToPreferred,
   getProjectScopeSelectionTarget,
+  resolveExplicitProjectScopes,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -52,6 +55,10 @@ type NewTaskRouteParams = {
   readonly pr?: string | string[];
   readonly provider?: string | string[];
   readonly model?: string | string[];
+  /** The machine the user tapped in the environment picker; prefer its copy. */
+  readonly preferredEnvironmentId?: string | string[];
+  /** The user came from the environment picker and must choose explicitly. */
+  readonly explicitProjectChoice?: boolean;
 };
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
@@ -166,6 +173,25 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
+  const routePreferredEnvironmentId = Array.isArray(route.params?.preferredEnvironmentId)
+    ? route.params.preferredEnvironmentId[0]
+    : route.params?.preferredEnvironmentId;
+  // The environment picker passes the tapped machine so its copy wins over
+  // the draft's current one; otherwise the chooser keeps the flow's machine.
+  const preferredEnvironmentId =
+    routePreferredEnvironmentId === undefined
+      ? selectedEnvironmentId
+      : EnvironmentId.make(routePreferredEnvironmentId);
+  // Explicit choice (from the environment picker) never auto-resumes a share
+  // reservation: the user is here to pick a different project.
+  const explicitProjectChoice = route.params?.explicitProjectChoice === true;
+  // An explicitly tapped machine constrains the chooser to its own projects
+  // so picking a row cannot silently move the draft elsewhere. A normally
+  // opened chooser keeps listing every environment.
+  const displayScopes = resolveExplicitProjectScopes({
+    scopes: projectScopes,
+    preferredEnvironmentId: routePreferredEnvironmentId,
+  });
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const routeDraftId = Array.isArray(route.params?.draftId)
     ? route.params.draftId[0]
@@ -180,7 +206,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
-  const listScopes = pickableProjectGroups(projectScopes).filter(
+  const listScopes = pickableProjectGroups(displayScopes).filter(
     (scope) =>
       !scope.projects.every((project) =>
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
@@ -207,16 +233,27 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const scratchOption =
     reservedDestinationProject === null
       ? resolveNewTaskScratchOption({
-          environments: connectedEnvironments,
+          // Explicit choice stays on the tapped machine: never fall back to
+          // another environment's scratch space from this picker.
+          environments: filterScratchEnvironmentsToPreferred(
+            connectedEnvironments,
+            routePreferredEnvironmentId,
+          ),
           serverConfigs,
-          selectedEnvironmentId,
+          selectedEnvironmentId: preferredEnvironmentId,
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;
   const scratchStartInFlightRef = useRef(false);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
-    if (incomingShare?.destination && !reservedDestinationProject) {
+    const replacesReservation =
+      incomingShare?.destination !== undefined &&
+      (reservedDestinationProject === null ||
+        (explicitProjectChoice &&
+          (reservedDestinationProject.environmentId !== project.environmentId ||
+            reservedDestinationProject.id !== project.id)));
+    if (replacesReservation) {
       try {
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
@@ -294,7 +331,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- navigates to the incoming share's reserved destination draft once its project loads and the screen is focused
   useEffect(() => {
     const destination = incomingShare?.destination;
-    if (!destination) {
+    if (!destination || explicitProjectChoice) {
       resumedDestinationKeyRef.current = null;
       return;
     }
@@ -322,7 +359,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         },
       },
     });
-  }, [incomingShare, isFocused, reservedDestinationProject, selectDetail]);
+  }, [explicitProjectChoice, incomingShare, isFocused, reservedDestinationProject, selectDetail]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -499,7 +536,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 const hasMultipleProjects = scope.projects.length > 1;
                 const selectionTarget = getProjectScopeSelectionTarget(
                   scope,
-                  selectedEnvironmentId,
+                  preferredEnvironmentId,
                   connectedEnvironmentIds,
                 );
                 if (Platform.OS === "android") {
@@ -515,7 +552,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       }
                       subtitleNumberOfLines={1}
                       subtitleEllipsizeMode="middle"
-                      disabled={reservedDestinationProject !== null}
+                      disabled={reservedDestinationProject !== null && !explicitProjectChoice}
                       onPress={() => void selectProject(selectionTarget)}
                       leading={
                         <ProjectFavicon
@@ -538,7 +575,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={scope.title}
-                      disabled={reservedDestinationProject !== null}
+                      disabled={reservedDestinationProject !== null && !explicitProjectChoice}
                       onPress={() => void selectProject(selectionTarget)}
                       className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                     >

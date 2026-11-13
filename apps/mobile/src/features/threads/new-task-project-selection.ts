@@ -75,7 +75,13 @@ export function resolveNewTaskScratchOption(input: {
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
 }
 
-export function resolveEnvironmentProjectMatch(
+/**
+ * A same-project match on the target machine: same repository, or the same
+ * checkout basename/title when identity is unknown. Unlike
+ * resolveEnvironmentProjectMatch it never falls back to an unrelated first
+ * project, so callers can tell an explicit project choice is needed.
+ */
+export function resolveGenuineEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
 ): EnvironmentProject | null {
@@ -112,6 +118,16 @@ export function resolveEnvironmentProjectMatch(
           (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
         )
       : undefined) ??
+    null
+  );
+}
+
+export function resolveEnvironmentProjectMatch(
+  projectsOnTarget: ReadonlyArray<EnvironmentProject>,
+  selectedProject: EnvironmentProject | null,
+): EnvironmentProject | null {
+  return (
+    resolveGenuineEnvironmentProjectMatch(projectsOnTarget, selectedProject) ??
     projectsOnTarget[0] ??
     null
   );
@@ -143,6 +159,84 @@ export function resolveDraftProjectSelection(
   const onlyScope =
     draft.incomingShareId !== undefined && projectScopes.length === 1 ? projectScopes[0] : null;
   return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
+}
+
+/**
+ * Which project a pending share import may target. The initial project wins
+ * while resolving; an explicit pick the flow key names is followed instead.
+ */
+export function resolveShareImportProject(input: {
+  readonly selectedProject: EnvironmentProject | null;
+  readonly selectedProjectKey: string | null;
+  readonly initialEnvironmentId: string | undefined;
+  readonly initialProjectId: string | undefined;
+}): EnvironmentProject | null {
+  const selected = input.selectedProject;
+  if (selected === null) {
+    return null;
+  }
+  const selectedKey = scopedProjectKey(selected.environmentId, selected.id);
+  const initialKey =
+    input.initialEnvironmentId !== undefined && input.initialProjectId !== undefined
+      ? `${input.initialEnvironmentId}:${input.initialProjectId}`
+      : null;
+  if (initialKey === null || selectedKey === initialKey) {
+    return selected;
+  }
+  const followsExplicitChoice =
+    input.selectedProjectKey !== null && selectedKey === input.selectedProjectKey;
+  return followsExplicitChoice ? selected : null;
+}
+
+/**
+ * Projects the chooser may offer after an explicit environment tap. Without
+ * a tapped machine every scope is offered unchanged; with one, each scope
+ * keeps only that machine's projects and empty scopes drop out, so picking a
+ * row cannot silently move the draft elsewhere.
+ */
+export function resolveExplicitProjectScopes(input: {
+  readonly scopes: ReadonlyArray<HomeProjectScope>;
+  readonly preferredEnvironmentId: string | undefined;
+}): ReadonlyArray<HomeProjectScope> {
+  if (input.preferredEnvironmentId === undefined) {
+    return input.scopes;
+  }
+  return input.scopes.flatMap((scope) => {
+    const projects = scope.projects.filter(
+      (project) => String(project.environmentId) === input.preferredEnvironmentId,
+    );
+    if (projects.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...scope,
+        projects,
+        representative: projects[0] ?? scope.representative,
+        projectRefs: scope.projectRefs.filter(
+          (ref) => String(ref.environmentId) === input.preferredEnvironmentId,
+        ),
+      },
+    ];
+  });
+}
+
+/**
+ * Scratch candidates after an explicit environment tap. Without a tapped
+ * machine every connected environment stays a candidate; with one, only it
+ * is, so "No project" cannot open scratch space on another machine.
+ */
+export function filterScratchEnvironmentsToPreferred<
+  TEnvironment extends { readonly environmentId: EnvironmentId },
+>(
+  environments: ReadonlyArray<TEnvironment>,
+  preferredEnvironmentId: string | undefined,
+): ReadonlyArray<TEnvironment> {
+  return preferredEnvironmentId === undefined
+    ? environments
+    : environments.filter(
+        (environment) => String(environment.environmentId) === preferredEnvironmentId,
+      );
 }
 
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };

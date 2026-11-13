@@ -17,7 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -176,10 +176,14 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   );
 }
 
-export function NewTaskEnvironmentPickerRouteScreen() {
+export function NewTaskEnvironmentPickerRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly incomingShareId?: string } | undefined>) {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const incomingShareId = route.params?.incomingShareId;
+  const shareId = typeof incomingShareId === "string" ? incomingShareId : undefined;
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <AppBar title="Environment" hideBottomBorder onBack={() => navigation.goBack()} />
@@ -202,6 +206,19 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
+                  // No silent retarget: a machine without this project goes
+                  // to the project picker for an explicit choice. Replace
+                  // (not push) so the draft stays underneath and setProject
+                  // carries the prompt and attachments over.
+                  if (!flow.canSwitchEnvironmentDirectly(environment.environmentId)) {
+                    const params = {
+                      preferredEnvironmentId: String(environment.environmentId),
+                      explicitProjectChoice: true,
+                      ...(shareId === undefined ? {} : { incomingShareId: shareId }),
+                    };
+                    navigation.dispatch(StackActions.replace("NewTaskProject", params));
+                    return;
+                  }
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
                     if (switched) navigation.goBack();
                   });
