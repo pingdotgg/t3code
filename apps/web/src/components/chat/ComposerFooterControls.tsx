@@ -314,6 +314,9 @@ export function ComposerModelPicker({
   return (
     <ProviderModelPicker
       {...pickerProps}
+      {...(selectedModelSelection.options
+        ? { modelSelectionOptions: selectedModelSelection.options }
+        : {})}
       {...(multipleModelsEnabled
         ? {
             ...(multipleModelSelections !== null

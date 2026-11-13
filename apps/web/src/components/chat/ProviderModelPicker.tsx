@@ -2,6 +2,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
   type EnvironmentId,
+  type ModelSelection,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
@@ -25,6 +26,8 @@ import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPick
 import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { describeAutoRoute } from "./autoRoute";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
@@ -92,6 +95,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   workspaceCwd?: string | null;
   activeInstanceId: ProviderInstanceId;
   model: string;
+  /** The selection's options; for the `auto` model they carry its level. */
+  modelSelectionOptions?: ModelSelection["options"];
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   lockedProvider: ProviderDriverKind | null;
@@ -129,6 +134,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   footer?: ReactNode;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
+  const nowMinute = useNowMinute();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const registry = useContext(RegistryContext);
@@ -170,14 +176,27 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
-  const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
-    : props.model === ANTIGRAVITY_DEFAULT_MODEL
-      ? "Choose model"
-      : props.model || "Choose model";
-  const triggerLabel = selectedModel
-    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
-    : triggerTitle;
+  const isAuto = props.model === "auto";
+  // Names the model Auto would pick now, at this selection's level (default level elsewhere).
+  const autoRoute = describeAutoRoute({
+    entries: props.instanceEntries,
+    ...(isAuto && props.modelSelectionOptions ? { options: props.modelSelectionOptions } : {}),
+    now: Date.parse(nowMinute),
+  });
+  const triggerTitle =
+    isAuto && autoRoute
+      ? `Auto · ${autoRoute.label}`
+      : selectedModel
+        ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
+        : props.model === ANTIGRAVITY_DEFAULT_MODEL
+          ? "Choose model"
+          : props.model || "Choose model";
+  const triggerLabel =
+    isAuto && autoRoute
+      ? triggerTitle
+      : selectedModel
+        ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+        : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -287,6 +306,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       workspaceCwd={props.workspaceCwd ?? null}
       activeInstanceId={activeInstanceId}
       model={props.model}
+      autoRoute={autoRoute}
       {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
       {...(props.onToggleModel
         ? {
@@ -407,7 +427,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             // Narrow compacted composers hide the provider icon before truncating the name.
             <span data-chat-provider-model-picker-icon className="contents">
               <ProviderInstanceIcon
-                driverKind={activeEntry.driverKind}
+                driverKind={isAuto && autoRoute ? autoRoute.driverKind : activeEntry.driverKind}
                 displayName={activeEntry.displayName}
                 modelSlug={props.model}
                 accentColor={activeEntry.accentColor}
