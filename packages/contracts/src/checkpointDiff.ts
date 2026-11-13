@@ -4,6 +4,9 @@ import * as Struct from "effect/Struct";
 
 import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+/** Ends a checkpoint diff the server cut off at its output size limit. */
+export const CHECKPOINT_DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
+
 export const TurnCountRange = Schema.Struct({
   fromTurnCount: NonNegativeInt,
   toTurnCount: NonNegativeInt,
