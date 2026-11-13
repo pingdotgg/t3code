@@ -2,14 +2,11 @@ import * as NodeModule from "node:module";
 
 import type {
   DirItem,
-  DirSearchResult,
   FileItem,
   FileFinder as FileFinderType,
   GrepCursor,
   MixedItem,
-  MixedSearchResult,
   Result,
-  SearchResult,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -25,7 +22,10 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
@@ -121,8 +121,9 @@ export class WorkspaceSearchIndex extends Context.Service<
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
-function toPosixPath(input: string): string {
-  return input.replaceAll("\\", "/");
+// Only the host separator becomes `/`: on POSIX `\` is a file name character.
+function toPosixPath(input: string, hostIsWindows: boolean): string {
+  return hostIsWindows ? input.replaceAll("\\", "/") : input;
 }
 
 function trimDirectorySeparator(input: string): string {
@@ -134,8 +135,8 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+function toProjectEntry(item: MixedItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath, hostIsWindows));
   if (!normalizedPath) {
     return null;
   }
@@ -146,23 +147,26 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
   };
 }
 
-function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toFileEntry(item: FileItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
-function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toDirectoryEntry(item: DirItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
+type SearchPage<I> = { readonly items: ReadonlyArray<I>; readonly totalMatched: number };
+
 function mapFileSearchResult(
-  result: SearchResult,
+  result: SearchPage<FileItem>,
   limit: number,
+  hostIsWindows: boolean,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toFileEntry(item);
+    const entry = toFileEntry(item, hostIsWindows);
     return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
   });
   return {
@@ -172,11 +176,12 @@ function mapFileSearchResult(
 }
 
 function mapDirectorySearchResult(
-  result: DirSearchResult,
+  result: SearchPage<DirItem>,
   limit: number,
+  hostIsWindows: boolean,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toDirectoryEntry(item);
+    const entry = toDirectoryEntry(item, hostIsWindows);
     return entry ? [entry] : [];
   });
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
@@ -187,12 +192,13 @@ function mapDirectorySearchResult(
 }
 
 function mapMixedSearchResult(
-  result: MixedSearchResult,
+  result: SearchPage<MixedItem>,
   limit: number,
+  hostIsWindows: boolean,
 ): { readonly entries: ProjectEntry[]; readonly truncated: boolean } {
   const entries: ProjectEntry[] = [];
   for (const item of result.items) {
-    const entry = toProjectEntry(item);
+    const entry = toProjectEntry(item, hostIsWindows);
     if (entry) {
       entries.push(entry);
     }
@@ -284,6 +290,54 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+// fff applies .gitignore files only; Git also ignores paths from .git/info/exclude and the global excludes file.
+const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths")(function* (
+  vcsProcess: VcsProcess.VcsProcess["Service"],
+  cwd: string,
+) {
+  const result = yield* vcsProcess
+    .run({
+      operation: "WorkspaceSearchIndex.listGitIgnoredPaths",
+      command: "git",
+      args: [
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "-z",
+      ],
+      cwd,
+      allowNonZeroExit: true,
+      timeoutMs: 10_000,
+      maxOutputBytes: 16 * 1024 * 1024,
+    })
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return new Set<string>();
+  return new Set(
+    result.stdout
+      .split("\0")
+      .filter((entry) => entry.length > 0)
+      .map((entry) => trimDirectorySeparator(toPosixPath(entry))),
+  );
+});
+
+function mixedItemPath(item: MixedItem): string {
+  return item.item.relativePath;
+}
+
+function isIgnoredPath(ignoredPaths: ReadonlySet<string>, relativePath: string): boolean {
+  if (ignoredPaths.size === 0) return false;
+  let candidate: string | undefined = trimDirectorySeparator(toPosixPath(relativePath));
+  while (candidate) {
+    if (ignoredPaths.has(candidate)) return true;
+    candidate = parentPathOf(candidate);
+  }
+  return false;
+}
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
@@ -339,6 +393,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const hostIsWindows = yield* HostProcess.isWindows;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -346,6 +401,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }).pipe(Effect.orDie),
   );
   let initialScanTimedOut = false;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd);
   yield* waitForIndexReady(
     cwd,
     finder,
@@ -396,15 +453,44 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.value;
   });
 
+  // Grows the first page until hidden entries can no longer crowd visible ones out of it.
+  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I>(
+    query: string,
+    pageSize: number,
+    operation: "directorySearch" | "fileSearch" | "mixedSearch",
+    execute: (pageSize: number) => Result<SearchPage<I>>,
+    pathOf: (item: I) => string,
+  ): Effect.fn.Return<SearchPage<I>, WorkspaceSearchIndexSearchFailed> {
+    let size = pageSize;
+    while (true) {
+      const fetchSize = size;
+      const result = yield* runSearch(query, fetchSize, operation, () => execute(fetchSize));
+      if (ignoredPaths.size === 0) return result;
+      const items = result.items.filter((item) => !isIgnoredPath(ignoredPaths, pathOf(item)));
+      if (
+        items.length >= pageSize ||
+        result.items.length >= result.totalMatched ||
+        fetchSize >= WORKSPACE_INDEX_PAGE_SIZE
+      ) {
+        return {
+          items,
+          totalMatched: result.totalMatched - (result.items.length - items.length),
+        };
+      }
+      size = Math.min(WORKSPACE_INDEX_PAGE_SIZE, fetchSize * 4);
+    }
+  });
+
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
-    const result = yield* Effect.try({
-      try: () => finder.scanFiles(),
+    // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
+    const result = yield* Effect.tryPromise({
+      try: () => finder.scanFilesAsync(),
       catch: (cause) =>
         new WorkspaceSearchIndexRefreshFailed({
           cwd,
-          reason: "FileFinder.scanFiles threw unexpectedly.",
+          reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
           cause,
         }),
     });
@@ -426,15 +512,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd);
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
       const incompleteBeforeQuery = hasIncompleteInitialScan();
-      const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
-        finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+      const result = yield* searchVisible(
+        "",
+        WORKSPACE_INDEX_PAGE_SIZE,
+        "mixedSearch",
+        (pageSize) => finder.mixedSearch("", { pageSize }),
+        mixedItemPath,
       );
-      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, hostIsWindows);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
@@ -447,32 +538,55 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     },
   );
 
+  const searchNames = Effect.fn("WorkspaceSearchIndex.searchNames")(function* (
+    query: string,
+    limit: number,
+    kind: ProjectEntryKind | undefined,
+    imageOnly: boolean | undefined,
+  ) {
+    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
+    if (kind === "file" || imageOnly) {
+      const result = yield* searchVisible(
+        query,
+        pageSize,
+        "fileSearch",
+        (size) => finder.fileSearch(query, { pageSize: size }),
+        (item) => item.relativePath,
+      );
+      return mapFileSearchResult(result, limit, hostIsWindows, imageOnly);
+    }
+    if (kind === "directory") {
+      const result = yield* searchVisible(
+        query,
+        pageSize,
+        "directorySearch",
+        (size) => finder.directorySearch(query, { pageSize: size }),
+        (item) => item.relativePath,
+      );
+      return mapDirectorySearchResult(result, limit, hostIsWindows);
+    }
+    const result = yield* searchVisible(
+      query,
+      pageSize,
+      "mixedSearch",
+      (size) => finder.mixedSearch(query, { pageSize: size }),
+      mixedItemPath,
+    );
+    return mapMixedSearchResult(result, limit, hostIsWindows);
+  });
+
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
   )(function* (rawQuery, limit, kind, imageOnly) {
-    // fff parses any word containing "[" as a glob and has no escape for it; fuzzy
-    // matching is subsequence-based, so dropping "[" still matches "[id]" folders.
+    // fff parses any word containing "[" or "{" as a glob and has no escape for them; fuzzy
+    // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
+    // "{" is dropped only when the query finds nothing as a glob, so "*.{ts,tsx}" keeps working.
     const query = rawQuery.replaceAll("[", "");
-    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
-    if (kind === "file" || imageOnly) {
-      const result = yield* runSearch(query, pageSize, "fileSearch", () =>
-        finder.fileSearch(query, { pageSize }),
-      );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+    let mapped = yield* searchNames(query, limit, kind, imageOnly);
+    if (mapped.entries.length === 0 && query.includes("{")) {
+      mapped = yield* searchNames(query.replaceAll("{", ""), limit, kind, imageOnly);
     }
-    if (kind === "directory") {
-      const result = yield* runSearch(query, pageSize, "directorySearch", () =>
-        finder.directorySearch(query, { pageSize }),
-      );
-      const mapped = mapDirectorySearchResult(result, limit);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
-    }
-    const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
-      finder.mixedSearch(query, { pageSize }),
-    );
-    const mapped = mapMixedSearchResult(result, limit);
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
   });
 
@@ -511,13 +625,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
 
       for (const match of result.items) {
+        if (isIgnoredPath(ignoredPaths, match.relativePath)) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
-          path: toPosixPath(match.relativePath),
+          path: toPosixPath(match.relativePath, hostIsWindows),
           lineNumber: match.lineNumber,
           lineContent: match.lineContent,
           matchRanges,
