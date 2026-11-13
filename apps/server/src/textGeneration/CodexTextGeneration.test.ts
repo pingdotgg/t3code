@@ -435,6 +435,30 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("keeps MCP servers off when launch args set their own mcp_servers table", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: `-c 'mcp_servers={"my.server"={command="echo",enabled=true}}'`,
+        mcpServers: [
+          { name: "my.server", enabled: true },
+          { name: "my server", enabled: true },
+        ],
+        requireArg:
+          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --ephemeral',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
   it.effect("still generates when Codex cannot list its MCP servers", () =>
     withFakeCodexEnv(
       {

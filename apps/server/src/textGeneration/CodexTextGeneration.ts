@@ -55,10 +55,10 @@ const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
   names.length === 0
     ? null
     : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
-// Codex splits -c keys on every dot, so only bare-key names can be addressed by a dotted flag.
+// Codex splits -c keys at the first "=" and on every dot, so only those names take a dotted flag.
 const codexMcpServerOffFlags = (names: ReadonlyArray<string>) =>
   names
-    .filter((name) => /^[A-Za-z0-9_-]+$/.test(name))
+    .filter((name) => !name.includes(".") && !name.includes("="))
     .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]);
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
@@ -303,15 +303,19 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         launchArgs: codexMcpListLaunchArgs(launchArgs),
       });
       const mcpServersOff = codexMcpServersOff(enabledMcpServers);
+      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
+      // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
+      const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
           // Before launch args: a later table would replace servers their -c flags define.
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
-          ...codexExecLaunchArgs(launchArgs),
+          ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
+          ...(mcpServersOff && launchArgsSetMcpTable ? ["--config", mcpServersOff] : []),
           // After launch args, so a launch arg's enabled=true cannot turn a server back on.
           ...codexMcpServerOffFlags(enabledMcpServers),
           "--ephemeral",
