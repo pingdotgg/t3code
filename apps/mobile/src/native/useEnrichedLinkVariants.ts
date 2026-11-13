@@ -19,10 +19,10 @@ import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedModelReference,
-  enrichedSkillDisplayName,
   enrichedSkillReference,
   enrichedThreadLinkPresentation,
 } from "../lib/enrichedLinkPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 function chipCustomization(
   chip: ReturnType<typeof enrichedContextLinkPresentation>,
@@ -70,7 +70,7 @@ function presentation(
   const skill = enrichedSkillReference(url, props.skills);
   if (skill)
     return {
-      label: enrichedSkillDisplayName(skill),
+      label: formatProviderSkillDisplayName(skill),
       icon: CONTEXT_CHIP_ICON_SOURCES.skill,
       chip: { accent: contextChipPresentation("skill").accent, tintsIcon: true },
     };

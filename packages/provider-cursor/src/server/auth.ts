@@ -18,10 +18,23 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { loadCursorSdk } from "./sdk.ts";
+import { isCursorSdkError, loadCursorSdk } from "./sdk.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
 const AUTH_TIMEOUT_MS = 300_000;
+
+// The SDK has no code distinguishing these failures, so classify by its fixed message prefixes.
+const loginFailureDetail = (cause: unknown) => {
+  if (isCursorSdkError(cause, "CursorSdkError")) {
+    if (cause.message.startsWith("Login succeeded, but creating an SDK API key failed")) {
+      return "Cursor signed you in but could not create an API key. Your team's settings may restrict API keys: ask a team admin, or add CURSOR_API_KEY in provider settings.";
+    }
+    if (cause.message.startsWith("Login failed or timed out")) {
+      return "Cursor sign-in failed or timed out. Check that this machine can reach Cursor, then start sign-in again.";
+    }
+  }
+  return "Cursor sign-in failed. Start sign-in again.";
+};
 
 interface AuthFlow {
   readonly id: string;
@@ -204,7 +217,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "start",
-            detail: "Cursor sign-in failed. Start sign-in again.",
+            detail: loginFailureDetail(cause),
             cause,
           }),
       });
@@ -270,6 +283,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               }),
             ),
         }),
+        Effect.tapCause((cause) => Effect.logWarning("Cursor sign-in failed", cause)),
         Effect.exit,
         Effect.flatMap((result) =>
           lock.withPermits(1)(
