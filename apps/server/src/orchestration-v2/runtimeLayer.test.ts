@@ -4090,21 +4090,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           [20, "open"],
         ]);
         const detailReads = yield* Queue.unbounded<number>();
+        const agentRead = yield* Deferred.make<void>();
         const agentEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
             detail: (input) =>
-              Queue.offer(detailReads, input.number).pipe(
-                Effect.as({
+              Effect.sync(() => states.get(input.number)!).pipe(
+                Effect.tap(() => Queue.offer(detailReads, input.number)),
+                // Reads of an open pull request are slow, so the first sweep outlasts the merge.
+                Effect.tap((state) => (state === "open" ? Effect.sleep("1 second") : Effect.void)),
+                Effect.map((state) => ({
                   ...watchedPullRequestDetail({
                     projectId,
                     number: input.number,
                     at: "2026-10-02T12:00:00.000Z",
                   }),
-                  state: states.get(input.number)!,
-                }),
+                  state,
+                })),
               ),
             activity: () =>
               Effect.succeed({
@@ -4123,6 +4127,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             ...orchestrator,
             streamDomainEvents: Stream.fromQueue(agentEvents),
           }),
+          // Only the read at a command's end asks for one thread's watches.
+          Layer.effect(
+            ProjectionStore.ProjectionStoreV2,
+            Effect.map(ProjectionStore.ProjectionStoreV2, (store) => ({
+              ...store,
+              getThreadsWithPullRequests: (thread?: ThreadId) =>
+                store
+                  .getThreadsWithPullRequests(thread)
+                  .pipe(
+                    Effect.tap(() =>
+                      thread === undefined ? Effect.void : Deferred.succeed(agentRead, undefined),
+                    ),
+                  ),
+            })),
+          ),
         );
         const runId = RunId.make(`run:${threadId}:1`);
         const command = (status: "running" | typeof ended) =>
@@ -4154,7 +4173,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         yield* reactor.start();
-        // The first sweep finds both open.
+        // The first sweep has read both as open, and has not recorded that yet.
         yield* Queue.take(detailReads);
         yield* Queue.take(detailReads);
 
@@ -4162,8 +4181,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* Queue.offer(agentEvents, yield* command("running"));
         states.set(19, "merged");
         states.set(20, "closed");
-        // The command's end reads the thread's watches in full, before any sweep.
+        // The command's end reads the thread's watches in full, after that sweep.
         yield* Queue.offer(agentEvents, yield* command(ended));
+        yield* Deferred.await(agentRead);
+        yield* TestClock.adjust("1 second");
         yield* Queue.take(detailReads);
         yield* Queue.take(detailReads);
         // A sweep waits for that read to finish.

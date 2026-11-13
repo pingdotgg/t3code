@@ -855,10 +855,10 @@ export const make = Effect.gen(function* () {
               .map((link) => [thread.projectId, threadPullRequestKeyOf(link)] as const),
           ),
           ([projectId, pullRequest]) =>
-            Effect.suspend(() => {
-              lastReads.delete(`${projectId} ${pullRequest}`);
-              return readOnChange(pullRequest);
-            }),
+            // After any pass in flight, which could record a read from before the merge.
+            passes
+              .withPermit(Effect.sync(() => lastReads.delete(`${projectId} ${pullRequest}`)))
+              .pipe(Effect.andThen(readOnChange(pullRequest))),
           { discard: true },
         ),
       ),
