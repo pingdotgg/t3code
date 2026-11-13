@@ -905,6 +905,173 @@ it.effect("tells two hosts of one kind apart in the switcher and the filter", ()
   }),
 );
 
+it.effect("retains an unavailable host's summary when it is the only queried host", () =>
+  Effect.gen(function* () {
+    for (const reason of ["missing-tool", "unauthenticated"] as const) {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "t3code",
+            workspaceRoot: "/a",
+            repository: "pingdotgg/t3code",
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () =>
+              Effect.fail(unusable(SourceControlProviderKind.make("github"), reason)),
+          }),
+        ],
+      });
+
+      for (const filter of [{}, { host: "github.com" }]) {
+        const error = yield* service.list({ state: "open", ...filter }).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PullRequestUnavailableError");
+        assert.strictEqual(
+          error._tag === "PullRequestUnavailableError" ? error.reason : null,
+          reason === "missing-tool" ? "cli-missing" : "cli-unauthenticated",
+        );
+        assert.isDefined(error.listResult);
+        const result = error.listResult!;
+        assert.deepStrictEqual(result.entries, []);
+        assert.deepStrictEqual(result.viewers, {});
+        assert.deepStrictEqual(
+          result.providers.map(({ host, configured, projectIds }) => ({
+            host,
+            configured,
+            projectIds: projectIds?.map(String),
+          })),
+          [{ host: "github.com", configured: false, projectIds: undefined }],
+        );
+        assert.strictEqual(result.providers[0]?.detail?.includes("github"), true);
+        assert.deepStrictEqual(
+          result.errors.map(({ projectId }) => projectId),
+          ["p1"],
+        );
+      }
+    }
+  }),
+);
+
+it.effect("retains a Bitbucket host summary when the provider rejects saved credentials", () =>
+  Effect.gen(function* () {
+    const provider = fakePullRequestProvider(SourceControlProviderKind.make("bitbucket"), {
+      getViewer: () =>
+        Effect.fail(
+          new PullRequestProviderError({
+            provider: SourceControlProviderKind.make("bitbucket"),
+            operation: "getViewer",
+            reason: "failed",
+            detail: "HTTP 403",
+          }),
+        ),
+    });
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "bitbucket",
+          title: "Widget",
+          workspaceRoot: "/widget",
+          repository: "acme/widget",
+          provider: "bitbucket",
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [provider],
+    });
+    for (const filter of [{}, { host: "bitbucket.org" }]) {
+      const error = yield* service.list({ state: "open", ...filter }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.isDefined(error.listResult);
+      const result = error.listResult!;
+      assert.deepStrictEqual(
+        result.providers.map(({ host, configured, projectIds }) => ({
+          host,
+          configured,
+          projectIds: projectIds?.map(String),
+        })),
+        [{ host: "bitbucket.org", configured: false, projectIds: undefined }],
+      );
+      assert.deepStrictEqual(result.entries, []);
+      assert.deepStrictEqual(
+        result.errors.map(({ projectId }) => projectId),
+        ["bitbucket"],
+      );
+    }
+  }),
+);
+
+it.effect.each([
+  {
+    provider: "forgejo",
+    host: "ssh.forge.example",
+    remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
+  },
+  {
+    provider: "unknown",
+    host: "forge.example",
+    remoteUrl: "http://forge.example:3000/team/repo.git",
+  },
+])(
+  "identifies every worktree behind an unavailable refined Forgejo authority",
+  ({ provider, host, remoteUrl }) =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: ["ssh", "ssh-worktree"].map((id) =>
+          project({
+            id,
+            title: id,
+            workspaceRoot: `/${id}`,
+            repository: "team/repo",
+            provider,
+            host,
+            remoteUrl,
+          }),
+        ),
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("forgejo"), {
+            getViewer: ({ host }) => {
+              assert.strictEqual(host, "forge.example:3000");
+              return Effect.fail(
+                unusable(SourceControlProviderKind.make("forgejo"), "unauthenticated"),
+              );
+            },
+            listChangeRequests: () => Effect.die("An unauthenticated host must not be queried"),
+          }),
+        ],
+        resolveHandle: ({ context }) =>
+          Effect.succeed({
+            context: {
+              ...context!,
+              provider: {
+                kind: SourceControlProviderKind.make("forgejo"),
+                name: "Forgejo",
+                baseUrl: "http://forge.example:3000",
+              },
+            },
+            provider: undefined as never,
+          }),
+      });
+      const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
+      assert.isDefined(error.listResult);
+      const result = error.listResult!;
+      assert.deepStrictEqual(
+        result.providers.map(({ host, configured, projectIds }) => ({
+          host,
+          configured,
+          projectIds: projectIds?.map(String),
+        })),
+        [{ host: "forge.example:3000", configured: false, projectIds: ["ssh", "ssh-worktree"] }],
+      );
+      assert.deepStrictEqual(result.entries, []);
+      assert.deepStrictEqual(
+        result.errors.map(({ projectId }) => projectId),
+        ["ssh"],
+      );
+    }),
+);
+
 it.effect("reads a repository once when several worktrees share it", () =>
   Effect.gen(function* () {
     let calls = 0;
@@ -936,6 +1103,7 @@ it.effect("reads a repository once when several worktrees share it", () =>
 
     assert.strictEqual(calls, 1);
     assert.strictEqual(result.entries.length, 1);
+    assert.isUndefined(result.providers[0]?.projectIds);
   }),
 );
 
@@ -1723,6 +1891,71 @@ it.effect("stops new reads after a rate limit while leaving manual actions avail
   }),
 );
 
+it.effect(
+  "opening a pull request during a rate-limit pause still reads its detail and activity",
+  () =>
+    Effect.gen(function* () {
+      let detailReads = 0;
+      let activityReads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: ({ number }) =>
+              Effect.suspend(() => {
+                detailReads += 1;
+                return number === 1
+                  ? Effect.fail(
+                      new PullRequestProviderError({
+                        provider: SourceControlProviderKind.make("github"),
+                        operation: "getChangeRequest",
+                        reason: "rate-limited",
+                        detail: "GitHub API rate limit exceeded.",
+                      }),
+                    )
+                  : Effect.succeed({ ...hostedChangeRequest("Body"), number });
+              }),
+            getChangeRequestActivity: () =>
+              Effect.sync(() => {
+                activityReads += 1;
+                return {
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                };
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 };
+
+      yield* Effect.result(service.detail({ ...reference, number: 1 }));
+      const background = yield* Effect.result(service.detail(reference));
+      const opened = yield* Effect.result(
+        service
+          .detail(reference)
+          .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true)),
+      );
+      const timeline = yield* Effect.result(
+        service
+          .activity(reference)
+          .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true)),
+      );
+
+      expect(background).toMatchObject({ _tag: "Failure" });
+      expect({ opened, timeline }).toMatchObject({
+        opened: { _tag: "Success", success: { number: 2 } },
+        timeline: { _tag: "Success", success: { commentCount: 0 } },
+      });
+      assert.strictEqual(detailReads, 2);
+      assert.strictEqual(activityReads, 1);
+    }),
+);
+
 it.effect("refuses a repository that does not belong to the requested project", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -1979,6 +2212,72 @@ it.effect("routes a hosted reference to another repository through a project on 
     assert.strictEqual(projectReads, readsPerReference + 2);
     yield* read(11);
     assert.strictEqual(projectReads, readsPerReference * 2 + 2);
+  }),
+);
+
+it.effect("an uncached summary reaches the host despite a cached read in another project", () =>
+  Effect.gen(function* () {
+    const caller = project({
+      id: "caller",
+      title: "caller",
+      workspaceRoot: "/caller",
+      repository: "acme/other",
+    });
+    const target = project({
+      id: "gitlab",
+      title: "gitlab",
+      workspaceRoot: "/gitlab",
+      repository: "team/project",
+      provider: "gitlab",
+    });
+    let missing = false;
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [caller, target],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github")),
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: (input) =>
+            Effect.suspend(() => {
+              reads++;
+              assert.strictEqual(input.cwd, target.workspaceRoot);
+              assert.strictEqual(input.repository, "team/project");
+              assert.strictEqual(input.host, "gitlab.com");
+              return missing
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("gitlab"),
+                      operation: "summary",
+                      reason: "missing-tool",
+                      detail: "The hosting CLI is unavailable.",
+                    }),
+                  )
+                : Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            }),
+        }),
+      ],
+    });
+    const reference = {
+      projectId: caller.id,
+      host: "gitlab.com",
+      repository: "team/project",
+      number: 42,
+      allowStale: false,
+    };
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    missing = true;
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 1);
+
+    const error = yield* service
+      .summary(reference, { recoverTransientFailure: false, bypassCache: true })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "PullRequestUnavailableError",
+      reason: "cli-missing",
+      provider: "gitlab",
+    });
+    assert.strictEqual(reads, 2);
   }),
 );
 
@@ -2435,6 +2734,40 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
     for (let index = 0; index < 2048; index++)
       yield* service.refreshAfterTurn(`project-${index}` as ProjectId);
     assert.strictEqual((yield* service.summary(ref))?.title, "new");
+  }),
+);
+
+it.effect("a finished turn leaves another project's cached listing in place", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            reads.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+    const webListing = { state: "open" as const, projectId: "p1" as ProjectId };
+    const everyListing = { state: "open" as const };
+
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    reads.length = 0;
+    yield* service.refreshAfterTurn("p2" as ProjectId);
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
+
+    yield* service.refreshAfterTurn("p2" as ProjectId, { pushed: true });
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/web"]);
   }),
 );
 
@@ -3162,6 +3495,27 @@ it.effect(
       assert.strictEqual(summary.reviewDecision, "approved");
       assert.strictEqual(summary.checksState, "passing");
     }),
+);
+
+it.effect("preserves merge queue removal details from the provider", () =>
+  Effect.gen(function* () {
+    const removal = { id: "RMQE_1", removedAt: "2026-07-02T00:00:00Z", reason: "CI failed" };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("body"), mergeQueueRemoval: removal }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.deepStrictEqual(detail.mergeQueueRemoval, removal);
+  }),
 );
 
 it.effect("notifies linked threads when detail changes draft status in either direction", () =>
@@ -4040,35 +4394,6 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
   }),
 );
 
-it.effect("reports a file pushed to since it was cleared as changed", () =>
-  Effect.gen(function* () {
-    const revisions = new Map([
-      ["src/a.ts", "blob-a"],
-      ["src/b.ts", "blob-b"],
-    ]);
-    const service = yield* environmentViewedService(revisions, []);
-
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [
-        { path: "src/a.ts", viewed: true },
-        { path: "src/b.ts", viewed: true },
-      ],
-    });
-    revisions.set("src/a.ts", "blob-a-again");
-    yield* service.invalidate({ reference: GITLAB_REFERENCE });
-    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
-
-    assert.deepStrictEqual(
-      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
-      [
-        { path: "src/a.ts", state: "dismissed" },
-        { path: "src/b.ts", state: "viewed" },
-      ],
-    );
-  }),
-);
-
 it.effect("keeps a deleted file cleared, which the head has no version of at all", () =>
   Effect.gen(function* () {
     const service = yield* environmentViewedService(new Map(), []);
@@ -4114,6 +4439,26 @@ it.effect("leaves a mark alone when the host could not say what the head has of 
         { path: "src/past-the-cut.ts", state: "viewed" },
       ],
     );
+  }),
+);
+
+it.effect("reports a file pushed to after the diff the reader ticked was drawn as changed", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "shown-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.filesViewed(GITLAB_REFERENCE);
+    yield* TestClock.adjust("61 seconds");
+    revisions.set("src/a.ts", "pushed-a");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "shown-a" }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
   }),
 );
 

@@ -8,7 +8,10 @@ import * as TestClock from "effect/testing/TestClock";
 import type * as Electron from "electron";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { SSH_PASSWORD_PROMPT_CHANNEL } from "../ipc/channels.ts";
+import {
+  SSH_PASSWORD_PROMPT_CHANNEL,
+  SSH_PASSWORD_PROMPT_SETTLED_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 interface SentMessage {
@@ -143,6 +146,52 @@ describe("DesktopSshPasswordPrompts", () => {
       assert.equal(yield* Fiber.join(fiber), "secret");
     }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
   });
+
+  it.effect.each(["answered", "cancelled", "timed out", "interrupted"] as const)(
+    "tells the window a prompt ended when it is %s",
+    (outcome) => {
+      const testWindow = makeTestWindow();
+
+      return Effect.gen(function* () {
+        const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+        const fiber = yield* prompts
+          .request({
+            destination: "devbox",
+            username: "julius",
+            prompt: "Enter the SSH password.",
+            attempt: 1,
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        const request = testWindow.sentMessages[0]?.args[0] as { readonly requestId: string };
+        assert.ok(request);
+        switch (outcome) {
+          case "answered":
+            yield* prompts.resolve({ requestId: request.requestId, password: "secret" });
+            break;
+          case "cancelled":
+            yield* prompts.resolve({ requestId: request.requestId, password: null });
+            break;
+          case "timed out":
+            yield* TestClock.adjust("1 second");
+            break;
+          case "interrupted":
+            yield* Fiber.interrupt(fiber);
+            break;
+        }
+        yield* Fiber.await(fiber);
+
+        assert.deepEqual(
+          testWindow.sentMessages
+            .filter((message) => message.channel === SSH_PASSWORD_PROMPT_SETTLED_CHANNEL)
+            .map((message) => message.args),
+          [[request.requestId]],
+        );
+      }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
+    },
+  );
 
   it.effect("keeps a submitted password when a later presentation step fails", () => {
     const testWindow = makeTestWindow({
