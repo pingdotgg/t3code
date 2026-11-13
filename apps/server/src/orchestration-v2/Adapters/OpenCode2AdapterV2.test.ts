@@ -1608,6 +1608,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   ) =>
     Effect.gen(function* () {
       const calls = new Map<string, { status: string; result: string | null }>();
+      const callsById = new Map<string, { status: string; result: string | null }>();
       const childTurns = new Map<string, string>();
       const callsAtChildTurnStart = new Map<
         string,
@@ -1618,6 +1619,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.events.pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
+            if (event.type === "subagent.updated") {
+              callsById.set(event.subagent.nativeTaskRef?.nativeId ?? "", {
+                status: event.subagent.status,
+                result: event.subagent.result,
+              });
+            }
             if (event.type === "subagent.updated" && event.subagent.title !== null) {
               calls.set(event.subagent.title, {
                 status: event.subagent.status,
@@ -1656,7 +1663,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { calls, callsAtChildTurnStart, childTurns, state, until };
+      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -1869,6 +1876,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  const childSaid = (text: string) =>
+    event("session.text.ended", {
+      sessionID: CHILD,
+      assistantMessageID: `msg_child_${text}`,
+      ordinal: 0,
+      text,
+    });
   it.effect.each([
     {
       // regression: #26319 the report settled the older run and left the resumed call running
@@ -1876,33 +1890,36 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       replay: [
         ...launchedAndRunning,
         ...callAgain({ background: true }),
+        childSaid("FIRST_OK"),
         event("session.execution.succeeded", { sessionID: CHILD }),
         ...callAgain({ background: true }, { id: "call-later", writesRules: false }),
         event("session.execution.started", { sessionID: CHILD }),
+        childSaid("SECOND_OK"),
         event("session.execution.succeeded", { sessionID: CHILD }),
         event("session.execution.succeeded", { sessionID: SESSION }),
         childReport("msg_report_2", "SECOND_OK", "Again"),
       ],
       expected: {
-        Sleep: { status: "completed", result: null },
-        Again: { status: "completed", result: "SECOND_OK" },
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "FIRST_OK" },
+        "call-later": { status: "completed", result: "SECOND_OK" },
       },
     },
     {
-      name: "the previous run reports after the next one started",
+      name: "both runs' reports arrive after the runs ended",
       replay: [
         ...launchedAndRunning,
         event("session.execution.succeeded", { sessionID: CHILD }),
-        ...callAgain({ background: true }),
+        ...callAgain({ background: true, description: "Sleep" }),
         event("session.execution.started", { sessionID: CHILD }),
-        childReport("msg_report_1", "FIRST_OK"),
         event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_1", "FIRST_OK"),
+        childReport("msg_report_2", "SECOND_OK"),
         event("session.execution.succeeded", { sessionID: SESSION }),
-        childReport("msg_report_2", "SECOND_OK", "Again"),
       ],
       expected: {
-        Sleep: { status: "completed", result: "FIRST_OK" },
-        Again: { status: "completed", result: "SECOND_OK" },
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "SECOND_OK" },
       },
     },
     {
@@ -1929,8 +1946,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         childReport("msg_report", "CHILD_OK", "Again"),
       ],
       expected: {
-        Sleep: { status: "completed", result: "FIRST_OK" },
-        Again: { status: "completed", result: "CHILD_OK" },
+        "call-background": { status: "completed", result: "FIRST_OK" },
+        "call-again": { status: "completed", result: "CHILD_OK" },
       },
     },
   ])("settles a resumed subagent's calls when $name", ({ replay, expected }) =>
@@ -1941,9 +1958,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(
         () =>
           watch.state.roster?.length === 0 &&
-          Object.keys(expected).every((title) => watch.calls.get(title)?.status === "completed"),
+          Object.keys(expected).every((id) => watch.callsById.get(id)?.status === "completed"),
       );
-      assert.deepEqual(Object.fromEntries(watch.calls), expected);
+      assert.deepEqual(Object.fromEntries(watch.callsById), expected);
     }),
   );
 
