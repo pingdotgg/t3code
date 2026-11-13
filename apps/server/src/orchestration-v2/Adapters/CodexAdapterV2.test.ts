@@ -4854,6 +4854,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expected: "Done.\n\n![](</tmp/a.png>)",
     },
     {
+      name: "a reply that embeds a copy of its chosen image gains no drafts",
+      reply: "Updated the sprite.\n\n![Game](./game-03.png)",
+      images: [
+        { savedPath: "/home/me/.codex/generated_images/session/draft.png" },
+        { savedPath: "/home/me/.codex/generated_images/session/chosen.png" },
+      ],
+      expected: "Updated the sprite.\n\n![Game](./game-03.png)",
+    },
+    {
       name: "an image-only result becomes the reply",
       reply: null,
       images: [{ savedPath: "/tmp/a.png" }],
