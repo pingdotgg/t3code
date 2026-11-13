@@ -74,9 +74,10 @@ three conversations, already checked. Projects already in T3 Code are not checke
 again. Uncheck the box to start without them, or
 select **Review all** to pick from everything found, with "Select all" and
 "Select none". Linked worktrees of bare repositories
-can be offered as separate projects. Other linked git worktrees, Codex scratch
-directories under `Documents/Codex`, and anything under `Downloads` are not
-offered.
+can be offered as separate projects. Conversations in other linked git worktrees
+count toward their main checkout, so a repository is offered even if you only
+worked in its worktrees. Codex scratch directories under `Documents/Codex`, and
+anything under `Downloads` are not offered.
 
 A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.

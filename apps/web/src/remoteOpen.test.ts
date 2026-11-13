@@ -30,7 +30,7 @@ vi.mock(import("./state/presentation"), async (importOriginal) => {
   };
 });
 
-import { resolveRemoteOpenState, revealInDesktopShell } from "./remoteOpen";
+import { remoteFallbackEditors, resolveRemoteOpenState, revealInDesktopShell } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -89,6 +89,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
   });
@@ -100,6 +101,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: null,
       }),
     ).toEqual({
       mode: "remote-links",
@@ -115,8 +117,38 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
+  });
+
+  it("keeps exec behavior for the environment that owns the desktop's T3 home", () => {
+    // With Local environment off, a background service on this machine can own the
+    // desktop's home and still be reached through T3 Connect.
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: environmentId,
+      }),
+    ).toEqual({ mode: "local-exec" });
+  });
+
+  it("uses deep links for other environments when the desktop home has its own", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: EnvironmentId.make("environment-host"),
+      }),
+    ).toEqual({
+      mode: "remote-links",
+      host: { kind: "tailscale", host: "sol.tail1234.ts.net" },
+    });
   });
 
   it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
@@ -127,6 +159,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
       ],
+      hostEnvironmentId: null,
     });
     expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -155,6 +188,7 @@ describe("resolveRemoteOpenState", () => {
       sshTarget,
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
+      hostEnvironmentId: null,
     });
     expect(state.mode).toBe("remote-links");
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -179,6 +213,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
       ],
+      hostEnvironmentId: null,
     });
     expect(state.mode).toBe("remote-links");
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -195,9 +230,50 @@ describe("resolveRemoteOpenState", () => {
           sshTarget: null,
           isDesktopRenderer: false,
           remoteOpenTargets,
+          hostEnvironmentId: null,
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+});
+
+describe("remoteFallbackEditors", () => {
+  it.each([
+    {
+      // iPadOS Safari requests the desktop site with a Macintosh user agent by default.
+      device: "iPad with a desktop user agent",
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    },
+    {
+      device: "iPhone",
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+    },
+    {
+      device: "Android phone",
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+      platform: "Linux armv81",
+      maxTouchPoints: 5,
+    },
+  ])("offers no desktop editor for remote links on an $device", ({ device: _, ...identity }) => {
+    expect(remoteFallbackEditors(identity)).toEqual([]);
+  });
+
+  it("keeps the VS Code fallback for remote links on a Mac", () => {
+    expect(
+      remoteFallbackEditors({
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        platform: "MacIntel",
+        maxTouchPoints: 0,
+      }),
+    ).toEqual(["vscode"]);
   });
 });
 
@@ -206,6 +282,30 @@ describe("buildRemoteOpenUrl", () => {
     expect(
       buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\theo" }),
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
+  });
+
+  it("keeps a plus in the SSH username through Remote-SSH's authority parsing", () => {
+    const url = buildRemoteOpenUrl({
+      editor: "vscode",
+      host: "ssh.example.com",
+      username: "vm+demo",
+      absolutePath: "/workspace/project",
+    });
+    // VS Code decodes the authority, then Remote-SSH (0.129) takes `authority.split("+")[1]` and
+    // reads it as hex-encoded JSON `{ hostName, user }` or as `user@host`.
+    const authority = decodeURIComponent(new URL(url ?? "").pathname.split("/")[1] ?? "");
+    const destination = authority.split("+")[1] ?? "";
+    const hexBytes = /^(?:[0-9a-f]{2})+$/i.test(destination)
+      ? destination.match(/../g)?.map((byte) => Number.parseInt(byte, 16))
+      : undefined;
+    const resolved =
+      hexBytes === undefined
+        ? destination.match(/^(?:(?<user>.*)@)?(?<hostName>.+?)$/)?.groups
+        : JSON.parse(new TextDecoder().decode(new Uint8Array(hexBytes)));
+    expect({ user: resolved?.user, hostName: resolved?.hostName }).toEqual({
+      user: "vm+demo",
+      hostName: "ssh.example.com",
+    });
   });
 
   it("drops the Windows drive letter for Zed", () => {
