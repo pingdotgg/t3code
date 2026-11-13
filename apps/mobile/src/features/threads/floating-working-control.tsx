@@ -1,5 +1,4 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -29,6 +28,7 @@ import { ControlPill } from "../../components/ui/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
+import { formatWorkingDuration } from "../../lib/time";
 import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -656,28 +656,9 @@ function WorkingTimer(props: { readonly startedAt: string }) {
       numberOfLines={1}
       style={{ fontVariant: ["tabular-nums"], fontWeight: "500" }}
     >
-      Working {formatWorkingDuration(props.startedAt, nowMs)}
+      Working {formatWorkingDuration(nowMs - Date.parse(props.startedAt))}
     </SystemText>
   );
-}
-
-function formatWorkingDuration(startedAt: string, nowMs: number): string {
-  const startedAtMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedAtMs) || nowMs <= startedAtMs) {
-    return "0s";
-  }
-
-  const totalSeconds = Math.floor((nowMs - startedAtMs) / 1_000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-  if (totalSeconds >= 3_600) {
-    return formatDuration(totalSeconds * 1_000);
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${minutes}m ${seconds}s`;
 }
 
 function ScrollToEndButton(props: { readonly disabled?: boolean; readonly onPress: () => void }) {
