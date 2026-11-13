@@ -8,12 +8,21 @@ const SWIPE_TRIGGER_DISTANCE = 120;
 // Movement needed before the gesture picks an axis; first events are often diagonal.
 const SWIPE_AXIS_LOCK_DISTANCE = 8;
 const MOMENTUM_SAMPLE_SIZE = 5;
+const WHEEL_NOTCH_DELTA = 120;
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
 type SwipeGesture =
-  | { kind: "pending"; path: EventTarget[]; y: number; sumX: number; sumY: number }
+  | {
+      kind: "pending";
+      path: EventTarget[];
+      y: number;
+      sumX: number;
+      sumY: number;
+      notchesOnly: boolean;
+    }
   | {
       kind: "tracking";
+      notchesOnly: boolean;
       direction: HistoryDirection;
       distance: number;
       deltas: number[];
@@ -37,6 +46,24 @@ function readMainContentBounds(): SwipeBounds {
   return { left, top, width, height };
 }
 
+// Electron cannot tell a wheel from a trackpad, but Chromium's legacy wheelDelta counts wheel
+// notches in multiples of 120, divided by page zoom and truncated (99 for one notch at 120%).
+// A trackpad's pixel deltas can land on a multiple too, but a whole swipe rarely stays on them.
+function isMouseWheelNotch(event: WheelEvent): boolean {
+  const { wheelDeltaX = 0, wheelDeltaY = 0 } = event as WheelEvent & {
+    wheelDeltaX?: number;
+    wheelDeltaY?: number;
+  };
+  const notchDelta = WHEEL_NOTCH_DELTA / (window.desktopBridge?.getWindowZoomFactor() ?? 1);
+  const notches = [wheelDeltaX, wheelDeltaY].map((delta) => Math.round(delta / notchDelta));
+  return (
+    notches.some((count) => count !== 0) &&
+    [wheelDeltaX, wheelDeltaY].every(
+      (delta, index) => Math.abs(delta - notches[index]! * notchDelta) < 1.5,
+    )
+  );
+}
+
 // `event.target` stops at a shadow host; the composed path also reaches scrollers inside it.
 function canScrollHorizontally(path: readonly EventTarget[], deltaX: number): boolean {
   for (const element of path) {
@@ -55,7 +82,7 @@ function canScrollHorizontally(path: readonly EventTarget[], deltaX: number): bo
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
-  const { path, sumX, sumY } = pending;
+  const { path, sumX, sumY, notchesOnly } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
   if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
     return { kind: "ignored" };
@@ -65,6 +92,7 @@ function lockSwipeAxis(
   if (!canNavigateHistory(direction)) return { kind: "ignored" };
   return {
     kind: "tracking",
+    notchesOnly,
     direction,
     distance: Math.abs(sumX),
     deltas: [],
@@ -103,7 +131,11 @@ export function HistorySwipeNavigation() {
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
     const release = () => {
-      if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
+      if (
+        gesture?.kind === "tracking" &&
+        !gesture.notchesOnly &&
+        gesture.distance >= SWIPE_TRIGGER_DISTANCE
+      ) {
         navigateHistory(gesture.direction);
       }
       gesture = { kind: "ignored" };
@@ -122,9 +154,18 @@ export function HistorySwipeNavigation() {
         gesture =
           event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
             ? { kind: "ignored" }
-            : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
+            : {
+                kind: "pending",
+                path: event.composedPath(),
+                y: event.clientY,
+                sumX: 0,
+                sumY: 0,
+                notchesOnly: true,
+              };
       }
       if (gesture.kind === "ignored") return;
+      const moved = event.deltaX !== 0 || event.deltaY !== 0;
+      if (moved && !isMouseWheelNotch(event)) gesture.notchesOnly = false;
       if (gesture.kind === "pending") {
         gesture.sumX += event.deltaX;
         gesture.sumY += event.deltaY;
@@ -133,11 +174,12 @@ export function HistorySwipeNavigation() {
         if (gesture.kind === "ignored") return;
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
-        if (event.deltaX === 0 && event.deltaY === 0) return release();
+        if (!moved) return release();
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
       }
+      if (gesture.notchesOnly) return;
       setSwipe({
         direction: gesture.direction,
         progress: Math.min(1, gesture.distance / SWIPE_TRIGGER_DISTANCE),

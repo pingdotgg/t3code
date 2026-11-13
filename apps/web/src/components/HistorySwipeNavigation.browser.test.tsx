@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 const navigateHistory = vi.hoisted(() => vi.fn());
@@ -57,6 +57,59 @@ describe("HistorySwipeNavigation", () => {
       swipe(content, deltaX);
     }
 
+    expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
+  });
+
+  it.each([
+    [
+      "a macOS trackpad swipe opening with one native pixel at 299% zoom navigates",
+      1.2 ** 6,
+      [[-1 / 1.2 ** 6, 1], ...Array.from({ length: 6 }, () => [-60 / 1.2 ** 6, 60] as const)],
+      true,
+    ],
+    [
+      "a macOS trackpad swipe opening on a wheel-notch multiple navigates",
+      1,
+      [
+        [-40, 120],
+        [-60, 180],
+        [-60, 180],
+      ],
+      true,
+    ],
+    [
+      "slow macOS mouse wheel notches keep the thread",
+      1,
+      [
+        [-40, 120],
+        [-40, 120],
+        [-40, 120],
+      ],
+      false,
+    ],
+    [
+      "two mouse wheel notches at 120% zoom keep the thread",
+      1.2,
+      [
+        [-100, 99],
+        [-100, 99],
+      ],
+      false,
+    ],
+  ] as const)("%s", async (_name, zoomFactor, events, navigates) => {
+    navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    using _bridge = stubGlobal("desktopBridge", {
+      getWindowZoomFactor: () => zoomFactor,
+      onTrackpadScrollBegin: () => () => {},
+      onTrackpadScrollEnd: () => () => {},
+    });
+    await using screen = await render(<HistorySwipeNavigation />);
+    const target = screen.container.appendChild(document.createElement("div"));
+    for (const [deltaX, wheelDeltaX] of [...events, [0, 0]]) {
+      const init = { deltaX, wheelDeltaX, bubbles: true };
+      target.dispatchEvent(new WheelEvent("wheel", init));
+    }
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
 
