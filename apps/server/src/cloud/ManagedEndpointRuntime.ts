@@ -827,7 +827,7 @@ export const make = Effect.gen(function* () {
     }
 
     if (!("status" in child)) {
-      forgetRelayClient = yield* relayClientLedger.track(Number(child.pid));
+      forgetRelayClient = yield* Effect.uninterruptible(relayClientLedger.track(Number(child.pid)));
       const connector = {
         child,
         executable,

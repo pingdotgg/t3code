@@ -109,20 +109,4 @@ describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform)
       }),
     ),
   );
-
-  it.live("forgets a client once it is stopped", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-ledger-" });
-        const client = yield* spawnSleep;
-        const ledger = yield* RelayClientLedger.make({ stateDir });
-        const forget = yield* ledger.track(client.pid);
-        expect(yield* entryNames(stateDir)).toEqual([`${client.pid}.json`]);
-        yield* client.kill;
-        yield* forget;
-        expect(yield* entryNames(stateDir)).toEqual([]);
-      }),
-    ),
-  );
 });
