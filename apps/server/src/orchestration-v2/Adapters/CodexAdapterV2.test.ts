@@ -3581,6 +3581,101 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #30630 Codex answers thread/unsubscribe while it still holds the writer lock
+  it.effect(
+    "a detach unload waits for thread/closed, and only once when Codex never sends it",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "handed-over-thread";
+        const unsubscribe = (
+          id: number,
+          status = "unsubscribed",
+        ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "expect_outbound",
+            label: `unsubscribe-${id}`,
+            frame: { id, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          },
+          {
+            type: "emit_inbound",
+            label: `unsubscribe-result-${id}`,
+            frame: { id, result: { status } },
+          },
+        ];
+        const closedFrame = (threadId: string): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `closed-${threadId}`,
+          frame: { method: "thread/closed", params: { threadId } },
+        });
+        const closedNotifications = yield* Queue.unbounded<void>();
+        const closeReached = yield* Deferred.make<void>();
+        const releaseClose = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-detach-unload-awaits-closed",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              // An idle unload leaves the close pending; Codex then answers notSubscribed.
+              ...unsubscribe(3),
+              ...unsubscribe(4, "notSubscribed"),
+              closedFrame(nativeThreadId),
+              ...unsubscribe(5),
+              // Replies fence notifications on the protocol reader, so this one marks reply 5 as read.
+              closedFrame("unrelated-thread"),
+              ...unsubscribe(6),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === `closed-${nativeThreadId}`
+              ? Deferred.succeed(closeReached, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseClose)),
+                )
+              : Effect.void,
+          undefined,
+          undefined,
+          (method) =>
+            method === "thread/closed" ? Queue.offer(closedNotifications, undefined) : Effect.void,
+        );
+        const unload = harness.runtime.unloadThread!({
+          providerThread: harness.providerThread,
+          awaitClosed: true,
+        });
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const closing = yield* unload.pipe(Effect.forkScoped);
+        yield* Deferred.await(closeReached);
+        yield* TestClock.adjust("1 second");
+        assert.isUndefined(closing.pollUnsafe(), "a pending close must still be waited for");
+        yield* Deferred.succeed(releaseClose, undefined);
+        yield* Fiber.join(closing);
+        yield* Queue.take(closedNotifications);
+
+        const unclosed = yield* unload.pipe(Effect.forkScoped);
+        yield* Queue.take(closedNotifications);
+        yield* TestClock.adjust("1 second");
+        assert.isUndefined(unclosed.pollUnsafe(), "the unload must still wait for thread/closed");
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(unclosed);
+
+        yield* unload;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   // regression: #33747 Codex refuses thread/resume until an unsubscribed thread finishes closing
   it.effect.each([
     { name: "waits for thread/closed after a closing error", closedFirst: false },
