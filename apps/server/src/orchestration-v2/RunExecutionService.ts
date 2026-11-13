@@ -546,6 +546,8 @@ export class RunExecutionStartError extends Schema.TaggedError<RunExecutionStart
   }
 }
 
+const isProviderEventStreamError = Schema.is(ProviderAdapter.ProviderAdapterEventStreamError);
+
 export class RunExecutionIngestError extends Schema.TaggedError<RunExecutionIngestError>()(
   "RunExecutionIngestError",
   {
@@ -557,6 +559,7 @@ export class RunExecutionIngestError extends Schema.TaggedError<RunExecutionInge
     return `Failed while ingesting orchestration V2 run execution ${this.runId}.`;
   }
 }
+const isRunExecutionIngestError = Schema.is(RunExecutionIngestError);
 
 export const RunExecutionServiceV2Error = Schema.Union([
   RunExecutionStartError,
@@ -935,6 +938,12 @@ export const layer: Layer.Layer<
             ),
           ),
         );
+        const failedProviderTurnId =
+          input.attempt.providerTurnId ??
+          idAllocator.derive.providerTurn({
+            driver: input.providerThread.driver,
+            nativeTurnId: `failed:${input.attempt.id}`,
+          });
         const makeFailedTerminalEvent = (
           failure: OrchestrationV2ProviderFailure,
           failureItemOrdinal: number,
@@ -942,12 +951,7 @@ export const layer: Layer.Layer<
           type: "turn.terminal",
           driver: input.providerThread.driver,
           providerThreadId: input.providerThread.id,
-          providerTurnId:
-            input.attempt.providerTurnId ??
-            idAllocator.derive.providerTurn({
-              driver: input.providerThread.driver,
-              nativeTurnId: `failed:${input.attempt.id}`,
-            }),
+          providerTurnId: failedProviderTurnId,
           runOrdinal: input.run.ordinal,
           failureItemOrdinal,
           status: "failed",
@@ -1112,8 +1116,14 @@ export const layer: Layer.Layer<
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
         let idleFlushClosed = false;
+        const workspaceHandedOff = Effect.suspend(() =>
+          input.shouldFinalizeRun === undefined || input.hasWorkspaceMoved === undefined
+            ? Effect.succeed(false)
+            : input.hasWorkspaceMoved(),
+        );
         const finalizeRootRun = Effect.fn("RunExecutionService.finalizeRootRun")(function* (
           terminal: ProviderTerminalEvent,
+          abandonedProviderTurn?: OrchestrationV2ProviderTurn,
         ) {
           if (yield* Ref.get(rootRunFinalized)) {
             return;
@@ -1149,6 +1159,7 @@ export const layer: Layer.Layer<
                 : { loadRunInterruptReason: input.loadRunInterruptReason }),
               openRunOwnedSubagents: openSubagents,
               openRunOwnedSubagentsTerminal: terminal,
+              ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
               terminal: settledTerminal,
               failureItemPersisted: settledTerminal.status === "failed",
               refreshAfterTurn,
@@ -1161,11 +1172,7 @@ export const layer: Layer.Layer<
           // for it: the run completes, while its native subagents still settle
           // as interrupted. The completed write refuses in the same transaction
           // as a stored Stop request, so a racing Stop stays authoritative.
-          const handedOff =
-            terminal.status === "interrupted" &&
-            input.shouldFinalizeRun !== undefined &&
-            input.hasWorkspaceMoved !== undefined &&
-            (yield* input.hasWorkspaceMoved());
+          const handedOff = terminal.status === "interrupted" && (yield* workspaceHandedOff);
           if (!handedOff || !(yield* writeTerminal({ ...terminal, status: "completed" }))) {
             yield* writeTerminal(terminal);
           }
@@ -1722,14 +1729,51 @@ export const layer: Layer.Layer<
               (cause) =>
                 Effect.gen(function* () {
                   const completedAt = yield* DateTime.now;
+                  const routing = yield* Ref.get(eventRouting);
+                  const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
+                  const squashed = Cause.squash(cause);
+                  // An exclusive session closes when its thread detaches, and no terminal
+                  // follows. The process is gone, so a handoff settles here with no interrupt.
+                  if (
+                    isRunExecutionIngestError(squashed) &&
+                    isProviderEventStreamError(squashed.cause) &&
+                    squashed.cause.detachedThreadId === input.run.threadId &&
+                    (yield* workspaceHandedOff)
+                  ) {
+                    const handedOff = yield* finalizeRootRun(
+                      {
+                        type: "turn.terminal",
+                        driver: input.providerThread.driver,
+                        providerThreadId: input.providerThread.id,
+                        providerTurnId: routing.rootProviderTurnId ?? failedProviderTurnId,
+                        runOrdinal: input.run.ordinal,
+                        status: "interrupted",
+                        failure: null,
+                        threadDisposition: "reusable",
+                      },
+                      rootProviderTurn === null ||
+                        isTerminalProviderTurnStatus(rootProviderTurn.status)
+                        ? undefined
+                        : { ...rootProviderTurn, status: "interrupted", completedAt },
+                    ).pipe(
+                      Effect.as(true),
+                      Effect.catchCauseIf(
+                        (settleCause) => !Cause.hasInterruptsOnly(settleCause),
+                        (settleCause) =>
+                          Effect.logWarning(
+                            "orchestration V2 failed to settle a run after its workspace handoff",
+                            { runId: input.run.id, cause: settleCause },
+                          ).pipe(Effect.as(false)),
+                      ),
+                    );
+                    if (handedOff) return;
+                  }
                   yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
                     runId: input.run.id,
                     cause,
                   });
                   if (yield* Ref.get(rootRunFinalized)) return;
                   const providerThread = yield* Ref.get(latestProviderThread);
-                  const routing = yield* Ref.get(eventRouting);
-                  const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                   // Stop background work too; the failed consumer cannot persist terminal events.
                   const abandonedProviderTurn =
                     routing.rootProviderTurnId !== null && !routing.rootTurnEnded
@@ -1767,7 +1811,6 @@ export const layer: Layer.Layer<
                       : null;
                   const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                   const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-                  const squashed = Cause.squash(cause);
                   let nextRetryWarningAt = completedAt;
                   yield* writeFinalRunEvents({
                     run: input.run,
