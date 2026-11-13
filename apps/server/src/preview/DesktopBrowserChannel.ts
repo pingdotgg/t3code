@@ -193,12 +193,14 @@ const make = Effect.gen(function* () {
           connected = true;
           const writer = yield* socket.writer;
           const reader = yield* socket.reader;
-          yield* Stream.fromQueue(queue).pipe(
+          // A detach shuts the queue down. Ending here closes the socket, so Playwright's
+          // pending commands fail instead of waiting forever for the tab to answer.
+          const toPlaywright = Stream.fromQueue(queue).pipe(
             Stream.runForEach((message) => writer.write(message)),
-            Effect.forkScoped,
+            Effect.exit,
           );
           const decoder = new TextDecoder();
-          return yield* reader.pull.pipe(
+          const toDesktop = reader.pull.pipe(
             Effect.flatMap((frames) =>
               Effect.forEach(
                 frames,
@@ -213,6 +215,7 @@ const make = Effect.gen(function* () {
             ),
             Effect.forever,
           );
+          return yield* Effect.raceFirst(toPlaywright, toDesktop);
         }).pipe(Effect.scoped, Effect.ignore),
       )
       .pipe(Effect.forkScoped);
