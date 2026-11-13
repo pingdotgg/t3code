@@ -2180,11 +2180,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
 
-  const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
+  const toggleDevTools = Effect.fn("PreviewManager.toggleDevTools")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
     if (wc.isDevToolsOpened()) {
-      yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
-        wc.devToolsWebContents?.focus(),
+      yield* attempt({ operation: "closeDevTools", tabId, webContentsId: wc.id }, () =>
+        wc.closeDevTools(),
       );
       return;
     }
@@ -3538,7 +3538,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     hardReload,
     navigate,
     openPictureInPicture,
-    openDevTools,
+    toggleDevTools,
     pickElement,
     updateAnnotationVoice,
     prepareWebview,
@@ -3771,7 +3771,7 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
-    readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly toggleDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
     ) => Effect.Effect<void, PreviewManagerError>;
@@ -3933,7 +3933,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
     setShown: operations.setShown,
-    openDevTools: operations.openDevTools,
+    toggleDevTools: operations.toggleDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
         .clearCookies(partitions)

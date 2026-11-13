@@ -234,10 +234,10 @@ const setShown = DesktopIpc.makeIpcMethod({
     yield* manager.setShown(tabId, shown);
   }),
 });
-const openDevTools = tabMethod(
-  IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
-  "desktop.ipc.preview.openDevTools",
-  (manager, tabId) => manager.openDevTools(tabId),
+const toggleDevTools = tabMethod(
+  IpcChannels.PREVIEW_TOGGLE_DEVTOOLS_CHANNEL,
+  "desktop.ipc.preview.toggleDevTools",
+  (manager, tabId) => manager.toggleDevTools(tabId),
 );
 const cancelPickElement = tabMethod(
   IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
@@ -488,7 +488,7 @@ export const methods = [
   setZoomFactor,
   setAudioMuted,
   setShown,
-  openDevTools,
+  toggleDevTools,
   clearCookies,
   clearCache,
   getPreviewConfig,
