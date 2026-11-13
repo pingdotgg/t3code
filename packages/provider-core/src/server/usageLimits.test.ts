@@ -104,7 +104,7 @@ describe("applyUsageLimitsUpdate", () => {
       zeroSpendCap: true,
     });
   });
-  it("revokes credit spending once and publishes nothing for a block it already knows", () => {
+  it("records every credit block it is sent so an older probe cannot grant over it", () => {
     const later = "2026-09-03T12:00:05.000Z";
     const revoke = { windows: [], continuesOnCredits: false } as const;
     const revoked = applyUsageLimitsUpdate({
@@ -113,9 +113,6 @@ describe("applyUsageLimitsUpdate", () => {
       update: revoke,
     });
     expect(revoked).toEqual({ ...published, checkedAt: later, continuesOnCredits: false });
-    expect(applyUsageLimitsUpdate({ previous: revoked, checkedAt: later, update: revoke })).toBe(
-      revoked,
-    );
     // No grant yet: a probe still in flight may be about to make one from an older read.
     const blockedFirst = applyUsageLimitsUpdate({
       previous: published,
@@ -129,9 +126,19 @@ describe("applyUsageLimitsUpdate", () => {
         probed: { ...published, continuesOnCredits: true },
       })?.continuesOnCredits,
     ).toBe(false);
+    // A different block after one is already recorded: a probe started in between must not win.
+    const blockedAgain = applyUsageLimitsUpdate({
+      previous: blockedFirst,
+      checkedAt: "2026-09-03T12:00:09.000Z",
+      update: revoke,
+    });
+    expect(blockedAgain?.checkedAt).toBe("2026-09-03T12:00:09.000Z");
     expect(
-      applyUsageLimitsUpdate({ previous: blockedFirst, checkedAt: later, update: revoke }),
-    ).toBe(blockedFirst);
+      resolveUsageLimitsAfterProbe({
+        published: blockedAgain,
+        probed: { ...published, checkedAt: "2026-09-03T12:00:07.000Z", continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
     expect(
       applyUsageLimitsUpdate({ previous: undefined, checkedAt: later, update: revoke }),
     ).toBeUndefined();

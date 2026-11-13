@@ -53,11 +53,8 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  // Recorded even without a grant, so a probe in flight cannot grant over it; a repeat stays a no-op.
-  const revokesCredits =
-    update.continuesOnCredits === false &&
-    previous !== undefined &&
-    previous.continuesOnCredits !== false;
+  // Every block re-stamps checkedAt so a probe in flight cannot grant over it; providers send each block once.
+  const revokesCredits = update.continuesOnCredits === false && previous !== undefined;
   if (
     (update.windows.length === 0 && !revokesCredits) ||
     previous?.unavailable?.reason === "unsupported"
