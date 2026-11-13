@@ -311,13 +311,14 @@ it("leaves Command-arrow thread navigation bindings to the app on macOS", async 
 });
 
 it.each([
-  ["e", false, false],
-  ["i", false, false],
-  ["e", true, false],
-  ["e", false, true],
+  ["e", false, false, false],
+  ["i", false, false, false],
+  ["e", true, false, false],
+  ["e", false, true, false],
+  ["s", false, false, true],
 ])(
-  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s, declined capture command: %s)",
-  async (key, composerClaimsKey, declinedCapture) => {
+  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s, declined capture command: %s, shift: %s)",
+  async (key, composerClaimsKey, declinedCapture, shiftKey) => {
     const openUsage = vi.fn((event: KeyboardEvent) => {
       if (declinedCapture) return false;
       event.preventDefault();
@@ -333,7 +334,7 @@ it.each([
                 key,
                 metaKey: false,
                 ctrlKey: false,
-                shiftKey: false,
+                shiftKey,
                 altKey: false,
                 modKey: true,
               },
@@ -352,7 +353,8 @@ it.each([
     });
     await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
-    await userEvent.keyboard(`{${modifier}>}${key}{/${modifier}}`);
+    const shift = shiftKey ? ["{Shift>}", "{/Shift}"] : ["", ""];
+    await userEvent.keyboard(`{${modifier}>}${shift[0]}${key}${shift[1]}{/${modifier}}`);
     expect(composerCommand).toHaveBeenCalled();
     expect(openUsage).toHaveBeenCalledTimes(composerClaimsKey ? 0 : 1);
     expect(serializeEditorDoc(editor.state.doc).value).toBe(declinedCapture ? "`word`" : "word");
