@@ -178,7 +178,7 @@ describe("React Compiler coverage", () => {
   // ThreadFeed render rebuilt the feed and handed LegendList a new data array.
   it("caches the thread feed derivation", () => {
     expect(
-      compilerCachedCalls("src/features/threads/ThreadFeed.tsx", "deriveThreadFeedPresentation"),
+      compilerCachedCalls("src/features/threads/thread-feed/placeholder.tsx", "deriveThreadFeedPresentation"),
     ).toEqual([true]);
   });
 
