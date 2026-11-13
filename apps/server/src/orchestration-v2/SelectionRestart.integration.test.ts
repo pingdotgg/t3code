@@ -546,24 +546,24 @@ it.live.each(["pooled", "exclusive"] as const)(
             Effect.forkScoped,
           );
         // What t3_worktree_handoff dispatches while the calling turn is still running.
-        yield* orchestrator.dispatch({
+        const bound = yield* orchestrator.dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make("command:workspace-handoff:rebind"),
           threadId,
           branch: "repro-handoff",
           worktreePath: handoffCwd,
+          continuation: {
+            messageId: MessageId.make("message:workspace-handoff:continuation"),
+            text: "continue in the worktree",
+          },
         });
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "agent",
-          creationSource: "mcp",
-          commandId: CommandId.make("command:workspace-handoff:continuation"),
-          threadId,
-          messageId: MessageId.make("message:workspace-handoff:continuation"),
-          text: "continue in the worktree",
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-        });
+        // The detach can settle the run at once, so its follow-up must exist in the same commit.
+        assert.deepEqual(
+          bound.storedEvents.flatMap(({ event }) =>
+            event.type === "run.created" ? [event.payload.status] : [],
+          ),
+          ["queued"],
+        );
         yield* Fiber.join(settled);
         yield* worker.drain();
         return yield* orchestrator.getThreadProjection(threadId);
