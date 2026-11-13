@@ -91,6 +91,39 @@ describe("linked pull requests", () => {
     expect(result).toEqual([entry(4, "2026-01-03")]);
   });
 
+  it("keeps linked reviews apart when only their host differs", () => {
+    const linked = composerPullRequestsFromLinks(
+      [
+        link("owner/repo", 1),
+        link("owner/repo", 1, {
+          host: "gitlab.com",
+          url: "https://gitlab.com/owner/repo/-/merge_requests/1",
+        }),
+      ],
+      "p1",
+    );
+    const urls = [
+      "https://github.com/owner/repo/pull/1",
+      "https://gitlab.com/owner/repo/-/merge_requests/1",
+    ];
+    const byNumber = filterComposerPullRequestMatches({
+      entries: [],
+      linked,
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "1",
+      limit: 10,
+    });
+    expect(byNumber.map((match) => match.url).toSorted()).toEqual(urls);
+    const byText = withLinkedComposerPullRequestsFirst({
+      matches: [linked[0]!],
+      linked,
+      query: "owner",
+      limit: 10,
+    });
+    expect(byText.map((match) => match.url).toSorted()).toEqual(urls);
+  });
+
   it("puts linked pull requests ahead of a text search, before and after it returns", () => {
     const linked = composerPullRequestsFromLinks(
       [
