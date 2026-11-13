@@ -1296,6 +1296,64 @@ it.effect("restores edits to skip-worktree files whose checkpoint content matche
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("sparse restore rewrites manual skip-worktree files and keeps exclusions absent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    // One byte per chunk, so the index listing splits inside every record.
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          const onStdoutChunk = input.onStdoutChunk;
+          return liveProcess.run(
+            onStdoutChunk === undefined
+              ? input
+              : {
+                  ...input,
+                  onStdoutChunk: (chunk) => {
+                    for (let index = 0; index < chunk.length; index++)
+                      onStdoutChunk(chunk.subarray(index, index + 1));
+                  },
+                },
+          );
+        },
+      }),
+    );
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sparse-restore-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    for (const name of ["in/normal", "in/skipped", "in/s space", "out/deep/absent", "out/stray"]) {
+      yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, name), "original\n");
+    }
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "sparse fixture"]);
+    yield* git(["sparse-checkout", "set", "--cone", "--sparse-index", "in"]);
+    // Keeps Git from clearing the bit on files that are present.
+    yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+    yield* git(["update-index", "--skip-worktree", "in/skipped", "in/s space"]);
+    const captureCwd = path.join(cwd, "in");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: captureCwd, checkpointRef });
+    yield* fs.writeFileString(path.join(cwd, "in/skipped"), "later\n");
+    yield* fs.writeFileString(path.join(cwd, "in/s space"), "later\n");
+    yield* fs.writeFileString(path.join(cwd, "in/normal"), "later\n");
+
+    for (const restoreCwd of [captureCwd, cwd]) {
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({
+          cwd: restoreCwd,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/skipped")), "original\n");
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/s space")), "original\n");
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/normal")), "original\n");
+      assert.isFalse(yield* fs.exists(path.join(cwd, "out")));
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(
