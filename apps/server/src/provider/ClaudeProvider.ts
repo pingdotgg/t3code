@@ -27,6 +27,7 @@ import {
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
+  type Settings as ClaudeSdkSettings,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -49,6 +50,7 @@ import {
 import {
   customClaudeApiEndpointHost,
   discoverClaudeSkills,
+  readClaudeLaunchArgSettings,
   readClaudeSettingsEnv,
 } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
@@ -233,6 +235,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly launchArgSettings?: ClaudeSdkSettings | undefined;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -240,7 +243,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    settings: { ...input.launchArgSettings, disableAllHooks: true },
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -457,6 +460,13 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    // Unreadable --settings is reported when a turn starts; the probe runs without it.
+    const launchArgSettings = yield* readClaudeLaunchArgSettings({
+      settings: claudeSettings,
+      cwd: cwd ?? null,
+      fileSystem: yield* FileSystem.FileSystem,
+      path: yield* Path.Path,
+    }).pipe(Effect.orElseSucceed(() => undefined));
     // Workspace probes (no usage) discard models; the machine probe refreshes the shared cache.
     const graceMs = includeStatus
       ? claudeGatewayDiscoveryGraceMs({
@@ -477,6 +487,7 @@ const probeClaudeCapabilities = (
             environment: claudeEnvironment,
             cwd,
             managedMcpConfig,
+            launchArgSettings,
           }),
         });
         const init = await q.initializationResult();
