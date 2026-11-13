@@ -270,9 +270,9 @@ export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* 
 
 const run = Migrator.make({});
 
-/** Told which pending migration is running, then `undefined` once none is; the server answers startup requests with it. */
+// Never cleared: the server is not serving yet when the last migration ends, and its startup 503 goes away once it is.
 export const DatabaseMigrationProgressReporter = Context.Reference<
-  (progress: DatabaseMigrationProgress | undefined) => void
+  (progress: DatabaseMigrationProgress) => void
 >("t3/persistence/Migrations/DatabaseMigrationProgressReporter", {
   defaultValue: () => () => undefined,
 });
@@ -323,7 +323,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     }
     executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
   }
-  reportProgress(undefined);
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

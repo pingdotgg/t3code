@@ -170,11 +170,11 @@ describe("resolveInitialServerAuthGateState", () => {
   it("names the server's database upgrade on the boot splash and waits it out", async () => {
     vi.useFakeTimers();
     const testWindow = installTestBrowser("http://localhost/");
-    let upgrading = true;
+    let phase: "upgrading" | "starting" | "serving" = "upgrading";
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      upgrading
+      phase === "upgrading"
         ? Response.json({ databaseMigration: { current: 2, total: 7 } }, { status: 503 })
-        : Response.json({}),
+        : new Response(null, { status: phase === "starting" ? 503 : 200 }),
     );
     const request = HttpClientRequest.get("http://localhost/api/auth/session");
     const unavailable = new HttpClientError.HttpClientError({
@@ -184,9 +184,9 @@ describe("resolveInitialServerAuthGateState", () => {
       }),
     });
     __setPrimaryHttpRunnerForTests((() =>
-      upgrading
-        ? Promise.reject(unavailable)
-        : Promise.resolve(authenticatedSession(LOOPBACK_AUTH))) as never);
+      phase === "serving"
+        ? Promise.resolve(authenticatedSession(LOOPBACK_AUTH))
+        : Promise.reject(unavailable)) as never);
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
     const gate = resolveInitialServerAuthGateState();
@@ -194,7 +194,10 @@ describe("resolveInitialServerAuthGateState", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(testWindow.bootStatus.textContent).toBe("Upgrading database (2 of 7)");
 
-    upgrading = false;
+    // The server still answers its plain startup 503 between the last migration and serving.
+    phase = "starting";
+    await vi.advanceTimersByTimeAsync(2_000);
+    phase = "serving";
     await vi.advanceTimersByTimeAsync(1_000);
     await expect(gate).resolves.toEqual({ status: "authenticated" });
     expect(testWindow.bootStatus.textContent).toBe("");

@@ -77,7 +77,7 @@ describe("runMigrations", () => {
   it.effect("upgrades a database at exactly 54", () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 54 });
-      const reported: Array<DatabaseMigrationProgress | undefined> = [];
+      const reported: Array<DatabaseMigrationProgress> = [];
       assert.deepStrictEqual(
         yield* runMigrations().pipe(
           Effect.provideService(DatabaseMigrationProgressReporter, (progress) => {
@@ -86,10 +86,10 @@ describe("runMigrations", () => {
         ),
         v2Migrations,
       );
-      assert.deepStrictEqual(reported, [
-        ...v2Migrations.map((_, index) => ({ current: index + 1, total: v2Migrations.length })),
-        undefined,
-      ]);
+      assert.deepStrictEqual(
+        reported,
+        v2Migrations.map((_, index) => ({ current: index + 1, total: v2Migrations.length })),
+      );
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),

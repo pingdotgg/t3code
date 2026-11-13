@@ -315,7 +315,7 @@ function showDatabaseUpgradeOnBootSplash(): () => void {
 }
 
 async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<T> {
-  const startedAt = Date.now();
+  let startedAt = Date.now();
   while (true) {
     try {
       return await operation();
@@ -324,12 +324,12 @@ async function retryTransientBootstrap<T>(operation: () => Promise<T>): Promise<
         throw error;
       }
 
-      // An upgrade of a large database outlasts the budget; the server is working, not gone.
-      if (
-        Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS &&
-        (await readDatabaseUpgradeProgress()) === null
-      ) {
-        throw error;
+      if (Date.now() - startedAt >= BOOTSTRAP_RETRY_TIMEOUT_MS) {
+        if ((await readDatabaseUpgradeProgress()) === null) {
+          throw error;
+        }
+        // An upgrading server is working, not gone, and still needs its normal startup time afterwards.
+        startedAt = Date.now();
       }
 
       await waitForBootstrapRetry(BOOTSTRAP_RETRY_STEP_MS);
