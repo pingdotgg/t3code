@@ -325,6 +325,11 @@ export function HomeScreen(props: HomeScreenProps) {
       }),
     [projects, selectedEnvironmentId, projectGroupingMode],
   );
+  const { threads, pendingTasks } = props;
+  const projectFilterOptions = useMemo(
+    () => buildHomeProjectFilterOptions({ scopes: projectScopes, threads, pendingTasks }),
+    [projectScopes, threads, pendingTasks],
+  );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = (() => {
     const map = new Map<string, EnvironmentProject>();
@@ -679,11 +684,7 @@ export function HomeScreen(props: HomeScreenProps) {
         <ThreadListFilters
           gutter={sidebarSurface ? 8 : 0}
           environments={props.environments}
-          projects={buildHomeProjectFilterOptions({
-            scopes: projectScopes,
-            threads: props.threads,
-            pendingTasks: props.pendingTasks,
-          })}
+          projects={projectFilterOptions}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}

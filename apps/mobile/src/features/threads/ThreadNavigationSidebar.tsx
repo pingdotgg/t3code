@@ -181,11 +181,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       }),
     [projects, options.selectedEnvironmentId, options.projectGroupingMode],
   );
-  const projectFilterOptions = buildHomeProjectFilterOptions({
-    scopes: projectScopes,
-    threads,
-    pendingTasks,
-  });
+  const projectFilterOptions = useMemo(
+    () => buildHomeProjectFilterOptions({ scopes: projectScopes, threads, pendingTasks }),
+    [projectScopes, threads, pendingTasks],
+  );
   const projectTitleByProjectKey = useMemo(
     () =>
       new Map(
