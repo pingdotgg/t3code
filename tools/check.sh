@@ -2,6 +2,8 @@
 # Runs every check that needs no model, in order, and prints a summary.
 # Usage: CONN_MONOREPO=/path/to/conn tools/check.sh
 # Without CONN_MONOREPO it runs the Rust-only checks and lists what it skipped.
+# CHECK_SUMMARY=<file> also writes one line per check (`ok <name>`, `FAIL <name>`,
+# `skip <name>`) to that file, for tools/bump-conn.sh.
 # No check calls a model: the server checks use `examples/replay_server` (the engine's fake
 # provider), and `parity.mjs` calls none by default. Every server gets a temp state folder.
 set -u
@@ -16,6 +18,9 @@ trap 'rm -rf "$scratch"' EXIT
 passed=()
 failed=()
 skipped=()
+skipped_tools=()
+summary="${CHECK_SUMMARY:-/dev/null}"
+: >"$summary"
 
 run() {
   local name="$1"
@@ -24,9 +29,11 @@ run() {
   local started=$SECONDS
   if "$@"; then
     passed+=("$name")
+    printf 'ok %s\n' "$name" >>"$summary"
     printf '<== ok    %s (%ss)\n' "$name" $((SECONDS - started))
   else
     failed+=("$name")
+    printf 'FAIL %s\n' "$name" >>"$summary"
     printf '<== FAIL  %s (%ss)\n' "$name" $((SECONDS - started))
   fi
 }
@@ -43,6 +50,15 @@ run "cargo test" cargo test --workspace
 run "release build" cargo build --release --workspace --bins --examples
 run "decode check" env CARGO_TARGET_DIR="$repo/target" \
   cargo test --manifest-path fixtures/decode-check/Cargo.toml
+
+# Advisories, licences, bans and sources (deny.toml). Advisories need network access for the
+# RustSec database; DENY_OFFLINE=1 (`cargo deny --offline`) uses the cached copy.
+if command -v cargo-deny >/dev/null 2>&1; then
+  run "cargo deny" cargo deny --locked ${DENY_OFFLINE:+--offline} check
+else
+  printf '\ncargo-deny is not installed: skipping `cargo deny check` (cargo install cargo-deny --locked).\n'
+  skipped_tools+=("cargo deny")
+fi
 
 monorepo_checks=(
   "gen-contract --check"
@@ -80,5 +96,10 @@ printf 'passed  %d\n' "${#passed[@]}"
 for name in "${failed[@]+"${failed[@]}"}"; do printf 'FAILED  %s\n' "$name"; done
 for name in "${skipped[@]+"${skipped[@]}"}"; do
   printf 'skipped %s (needs CONN_MONOREPO)\n' "$name"
+  printf 'skip %s\n' "$name" >>"$summary"
+done
+for name in "${skipped_tools[@]+"${skipped_tools[@]}"}"; do
+  printf 'skipped %s (tool not installed)\n' "$name"
+  printf 'skip %s\n' "$name" >>"$summary"
 done
 [ "${#failed[@]}" -eq 0 ]

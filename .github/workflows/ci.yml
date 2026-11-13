@@ -1,0 +1,223 @@
+name: CI
+
+# Not active yet: this repository has no GitHub remote. Runner labels and action pins follow
+# the Conn monorepo's own workflows (GitHub-hosted `ubuntu-24.04`; Blacksmith labels are not
+# registered on Nick's repositories).
+#
+# Jobs:
+# - rust: format, clippy with warnings as errors, tests, the recordings decode check.
+# - deny: cargo-deny (advisories, licences, bans, sources). Runs nightly too, so a new
+#   advisory shows without a code change.
+# - musl: the x86_64-unknown-linux-musl release binary that Orbit runs; prints its size.
+# - monorepo: the checks that need a Conn checkout (tools/check.sh with CONN_MONOREPO).
+#   NEEDS the repository secret CONN_READ_TOKEN: a fine-grained token with read access to
+#   the contents of nckrtl/conn, which is private. Without it the job fails at its first step.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # After the Conn nightly sync (about 03:30-04:00 UTC).
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same as rust-version in Cargo.toml.
+  RUST_TOOLCHAIN: "1.95.0"
+
+jobs:
+  rust:
+    name: Format, Clippy, Tests
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-test-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-test-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked --workspace
+
+      - name: Recordings decode
+        run: cargo test --locked --manifest-path fixtures/decode-check/Cargo.toml
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: cargo deny check
+        run: cargo deny --locked check
+
+  musl:
+    name: Linux musl release build
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-unknown-linux-musl
+
+      # musl-gcc compiles the bundled SQLite.
+      - name: Install musl tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-musl-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-musl-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Build
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl -p conn-server
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+
+      - name: Binary size
+        run: |
+          binary=target/x86_64-unknown-linux-musl/release/conn-server
+          bytes="$(stat -c %s "$binary")"
+          file "$binary"
+          printf 'conn-server (x86_64-unknown-linux-musl): %s bytes\n' "$bytes"
+          printf '**conn-server** x86_64-unknown-linux-musl: %s bytes (%s MiB)\n' "$bytes" \
+            "$(awk "BEGIN { printf \"%.2f\", $bytes / 1048576 }")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conn-server-x86_64-unknown-linux-musl
+          path: target/x86_64-unknown-linux-musl/release/conn-server
+          retention-days: 14
+
+  monorepo:
+    name: Checks with the Conn checkout
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Need read access to nckrtl/conn
+        env:
+          CONN_READ_TOKEN: ${{ secrets.CONN_READ_TOKEN }}
+        run: |
+          if [ -z "$CONN_READ_TOKEN" ]; then
+            echo "::error::Set the repository secret CONN_READ_TOKEN: a fine-grained token with read access to the contents of nckrtl/conn."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Read the pin
+        id: pin
+        run: echo "commit=$(head -n 1 conn.pin | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      # The pinned commit only. tools/conn-checkout does the same on a machine.
+      - name: Checkout Conn at the pin
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: nckrtl/conn
+          ref: ${{ steps.pin.outputs.commit }}
+          token: ${{ secrets.CONN_READ_TOKEN }}
+          path: .conn/conn
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        env:
+          VP_DOWNLOAD_TIMEOUT: "120"
+        with:
+          node-version-file: .conn/conn/package.json
+          cache: false
+          run-install: false
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: conn-pnpm-${{ runner.os }}-${{ hashFiles('.conn/conn/pnpm-lock.yaml') }}
+          restore-keys: conn-pnpm-${{ runner.os }}-
+
+      - name: Install Conn dependencies
+        working-directory: .conn/conn
+        run: vp i
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-check-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-check-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+
+      # Every check that needs no model; none calls one.
+      - name: tools/check.sh
+        run: tools/check.sh
+        env:
+          CONN_MONOREPO: ${{ github.workspace }}/.conn/conn

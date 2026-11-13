@@ -1,0 +1,29 @@
+# Files in the Conn monorepo that the provider crates follow. tools/bump-conn.sh prints their
+# diff stat between the old and the new pin. One Git pathspec per line; `:(glob)` allowed.
+# Add a file here when a provider crate starts to follow it.
+
+# Claude (crates/conn-provider-claude)
+apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
+apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts
+apps/server/src/orchestration-v2/Adapters/claudeWorkflowProgress.ts
+apps/server/src/provider/ClaudeProvider.ts
+apps/server/src/provider/Drivers/ClaudeDriver.ts
+apps/server/src/provider/Drivers/ClaudeExecutable.ts
+apps/server/src/provider/Drivers/ClaudeHome.ts
+
+# Codex (crates/conn-provider-codex)
+apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+apps/server/src/provider/CodexProvider.ts
+apps/server/src/provider/codexLaunchArgs.ts
+apps/server/src/provider/CodexInstallation.ts
+apps/server/src/provider/CodexDeveloperInstructions.ts
+apps/server/src/provider/Drivers/CodexDriver.ts
+apps/server/src/provider/Drivers/CodexHomeLayout.ts
+
+# Both
+packages/provider-core/src/server/ProviderAdapter.ts
+packages/provider-core/src/server/orchestrationInstructions.ts
+packages/shared/src/cliArgs.ts
+
+# SDK and CLI pins
+apps/server/package.json
