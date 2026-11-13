@@ -32,6 +32,7 @@ export const ForgejoRepository = Schema.Struct({
   allow_merge_commits: Schema.optional(Schema.Boolean),
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
+  allow_fast_forward_only_merge: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
   default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });
@@ -147,7 +148,11 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     closedAt: pr.closed_at === null ? null : toIsoUtc(pr.closed_at),
     mergedAt: pr.merged_at === null ? null : toIsoUtc(pr.merged_at),
     reviewRequestLogins: (pr.requested_reviewers ?? []).map((user) => user.login),
-    labels: (pr.labels ?? []).map((label) => ({ name: label.name, color: label.color ?? null })),
+    labels: (pr.labels ?? []).map((label) => ({
+      name: label.name,
+      color: label.color ?? null,
+      description: label.description || null,
+    })),
   } satisfies ProviderChangeRequest;
 }
 
