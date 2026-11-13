@@ -411,6 +411,29 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
   ),
 );
 
+it.live("answers a failed Basic client authentication with 401 and a Basic challenge", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      const request = form({
+        grant_type: "authorization_code",
+        code: "synthetic",
+        redirect_uri: REDIRECT,
+        client_id: "unknown",
+        code_verifier: verifier,
+      });
+      const response = yield* handler(
+        at("/oauth/mcp/token", {
+          ...request,
+          headers: { ...request.headers, authorization: `Basic ${btoa("unknown:synthetic")}` },
+        }),
+      );
+      expect(yield* json<unknown>(response)).toMatchObject({ error: "invalid_client" });
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toMatch(/^Basic\b/);
+    }),
+  ),
+);
+
 it.live("rejects a wrong PKCE verifier and spends the code", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
