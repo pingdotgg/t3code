@@ -485,6 +485,8 @@ describe("AcpRegistrySupport", () => {
       // What npm 12.2.2 prints for `allow-scripts=` in the user file over `allow-scripts=none`.
       const environment = {
         ...toolchain.environment,
+        // Inherited JSON mode replaces the per-source listing with the effective values.
+        npm_config_json: "true",
         FAKE_NPM_CONFIG_LIST: [
           '; "global" config from /etc/npmrc',
           "",

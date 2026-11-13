@@ -10,6 +10,13 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   exit 0
 fi
 if [ "$1" = "config" ] && [ "$2" = "list" ]; then
+  case "${npm_config_json:-} $*" in
+    "true "*--no-json*) ;;
+    "true "*)
+      printf '{"allow-scripts":[""]}\n'
+      exit 0
+      ;;
+  esac
   printf '%s\n' "$FAKE_NPM_CONFIG_LIST"
   exit 0
 fi

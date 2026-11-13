@@ -1231,7 +1231,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   // can hide a lower source's restriction: any defined setting, or a failed query, is a policy.
   const npmHasInstallScriptPolicy = Effect.fn("AcpRegistryCatalog.npmHasInstallScriptPolicy")(
     function* (managerPath: string, environment: NodeJS.ProcessEnv) {
-      return yield* runCommand(managerPath, ["config", "list", "--global", "--no-long"], {
+      // An inherited `json` or `long` setting would change the listing the matcher reads.
+      const listArgs = ["config", "list", "--global", "--no-long", "--no-json"];
+      return yield* runCommand(managerPath, listArgs, {
         env: environment,
         timeout: PACKAGE_QUERY_TIMEOUT,
         truncatedOutputReason: "install_failed",
