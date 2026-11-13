@@ -72,12 +72,17 @@ interface CacheKey extends FileIdentity {
 }
 
 /**
- * Estimated peak memory for a preview in MiB, measured at the size limits. Blender thumbnails are
- * read in small pieces; meshes hold the file plus their geometry, up to about 2.5 times the file,
- * and a compressed 3MF expands to about six times.
+ * Memory, in MiB, a `.blend` thumbnail may take: the scan buffer while it doubles to its 32 MiB
+ * limit, plus a 1024x1024 RGBA thumbnail, its flipped copy, and the PNG encode.
+ */
+const BLEND_THUMBNAIL_MEMORY_MIB = 64;
+
+/**
+ * Estimated peak memory for a preview in MiB, measured at the size limits. Meshes hold the file plus
+ * their geometry, up to about 2.5 times the file, and a compressed 3MF expands to about six times.
  */
 const estimatedMemoryMib = (key: CacheKey) => {
-  if (key.format === "blend") return 1;
+  if (key.format === "blend") return BLEND_THUMBNAIL_MEMORY_MIB;
   const factor = key.format === "3mf" ? 6 : 2.5;
   return Math.min(
     PREVIEW_MEMORY_BUDGET_MIB,
