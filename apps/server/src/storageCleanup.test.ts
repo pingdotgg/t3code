@@ -2743,6 +2743,9 @@ describe("storage cleanup reports and local file policies", () => {
         ]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         yield* command(worktree, ["rebase", "--abort"]);
+        yield* command(worktree, ["bisect", "start"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["bisect", "reset"]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
       }),
     ),

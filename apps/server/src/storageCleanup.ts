@@ -695,16 +695,18 @@ const make = Effect.gen(function* () {
     if (head === null) return true;
     // Removal keeps branches but drops a detached HEAD, so only commits held elsewhere are safe.
     if (head.exitCode !== 0) {
-      // A paused rebase also detaches HEAD; removal would discard its remaining steps.
-      const rebase = yield* read([
+      // A paused rebase or bisect also detaches HEAD; removal would discard its progress.
+      const operations = yield* read([
         "rev-parse",
         "--git-path",
         "rebase-merge",
         "--git-path",
         "rebase-apply",
+        "--git-path",
+        "BISECT_LOG",
       ]);
-      if (rebase === null) return true;
-      for (const state of rebase.stdout.trim().split(/\r?\n/)) {
+      if (operations === null) return true;
+      for (const state of operations.stdout.trim().split(/\r?\n/)) {
         if (yield* fs.exists(path.resolve(cwd, state))) return true;
       }
       const unreachable = yield* read([
