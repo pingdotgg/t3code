@@ -469,13 +469,17 @@ describe("DesktopServerExposure", () => {
       "https://win-host.tail1234.ts.net/",
     ];
 
-    it.effect("NAT: drops Windows addresses and adds the distro's Tailscale IP", () =>
+    it.effect("NAT: drops Windows addresses and adds the pinned distro's Tailscale IP", () =>
       Effect.gen(function* () {
         assert.deepEqual(
-          yield* advertisedUrls({
-            hostnameOutput: "172.20.1.5 100.64.0.9\n",
-            tailscaleOutput: "100.64.0.9\n",
-          }),
+          yield* advertisedUrls(
+            {
+              hostnameOutput: "172.20.1.5 100.64.0.9\n",
+              tailscaleOutput: "100.64.0.9\n",
+              distro: "Pinned",
+            },
+            { distro: "Pinned" },
+          ),
           [
             "http://127.0.0.1:4173/",
             "https://win-host.tail1234.ts.net/",
@@ -574,26 +578,6 @@ describe("DesktopServerExposure", () => {
             null,
           ),
           windowsUrls,
-        );
-      }),
-    );
-
-    it.effect("probes the distro the backend runs in, not the current default", () =>
-      Effect.gen(function* () {
-        assert.deepEqual(
-          yield* advertisedUrls(
-            {
-              hostnameOutput: "172.20.1.5 100.64.0.9\n",
-              tailscaleOutput: "100.64.0.9\n",
-              distro: "Pinned",
-            },
-            { distro: "Pinned" },
-          ),
-          [
-            "http://127.0.0.1:4173/",
-            "https://win-host.tail1234.ts.net/",
-            "http://100.64.0.9:4173/",
-          ],
         );
       }),
     );
