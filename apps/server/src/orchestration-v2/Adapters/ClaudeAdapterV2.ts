@@ -12807,15 +12807,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
         );
 
-        // Move subagents to the background before priority "now" steers cancel foreground tools.
-        const backgroundForegroundSubagents = Effect.fnUntraced(function* (
+        // Move foreground work to the background before a priority "now" steer, as the
+        // terminal's send-now (ctrl+x ctrl+s) does. The steer would cancel a
+        // foreground subagent, and a foreground command would hold the steer until the
+        // command ends. Both keep running and report back when they settle.
+        const backgroundForegroundWork = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
+          turn: ActiveClaudeTurnContext,
           deadline: number,
         ) {
           const foreground: Array<{
-            readonly taskId: string;
             readonly toolUseId: string;
+            readonly subagentTaskId?: string;
           }> = [];
+          // Only the turn's own calls: a subagent's commands move with the subagent.
+          for (const toolCall of turn.toolCalls.values()) {
+            if (toolCall.classification.itemType === "command_execution") {
+              foreground.push({ toolUseId: toolCall.nativeItemId });
+            }
+          }
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
             const toolUseId = subagent.runToolUseId;
             if (
@@ -12827,21 +12837,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               continue;
             }
-            foreground.push({ taskId, toolUseId });
+            foreground.push({ toolUseId, subagentTaskId: taskId });
           }
           for (const [toolUseId, move] of backgroundMovesByToolUseId) {
             if (move.pollUnsafe() !== undefined) backgroundMovesByToolUseId.delete(toolUseId);
           }
           const moves: Array<Fiber.Fiber<void>> = [];
-          for (const { taskId, toolUseId } of foreground) {
+          for (const { subagentTaskId: taskId, toolUseId } of foreground) {
             const inFlight = backgroundMovesByToolUseId.get(toolUseId);
             if (inFlight !== undefined) {
               moves.push(inFlight);
               continue;
             }
+            // A moved command needs no bookkeeping here: its task events report the move.
             const move = yield* live.query.backgroundTasks(toolUseId).pipe(
               Effect.flatMap((moved) =>
-                moved
+                moved && taskId !== undefined
                   ? Ref.get(sessionSubagentsByTaskId).pipe(
                       Effect.flatMap((registry) =>
                         registry.get(taskId)?.task.status === "running" &&
@@ -12855,11 +12866,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : Effect.void,
               ),
               Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.claude-steer-background-subagent-failed", {
-                  taskId,
-                  toolUseId,
-                  cause,
-                }),
+                Effect.logWarning(
+                  taskId === undefined
+                    ? "orchestration-v2.claude-steer-background-command-failed"
+                    : "orchestration-v2.claude-steer-background-subagent-failed",
+                  { taskId, toolUseId, cause },
+                ),
               ),
               Effect.forkIn(sessionScope),
             );
@@ -12944,7 +12956,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
-            yield* backgroundForegroundSubagents(existing, backgroundDeadline);
+            yield* backgroundForegroundWork(existing, currentTurn, backgroundDeadline);
             if (liveSteerSelection !== undefined) {
               yield* applySelectionLive(existing, liveSteerSelection);
             }
