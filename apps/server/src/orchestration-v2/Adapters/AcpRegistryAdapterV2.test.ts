@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -210,6 +211,9 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
   agentId = "claude-acp",
+  // A flavor that buffers wakes without following the agent's work state still
+  // has the hook, so callers that only want the buffer opt the assertion out.
+  expectPendingBackgroundWork = continuationEnabled,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -276,10 +280,10 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (expectPendingBackgroundWork) {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
-      "Claude ACP v2 must report background work after foreground idle",
+      "an ACP flavor that keeps turns open must report background work",
     );
   }
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -1854,6 +1858,149 @@ describe("AcpRegistryAdapterV2", () => {
       const second = yield* session.throughMarker("after second idle");
       const secondTerminal = second.find((event) => event.type === "turn.terminal");
       assert.equal(secondTerminal?.type === "turn.terminal" ? secondTerminal.runOrdinal : null, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // regression: Kimi Code answers `session/prompt` while a detached shell task is still
+  // running, then starts a turn of its own the moment that task terminates.
+  it.effect("replays Kimi's self-resume after a detached task ends into a continuation run", () =>
+    Effect.gen(function* () {
+      const kimiSession = "kimi-session";
+      const wakeText = "The detached check failed; rerunning it.";
+      const openKimi = Effect.fn("openKimi")(function* (
+        agentId: string,
+        gate: ProviderReplayGate | undefined,
+        expectPendingBackgroundWork: boolean,
+      ) {
+        const update = (sessionUpdate: Record<string, unknown>) =>
+          claudeFrames.update(kimiSession, sessionUpdate);
+        const wake = {
+          ...update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: wakeText },
+          }),
+          ...(gate === undefined ? {} : { label: "wake" }),
+        };
+        return yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                // Kimi Code 2.6.1 negotiates ACP v1, so the prompt response is the turn's end.
+                result: {
+                  protocolVersion: 1,
+                  agentInfo: { name: "Kimi Code CLI", version: "2.6.1" },
+                  agentCapabilities: { loadSession: true },
+                  authMethods: [],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/new",
+                result: { sessionId: kimiSession },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            update({
+              sessionUpdate: "tool_call",
+              toolCallId: "shell-1",
+              title: "rtk node tools/demo-cabinet.ts",
+              kind: "execute",
+              status: "completed",
+              rawInput: { command: "rtk node tools/demo-cabinet.ts", background: true },
+            }),
+            update({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Waiting for the detached check." },
+            }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            update({ sessionUpdate: "session_info_update", title: "turn settled" }),
+            wake,
+            update({ sessionUpdate: "session_info_update", title: "wake delivered" }),
+          ],
+          gate,
+          true,
+          agentId,
+          expectPendingBackgroundWork,
+        );
+      });
+
+      const gate = makeProviderReplayGate(["wake"]);
+      const session = yield* openKimi("kimi-code", gate, true);
+      assert.isDefined(
+        session.runtime.hasPendingBackgroundWork,
+        "Kimi must keep post-settle wake traffic for a continuation run",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const settled = yield* session.throughMarker("turn settled");
+      assert.isFalse(
+        settled.some((event) => event.type === "turn.terminal"),
+        "the deferred finalize must hold the settled turn open for Kimi's self-resume",
+      );
+      assert.lengthOf(session.offers, 0, "the settled turn must not invent a continuation");
+
+      gate.release("wake");
+      const delivered = yield* session.throughMarker("wake delivered");
+      assert.isFalse(
+        delivered.some(
+          (event) => event.type === "message.updated" && event.message.text === wakeText,
+        ),
+        "wake traffic must wait for its own run instead of landing in the settled one",
+      );
+      assert.lengthOf(session.offers, 1, "Kimi's own follow-up turn must offer a continuation");
+      assert.notEqual(
+        session.offers[0]?.delivery,
+        "message_text",
+        "Kimi's follow-up is buffered output, so nothing may re-prompt the agent",
+      );
+
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      yield* TestClock.adjust("4 seconds");
+      const resumed = yield* session.until(
+        (event) => event.type === "turn.terminal" && event.runOrdinal === 2,
+      );
+      assert.isTrue(
+        resumed.some(
+          (event) => event.type === "message.updated" && event.message.text === wakeText,
+        ),
+        "the buffered follow-up reply must appear in the continuation run",
+      );
+      const continuationTerminal = resumed.at(-1)!;
+      if (continuationTerminal.type !== "turn.terminal") throw new Error("Missing continuation");
+      assert.equal(continuationTerminal.status, "completed");
+
+      // A registry agent that never resumes on its own keeps the old behavior.
+      const plain = yield* openKimi("gemini", undefined, false);
+      assert.isUndefined(
+        plain.runtime.hasPendingBackgroundWork,
+        "an ACP Registry agent without self-resume support must not hold turns open",
+      );
+      yield* plain.runtime.startTurn(plain.turnInput(1));
+      yield* plain.throughMarker("wake delivered");
+      assert.lengthOf(plain.offers, 0, "only Kimi is known to resume itself after the prompt");
     }).pipe(Effect.provide(layerTest)),
   );
 
