@@ -45,7 +45,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers } from "effect/http";
+import { Headers, HttpClient } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1666,40 +1666,119 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
   ),
 );
 
-it.effect("a usage-limits refresh delegates to the usage limit sources service", () =>
+it.effect("a usage-limits refresh delivers the probe's fresh limits on the config stream", () =>
   Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const provider: ServerProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-12T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const freshLimits = {
+      checkedAt: "2026-11-12T00:05:00.000Z",
+      windows: [{ id: "session", kind: "session" as const, label: "Session", usedPercent: 42 }],
+    };
+    let registryProviders: ReadonlyArray<ServerProvider> = [provider];
+    const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+    const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
-    let limitsRefreshes = 0;
+    // A probe publishes its result, which is how a client learns the provider's fresh limits.
+    const providerRegistryLayer = Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.sync(() => registryProviders),
+      streamChanges: Stream.fromQueue(providerChanges).pipe(
+        Stream.tap(() => Queue.offer(pulled, undefined)),
+      ),
+      refresh: () =>
+        Effect.gen(function* () {
+          const probed: ReadonlyArray<ServerProvider> = [{ ...provider, usageLimits: freshLimits }];
+          registryProviders = probed;
+          yield* Queue.offer(providerChanges, probed);
+          return probed;
+        }),
+      refreshWorkspaceSnapshot: () => Effect.sync(() => registryProviders),
+    });
+    const usageLimitSources = yield* UsageLimitSources.make.pipe(
+      Effect.provide([
+        ServerSettings.layerTest({ usageLimitSources: {} }),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
+          read: (references) => Effect.succeed(references.map(() => undefined)),
+          invalidate: () => Effect.void,
+        }),
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunScopeWork: () => Effect.succeed(false),
+        }),
+        providerRegistryLayer,
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Unexpected network request")),
+        ),
+        NodeCrypto.layer,
+      ]),
+    );
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
-      Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([]),
-        refresh: () => Effect.succeed([]),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({
+        resolveAvailableEditors: () => Effect.succeed([]),
+        resolveFileManagerRevealKind: () => Effect.undefined,
       }),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({
-        current: Effect.succeed([]),
-        refreshUsageLimits: Effect.sync(() => {
-          limitsRefreshes += 1;
-        }),
+      providerRegistryLayer,
+      Layer.mock(ProjectService.ProjectService)({
+        workspaceScanDirectory: (cwd) => Effect.succeed(cwd),
       }),
-      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
-      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
-      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
-      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        listInstances: Effect.succeed([]),
+        getInstance: () => Effect.succeed({ instanceId } as never),
+      }),
+      Layer.succeed(UsageLimitSources.UsageLimitSources, usageLimitSources),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+        resolveTargets: () => Effect.succeed([]),
+      }),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({
+        resolve: () => Effect.succeed([]),
+        resolveAvailable: () => Effect.succeed([]),
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("limits-test"),
+          label: "Limits test",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0",
+          capabilities: { repositoryIdentity: false },
+        }),
+      }),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+        getDescriptor: () =>
+          Effect.succeed({
+            policy: "loopback-browser",
+            bootstrapMethods: [],
+            sessionMethods: ["browser-session-cookie"],
+            sessionCookieName: "limits-test-session",
+          }),
+      }),
     );
     const server = yield* RpcServer.makeNoSerialization(
-      RpcGroup.make(WsServerRefreshProvidersRpc),
+      RpcGroup.make(WsSubscribeServerConfigRpc, WsServerRefreshProvidersRpc),
       {
         ...WS_RPC_SERVER_OPTIONS,
         onFromServer: (response) =>
-          response._tag === "Exit" && response.exit._tag === "Success"
-            ? Queue.offer(responses, response.exit.value)
+          response._tag === "Chunk"
+            ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
+                discard: true,
+              })
             : response._tag === "Exit"
               ? Queue.offer(responses, response.exit)
               : Effect.void,
@@ -1708,8 +1787,8 @@ it.effect("a usage-limits refresh delegates to the usage limit sources service",
       Effect.provide(
         layerWsRpc(
           {
-            sessionId: AuthSessionId.make("usage-limits-test"),
-            subject: "usage-limits-test",
+            sessionId: AuthSessionId.make("limits-test"),
+            subject: "limits-test",
             method: "browser-session-cookie",
             scopes: [],
           },
@@ -1720,19 +1799,41 @@ it.effect("a usage-limits refresh delegates to the usage limit sources service",
         ).pipe(Layer.provide(services)),
       ),
     );
+    const configRequest = RpcMessage.RequestId("limits-config");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: configRequest,
+      tag: WS_METHODS.subscribeServerConfig,
+      payload: { workspaceSnapshotsOnDemand: true, providerCatalogsOnDemand: true },
+      headers: Headers.empty,
+    });
+    const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (Exit.isExit(snapshot)) return yield* Effect.die(`Subscription failed: ${snapshot}`);
+    if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
     yield* server.write(0, {
       _tag: "Request",
-      id: RpcMessage.RequestId("limits"),
+      id: RpcMessage.RequestId("limits-refresh"),
       tag: WS_METHODS.serverRefreshProviders,
       payload: { usageLimitsOnly: true },
       headers: Headers.empty,
     });
-    const refreshed = (yield* Queue.take(responses)) as {
-      readonly providers: ReadonlyArray<ServerProvider>;
-    };
+    const reply = (yield* Queue.take(responses)) as Exit.Exit<unknown, unknown>;
+    if (!Exit.isExit(reply) || reply._tag !== "Success") {
+      return yield* Effect.die(`Refresh failed: ${JSON.stringify(reply)}`);
+    }
+    const refreshed = reply.value as { readonly providers: ReadonlyArray<ServerProvider> };
+    // The reply carries no provider list, so the probe's result has to reach the client
+    // through the config stream.
     assert.deepEqual(refreshed.providers, []);
-    assert.equal(limitsRefreshes, 1, "the limits-only refresh should be one service call");
+    // The probe's result has to reach the config stream before its update can be sent.
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const update = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider statuses");
+    assert.deepEqual(update.payload.providers[0]?.usageLimits?.windows, freshLimits.windows);
+    yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
