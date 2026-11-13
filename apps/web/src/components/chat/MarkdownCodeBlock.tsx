@@ -108,6 +108,9 @@ function MarkdownCodeBlockTitleContent({
     );
   }
 
+  // Fences without a language highlight as "text"; a label would only echo that default.
+  if (language === "text") return null;
+
   const fileName = syntheticFileNameForLanguageId(language);
   if (!hasSpecificPierreIconForFileName(fileName)) {
     return <span className="truncate">{language}</span>;
