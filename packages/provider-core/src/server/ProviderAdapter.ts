@@ -71,13 +71,25 @@ export const ProviderAdapterV2TurnMessage = Schema.Struct({
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
 
 /**
- * Text an agent or the server wrote: a cross-thread send, a delegation brief, a completion wake.
- * Skill syntax in it is not an invocation. A scheduled prompt runs as its author wrote it.
+ * Text an agent or the server wrote into a thread that already has work: a cross-thread send, a
+ * completion wake. Skill syntax in it is not an invocation. A thread's first message is the brief
+ * its launcher wrote for it, and a scheduled prompt runs as its author wrote it.
  */
-export function isAgentAuthoredMessage(
-  message: Pick<ProviderAdapterV2TurnMessage, "createdBy" | "scheduledTaskId">,
-): boolean {
-  return message.createdBy === "agent" && message.scheduledTaskId === undefined;
+export function isAgentAuthoredMessage(input: {
+  readonly message: Pick<ProviderAdapterV2TurnMessage, "createdBy" | "scheduledTaskId">;
+  /** Absent on a steer, which never carries a thread's first message. */
+  readonly runOrdinal?: number;
+}): boolean {
+  return (
+    input.message.createdBy === "agent" &&
+    input.message.scheduledTaskId === undefined &&
+    input.runOrdinal !== 1
+  );
+}
+
+/** A word joiner ahead of a leading `/name` keeps a provider CLI from running it as a command. */
+export function withoutLeadingSlashCommand(text: string): string {
+  return /^\s*\/[^\s/]+(?:\s|$)/u.test(text) ? `\u2060${text}` : text;
 }
 
 export const ProviderAdapterV2SessionStatus = Schema.Literals([

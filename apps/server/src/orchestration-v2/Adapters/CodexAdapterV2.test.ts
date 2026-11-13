@@ -3086,6 +3086,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const started = yield* harness.runtime
           .startTurn({
             ...turnInput,
+            runOrdinal: 2,
             message: { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
           })
           .pipe(Effect.exit);

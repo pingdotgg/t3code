@@ -2336,11 +2336,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         let cursorSkills: ReadonlyMap<string, ServerProviderSkill> | undefined;
         const resolveCursorSkillText = Effect.fn("CursorAdapterV2.resolveCursorSkillText")(
           function* (
-            message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+            input: {
+              readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
+              readonly runOrdinal?: number;
+            },
             cwd: string | undefined,
           ) {
-            const rawText = message.text;
-            if (ProviderAdapter.isAgentAuthoredMessage(message)) return rawText;
+            const rawText = input.message.text;
+            if (ProviderAdapter.isAgentAuthoredMessage(input)) return rawText;
             if (
               cursorSkills === undefined &&
               (hasCursorSkillMention(rawText) || cursorSlashSkillNames(rawText).size > 0)
@@ -2384,7 +2387,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const newText = t3OrchestrationPrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text: yield* resolveCursorSkillText(
-                turnInput.message,
+                turnInput,
                 turnInput.runtimePolicy.cwd ?? undefined,
               ),
               attachments: turnInput.message.attachments,
@@ -2796,7 +2799,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               // The live run already has the runtime instructions from startTurn.
               const text = yield* providerMessageTextWithAttachmentPaths({
                 text: yield* resolveCursorSkillText(
-                  turnInput.message,
+                  turnInput,
                   context.input.runtimePolicy.cwd ?? undefined,
                 ),
                 attachments: turnInput.message.attachments,

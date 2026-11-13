@@ -2238,6 +2238,8 @@ describe("ClaudeAdapterV2 attachments", () => {
             attachments: resumed ? [attachment] : [attachment, document],
             messageCreatedBy: createdBy,
           }),
+          // A thread's first message is its launcher's brief, which may invoke skills.
+          runOrdinal: createdBy === "agent" ? 2 : 1,
           nativeThreadHasTurns: resumed,
         };
         if (budget === "cancelled-send" || budget === "cancelled-steer") {

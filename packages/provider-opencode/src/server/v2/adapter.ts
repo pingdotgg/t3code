@@ -4476,7 +4476,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
       }
       const location = { directory: turnInput.runtimePolicy.cwd ?? host.paths.cwd };
-      const command = bare ? commandOf(text) : undefined;
+      // Text an agent wrote runs no command or skill; T3's own `/goal` still does.
+      const agentAuthored = ProviderAdapter.isAgentAuthoredMessage(turnInput);
+      const command =
+        bare && (!agentAuthored || parseGoalCommand(turnInput.message) !== null)
+          ? commandOf(text)
+          : undefined;
       if (command !== undefined) {
         const commands = yield* client.command.list({ location }).pipe(
           Effect.timeout(INVENTORY_TIMEOUT),
@@ -4502,7 +4507,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
         }
       }
-      const mentions = skillMentions(text);
+      const mentions = agentAuthored ? [] : skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);

@@ -9,6 +9,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
+  isCompactionCommandMessage,
+  parseGoalCommand,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
   type RuntimeMode,
@@ -331,9 +333,16 @@ export function makeGrokAcpAdapterFlavor(
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
     rewriteUserText: (text, turnInput) => {
-      const mention = ProviderAdapter.isAgentAuthoredMessage(turnInput.message)
-        ? undefined
-        : leadingGrokSkillMention(text);
+      if (ProviderAdapter.isAgentAuthoredMessage(turnInput)) {
+        // T3's own `/compact` and `/goal` still run.
+        return Effect.succeed(
+          isCompactionCommandMessage({ role: "user", ...turnInput.message }) ||
+            parseGoalCommand(turnInput.message) !== null
+            ? text
+            : ProviderAdapter.withoutLeadingSlashCommand(text),
+        );
+      }
+      const mention = leadingGrokSkillMention(text);
       if (mention === undefined) return Effect.succeed(text);
       return discoverGrokSkills(
         options.settings,

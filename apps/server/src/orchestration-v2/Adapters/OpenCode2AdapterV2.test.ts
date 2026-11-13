@@ -3236,6 +3236,29 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #24667 an agent's message ran any skill it mentioned in the recipient
+  it.effect("sends another agent's $skill mention as text", () =>
+    Effect.gen(function* () {
+      const prompts: Array<unknown> = [];
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onPrompt: (input) => prompts.push(input) },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        runOrdinal: 2,
+        message: { ...turnInput(thread).message, createdBy: "agent", text: "$greet again please" },
+      });
+      assert.notProperty(prompts[0], "skills");
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
   it.effect("sends a $skill that appears once OpenCode finishes scanning the directory", () =>
     Effect.gen(function* () {
       const prompts: Array<unknown> = [];

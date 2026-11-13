@@ -58,11 +58,3 @@ export function planClaudeSkillDispatch(
     commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
   };
 }
-
-/**
- * Claude runs a `/name` that opens a text block, whoever wrote it. A word joiner ahead of one keeps
- * text another agent wrote as text; `$name` and a later `/name` are inert without a dispatch plan.
- */
-export function claudeAgentAuthoredText(text: string): string {
-  return /^\s*\/[^\s/]+(?:\s|$)/u.test(text) ? `\u2060${text}` : text;
-}

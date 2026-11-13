@@ -3600,11 +3600,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
-          >,
+          > & { readonly runOrdinal?: number },
           cwd: string | null,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
-          const agentAuthored = ProviderAdapter.isAgentAuthoredMessage(turnInput.message);
+          const agentAuthored = ProviderAdapter.isAgentAuthoredMessage(turnInput);
           const messageText = yield* providerMessageTextWithAttachmentPaths({
             text: agentAuthored
               ? turnInput.message.text

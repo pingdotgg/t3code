@@ -6313,12 +6313,10 @@ describe("AcpAdapterV2", () => {
     { text: "ship $deploy", sent: "ship $deploy", native: false },
     { text: "$other ship it", sent: "$other ship it", native: false },
     // regression: #24667 an agent's message ran any skill it mentioned in the recipient
-    {
-      text: "$deploy ship it",
-      sent: "$deploy ship it",
-      native: false,
-      createdBy: "agent" as const,
-    },
+    { text: "$deploy ship it", sent: "$deploy ship it", native: false, agentRun: 2 },
+    { text: "/deploy ship it", sent: "\u2060/deploy ship it", native: false, agentRun: 2 },
+    // A thread's first message is its launcher's brief, which may invoke skills.
+    { text: "$deploy ship it", sent: "/deploy ship it", native: true, agentRun: 1 },
   ])("Grok sends $text with a picked skill as $sent", ({ text, sent, native, ...row }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -6373,13 +6371,15 @@ describe("AcpAdapterV2", () => {
         now: yield* DateTime.now,
         messageText: text,
       });
-      yield* runtime.startTurn({
-        ...turnInput,
-        message: {
-          ...turnInput.message,
-          createdBy: "createdBy" in row ? row.createdBy : turnInput.message.createdBy,
-        },
-      });
+      yield* runtime.startTurn(
+        "agentRun" in row
+          ? {
+              ...turnInput,
+              runOrdinal: row.agentRun,
+              message: { ...turnInput.message, createdBy: "agent" },
+            }
+          : turnInput,
+      );
       const prompt = yield* Stream.fromQueue(protocolEvents).pipe(
         Stream.filter(
           (event) =>

@@ -166,7 +166,6 @@ import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
-  claudeAgentAuthoredText,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -4322,14 +4321,17 @@ function isClaudeProviderContinuationTurn(
 
 /** The prompt for text an agent wrote, or undefined for a user's. T3's own `/compact` and `/goal` still run. */
 function claudeAgentAuthoredPrompt(
-  message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+  input: {
+    readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
+    readonly runOrdinal?: number;
+  },
   text: string,
 ): string | undefined {
-  if (!ProviderAdapter.isAgentAuthoredMessage(message)) return undefined;
-  return isCompactionCommandMessage({ role: "user", ...message }) ||
-    parseGoalCommand(message) !== null
+  if (!ProviderAdapter.isAgentAuthoredMessage(input)) return undefined;
+  return isCompactionCommandMessage({ role: "user", ...input.message }) ||
+    parseGoalCommand(input.message) !== null
     ? text
-    : claudeAgentAuthoredText(text);
+    : ProviderAdapter.withoutLeadingSlashCommand(text);
 }
 
 function isClaudePromptEchoGatedFrame(message: SDKMessage): boolean {
@@ -12446,7 +12448,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.message.text,
               compileClaudeModelSelection(turnInput.modelSelection, modelCatalog).promptEffort,
             );
-            const agentPrompt = claudeAgentAuthoredPrompt(turnInput.message, promptText);
+            const agentPrompt = claudeAgentAuthoredPrompt(turnInput, promptText);
             const userMessage =
               promptUuid === null
                 ? null
@@ -12964,7 +12966,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
               ).promptEffort,
             );
-            const agentPrompt = claudeAgentAuthoredPrompt(turnInput.message, steerText);
+            const agentPrompt = claudeAgentAuthoredPrompt(turnInput, steerText);
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: agentPrompt ?? steerText,
               attachments: turnInput.message.attachments,
