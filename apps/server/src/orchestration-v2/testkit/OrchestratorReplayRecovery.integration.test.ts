@@ -275,97 +275,94 @@ describe("orchestrator replay recovery", () => {
   it.effect(
     "resumes a provider-native Codex thread after recreating the orchestrator runtime",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          // Use a throwaway checkpoint workspace; cold full-repo capture exceeds CI wait budgets.
-          const workspace = yield* checkpointWorkspace("provider_thread_resume");
-          const transcript = yield* readCodexTranscript(workspace);
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const tempDir = yield* Effect.acquireRelease(
-            fs.makeTempDirectory({
-              prefix: "t3-orchestration-v2-recovery-",
-            }),
-            (directory) =>
-              fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
-          );
-          yield* fs.makeDirectory(tempDir, { recursive: true });
-          const dbPath = path.join(tempDir, "state.sqlite");
-          const driver = yield* CodexReplay.makeReplayDriver(transcript);
-          const materialized = yield* materializeFixtureInput({
-            scenario: "provider_thread_resume",
-            fixtureInput: {
-              steps: [
-                { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
-                { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
-              ],
-            },
-            driver: ProviderDriverKind.make("codex"),
-            modelSelection: CODEX_MODEL_SELECTION,
-          });
-          const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
-            splitAfterFirstIdle(materialized);
+      Effect.gen(function* () {
+        // Use a throwaway checkpoint workspace; cold full-repo capture exceeds CI wait budgets.
+        const workspace = yield* checkpointWorkspace("provider_thread_resume");
+        const transcript = yield* readCodexTranscript(workspace);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({
+            prefix: "t3-orchestration-v2-recovery-",
+          }),
+          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+        );
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        const dbPath = path.join(tempDir, "state.sqlite");
+        const driver = yield* CodexReplay.makeReplayDriver(transcript);
+        const materialized = yield* materializeFixtureInput({
+          scenario: "provider_thread_resume",
+          fixtureInput: {
+            steps: [
+              { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
+              { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
+            ],
+          },
+          driver: ProviderDriverKind.make("codex"),
+          modelSelection: CODEX_MODEL_SELECTION,
+        });
+        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+          splitAfterFirstIdle(materialized);
 
-          const harness = {
-            ...CodexOrchestratorReplayHarness,
-            makeProviderAdapterRegistryLayer: () =>
-              CodexAdapterV2Testkit.layer({ transcript, driver }),
-          };
-          const options = {
-            databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
-              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-            ),
-          };
-
-          yield* runOrchestratorV2ProviderReplayScenario(
-            {
-              name: "provider_thread_resume/codex:first-runtime",
-              transcript,
-              commands: phase1Commands,
-              steps: phase1Steps,
-              projectionThreadIds: materialized.projectionThreadIds,
-              runtimePolicyOverride: { cwd: workspace },
-            },
-            harness,
-            options,
-          );
-
-          const result = yield* runOrchestratorV2ProviderReplayScenario(
-            {
-              name: "provider_thread_resume/codex:second-runtime",
-              transcript,
-              commands: phase2Commands,
-              steps: phase2Steps,
-              projectionThreadIds: materialized.projectionThreadIds,
-              runtimePolicyOverride: { cwd: workspace },
-            },
-            harness,
-            { ...options, recoverOnStartup: true },
-          );
-
-          assertBaseProjection({
-            result,
-            transcript,
-            runCount: 2,
-            runStatuses: ["completed", "completed"],
-          });
-          const projection = projectionFor(result, transcript.scenario);
-          assertSemanticProjectionIntegrity(projection);
-          assertRunOrdinals(projection, [1, 2]);
-          assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
-          assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
-          assertUserMessagesInclude(projection, [
-            PROVIDER_THREAD_RESUME_FIRST_PROMPT,
-            PROVIDER_THREAD_RESUME_SECOND_PROMPT,
-          ]);
-          assertAssistantTextIncludes(projection, FIRST_FINAL);
-          assertAssistantTextIncludes(projection, SECOND_FINAL);
-          assert.lengthOf(projection.providerThreads, 1);
-        }).pipe(
-          provideDeterministicTestRuntime,
-          Effect.provide(
-            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        const harness = {
+          ...CodexOrchestratorReplayHarness,
+          makeProviderAdapterRegistryLayer: () =>
+            CodexAdapterV2Testkit.layer({ transcript, driver }),
+        };
+        const options = {
+          databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
+            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
+        };
+
+        yield* runOrchestratorV2ProviderReplayScenario(
+          {
+            name: "provider_thread_resume/codex:first-runtime",
+            transcript,
+            commands: phase1Commands,
+            steps: phase1Steps,
+            projectionThreadIds: materialized.projectionThreadIds,
+            runtimePolicyOverride: { cwd: workspace },
+          },
+          harness,
+          options,
+        );
+
+        const result = yield* runOrchestratorV2ProviderReplayScenario(
+          {
+            name: "provider_thread_resume/codex:second-runtime",
+            transcript,
+            commands: phase2Commands,
+            steps: phase2Steps,
+            projectionThreadIds: materialized.projectionThreadIds,
+            runtimePolicyOverride: { cwd: workspace },
+          },
+          harness,
+          { ...options, recoverOnStartup: true },
+        );
+
+        assertBaseProjection({
+          result,
+          transcript,
+          runCount: 2,
+          runStatuses: ["completed", "completed"],
+        });
+        const projection = projectionFor(result, transcript.scenario);
+        assertSemanticProjectionIntegrity(projection);
+        assertRunOrdinals(projection, [1, 2]);
+        assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
+        assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
+        assertUserMessagesInclude(projection, [
+          PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+          PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+        ]);
+        assertAssistantTextIncludes(projection, FIRST_FINAL);
+        assertAssistantTextIncludes(projection, SECOND_FINAL);
+        assert.lengthOf(projection.providerThreads, 1);
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
   );
@@ -373,253 +370,246 @@ describe("orchestrator replay recovery", () => {
   it.effect(
     "resumes a provider-native Cursor thread after recreating the orchestrator runtime",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const transcript = yield* readCursorTranscript();
-          const runner = makeCursorAgentSdkReplayRunner(transcript);
-          yield* runCursorRecovery({ transcript, runner });
-          yield* runner.assertComplete;
-        }).pipe(
-          provideDeterministicTestRuntime,
-          Effect.provide(
-            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
+      Effect.gen(function* () {
+        const transcript = yield* readCursorTranscript();
+        const runner = makeCursorAgentSdkReplayRunner(transcript);
+        yield* runCursorRecovery({ transcript, runner });
+        yield* runner.assertComplete;
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
   );
   it.effect("keeps a Claude subagent resumed after a server restart in its own thread", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const transcript = yield* readClaudeSubagentResumeTranscript();
-        const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
-        const workspace = yield* checkpointWorkspace(transcript.scenario);
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const tempDir = yield* Effect.acquireRelease(
-          fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
-          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
-        );
-        const materialized = yield* materializeFixtureInput({
-          scenario: transcript.scenario,
-          fixtureInput: {
-            steps: [
-              { type: "message", text: launchPrompt },
-              { type: "message", text: resumePrompt },
-            ],
-          },
-          driver: ProviderDriverKind.make("claudeAgent"),
-          modelSelection: CLAUDE_MODEL_SELECTION,
-        });
-        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
-          splitAfterFirstIdle(materialized);
-        const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
-        const options = {
-          databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
-        };
-
-        yield* Effect.scoped(
-          runOrchestratorV2ProviderReplayScenario(
-            {
-              name: `${transcript.scenario}:first-runtime`,
-              transcript,
-              commands: phase1Commands,
-              steps: phase1Steps,
-              projectionThreadIds: materialized.projectionThreadIds,
-              runtimePolicyOverride: { cwd: workspace },
-            },
-            harness,
-            options,
-          ),
-        );
-        const result = yield* Effect.scoped(
-          runOrchestratorV2ProviderReplayScenario(
-            {
-              name: `${transcript.scenario}:second-runtime`,
-              transcript,
-              commands: phase2Commands,
-              steps: phase2Steps,
-              projectionThreadIds: materialized.projectionThreadIds,
-              runtimePolicyOverride: { cwd: workspace },
-            },
-            harness,
-            { ...options, recoverOnStartup: true },
-          ),
-        );
-        yield* assertComplete;
-
-        const projection = projectionFor(result, transcript.scenario);
-        assertSemanticProjectionIntegrity(projection);
-        assert.lengthOf(projection.subagents, 1);
-        const subagent = projection.subagents[0];
-        assert.equal(subagent?.status, "completed");
-        const childThreads = [...result.projections.values()].filter(
-          (candidate) => candidate.thread.lineage.parentThreadId === projection.thread.id,
-        );
-        assert.lengthOf(childThreads, 1);
-        const child = childThreads[0];
-        assert.equal(child?.thread.id, subagent?.childThreadId);
-        assert.deepEqual(child?.thread.modelSelection, {
-          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-          model: "claude-sonnet-5",
-        });
-
-        const conversation = (child?.turnItems ?? [])
-          .toSorted((left, right) => left.ordinal - right.ordinal)
-          .flatMap((item) =>
-            item.type === "user_message" || item.type === "assistant_message"
-              ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
-              : [],
-          );
-        const launchTask = conversation[0];
-        assert.deepEqual(
-          conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
-          ["user", "assistant", "user", "assistant"],
-        );
-        assert.include(launchTask, "Your job is just the file");
-        assert.include(conversation[1], "is 1 line long");
-        assert.include(conversation[2], "Look again at");
-        assert.include(conversation[3], "Bug/edge case found and fixed");
-        const childCommands = (child?.turnItems ?? []).filter(
-          (item) => item.type === "command_execution",
-        );
-        assert.lengthOf(childCommands, 3);
-        assert.isFalse(
-          projection.turnItems.some(
-            (item) =>
-              item.type === "assistant_message" && item.text.includes("Bug/edge case found"),
-          ),
-          "the resumed subagent's reply leaked into the parent thread",
-        );
-      }).pipe(
-        provideDeterministicTestRuntime,
-        Effect.provide(
-          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.gen(function* () {
+      const transcript = yield* readClaudeSubagentResumeTranscript();
+      const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
+      const workspace = yield* checkpointWorkspace(transcript.scenario);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
+        (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+      );
+      const materialized = yield* materializeFixtureInput({
+        scenario: transcript.scenario,
+        fixtureInput: {
+          steps: [
+            { type: "message", text: launchPrompt },
+            { type: "message", text: resumePrompt },
+          ],
+        },
+        driver: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+      });
+      const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+        splitAfterFirstIdle(materialized);
+      const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+      const options = {
+        databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
+      };
+
+      yield* Effect.scoped(
+        runOrchestratorV2ProviderReplayScenario(
+          {
+            name: `${transcript.scenario}:first-runtime`,
+            transcript,
+            commands: phase1Commands,
+            steps: phase1Steps,
+            projectionThreadIds: materialized.projectionThreadIds,
+            runtimePolicyOverride: { cwd: workspace },
+          },
+          harness,
+          options,
+        ),
+      );
+      const result = yield* Effect.scoped(
+        runOrchestratorV2ProviderReplayScenario(
+          {
+            name: `${transcript.scenario}:second-runtime`,
+            transcript,
+            commands: phase2Commands,
+            steps: phase2Steps,
+            projectionThreadIds: materialized.projectionThreadIds,
+            runtimePolicyOverride: { cwd: workspace },
+          },
+          harness,
+          { ...options, recoverOnStartup: true },
+        ),
+      );
+      yield* assertComplete;
+
+      const projection = projectionFor(result, transcript.scenario);
+      assertSemanticProjectionIntegrity(projection);
+      assert.lengthOf(projection.subagents, 1);
+      const subagent = projection.subagents[0];
+      assert.equal(subagent?.status, "completed");
+      const childThreads = [...result.projections.values()].filter(
+        (candidate) => candidate.thread.lineage.parentThreadId === projection.thread.id,
+      );
+      assert.lengthOf(childThreads, 1);
+      const child = childThreads[0];
+      assert.equal(child?.thread.id, subagent?.childThreadId);
+      assert.deepEqual(child?.thread.modelSelection, {
+        instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+        model: "claude-sonnet-5",
+      });
+
+      const conversation = (child?.turnItems ?? [])
+        .toSorted((left, right) => left.ordinal - right.ordinal)
+        .flatMap((item) =>
+          item.type === "user_message" || item.type === "assistant_message"
+            ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
+            : [],
+        );
+      const launchTask = conversation[0];
+      assert.deepEqual(
+        conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
+        ["user", "assistant", "user", "assistant"],
+      );
+      assert.include(launchTask, "Your job is just the file");
+      assert.include(conversation[1], "is 1 line long");
+      assert.include(conversation[2], "Look again at");
+      assert.include(conversation[3], "Bug/edge case found and fixed");
+      const childCommands = (child?.turnItems ?? []).filter(
+        (item) => item.type === "command_execution",
+      );
+      assert.lengthOf(childCommands, 3);
+      assert.isFalse(
+        projection.turnItems.some(
+          (item) => item.type === "assistant_message" && item.text.includes("Bug/edge case found"),
+        ),
+        "the resumed subagent's reply leaked into the parent thread",
+      );
+    }).pipe(
+      provideDeterministicTestRuntime,
+      Effect.provide(
+        Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
   );
   it.effect("reopens the thread of a Claude subagent the restart cancelled when resumed", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const transcript = yield* readClaudeCancelledSubagentResumeTranscript();
-        const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
-        const workspace = yield* checkpointWorkspace(transcript.scenario);
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const tempDir = yield* Effect.acquireRelease(
-          fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
-          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+    Effect.gen(function* () {
+      const transcript = yield* readClaudeCancelledSubagentResumeTranscript();
+      const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
+      const workspace = yield* checkpointWorkspace(transcript.scenario);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
+        (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+      );
+      const materialized = yield* materializeFixtureInput({
+        scenario: transcript.scenario,
+        fixtureInput: {
+          steps: [
+            { type: "message", text: launchPrompt },
+            { type: "message", text: resumePrompt },
+          ],
+        },
+        driver: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+      });
+      const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+        splitAfterFirstIdle(materialized);
+      const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+      const options = {
+        databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      };
+      const childThreadOf = (result: OrchestratorV2ScenarioResult, parentThreadId: ThreadId) =>
+        [...result.projections.values()].find(
+          (candidate) => candidate.thread.lineage.parentThreadId === parentThreadId,
         );
-        const materialized = yield* materializeFixtureInput({
-          scenario: transcript.scenario,
-          fixtureInput: {
-            steps: [
-              { type: "message", text: launchPrompt },
-              { type: "message", text: resumePrompt },
-            ],
-          },
-          driver: ProviderDriverKind.make("claudeAgent"),
-          modelSelection: CLAUDE_MODEL_SELECTION,
-        });
-        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
-          splitAfterFirstIdle(materialized);
-        const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
-        const options = {
-          databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-            Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
-        };
-        const childThreadOf = (result: OrchestratorV2ScenarioResult, parentThreadId: ThreadId) =>
-          [...result.projections.values()].find(
-            (candidate) => candidate.thread.lineage.parentThreadId === parentThreadId,
-          );
-        const childRootStatus = (child: OrchestrationV2ThreadProjection | undefined) =>
-          child?.nodes.find((node) => node.kind === "root_turn" && node.runId === null)?.status;
+      const childRootStatus = (child: OrchestrationV2ThreadProjection | undefined) =>
+        child?.nodes.find((node) => node.kind === "root_turn" && node.runId === null)?.status;
 
-        const snapshotPath = path.join(tempDir, "restart-state.sqlite");
-        const beforeScenario = {
-          name: `${transcript.scenario}:cancelled-first-runtime`,
-          transcript,
-          commands: phase1Commands,
-          steps: phase1Steps,
-          projectionThreadIds: materialized.projectionThreadIds,
-          runtimePolicyOverride: { cwd: workspace },
-        };
-        const before = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const result = yield* runOrchestratorV2Scenario(beforeScenario);
-            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            yield* worker.drain();
-            // Preserve the orphan before scoped teardown settles its provider work.
-            const sql = yield* SqlClient.SqlClient;
-            yield* sql`VACUUM INTO ${snapshotPath}`;
-            return result;
-          }).pipe(
-            Effect.provide(
-              Layer.merge(
-                layerProviderReplay(beforeScenario, harness, options),
-                options.databaseLayer,
-              ),
+      const snapshotPath = path.join(tempDir, "restart-state.sqlite");
+      const beforeScenario = {
+        name: `${transcript.scenario}:cancelled-first-runtime`,
+        transcript,
+        commands: phase1Commands,
+        steps: phase1Steps,
+        projectionThreadIds: materialized.projectionThreadIds,
+        runtimePolicyOverride: { cwd: workspace },
+      };
+      const before = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const result = yield* runOrchestratorV2Scenario(beforeScenario);
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* worker.drain();
+          // Preserve the orphan before scoped teardown settles its provider work.
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`VACUUM INTO ${snapshotPath}`;
+          return result;
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              layerProviderReplay(beforeScenario, harness, options),
+              options.databaseLayer,
             ),
           ),
-        );
-        const settled = projectionFor(before, transcript.scenario);
-        assert.equal(settled.subagents[0]?.status, "running");
-        assert.equal(childRootStatus(childThreadOf(before, settled.thread.id)), "running");
-
-        const result = yield* Effect.scoped(
-          runOrchestratorV2ProviderReplayScenario(
-            {
-              name: `${transcript.scenario}:cancelled-second-runtime`,
-              transcript,
-              commands: phase2Commands,
-              steps: phase2Steps,
-              projectionThreadIds: materialized.projectionThreadIds,
-              runtimePolicyOverride: { cwd: workspace },
-            },
-            harness,
-            {
-              databaseLayer: SqlitePersistence.layerFromPath(snapshotPath).pipe(
-                Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-              ),
-              recoverOnStartup: true,
-              continueThreadsAfterServerUpdate: false,
-            },
-          ),
-        );
-        yield* assertComplete;
-
-        const projection = projectionFor(result, transcript.scenario);
-        assertSemanticProjectionIntegrity(projection);
-        assert.equal(projection.subagents[0]?.status, "completed");
-        const child = childThreadOf(result, projection.thread.id);
-        assert.equal(child?.thread.id, projection.subagents[0]?.childThreadId);
-        assert.equal(childRootStatus(child), "completed");
-        const conversation = (child?.turnItems ?? [])
-          .toSorted((left, right) => left.ordinal - right.ordinal)
-          .flatMap((item) =>
-            item.type === "user_message" || item.type === "assistant_message"
-              ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
-              : [],
-          );
-        assert.deepEqual(
-          conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
-          ["user", "user", "assistant"],
-        );
-        assert.include(conversation[0], "Your job is just the file");
-        assert.include(conversation[1], "Look again at");
-        assert.include(conversation[2], "Bug/edge case found and fixed");
-        assert.lengthOf(
-          (child?.turnItems ?? []).filter((item) => item.type === "command_execution"),
-          2,
-        );
-      }).pipe(
-        provideDeterministicTestRuntime,
-        Effect.provide(
-          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
+      );
+      const settled = projectionFor(before, transcript.scenario);
+      assert.equal(settled.subagents[0]?.status, "running");
+      assert.equal(childRootStatus(childThreadOf(before, settled.thread.id)), "running");
+
+      const result = yield* Effect.scoped(
+        runOrchestratorV2ProviderReplayScenario(
+          {
+            name: `${transcript.scenario}:cancelled-second-runtime`,
+            transcript,
+            commands: phase2Commands,
+            steps: phase2Steps,
+            projectionThreadIds: materialized.projectionThreadIds,
+            runtimePolicyOverride: { cwd: workspace },
+          },
+          harness,
+          {
+            databaseLayer: SqlitePersistence.layerFromPath(snapshotPath).pipe(
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+            recoverOnStartup: true,
+            continueThreadsAfterServerUpdate: false,
+          },
+        ),
+      );
+      yield* assertComplete;
+
+      const projection = projectionFor(result, transcript.scenario);
+      assertSemanticProjectionIntegrity(projection);
+      assert.equal(projection.subagents[0]?.status, "completed");
+      const child = childThreadOf(result, projection.thread.id);
+      assert.equal(child?.thread.id, projection.subagents[0]?.childThreadId);
+      assert.equal(childRootStatus(child), "completed");
+      const conversation = (child?.turnItems ?? [])
+        .toSorted((left, right) => left.ordinal - right.ordinal)
+        .flatMap((item) =>
+          item.type === "user_message" || item.type === "assistant_message"
+            ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
+            : [],
+        );
+      assert.deepEqual(
+        conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
+        ["user", "user", "assistant"],
+      );
+      assert.include(conversation[0], "Your job is just the file");
+      assert.include(conversation[1], "Look again at");
+      assert.include(conversation[2], "Bug/edge case found and fixed");
+      assert.lengthOf(
+        (child?.turnItems ?? []).filter((item) => item.type === "command_execution"),
+        2,
+      );
+    }).pipe(
+      provideDeterministicTestRuntime,
+      Effect.provide(
+        Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
   );

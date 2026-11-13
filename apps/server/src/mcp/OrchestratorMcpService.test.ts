@@ -2202,176 +2202,171 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.live.each([
+  it.effect.each([
     { name: "parent instance", parentEnabled: true, model: "gpt-5.4" },
     { name: "alternate instance", parentEnabled: false, model: "gpt-5.5" },
   ])(
     "replays accepted creation on the $name without authorizing new disabled work",
     ({ parentEnabled, model }) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const altInstanceId = ProviderInstanceId.make("codex-alt");
-          const driver = ProviderDriverKind.make("codex");
-          const cwd = yield* checkpointWorkspace("mcp-create-retry");
-          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
-            [codexInstanceId, altInstanceId].map((instanceId) => ({
-              instanceId,
-              driver,
-              getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-              planSelectionTransition: () =>
-                Effect.succeed({ type: "apply_on_next_turn" as const }),
-              openSession: () =>
-                Effect.die("These tests exercise committed commands before provider execution."),
-            })),
-          );
-          const layerDatabase = SqlitePersistence.layerMemory;
-          const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-            { name: "mcp-create-retry", runtimePolicyOverride: { cwd } },
-            layerRegistry,
-            { databaseLayer: layerDatabase, runEffectWorker: false },
-          );
-          const layerSettings = ServerSettings.layerTest({
-            providerInstances: {
-              [codexInstanceId]: { driver: "codex", enabled: true },
-              [altInstanceId]: { driver: "codex", enabled: true },
-            },
-            projectSettingsOverrides: {
-              [projectId]: { providerInstances: { [codexInstanceId]: { enabled: parentEnabled } } },
-            },
+      Effect.gen(function* () {
+        const altInstanceId = ProviderInstanceId.make("codex-alt");
+        const driver = ProviderDriverKind.make("codex");
+        const cwd = yield* checkpointWorkspace("mcp-create-retry");
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
+          [codexInstanceId, altInstanceId].map((instanceId) => ({
+            instanceId,
+            driver,
+            getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+            planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+            openSession: () =>
+              Effect.die("These tests exercise committed commands before provider execution."),
+          })),
+        );
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "mcp-create-retry", runtimePolicyOverride: { cwd } },
+          layerRegistry,
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        );
+        const layerSettings = ServerSettings.layerTest({
+          providerInstances: {
+            [codexInstanceId]: { driver: "codex", enabled: true },
+            [altInstanceId]: { driver: "codex", enabled: true },
+          },
+          projectSettingsOverrides: {
+            [projectId]: { providerInstances: { [codexInstanceId]: { enabled: parentEnabled } } },
+          },
+        });
+        const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(
+            LegacyV1ThreadImporter.layer.pipe(
+              Layer.provide(layerOrchestrator),
+              Layer.provide(layerDatabase),
+            ),
+          ),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+          Layer.provideMerge(layerSettings),
+        );
+        const layerTest = layerOrchestratorService.pipe(
+          Layer.provideMerge(layerThreads),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              layerRegistry,
+              layerSettings,
+              providerRegistryLayer([
+                providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+                providerSnapshot({ instanceId: altInstanceId, driver, model: "gpt-5.5" }),
+              ]),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("parent:create"),
+            threadId: parentThreadId,
+            projectId,
+            title: "MCP parent",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
           });
-          const layerThreads = ThreadManagementService.layer.pipe(
-            Layer.provideMerge(layerOrchestrator),
-            Layer.provide(
-              LegacyV1ThreadImporter.layer.pipe(
-                Layer.provide(layerOrchestrator),
-                Layer.provide(layerDatabase),
-              ),
-            ),
-            Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-            Layer.provideMerge(layerSettings),
-          );
-          const layerTest = layerOrchestratorService.pipe(
-            Layer.provideMerge(layerThreads),
-            Layer.provide(
-              Layer.mergeAll(
-                NodeServices.layer,
-                NodeCrypto.layer,
-                layerRegistry,
-                layerSettings,
-                providerRegistryLayer([
-                  providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
-                  providerSnapshot({ instanceId: altInstanceId, driver, model: "gpt-5.5" }),
-                ]),
-                Layer.mock(ProjectService.ProjectService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-              ),
-            ),
-          );
-          yield* Effect.gen(function* () {
-            const orchestrator = yield* Orchestrator.OrchestratorV2;
-            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-            const settings = yield* ServerSettings.ServerSettingsService;
-            yield* orchestrator.dispatch({
-              type: "thread.create",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make("parent:create"),
-              threadId: parentThreadId,
-              projectId,
-              title: "MCP parent",
-              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: cwd,
-            });
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make("parent:start"),
-              threadId: parentThreadId,
-              messageId: MessageId.make("parent:message"),
-              text: "Create a thread.",
-              attachments: [],
-              dispatchMode: { type: "start_immediately" },
-            });
-            const request = {
-              threads: [{ target: { driverKind: driver, model } }],
-              clientRequestId: "create-retry",
-            };
-            const first = yield* service.createThreads(scope, request);
-            const child = first.threads[0]!;
-            const selection = parentEnabled
-              ? { instanceId: codexInstanceId, model: "gpt-5.4" }
-              : { instanceId: altInstanceId, model: "gpt-5.5" };
-            assert.equal(first.threads.length, 1);
-            assert.equal(child.providerInstanceId, selection.instanceId);
-            assert.equal(child.model, selection.model);
-            assert.deepEqual(yield* service.createThreads(scope, request), first);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("parent:start"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("parent:message"),
+            text: "Create a thread.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const request = {
+            threads: [{ target: { driverKind: driver, model } }],
+            clientRequestId: "create-retry",
+          };
+          const first = yield* service.createThreads(scope, request);
+          const child = first.threads[0]!;
+          const selection = parentEnabled
+            ? { instanceId: codexInstanceId, model: "gpt-5.4" }
+            : { instanceId: altInstanceId, model: "gpt-5.5" };
+          assert.equal(first.threads.length, 1);
+          assert.equal(child.providerInstanceId, selection.instanceId);
+          assert.equal(child.model, selection.model);
+          assert.deepEqual(yield* service.createThreads(scope, request), first);
 
-            // The creation receipt exists, but this prompt has not been accepted yet.
-            const withPrompt = {
-              ...request,
-              threads: [{ ...request.threads[0]!, prompt: "Start work." }],
-            };
-            const started = yield* service.createThreads(scope, withPrompt);
-            assert.equal(started.threads[0]?.threadId, child.threadId);
-            const before = yield* orchestrator.getThreadProjection(child.threadId);
-            assert.deepEqual(before.runs[0]?.modelSelection, selection);
-            assert.equal(before.messages.length, 1);
-            const empty = yield* service.createThreads(scope, {
-              ...request,
-              clientRequestId: "empty",
-            });
-            const emojiAtLimit = yield* service.createThreads(scope, {
-              threads: [{ ...request.threads[0]!, prompt: `${"a".repeat(76)}😀 and more work.` }],
-              clientRequestId: "emoji-title",
-            });
-            const titled = yield* orchestrator.getThreadProjection(
-              emojiAtLimit.threads[0]!.threadId,
-            );
-            assert.equal(titled.thread.title, `${"a".repeat(76)}...`);
+          // The creation receipt exists, but this prompt has not been accepted yet.
+          const withPrompt = {
+            ...request,
+            threads: [{ ...request.threads[0]!, prompt: "Start work." }],
+          };
+          const started = yield* service.createThreads(scope, withPrompt);
+          assert.equal(started.threads[0]?.threadId, child.threadId);
+          const before = yield* orchestrator.getThreadProjection(child.threadId);
+          assert.deepEqual(before.runs[0]?.modelSelection, selection);
+          assert.equal(before.messages.length, 1);
+          const empty = yield* service.createThreads(scope, {
+            ...request,
+            clientRequestId: "empty",
+          });
+          const emojiAtLimit = yield* service.createThreads(scope, {
+            threads: [{ ...request.threads[0]!, prompt: `${"a".repeat(76)}😀 and more work.` }],
+            clientRequestId: "emoji-title",
+          });
+          const titled = yield* orchestrator.getThreadProjection(emojiAtLimit.threads[0]!.threadId);
+          assert.equal(titled.thread.title, `${"a".repeat(76)}...`);
 
-            yield* settings.updateSettings({
-              projectSettingsOverrides: {
-                [projectId]: {
-                  providerInstances: {
-                    [codexInstanceId]: { enabled: false },
-                    [altInstanceId]: { enabled: false },
-                  },
+          yield* settings.updateSettings({
+            projectSettingsOverrides: {
+              [projectId]: {
+                providerInstances: {
+                  [codexInstanceId]: { enabled: false },
+                  [altInstanceId]: { enabled: false },
                 },
               },
-            });
-            assert.deepEqual(yield* service.createThreads(scope, withPrompt), started);
-            const after = yield* orchestrator.getThreadProjection(child.threadId);
-            assert.deepEqual(after.thread.modelSelection, selection);
-            assert.deepEqual(after.runs, before.runs);
-            assert.deepEqual(after.messages, before.messages);
+            },
+          });
+          assert.deepEqual(yield* service.createThreads(scope, withPrompt), started);
+          const after = yield* orchestrator.getThreadProjection(child.threadId);
+          assert.deepEqual(after.thread.modelSelection, selection);
+          assert.deepEqual(after.runs, before.runs);
+          assert.deepEqual(after.messages, before.messages);
 
-            const freshError = yield* service
-              .createThreads(scope, {
-                ...request,
-                clientRequestId: "fresh",
-              })
-              .pipe(Effect.flip);
-            assert.equal(freshError.code, "provider_unavailable");
-            const promptError = yield* service
-              .createThreads(scope, {
-                ...withPrompt,
-                clientRequestId: "empty",
-              })
-              .pipe(Effect.flip);
-            assert.equal(promptError.code, "invalid_request");
-            assert.include(promptError.message, "disabled");
-            const untouched = yield* orchestrator.getThreadProjection(empty.threads[0]!.threadId);
-            assert.equal(untouched.messages.length, 0);
-            assert.equal(untouched.runs.length, 0);
-          }).pipe(Effect.provide(layerTest));
-        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-      ),
+          const freshError = yield* service
+            .createThreads(scope, {
+              ...request,
+              clientRequestId: "fresh",
+            })
+            .pipe(Effect.flip);
+          assert.equal(freshError.code, "provider_unavailable");
+          const promptError = yield* service
+            .createThreads(scope, {
+              ...withPrompt,
+              clientRequestId: "empty",
+            })
+            .pipe(Effect.flip);
+          assert.equal(promptError.code, "invalid_request");
+          assert.include(promptError.message, "disabled");
+          const untouched = yield* orchestrator.getThreadProjection(empty.threads[0]!.threadId);
+          assert.equal(untouched.messages.length, 0);
+          assert.equal(untouched.runs.length, 0);
+        }).pipe(Effect.provide(layerTest));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.each(["local", "remote"] as const)(
@@ -3980,6 +3975,7 @@ describe("OrchestratorMcpService thread list", () => {
       ],
     },
   ];
+  const shellRequests: Array<ReadonlyArray<ThreadId>> = [];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -3992,6 +3988,13 @@ describe("OrchestratorMcpService thread list", () => {
                 (thread) => input.projectId === undefined || thread.projectId === input.projectId,
               ),
             ),
+          getShellSnapshot: (options) => {
+            const threadIds = options?.threadIds ?? shells.map((thread) => thread.id);
+            shellRequests.push(threadIds);
+            return Effect.succeed({
+              threads: shells.filter((thread) => threadIds.includes(thread.id)),
+            } as never);
+          },
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -4082,6 +4085,22 @@ describe("OrchestratorMcpService thread list", () => {
         listed.threads.map((thread) => thread.threadId),
         ["thread:a-awaiting-command"],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("builds shells only for the threads on the page", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      shellRequests.length = 0;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:a"),
+        limit: 1,
+      });
+      assert.deepStrictEqual(
+        [listed.threads.map((thread) => thread.threadId), listed.total, listed.nextCursor],
+        [["thread:a-snoozed"], 3, 1],
+      );
+      assert.deepStrictEqual(shellRequests, [[ThreadId.make("thread:a-snoozed")]]);
     }).pipe(Effect.provide(service)),
   );
 
@@ -4193,140 +4212,137 @@ describe("OrchestratorMcpService thread stop", () => {
       stop: { reason: "Make room", message: "Stopped by an agent: Make room" },
     },
   ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, stop }) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("mcp-thread-stop");
-        const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter(cwd));
-        const layerDatabase = SqlitePersistence.layerMemory;
-        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-          { name: "mcp-thread-stop" },
-          layerAdapters,
-          { databaseLayer: layerDatabase, runEffectWorker: false },
-        );
-        const layerThreads = ThreadManagementService.layer.pipe(
-          Layer.provideMerge(layerOrchestrator),
-          Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-        );
-        const layerTest = layerOrchestratorService.pipe(
-          Layer.provideMerge(layerThreads),
-          Layer.provide(
-            Layer.mergeAll(
-              NodeServices.layer,
-              NodeCrypto.layer,
-              layerAdapters,
-              ServerSettings.layerTest(),
-              Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-              Layer.mock(ProjectService.ProjectService)({}),
-              Layer.mock(SecretRequests.SecretRequests)({}),
-              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-            ),
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("mcp-thread-stop");
+      const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter(cwd));
+      const layerDatabase = SqlitePersistence.layerMemory;
+      const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+        { name: "mcp-thread-stop" },
+        layerAdapters,
+        { databaseLayer: layerDatabase, runEffectWorker: false },
+      );
+      const layerThreads = ThreadManagementService.layer.pipe(
+        Layer.provideMerge(layerOrchestrator),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+      );
+      const layerTest = layerOrchestratorService.pipe(
+        Layer.provideMerge(layerThreads),
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            layerAdapters,
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           ),
-        );
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          const send = (text: string, type: "start_immediately" | "queue_after_active") =>
-            orchestrator.dispatch({
-              type: "message.dispatch",
-              commandId: CommandId.make(`send:${text}`),
-              threadId,
-              messageId: MessageId.make(`message:${text}`),
-              text,
-              attachments: [],
-              dispatchMode: { type },
-              createdBy: "user",
-              creationSource: "web",
-            });
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make("create"),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const send = (text: string, type: "start_immediately" | "queue_after_active") =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`send:${text}`),
             threadId,
-            projectId: ProjectId.make("project:mcp-stop"),
-            title: "Stop",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
+            messageId: MessageId.make(`message:${text}`),
+            text,
+            attachments: [],
+            dispatchMode: { type },
             createdBy: "user",
             creationSource: "web",
           });
-          const running = yield* orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "provider-turn.updated" && event.payload.status === "running",
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-          yield* send("work", "start_immediately");
-          yield* worker.drain();
-          yield* Fiber.join(running);
-          if (queued) yield* send("later", "queue_after_active");
-          const before = yield* orchestrator.getThreadProjection(threadId);
-          const runningRun = before.runs.find((run) => run.status === "running")!;
-          assert.equal(before.runs.filter((run) => run.status === "queued").length, queued ? 1 : 0);
-          // A task the thread delegated, running when the thread is stopped.
-          const childRunning = yield* orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "provider-turn.updated" &&
-                event.threadId !== threadId &&
-                event.payload.status === "running",
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-          yield* orchestrator.dispatch({
-            type: "delegated_task.request",
-            commandId: CommandId.make("delegate"),
-            parentThreadId: threadId,
-            parentRunId: runningRun.id,
-            parentNodeId: runningRun.rootNodeId!,
-            task: "child work",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            completionWake: "always",
-            createdBy: "agent",
-            creationSource: "mcp",
-          });
-          yield* worker.drain();
-          yield* Fiber.join(childRunning);
-          const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
-            .childThreadId!;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make("project:mcp-stop"),
+          title: "Stop",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* send("work", "start_immediately");
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        if (queued) yield* send("later", "queue_after_active");
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const runningRun = before.runs.find((run) => run.status === "running")!;
+        assert.equal(before.runs.filter((run) => run.status === "queued").length, queued ? 1 : 0);
+        // A task the thread delegated, running when the thread is stopped.
+        const childRunning = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider-turn.updated" &&
+              event.threadId !== threadId &&
+              event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make("delegate"),
+          parentThreadId: threadId,
+          parentRunId: runningRun.id,
+          parentNodeId: runningRun.rootNodeId!,
+          task: "child work",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(childRunning);
+        const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
+          .childThreadId!;
 
-          const stopped = yield* service.interruptThread(client, {
-            threadId,
-            stop: true,
-            clientRequestId: "stop",
-            ...(stop.reason === undefined ? {} : { reason: stop.reason }),
-          });
-          assert.deepEqual(stopped, {
-            threadId,
-            runId: runningRun.id,
-            status: "interrupt_requested",
-          });
-          // An agent's Stop must not read as the user's, on its thread or a task it delegated.
-          const interruptMessages = (id: ThreadId) =>
-            orchestrator
-              .getThreadProjection(id)
-              .pipe(
-                Effect.map(({ turnItems }) =>
-                  turnItems.flatMap((item) =>
-                    item.type === "run_interrupt_request" ? [item.message] : [],
-                  ),
+        const stopped = yield* service.interruptThread(client, {
+          threadId,
+          stop: true,
+          clientRequestId: "stop",
+          ...(stop.reason === undefined ? {} : { reason: stop.reason }),
+        });
+        assert.deepEqual(stopped, {
+          threadId,
+          runId: runningRun.id,
+          status: "interrupt_requested",
+        });
+        // An agent's Stop must not read as the user's, on its thread or a task it delegated.
+        const interruptMessages = (id: ThreadId) =>
+          orchestrator
+            .getThreadProjection(id)
+            .pipe(
+              Effect.map(({ turnItems }) =>
+                turnItems.flatMap((item) =>
+                  item.type === "run_interrupt_request" ? [item.message] : [],
                 ),
-              );
-          assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
-          assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
-        }).pipe(Effect.provide(layerTest));
-      }),
-    ),
+              ),
+            );
+        assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
+        assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
+      }).pipe(Effect.provide(layerTest));
+    }),
   );
 });
