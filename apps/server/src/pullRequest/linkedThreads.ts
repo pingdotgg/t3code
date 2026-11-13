@@ -98,58 +98,39 @@ function linkedThreadsView(
 
 /**
  * Tells how a domain event changed `pullRequests.linkedThreads` answers, so readers can refresh on
- * change instead of polling. `reordered` means only activity order moved. A thread's first event
- * after a restart counts as a change, since its earlier links are unknown.
+ * change instead of polling. `reordered` means a linked thread's activity moved, which can reorder
+ * its answers. A thread's first event after a restart counts as a change, since its earlier links
+ * are unknown.
  */
 export function makeLinkedThreadsChangeDetector() {
   const views = new Map<ThreadId, string | null>();
-  const keysByThread = new Map<ThreadId, ReadonlyArray<string>>();
-  const threadsByKey = new Map<string, Set<ThreadId>>();
+  // Last activity of each thread with visible links.
   const activeAt = new Map<ThreadId, number>();
-  const setKeys = (threadId: ThreadId, keys: ReadonlyArray<string>) => {
-    for (const key of keysByThread.get(threadId) ?? []) threadsByKey.get(key)?.delete(threadId);
-    if (keys.length === 0) {
-      keysByThread.delete(threadId);
-      activeAt.delete(threadId);
-      return;
-    }
-    keysByThread.set(threadId, keys);
-    for (const key of keys) {
-      const threads = threadsByKey.get(key) ?? new Set<ThreadId>();
-      threadsByKey.set(key, threads.add(threadId));
-    }
-  };
-  // Answers order by activity, so activity reorders one only when another linked thread was newer.
-  const reordered = (threadId: ThreadId, at: DateTime.Utc): boolean => {
-    const keys = keysByThread.get(threadId);
-    if (keys === undefined) return false;
+  const active = (threadId: ThreadId, at: DateTime.Utc): boolean => {
+    const previous = activeAt.get(threadId);
+    if (previous === undefined) return false;
     const millis = DateTime.toEpochMillis(at);
-    const previous = activeAt.get(threadId) ?? Number.NEGATIVE_INFINITY;
     if (millis <= previous) return false;
     activeAt.set(threadId, millis);
-    return keys.some((key) =>
-      Array.from(threadsByKey.get(key) ?? []).some(
-        (other) =>
-          other !== threadId && (activeAt.get(other) ?? Number.NEGATIVE_INFINITY) >= previous,
-      ),
-    );
+    return true;
   };
   return (event: OrchestrationV2DomainEvent): "changed" | "reordered" | null => {
     // The projection stamps every non-thread event as the thread's activity.
     if (!event.type.startsWith("thread.")) {
-      return reordered(event.threadId, event.occurredAt) ? "reordered" : null;
+      return active(event.threadId, event.occurredAt) ? "reordered" : null;
     }
     if (!("lineage" in event.payload)) return null;
     const thread = event.payload;
-    const keys = linkedKeys(thread);
-    const view = linkedThreadsView(thread, keys);
+    const view = linkedThreadsView(thread, linkedKeys(thread));
     const known = views.has(event.threadId) || event.type === "thread.created";
     const previous = views.get(event.threadId) ?? null;
     if (event.type === "thread.deleted") views.delete(event.threadId);
     else views.set(event.threadId, view);
-    setKeys(event.threadId, view === null ? [] : keys);
-    const moved = reordered(event.threadId, thread.updatedAt);
-    if (!known || view !== previous) return "changed";
-    return moved ? "reordered" : null;
+    if (view === null) activeAt.delete(event.threadId);
+    if (!known || view !== previous) {
+      if (view !== null) activeAt.set(event.threadId, DateTime.toEpochMillis(thread.updatedAt));
+      return "changed";
+    }
+    return active(event.threadId, thread.updatedAt) ? "reordered" : null;
   };
 }

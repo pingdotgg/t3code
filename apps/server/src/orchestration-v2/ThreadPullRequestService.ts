@@ -410,8 +410,8 @@ export const make = Effect.gen(function* () {
     });
 
   const linkedThreadsChange = makeLinkedThreadsChangeDetector();
-  // Concurrent turns on threads linked to one pull request reorder its answer on nearly every
-  // event, so reorders refresh readers at most once per 10s, the cadence clients used to poll at.
+  // A running linked thread can reorder its answers on every event, so reorders refresh readers at
+  // most once per 10s, the cadence clients used to poll at.
   const linkedThreadReorders = yield* Queue.dropping<void>(1);
 
   const notifyLinkedThreads = (event: OrchestrationV2DomainEvent) => {

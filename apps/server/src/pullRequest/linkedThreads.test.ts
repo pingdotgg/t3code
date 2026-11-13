@@ -333,13 +333,12 @@ it("signals when activity reorders the threads linked to a pull request", () => 
       activity("b", 5),
       activity("unlinked", 6),
     ].map(changed),
-  ).toEqual(["reordered", null, "reordered", null, null]);
+  ).toEqual(["reordered", "reordered", "reordered", null, null]);
 
-  // Seeing an older thread last must not hide a later move to the top.
+  // Other threads linked to the pull request may have had no event since the restart.
   const afterRestart = makeLinkedThreadsChangeDetector();
-  afterRestart(thread("a", 4));
-  afterRestart(thread("b", 2));
+  afterRestart(thread("a", 2));
   expect(
-    afterRestart({ ...thread("b", 6), type: "thread.pinned" } as OrchestrationV2DomainEvent),
+    afterRestart({ ...thread("a", 6), type: "thread.pinned" } as OrchestrationV2DomainEvent),
   ).toBe("reordered");
 });

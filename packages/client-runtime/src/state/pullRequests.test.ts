@@ -1790,15 +1790,18 @@ it.effect("shares one refresh stream between independently created pull request 
 );
 
 it.effect.each([
-  { linkedThreadRefreshes: undefined, polledReads: 1 },
-  { linkedThreadRefreshes: true, polledReads: 0 },
+  { linkedThreadRefreshes: undefined, polledReads: 1, signalledReads: 0 },
+  { linkedThreadRefreshes: true, polledReads: 0, signalledReads: 1 },
 ])(
   "polls linked threads only on servers without linked-thread refreshes ($linkedThreadRefreshes)",
-  ({ linkedThreadRefreshes, polledReads }) =>
+  ({ linkedThreadRefreshes, polledReads, signalledReads }) =>
     Effect.gen(function* () {
       let reads = 0;
+      const linkedThreadSignal = yield* SubscriptionRef.make(0);
       const client = {
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+        [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: () =>
+          SubscriptionRef.changes(linkedThreadSignal).pipe(Stream.filter((value) => value > 0)),
         [WS_METHODS.pullRequestsLinkedThreads]: () =>
           Effect.sync(() => {
             reads++;
@@ -1822,6 +1825,10 @@ it.effect.each([
 
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
       expect(reads).toBe(1 + polledReads);
+
+      yield* SubscriptionRef.set(linkedThreadSignal, 1);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      expect(reads).toBe(1 + polledReads + signalledReads);
     }),
 );
 

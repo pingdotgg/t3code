@@ -224,7 +224,8 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReportStateInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
-    /** Wakes refresh readers when a thread's pull request links change; reads stay cached. */
+    readonly subscribeLinkedThreadRefreshes: Stream.Stream<number>;
+    /** Wakes linked-thread readers only; other pull request reads don't depend on thread links. */
     readonly notifyLinkedThreadsChanged: Effect.Effect<void>;
     readonly refreshAfterTurn: (
       projectId: ProjectId,
@@ -740,6 +741,7 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const stateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
+  const linkedThreadRefreshes = yield* SubscriptionRef.make(0);
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
   const requirementOf: UnavailableRequirementOf = (kind) =>
     registry.get(kind)?.unavailableRequirement;
@@ -3689,8 +3691,9 @@ export const make = Effect.gen(function* () {
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
 
-  const notifyLinkedThreadsChanged = Effect.suspend(() =>
-    SubscriptionRef.set(pullRequestRefreshes, ++epochCounter),
+  const notifyLinkedThreadsChanged = SubscriptionRef.update(
+    linkedThreadRefreshes,
+    (revision) => revision + 1,
   );
 
   const invalidatedByMutation =
@@ -3890,6 +3893,9 @@ export const make = Effect.gen(function* () {
     ),
     reportState,
     subscribeRefreshes: SubscriptionRef.changes(pullRequestRefreshes).pipe(
+      Stream.filter((revision) => revision > 0),
+    ),
+    subscribeLinkedThreadRefreshes: SubscriptionRef.changes(linkedThreadRefreshes).pipe(
       Stream.filter((revision) => revision > 0),
     ),
     notifyLinkedThreadsChanged,
