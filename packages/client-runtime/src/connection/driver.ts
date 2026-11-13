@@ -116,16 +116,16 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
-  // A slow route that answered after the head start goes before one that is
-  // still dead, which can hold an attempt open far longer than its probe.
   const late = yield* Effect.forEach(silent, ({ index }) => Fiber.join(checks[index]!), {
     concurrency: "unbounded",
   });
-  const retry = [
-    ...silent.filter((_, position) => late[position] !== "silent"),
-    ...silent.filter((_, position) => late[position] === "silent"),
-  ];
-  for (const { route } of retry) {
+  const answeredLate = silent.filter((_, position) => late[position] !== "silent");
+  const stillSilent = silent.filter((_, position) => late[position] === "silent");
+  for (const { route } of [...answeredLate, ...stillSilent]) {
+    // A route still silent after its whole check can hold the attempt open far
+    // longer than the check did. Once another route failed in a way that
+    // retries, the retry reaches it sooner than waiting here would.
+    if (transient !== undefined && stillSilent.some((entry) => entry.route === route)) break;
     const result = yield* attempt(route);
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
