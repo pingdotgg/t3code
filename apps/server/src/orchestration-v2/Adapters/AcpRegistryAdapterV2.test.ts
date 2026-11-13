@@ -1815,6 +1815,9 @@ describe("AcpRegistryAdapterV2", () => {
             type: "expect_outbound",
             frame: { kind: "request", method: "session/prompt", params: "<any>" },
           },
+          // A previous prompt's idle can land before this prompt's turn starts.
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after stale idle" }),
           sessionEvent("assistant.turn_start"),
           update({
             sessionUpdate: "tool_call",
@@ -1842,6 +1845,8 @@ describe("AcpRegistryAdapterV2", () => {
         "github-copilot-cli",
       );
       yield* session.runtime.startTurn(session.turnInput(1));
+      const stale = yield* session.throughMarker("after stale idle");
+      assert.isFalse(stale.some((event) => event.type === "turn.terminal"));
       const foreground = yield* session.throughMarker("after foreground idle");
       const terminal = foreground.find((event) => event.type === "turn.terminal");
       assert.isDefined(terminal, "the run settles once Copilot's foreground work is idle");
