@@ -364,10 +364,40 @@ const fileManagerRevealKindForPlatform = Effect.fn(
   return hasGraphicalLinuxSession(env) ? "files" : undefined;
 });
 
-function resolveWslFileManagerPath(target: string, distroName: string): string {
+function wslUncFallbackPath(target: string, distroName: string): string {
   const relativePath = target.replace(/^\/+/, "").replaceAll("/", "\\");
   return `\\\\wsl.localhost\\${distroName}${relativePath.length > 0 ? `\\${relativePath}` : ""}`;
 }
+
+// wslpath -w is mount-aware, so a drive remapped in /etc/wsl.conf resolves to the
+// real letter and a Linux path resolves to the \\wsl.localhost UNC path. Fall back
+// to the UNC form by hand when wslpath is missing or fails.
+export const resolveWslFileManagerPath = Effect.fn("externalLauncher.resolveWslFileManagerPath")(
+  function* (
+    target: string,
+    distroName: string,
+  ): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner
+      .spawn(ChildProcess.make("wslpath", ["-w", target], { stdin: "ignore", stderr: "ignore" }))
+      .pipe(
+        Effect.flatMap((handle) =>
+          Effect.all([handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode], {
+            concurrency: "unbounded",
+          }),
+        ),
+        Effect.map(([stdout, exitCode]) => {
+          const translated = stdout.trim();
+          return exitCode === 0 && translated.length > 0
+            ? translated
+            : wslUncFallbackPath(target, distroName);
+        }),
+        Effect.scoped,
+        Effect.timeout("2 seconds"),
+        Effect.orElseSucceed(() => wslUncFallbackPath(target, distroName)),
+      );
+  },
+);
 
 function buildBrowserLaunch(
   target: string,
@@ -522,17 +552,20 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
+  const wslArgs =
+    command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
+      ? [yield* resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
+      : undefined;
   return {
     editor: editorDef.id,
     target,
     command,
     args:
-      command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
-        : platform === "win32"
-          ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(target)]
-          : [target],
+      wslArgs ??
+      (platform === "win32"
+        ? // Explorer interprets / as a switch and silently opens a fallback folder.
+          [normalizeWindowsFileManagerPath(target)]
+        : [target]),
   };
 });
 
@@ -593,13 +626,18 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
     shouldUseWindowsHostFromWsl(platform, env) &&
     env.WSL_DISTRO_NAME !== undefined
   ) {
-    const explorerTarget = resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME);
     if (yield* isCommandAvailable(WSL_POWERSHELL_COMMAND, { env })) {
       // WSL names may contain quotes that Explorer's /select cannot encode.
       // Open the parent through the shell so replacement managers still apply.
       const path = yield* Path.Path;
       // .NET path parsing rejects characters that are legal in WSL filenames.
-      const parent = resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
+      const [explorerTarget, parent] = yield* Effect.all(
+        [
+          resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME),
+          resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME),
+        ],
+        { concurrency: "unbounded" },
+      );
       const source = explorerTarget.includes('"')
         ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
@@ -614,7 +652,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       editor: "file-manager",
       target,
       command: "explorer.exe",
-      args: [resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
+      args: [yield* resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
     };
   }
 

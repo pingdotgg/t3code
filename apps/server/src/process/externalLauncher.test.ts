@@ -338,6 +338,52 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+const wslpathSpawner = (translate: (target: string) => string | undefined) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        if (!ChildProcess.isStandardCommand(command)) {
+          throw new Error("Expected a standard command");
+        }
+        assert.equal(command.command, "wslpath");
+        const out = translate(String(command.args[command.args.length - 1] ?? ""));
+        return makeMockDetachedHandle(
+          out === undefined ? { exitCode: 1 } : { exitCode: 0, stdout: `${out}\n` },
+        );
+      }),
+    ),
+  );
+
+it.effect.each([
+  // wslpath is mount-aware, so its translation wins verbatim.
+  { target: "/mnt/c", wslpath: "C:\\", expected: "C:\\" },
+  {
+    target: "/mnt/d/projects/my-app",
+    wslpath: "D:\\projects\\my-app",
+    expected: "D:\\projects\\my-app",
+  },
+  // A drive remapped in /etc/wsl.conf resolves to its real letter, not the path's.
+  { target: "/mnt/d/project", wslpath: "E:\\project", expected: "E:\\project" },
+  {
+    target: "/home/user/repo",
+    wslpath: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
+    expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
+  },
+  // wslpath missing or failing falls back to the hand-built UNC path.
+  {
+    target: "/home/user/repo",
+    wslpath: undefined,
+    expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
+  },
+  { target: "/", wslpath: undefined, expected: "\\\\wsl.localhost\\Ubuntu-24.04" },
+])("resolveWslFileManagerPath resolves $target to $expected", ({ target, wslpath, expected }) =>
+  Effect.gen(function* () {
+    const result = yield* ExternalLauncher.resolveWslFileManagerPath(target, "Ubuntu-24.04");
+    assert.equal(result, expected);
+  }).pipe(Effect.provide(wslpathSpawner(() => wslpath))),
+);
+
 it.effect.skipIf(windowsHost)(
   "reveals a WSL file in Windows File Explorer through its UNC path",
   () =>
