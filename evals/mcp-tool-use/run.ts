@@ -307,6 +307,8 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /** false: the project is on no forge T3 reads, so T3 hides its forge tools. */
+    forge: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -511,10 +513,17 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+// T3 lists PR and CI tools only to a thread whose project is on a forge it reads.
+const hiddenWithoutForge = enabledWhen(McpInvocationContext.hiddenWithoutForge);
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly forge?: boolean;
+}) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -625,6 +634,7 @@ export const buildBase = (
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly forge?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -721,6 +731,7 @@ const buildCodexBase = (
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly forge?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
@@ -845,6 +856,18 @@ const createdPullRequests = ({ tool, input, output }: ShellEntry) =>
   tool === "Bash" && isRecord(input) && typeof input.command === "string"
     ? changeRequestsCreatedBy(input.command, output).map(({ url }) => url)
     : [];
+
+/** The PR number a shell command opened for `branch`; `--head` naming another branch is not it. */
+const branchPullRequestCreatedBy = (entry: ShellEntry, branch: string | undefined) => {
+  const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
+  const head = /--head[=\s]+["']?([^\s"']+)/.exec(command)?.[1];
+  if (head !== undefined && branch !== undefined && head.split(":").at(-1) !== branch) {
+    return undefined;
+  }
+  return createdPullRequests(entry)
+    .map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]))
+    .find((number) => number > 0);
+};
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
  * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
@@ -858,6 +881,8 @@ type Sample = {
   readonly shell: Array<ShellEntry>;
   readonly shellUsage: Usage;
   readonly linked: Set<string>;
+  /** The branch PR the agent opened in this sample, which links alone do not prove. */
+  openedPullRequest: number | undefined;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -913,6 +938,14 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shell,
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
+    openedPullRequest:
+      shell
+        .map((entry) => branchPullRequestCreatedBy(entry, testCase.setup.world?.branch))
+        .find((number) => number !== undefined) ??
+      priorCalls
+        .filter((call) => call.tool === "pull_request_create")
+        .map((call) => Number(/\/pull\/(\d+)/.exec(valueText(call.result))?.[1]))
+        .find((number) => number > 0),
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
@@ -1169,6 +1202,39 @@ const linkedEntry = (sample: Sample, url: string) => {
   return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
 };
 
+/** The world's PRs. `prs` is free-form world data: number, title, headRefName, checks. */
+const worldPullRequests = (sample: Sample) => {
+  const prs = sample.testCase.setup.world?.prs;
+  return Array.isArray(prs) ? prs.filter(isRecord) : [];
+};
+
+/** World fixtures spell states as GitHub does (`MERGED`) or as T3 does (`merged`). */
+const worldState = (pr: Readonly<Record<string, unknown>> | undefined) => {
+  const state = valueText(pr?.state ?? "open").toLowerCase();
+  return state === "merged" || state === "closed" ? state : "open";
+};
+
+/**
+ * The PR for the sample's branch: the world's, else the one a create would open. A case that
+ * mocks `gh pr create` names that URL, so the T3 tool opens the same number.
+ */
+const branchPullRequest = (sample: Sample) => {
+  const branch = sample.testCase.setup.world?.branch;
+  const prs = worldPullRequests(sample);
+  const own = prs.find((pr) => pr.headRefName === branch);
+  if (own !== undefined) return { number: Number(own.number), created: false, pr: own };
+  if (sample.openedPullRequest !== undefined) {
+    return { number: sample.openedPullRequest, created: false, pr: undefined };
+  }
+  const mocked = (sample.testCase.setup.shellMocks ?? []).find((mock) =>
+    /\b(pr|mr) create\b/.test(mock.match),
+  );
+  const fromMock = Number(/\/pull\/(\d+)/.exec(mocked?.output ?? "")?.[1]);
+  const number =
+    fromMock > 0 ? fromMock : Math.max(123, ...prs.map((pr) => Number(pr.number) || 0)) + 1;
+  return { number, created: true, pr: undefined };
+};
+
 /** A believable T3 result for a tool the case does not mock. */
 export const t3Default = (
   sample: Sample,
@@ -1265,6 +1331,128 @@ export const t3Default = (
         ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
     }
+    case "pull_request_create": {
+      const { number, created } = branchPullRequest(sample);
+      const target = pullRequest(sample.repo, { number });
+      sample.linked.add(target.url);
+      if (created) sample.openedPullRequest = number;
+      return { ...target, created };
+    }
+    case "pull_request_read": {
+      const own = branchPullRequest(sample);
+      const number = typeof input.number === "number" ? input.number : own.number;
+      const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+      const sections = Array.isArray(input.sections) ? input.sections : ["summary", "checks"];
+      const checks = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+      return {
+        ...pullRequest(sample.repo, { number }),
+        ...(sections.includes("summary")
+          ? {
+              summary: {
+                title: valueText(
+                  world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
+                ),
+                body: valueText(world?.body ?? ""),
+                state: worldState(world),
+                isDraft: false,
+                author: "user",
+                headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
+                baseBranch: "main",
+                // Only the branch's own PR is at the checkout's latest commit.
+                headSha:
+                  typeof world?.headRefOid === "string"
+                    ? world.headRefOid
+                    : number === own.number
+                      ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
+                      : null,
+                mergeability: "mergeable",
+                behindBy: 0,
+                autoMergeEnabled: false,
+                additions: 1,
+                deletions: 1,
+                changedFiles: 1,
+                labels: [],
+                reviewers: [],
+              },
+            }
+          : {}),
+        ...(sections.includes("checks")
+          ? {
+              checks: checks.map((check) => ({
+                name: valueText(check.name),
+                status:
+                  check.state === "fail"
+                    ? "failure"
+                    : check.state === "pending"
+                      ? "pending"
+                      : "success",
+                description: null,
+                url: null,
+              })),
+            }
+          : {}),
+        ...(sections.includes("diff")
+          ? { diff: { patch: valueText(world?.diff ?? ""), truncated: false, nextCursor: null } }
+          : {}),
+        ...(sections.includes("conversation")
+          ? {
+              conversation: {
+                comments: (Array.isArray(world?.comments) ? world.comments : [])
+                  .filter(isRecord)
+                  .map((comment, index) => ({
+                    id: `comment-${index + 1}`,
+                    kind: "issue-comment",
+                    author: valueText(comment.author),
+                    body: valueText(comment.body),
+                    createdAt: "2026-10-27T10:00:00Z",
+                    path: null,
+                    reviewState: null,
+                  })),
+                reviewThreads: [],
+                hiddenResolvedThreads: 0,
+                truncated: false,
+                nextCursor: null,
+              },
+            }
+          : {}),
+      };
+    }
+    case "pull_request_list": {
+      const state = valueText(input.state ?? "open");
+      return {
+        pullRequests: worldPullRequests(sample)
+          .filter((pr) => state === "all" || worldState(pr) === state)
+          .map((pr) => ({
+            number: Number(pr.number),
+            title: valueText(pr.title),
+            url: pullRequest(sample.repo, { number: pr.number }).url,
+            author: "user",
+            headBranch: valueText(pr.headRefName),
+            baseBranch: "main",
+            state: worldState(pr),
+            isDraft: false,
+            reviewDecision: null,
+            checksState: null,
+            updatedAt: "2026-10-27T10:00:00Z",
+          })),
+        truncated: false,
+        nextCursor: null,
+      };
+    }
+    case "pull_request_update":
+    case "pull_request_review":
+      return pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number });
+    case "pull_request_respond":
+      return {
+        ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
+        replied: input.body !== undefined,
+        resolved: typeof input.resolved === "boolean" ? input.resolved : null,
+      };
+    case "pull_request_merge":
+      return {
+        ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
+        state: input.auto === true ? "open" : "merged",
+      };
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
       const id = NodeCrypto.createHash("sha256")
@@ -1402,6 +1590,7 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
       return listed("matches");
     case "link_pull_request":
     case "link_pull_requests":
+    case "pull_request_create":
       return child ? { ...value, next: CHILD_PULL_REQUEST_REPORT_NEXT } : value;
     default:
       return value;
@@ -1439,6 +1628,17 @@ const searchTools = (base: Base, query: string, max: number) => {
   const found = base.deferred.filter((tool) => hits(tool).length > 0);
   return found.toSorted((a, b) => hits(b).length - hits(a).length).slice(0, max);
 };
+
+/** Tools that act on the branch's PR when no number is passed. */
+const BRANCH_PULL_REQUEST_TOOLS = new Set([
+  "pull_request_read",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_review",
+  "pull_request_merge",
+]);
+const BRANCH_HAS_NO_PR_ERROR =
+  "This thread's branch has no known PR. Pass number, or open one with pull_request_create.";
 
 const SUBAGENT_WATCH_ERROR =
   "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
@@ -1612,6 +1812,10 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   const entry = { ...call, output };
   sample.shell.push(entry);
   for (const url of createdPullRequests(entry)) sample.linked.add(url);
+  sample.openedPullRequest ??= branchPullRequestCreatedBy(
+    entry,
+    sample.testCase.setup.world?.branch,
+  );
   return output;
 });
 
@@ -1686,6 +1890,11 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
     if (name === "request_secret") savedSecretFile(sample, mock);
+    if (name === "pull_request_create" && isRecord(mock) && typeof mock.url === "string") {
+      sample.linked.add(mock.url);
+      const number = Number(mock.number);
+      if (number > 0) sample.openedPullRequest = number;
+    }
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1697,6 +1906,10 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
+    }
+    if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
+      // Until the agent opens it, the PR a create would open does not exist.
+      if (branchPullRequest(sample).created) return failed(BRANCH_HAS_NO_PR_ERROR);
     }
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);
@@ -2551,6 +2764,7 @@ const main = Effect.gen(function* () {
     deviceAccess: boolean,
     browserAccess: boolean,
     links: boolean,
+    forge: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2561,6 +2775,7 @@ const main = Effect.gen(function* () {
               effort: flags.effort,
               subagent: role === "delegated-child",
               links,
+              forge,
               deviceAccess,
               browserAccess,
             }),
@@ -2574,6 +2789,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
               links,
+              forge,
               deviceAccess,
               browserAccess,
             });
@@ -2586,19 +2802,29 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, true, false);
-  const bases = new Map<string, Base>([["top:true:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}`;
+  const base = yield* buildFor("top", true, true, false, true);
+  const bases = new Map<string, Base>([["top:true:true:false:true", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links] = key.split(":") as [
+    const [role = "top", device, browser, links, forge] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
+    bases.set(
+      key,
+      yield* buildFor(
+        role,
+        device === "true",
+        browser === "true",
+        links === "true",
+        forge === "true",
+      ),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

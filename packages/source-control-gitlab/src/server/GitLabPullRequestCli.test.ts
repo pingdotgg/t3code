@@ -688,6 +688,48 @@ layer("GitLabPullRequestCli.layer", (it) => {
       }),
   );
 
+  it.effect("merges pinned to the head the caller reviewed, not the one it reads", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[0] === "api"
+              ? mergeRequestJson({
+                  diff_refs: { base_sha: "base", head_sha: "pushed-head", start_sha: "start" },
+                })
+              : "",
+          ),
+        ),
+      );
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        expectedHeadSha: "reviewed-head",
+      });
+      const merge = mockedExecute.mock.calls.at(-1)?.[0].args ?? [];
+      expect(merge[merge.indexOf("--sha") + 1]).toBe("reviewed-head");
+
+      // A rebase cannot be pinned, so a head that moved refuses it before rebasing.
+      mockedExecute.mockClear();
+      const refused = yield* Effect.flip(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "merge",
+          mergeMethod: "rebase",
+          expectedHeadSha: "reviewed-head",
+        }),
+      );
+      expect(refused._tag).toBe("GitLabMutationRefusedError");
+      expect(mockedExecute.mock.calls.map(([call]) => call.args[1])).not.toContain("rebase");
+    }),
+  );
+
   it.effect.each([
     {
       mergeMethod: "squash",

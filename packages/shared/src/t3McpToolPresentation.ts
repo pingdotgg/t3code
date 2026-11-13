@@ -65,6 +65,12 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "read-pr"
+  | "list-repo-prs"
+  | "create-pr"
+  | "update-pr"
+  | "respond-pr"
+  | "merge-pr"
   | "browser"
   | "device"
   | "html-preview"
@@ -139,6 +145,32 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   read_pull_request_guide: tool(
     ["Read", "Reading", "Read", "a review guide"],
     "read-pr-guide",
+    "pull-request",
+  ),
+  pull_request_read: tool(["Read", "Reading", "Read", "a pull request"], "read-pr", "pull-request"),
+  pull_request_list: tool(
+    ["List", "Listing", "Listed", "pull requests"],
+    "list-repo-prs",
+    "pull-request",
+  ),
+  pull_request_create: tool(
+    ["Open", "Opening", "Opened", "a pull request"],
+    "create-pr",
+    "pull-request",
+  ),
+  pull_request_update: tool(
+    ["Update", "Updating", "Updated", "a pull request"],
+    "update-pr",
+    "pull-request",
+  ),
+  pull_request_respond: tool(
+    ["Respond", "Responding", "Responded", "on a pull request"],
+    "respond-pr",
+    "pull-request",
+  ),
+  pull_request_merge: tool(
+    ["Merge", "Merging", "Merged", "a pull request"],
+    "merge-pr",
     "pull-request",
   ),
   orchestrator_capabilities: tool(

@@ -12,6 +12,7 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PreviewTabId,
+  ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -43,6 +44,7 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
@@ -102,6 +104,7 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
       Layer.mock(ProjectService.ProjectService)({}),
       Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
       Layer.mock(PullRequestService.PullRequestService)({}),
+      Layer.mock(GitManager.GitManager)({}),
       Layer.mock(Orchestrator.OrchestratorV2)({}),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
       NodeServices.layer,
@@ -1508,95 +1511,122 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const scopeFor = (
-        token: string,
-        subagent: boolean,
-      ): McpInvocationContext.McpThreadInvocationScope => ({
-        environmentId,
-        requestNamespace: token,
-        thread: {
-          threadId: ThreadId.make(`thread-${token}`),
-          providerSessionId: token,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          subagent,
-        },
-        client: undefined,
-        capabilities: new Set(["pull-requests"]),
-        issuedAt: 1,
-      });
-      const scopes = new Map([
-        ["parentToken", scopeFor("parentToken", false)],
-        ["childToken", scopeFor("childToken", true)],
-      ]);
-      const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.layerPullRequestsToolkit,
-      ).pipe(
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(
-          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-            resolve: (token) => Effect.succeed(scopes.get(token)),
-          }),
-        ),
-        Layer.provide(
-          Layer.mergeAll(
-            McpToolAccessTestkit.liveThreadsLayer,
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-            Layer.mock(PullRequestService.PullRequestService)({}),
-            Layer.mock(Orchestrator.OrchestratorV2)({}),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      );
-      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
-        Layer.build,
-      );
-      const httpClient = yield* HttpClient.HttpClient;
-      const listedTools = (token: string) =>
-        Effect.gen(function* () {
-          const headers = {
-            accept: "application/json, text/event-stream",
-            authorization: `Bearer ${token}`,
-          };
-          const initialize = yield* httpClient.post("/mcp", {
-            headers,
-            body: HttpBody.text(
-              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
-              "application/json",
-            ),
-          });
-          const listed = yield* httpClient.post("/mcp", {
-            headers: {
-              ...headers,
-              "mcp-session-id": initialize.headers["mcp-session-id"]!,
-              "mcp-protocol-version": "2025-06-18",
-            },
-            body: HttpBody.text(
-              `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
-              "application/json",
-            ),
-          });
-          const body = (yield* listed.json) as {
-            readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
-          };
-          return body.result.tools.map((tool) => tool.name);
+it.effect(
+  "lists watch tools only to threads that are not delegated children, and forge tools only where the project has a forge",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scopeFor = (
+          token: string,
+          subagent: boolean,
+        ): McpInvocationContext.McpThreadInvocationScope => ({
+          environmentId,
+          requestNamespace: token,
+          thread: {
+            threadId: ThreadId.make(`thread-${token}`),
+            providerSessionId: token,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            subagent,
+          },
+          client: undefined,
+          capabilities: new Set(["pull-requests"]),
+          issuedAt: 1,
         });
+        const scopes = new Map([
+          ["parentToken", scopeFor("parentToken", false)],
+          ["childToken", scopeFor("childToken", true)],
+          ["noForgeToken", scopeFor("noForgeToken", false)],
+        ]);
+        const serverLayer = McpHttpServer.layerMcpTransport(
+          McpHttpServer.layerPullRequestsToolkit,
+        ).pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (token) => Effect.succeed(scopes.get(token)),
+            }),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              McpToolAccessTestkit.liveThreadsLayer,
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+              Layer.mock(PullRequestService.PullRequestService)({
+                servesProject: (projectId) => Effect.succeed(projectId !== "project-noForgeToken"),
+              }),
+              Layer.mock(GitManager.GitManager)({}),
+              Layer.mock(Orchestrator.OrchestratorV2)({}),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getThreadShell: (threadId) =>
+                  Effect.succeed({
+                    projectId: ProjectId.make(threadId.replace("thread-", "project-")),
+                  } as never),
+              }),
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        );
+        yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.build,
+        );
+        const httpClient = yield* HttpClient.HttpClient;
+        const listedTools = (token: string) =>
+          Effect.gen(function* () {
+            const headers = {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+            };
+            const initialize = yield* httpClient.post("/mcp", {
+              headers,
+              body: HttpBody.text(
+                `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+                "application/json",
+              ),
+            });
+            const listed = yield* httpClient.post("/mcp", {
+              headers: {
+                ...headers,
+                "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                "mcp-protocol-version": "2025-06-18",
+              },
+              body: HttpBody.text(
+                `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+                "application/json",
+              ),
+            });
+            const body = (yield* listed.json) as {
+              readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
+            };
+            return body.result.tools.map((tool) => tool.name);
+          });
 
-      const parentTools = yield* listedTools("parentToken");
-      const childTools = yield* listedTools("childToken");
-      expect(parentTools).toEqual(
-        expect.arrayContaining(["link_pull_request", "watch_pull_request", "unwatch_pull_request"]),
-      );
-      expect(childTools).toContain("link_pull_request");
-      expect(childTools).not.toContain("watch_pull_request");
-      expect(childTools).not.toContain("unwatch_pull_request");
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        const parentTools = yield* listedTools("parentToken");
+        const childTools = yield* listedTools("childToken");
+        expect(parentTools).toEqual(
+          expect.arrayContaining([
+            "link_pull_request",
+            "watch_pull_request",
+            "unwatch_pull_request",
+          ]),
+        );
+        expect(childTools).toContain("link_pull_request");
+        expect(childTools).not.toContain("watch_pull_request");
+        expect(childTools).not.toContain("unwatch_pull_request");
+        expect(parentTools).toEqual(
+          expect.arrayContaining([
+            "pull_request_read",
+            "pull_request_review",
+            "pull_request_merge",
+          ]),
+        );
+        const noForgeTools = yield* listedTools("noForgeToken");
+        expect(noForgeTools).toEqual(
+          expect.arrayContaining(["link_pull_request", "watch_pull_request"]),
+        );
+        expect(noForgeTools.filter((name) => name.startsWith("pull_request_"))).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect(

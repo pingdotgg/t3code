@@ -575,6 +575,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly removeAgentCreditsOnMerge?: boolean;
+      /** The head the caller reviewed; a merge refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<ProviderChangeRequestSummary | void, GitLabPullRequestCliError>;
 
     readonly updateMergeRequest: (input: {
@@ -2695,11 +2697,27 @@ export const make = Effect.gen(function* () {
         const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
         if (input.action === "merge" || input.action === "enable-auto-merge") {
           if (input.mergeMethod === "rebase") {
+            // GitLab's rebase takes no SHA, so the reviewed head is checked just before it.
+            if (input.expectedHeadSha !== undefined) {
+              const current = yield* getDiffRefs(input);
+              if (current.headSha !== input.expectedHeadSha) {
+                return yield* new GitLabMutationRefusedError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "runMergeRequestAction",
+                  reasons: [`the head is now ${current.headSha}, not ${input.expectedHeadSha}`],
+                });
+              }
+            }
             // A rebase changes the source SHA, so wait for it before reading the merge guard.
             yield* executeMr("rebase");
           }
           const refs = yield* getDiffRefs(input);
-          flags.push("--sha", refs.headSha);
+          // After a rebase, the head checked above is replaced by its rebased commits.
+          flags.push(
+            "--sha",
+            input.mergeMethod === "rebase" ? refs.headSha : (input.expectedHeadSha ?? refs.headSha),
+          );
           if (input.removeAgentCreditsOnMerge === true) {
             // Read after the SHA guard, so a push since then fails the merge instead of
             // merging commits whose credits these messages don't cover.
