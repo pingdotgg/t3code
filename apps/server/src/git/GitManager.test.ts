@@ -2606,6 +2606,91 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("branch PR lookup in a fork checkout follows the branch's own published ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "upstream",
+        "git@github.com:pingdotgg/codething-mvp.git",
+      ]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+      // What a new worktree thread gets: its start point as upstream, nothing published.
+      yield* runGit(repoDir, ["branch", "--track", "t3code/new-thread", "origin/main"]);
+      yield* runGit(repoDir, ["branch", "--track", "feature/published", "origin/main"]);
+      yield* runGit(repoDir, ["branch", "--track", "t3code/pr-300/main", "origin/main"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/published"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:contributor/codething-mvp.git",
+        forkDir,
+      );
+
+      const forkPullRequest = {
+        baseRefName: "main",
+        isCrossRepository: true,
+        headRepositoryNameWithOwner: "contributor/codething-mvp",
+        headRepositoryOwnerLogin: "contributor",
+      } as const;
+      const { service, calls } = createFakeSourceControlProvider({
+        prListByHeadSelector: {
+          "contributor:main": [
+            {
+              ...forkPullRequest,
+              number: 300,
+              title: "Fork main",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/300",
+              headRefName: "main",
+              state: "merged",
+            },
+          ],
+          "feature/published": [
+            {
+              ...forkPullRequest,
+              number: 224,
+              title: "Fork feature",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/224",
+              headRefName: "feature/published",
+              state: "open",
+            },
+          ],
+        },
+      });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          createsChangeRequestsIn: ({ repository }) =>
+            Effect.succeed(repository === "pingdotgg/codething-mvp"),
+        },
+      });
+
+      const unpublished = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "t3code/new-thread",
+      });
+      expect(unpublished).toBeNull();
+      expect(listedSelectors(calls)).toEqual([]);
+
+      const published = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/published",
+      });
+      expect(published?.number).toBe(224);
+
+      const pullRequestWorktree = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "t3code/pr-300/main",
+      });
+      expect(pullRequestWorktree?.number).toBe(300);
+    }),
+  );
+
   it.effect("branch PR lookup ignores the PR of a local branch the branch tracks", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
