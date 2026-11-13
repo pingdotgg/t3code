@@ -2423,3 +2423,50 @@ async fn an_unknown_instance_fails_the_run_even_with_one_provider() {
     assert_eq!(p["runs"][0]["status"], "failed");
     assert_eq!(count(&provider.sessions), 0);
 }
+
+/// A child's second turn wakes the parent with a new message. Before the fix the wake reused
+/// the command and message id, so it overwrote the first result and two queued runs shared it.
+#[tokio::test(flavor = "current_thread")]
+async fn each_delegated_completion_wakes_with_its_own_message() {
+    let db = TempDb::new("delegate-twice");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    dispatch(&engine, delegate("d1", "look", Some("always"))).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    dispatch(&engine, message(child, "c3", "again")).await;
+    run_to_end(&engine, child, &format!("run:{child}:2")).await;
+
+    let parent = projection(&engine, "t1").await;
+    let wakes: Vec<(String, String)> = parent["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["createdBy"] == "agent" && m["role"] == "user")
+        .map(|m| {
+            (
+                m["id"].as_str().unwrap().to_owned(),
+                m["text"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(wakes.len(), 2, "{wakes:?}");
+    assert!(wakes[0].1.contains("echo: look"), "{wakes:?}");
+    assert!(wakes[1].1.contains("echo: again"), "{wakes:?}");
+    let users: Vec<_> = parent["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .map(|r| r["userMessageId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(users, [wakes[0].0.clone(), wakes[1].0.clone()]);
+}
