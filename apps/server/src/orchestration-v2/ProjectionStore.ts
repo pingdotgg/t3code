@@ -3672,17 +3672,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId} AND status IN ('pending','starting','running','waiting')
                 AND NOT ${todoListOfSettledRun(sql`live`)}
               UNION
+              -- One indexed arm per condition: under OR, SQLite reads every row of the thread.
               SELECT root_node_id FROM orchestration_v2_projection_run_attempts
-              WHERE thread_id = ${threadId} AND (
-                status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+              WHERE thread_id = ${threadId} AND status IN ('pending', 'starting', 'running', 'waiting')
+              UNION
+              SELECT root_node_id FROM orchestration_v2_projection_run_attempts
+              WHERE +thread_id = ${threadId} AND run_id IN (
+                SELECT value FROM json_each(${cohortRunIds})
+                UNION ALL SELECT ${window.requiredRunId ?? null})
               UNION
               SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
-              WHERE thread_id = ${threadId} AND (
-                status IN ('queued','preparing','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+              WHERE thread_id = ${threadId}
+                AND status IN ('queued','preparing','starting','running','waiting')
+              UNION
+              SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
+              WHERE +thread_id = ${threadId} AND run_id IN (
+                SELECT value FROM json_each(${cohortRunIds})
+                UNION ALL SELECT ${window.requiredRunId ?? null})
               UNION
               SELECT node_id FROM orchestration_v2_projection_runtime_requests
               WHERE thread_id = ${threadId} AND status IN ('pending','waiting')
@@ -3811,28 +3817,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               }
           `
               : sql<PayloadRow>`
+            -- Runs are looked up by key. Under one OR filter SQLite reads every run of the thread.
             SELECT payload_json FROM orchestration_v2_projection_runs
-            WHERE thread_id = ${threadId}
-              AND (status IN ('queued','preparing','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null}
-                ${
-                  // Keep the shell's latest run even when its items are outside the newest window.
-                  window.anchorItemId === undefined && window.requiredRunId === undefined
-                    ? sql`OR run_id = ${presentedShellRunId(sql`${threadId}`)}`
-                    : sql``
-                }
-                -- Queued or cancelled turns must not hide the latest actual session.
-                OR run_id = ${latestTodoList?.run_id ?? null}
-                OR run_id = (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE thread_id = ${threadId}
-                    AND provider_thread_id IS NOT NULL
-                    AND json_extract(payload_json, '$.startedAt') IS NOT NULL
-                    AND ${latestTodoList?.plan_id ?? null} IS NOT NULL
-                  ORDER BY ordinal DESC
-                  LIMIT 1
-                ))
+            WHERE +thread_id = ${threadId} AND run_id IN (
+              SELECT run_id FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}
+                AND status IN ('queued','preparing','starting','running','waiting')
+              UNION ALL SELECT value FROM json_each(${cohortRunIds})
+              UNION ALL SELECT ${window.requiredRunId ?? null}
+              ${
+                // Keep the shell's latest run even when its items are outside the newest window.
+                window.anchorItemId === undefined && window.requiredRunId === undefined
+                  ? sql`UNION ALL SELECT ${presentedShellRunId(sql`${threadId}`)}`
+                  : sql``
+              }
+              -- Queued or cancelled turns must not hide the latest actual session.
+              UNION ALL SELECT ${latestTodoList?.run_id ?? null}
+              UNION ALL SELECT (
+                SELECT run_id FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId}
+                  AND provider_thread_id IS NOT NULL
+                  AND json_extract(payload_json, '$.startedAt') IS NOT NULL
+                  AND ${latestTodoList?.plan_id ?? null} IS NOT NULL
+                ORDER BY ordinal DESC
+                LIMIT 1
+              ))
             ORDER BY ordinal ASC
           `,
           fields !== undefined && !fields.includes("attempts")
@@ -3847,9 +3856,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_run_attempts
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+            WHERE +thread_id = ${threadId} AND attempt_id IN (
+              SELECT attempt_id FROM orchestration_v2_projection_run_attempts
+              WHERE thread_id = ${threadId} AND status IN ('pending', 'starting', 'running', 'waiting')
+              UNION ALL
+              SELECT attempt_id FROM orchestration_v2_projection_run_attempts
+              WHERE run_id IN (SELECT value FROM json_each(${cohortRunIds})))
             ORDER BY run_id ASC, attempt_ordinal ASC
           `,
           (fields !== undefined && !fields.includes("nodes")) ||
@@ -4049,10 +4061,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId}
-              AND (status IN ('starting','running','waiting')
-                OR provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+            WHERE +thread_id = ${threadId} AND provider_turn_id IN (
+              SELECT provider_turn_id FROM orchestration_v2_projection_provider_turns
+              WHERE thread_id = ${threadId} AND status IN ('starting', 'running', 'waiting')
+              UNION ALL SELECT value FROM json_each(${cohortProviderTurnIds})
+              UNION ALL
+              SELECT provider_turn_id FROM orchestration_v2_projection_provider_turns
+              WHERE node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
             ORDER BY provider_thread_id ASC, ordinal ASC
           `,
           (fields !== undefined && !fields.includes("runtimeRequests")) ||
@@ -4159,19 +4174,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','capturing')
-                OR (run_id IS NULL AND ordinal_within_scope = 0 AND status = 'ready')
-                -- The diff of the last finished turn stays in reach while a long run is at work.
-                OR checkpoint_id = (
-                  SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
-                  WHERE thread_id = ${threadId} AND status = 'ready'
-                    AND app_run_ordinal IS NOT NULL
-                  ORDER BY app_run_ordinal DESC LIMIT 1
-                )
-                OR checkpoint_id IN (SELECT value FROM json_each(${cohortCheckpointIds}))
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+            WHERE +thread_id = ${threadId} AND checkpoint_id IN (
+              SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
+              WHERE thread_id = ${threadId} AND status IN ('pending','capturing')
+              UNION ALL
+              SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
+                INDEXED BY orchestration_v2_projection_checkpoints_root_idx
+              WHERE thread_id = ${threadId}
+                AND run_id IS NULL AND ordinal_within_scope = 0 AND status = 'ready'
+              -- The diff of the last finished turn stays in reach while a long run is at work.
+              UNION ALL SELECT (
+                SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
+                WHERE thread_id = ${threadId} AND status = 'ready'
+                  AND app_run_ordinal IS NOT NULL
+                ORDER BY app_run_ordinal DESC LIMIT 1
+              )
+              UNION ALL SELECT value FROM json_each(${cohortCheckpointIds})
+              UNION ALL
+              SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
+              WHERE run_id IN (SELECT value FROM json_each(${cohortRunIds}))
+              UNION ALL
+              SELECT checkpoint_id FROM orchestration_v2_projection_checkpoints
+              WHERE node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `,
           fields !== undefined && !fields.includes("contextHandoffs")
@@ -6601,7 +6625,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sql<{ run_id: string; root_node_id: string }>`
           SELECT attempt.run_id, attempt.root_node_id
           FROM (
+            -- Without the hint, DISTINCT picks the run index and reads every item of the thread.
             SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
+              INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
             WHERE thread_id = ${threadId} AND type = 'run_interrupt_result' AND run_id IS NOT NULL
           ) AS interrupted
           CROSS JOIN orchestration_v2_projection_run_attempts AS attempt
