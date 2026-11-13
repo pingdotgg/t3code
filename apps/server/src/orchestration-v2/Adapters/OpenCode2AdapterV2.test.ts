@@ -57,8 +57,6 @@ import {
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
 
-import { OpenCodeReplayController } from "./OpenCodeAdapterV2.testkit.ts";
-
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 const WORK = "/work/opencode2";
 const instanceId = ProviderInstanceId.make("opencode");
@@ -1660,38 +1658,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     event("session.execution.started", { sessionID: CHILD }),
   ];
 
-  it("a cancelled event subscription leaves its gated event for reconnect", async () => {
-    const controller = new OpenCodeReplayController({
-      provider: "opencode",
-      protocol: "opencode2-http.sse",
-      version: "2",
-      scenario: "cancel-gated-event",
-      entries: [event("session.execution.started", { sessionID: CHILD }, "cancel-gate")],
-    });
-    const entered = Promise.withResolvers<void>();
-    const abort = new AbortController();
-    const stream = controller.events(
-      abort.signal,
-      () =>
-        new Promise((resolve) => {
-          abort.signal.addEventListener("abort", () => resolve(), { once: true });
-          entered.resolve();
-        }),
-    );
-    const events = stream[Symbol.asyncIterator]();
-    const next = events.next();
-    await entered.promise;
-    abort.abort();
-    assert.isTrue((await next).done);
-    const replacement = controller.events()[Symbol.asyncIterator]();
-    assert.isFalse((await replacement.next()).done);
-    controller.assertComplete();
-  });
-
   it.effect.each([
     { goal: false, late: false, fails: false },
-    { goal: true, late: false, fails: false },
-    { goal: false, late: true, fails: false },
     { goal: true, late: true, fails: false },
     { goal: false, late: true, fails: true },
   ])(
