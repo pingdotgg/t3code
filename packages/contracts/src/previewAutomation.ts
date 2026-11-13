@@ -794,6 +794,7 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
 
 export const PreviewAutomationControlReason = Schema.Literals([
   "agentMismatch",
+  "unclaimedTab",
   "humanControl",
   "tabRequired",
   "closed",
@@ -814,6 +815,8 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
   override get message(): string {
     if (this.reason === "agentMismatch")
       return "This browser tab belongs to another agent session or a human. Open your own tab.";
+    if (this.reason === "unclaimedTab")
+      return "This tab has no agent owner. Ask the user to close it in the browser panel.";
     if (this.reason === "humanControl")
       return "A human controls this browser tab. Wait until they release control.";
     if (this.reason === "tabRequired")
