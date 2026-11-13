@@ -1426,6 +1426,15 @@ it.layer(
     { name: "NUL in DECRQM", data: "A\u001b[?2026\u0000$pB", history: "AB" },
     { name: "CR in DSR", data: "AB\u001b[5\rnC", history: "AB\rC" },
     { name: "DLE in DSR", data: "AB\u001b[5\u0010nC", history: "ABC" },
+    // Ghostty reads non-ASCII there as UTF-8 bytes: it drops é and runs 0x80-0x9F as C1 controls.
+    { name: "é in DA", data: "A\u001b[0écB", history: "AB" },
+    { name: "DECID byte in a CSI", data: "A\u001b[嚠B", history: "A\ufffdB" },
+    {
+      name: "C1 DCS then C1 CSI in DSR",
+      data: "A\u001b[\u0090\u009b6nB",
+      history: "A\u001bP\u009cB",
+    },
+    { name: "ESC in DSR", data: "A\u001b[5\u001b[6nB", history: "AB" },
   ])(
     "strips a query with an embedded control but keeps what the terminal ran ($name)",
     ({ data, history }) =>
@@ -1439,6 +1448,19 @@ it.layer(
         const restored = reopened.history.replaceAll("\u0000", "");
         expect(restored.split("\u001b[?1049h")[0]).toBe(history);
       }),
+  );
+
+  // Ghostty aborts a CSI at a non-ASCII code point and prints it and what follows.
+  it.effect("keeps a CSI interrupted by non-ASCII text in history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("A\u001b[界nB");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.split("\u001b[?1049h")[0]).toBe("A\u001b[界nB");
+    }),
   );
 
   it.effect.each([
