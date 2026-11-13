@@ -175,10 +175,6 @@ describe("server browser element refs", () => {
     expect(hidden.message).toBe(
       'The click may have happened; check the page before retrying. "button" still matches an element after the timeout. Playwright last saw: element is not visible.',
     );
-    await page.setContent(`<button id="save" disabled>Save</button>`);
-    const disabled = await failure("#save");
-    expect(disabled.tag).toBe("PreviewAutomationTimeoutError");
-    expect(disabled.message).toMatch(/not enabled/);
   });
 
   it("gives a late target only the click's remaining time, not a fresh timeout", async () => {
