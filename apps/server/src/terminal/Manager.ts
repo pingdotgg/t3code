@@ -1265,7 +1265,8 @@ function sanitizeTerminalHistoryChunk(
 
       if (nextCodePoint === 0x5b) {
         let cursor = index + 2;
-        // Ghostty executes C0 controls inside a CSI and ignores DEL; neither joins the parameters.
+        // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
+        // print in ground state. None join the parameters; only executed ones survive a strip.
         let body = "";
         let executedControls = "";
         while (cursor < input.length) {
@@ -1280,9 +1281,12 @@ function sanitizeTerminalHistoryChunk(
             index = cursor + 1;
             break;
           }
-          if (cursorCodePoint < 0x20 && cursorCodePoint !== 0x1b) {
+          if (cursorCodePoint < 0x10) {
             executedControls += input[cursor];
-          } else if (cursorCodePoint !== 0x7f) {
+          } else if (
+            (cursorCodePoint >= 0x20 || cursorCodePoint === 0x1b) &&
+            cursorCodePoint !== 0x7f
+          ) {
             body += input[cursor];
           }
           cursor += 1;
