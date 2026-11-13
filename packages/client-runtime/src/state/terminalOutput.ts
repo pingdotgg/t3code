@@ -246,9 +246,30 @@ function resetOutput(
 
 // Erasing in place, not a full reset, keeps the modes the still-running program negotiated.
 const CLEAR_SEQUENCE = "\u001b[H\u001b[2J\u001b[3J";
+// Mode 47 switches screens without clearing either or touching the saved cursor, so
+// the hidden primary screen is erased too and the program stays on its alternate one.
+const CLEAR_FROM_ALTERNATE_SEQUENCE = `\u001b[H\u001b[2J\u001b[?47l${CLEAR_SEQUENCE}\u001b[?47h`;
+const SCREEN_SWITCH = /\u001b(?:\[\?([0-9;]*)([hl])|c)/gu;
+
+function endsOnAlternateScreen(text: string): boolean {
+  let alternate = false;
+  for (const match of text.matchAll(SCREEN_SWITCH)) {
+    if (match[2] === undefined) {
+      alternate = false;
+    } else if (
+      match[1]!.split(";").some((mode) => mode === "47" || mode === "1047" || mode === "1049")
+    ) {
+      alternate = match[2] === "h";
+    }
+  }
+  return alternate;
+}
 
 function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
-  return appendOutput({ ...current, chunks: [], retainedBytes: 0 }, CLEAR_SEQUENCE, maxBufferBytes);
+  const sequence = endsOnAlternateScreen(terminalOutputText(current))
+    ? CLEAR_FROM_ALTERNATE_SEQUENCE
+    : CLEAR_SEQUENCE;
+  return appendOutput({ ...current, chunks: [], retainedBytes: 0 }, sequence, maxBufferBytes);
 }
 
 export function terminalOutputText(output: TerminalOutputState): string {

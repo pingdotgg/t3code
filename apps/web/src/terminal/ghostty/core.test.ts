@@ -421,7 +421,7 @@ describe("GhosttyTerminalCore snapshots", () => {
         kittyFlags: replies.join(""),
       };
     };
-    let state = createSession("\x1b[?1049h\x1b[>7u\x1b[?1;1000;1006h");
+    let state = createSession("PRIMARY\r\n1\r\n2\r\n3\x1b[?1049hALT\x1b[>7u\x1b[?1;1000;1006h");
     const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
     writeTerminalOutputUpdate(core, initial);
     const negotiated = modes();
@@ -440,6 +440,13 @@ describe("GhosttyTerminalCore snapshots", () => {
     writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, initial.cursor));
 
     expect(modes()).toEqual(negotiated);
+    expect(core.snapshot().rowData.map((row) => row.text.trim())).toEqual(["", "", ""]);
+
+    // The primary screen and its scrollback were cleared too, so leaving shows none of it.
+    core.write("\x1b[?1049l");
+    expect(core.snapshot().rowData.map((row) => row.text.trim())).toEqual(["", "", ""]);
+    const scrollbar = core.scrollbarState();
+    expect(scrollbar === null || scrollbar.total === scrollbar.len).toBe(true);
   });
 });
 
