@@ -1,21 +1,22 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off -- Parse workers are IPC child processes, which Effect's process API does not expose; their ready and idle deadlines live with the process callbacks.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
-import * as NodeURL from "node:url";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 import type { TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 
-import { TRANSCRIPT_FORMAT_MAP } from "./usageTranscriptFormats.ts";
+import { serverSubcommand } from "../cli/serverSubcommand.ts";
 import {
-  readTranscriptRecords,
-  type TranscriptParsePosition,
-  type TranscriptParseResult,
-} from "./usageTranscriptReader.ts";
+  makeUsageTranscriptWorker,
+  type TranscriptParseJob,
+  type TranscriptWorkerMessage,
+  type UsageTranscriptWorker,
+} from "./usageTranscriptWorker.ts";
+import { TRANSCRIPT_FORMAT_MAP } from "./usageTranscriptFormats.ts";
+import { readTranscriptRecords, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
 const WORKER_COMMAND = "__usage-transcript-worker";
 // Below this a parse costs well under a millisecond in process: tiny appends never start a worker,
@@ -31,22 +32,19 @@ const WORKER_HEAP_MB = 2048;
 // Reads the service overlaps when parsing in process, so file I/O hides behind parsing.
 const IN_PROCESS_READS = 4;
 const WORKER_IDLE_MS = 30_000;
-// Startup loads the server's entry module; a worker not ready by then is treated as failed.
-const WORKER_READY_MS = 10_000;
 
-interface TranscriptParseJob {
-  readonly path: string;
-  readonly provider: UsageProviderKind;
-  readonly resumeFrom: TranscriptParsePosition | undefined;
-}
-
-type WorkerMessage = { readonly ready: true } | { readonly result: TranscriptParseResult | null };
+export const TranscriptParserCapacity = Context.Reference<{
+  readonly cores: number;
+  readonly availableMemory: number;
+}>("t3/usage/TranscriptParserCapacity", {
+  defaultValue: () => ({
+    cores: NodeOS.availableParallelism(),
+    availableMemory: process.availableMemory(),
+  }),
+});
 
 interface Worker {
-  readonly child: NodeChildProcess.ChildProcess;
-  readonly exited: Promise<void>;
-  /** Receives the in-flight job's reply, or undefined when the process stops first. */
-  reply: ((result: TranscriptParseResult | null | undefined) => void) | undefined;
+  readonly process: UsageTranscriptWorker;
   idleTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
@@ -64,9 +62,9 @@ export function runUsageTranscriptWorker(): void {
       format === undefined
         ? Promise.resolve(null)
         : readTranscriptRecords(job.path, format, job.resumeFrom)
-    ).then((result) => send({ result } satisfies WorkerMessage));
+    ).then((result) => send({ result } satisfies TranscriptWorkerMessage));
   });
-  send({ ready: true } satisfies WorkerMessage);
+  send({ ready: true } satisfies TranscriptWorkerMessage);
 }
 
 /**
@@ -76,19 +74,14 @@ export function runUsageTranscriptWorker(): void {
  * failure. Closing the scope stops every worker, and reads still running end interrupted.
  */
 export const makeTranscriptParser = Effect.gen(function* () {
-  const executable = yield* HostProcess.ExecutablePath;
-  const isExecutable = yield* HostProcess.IsExecutable;
-  const environment = yield* HostProcess.Environment;
-  // In a bundle import.meta.url is bin.mjs's directory; development and tests use the source.
-  const entry = NodeURL.fileURLToPath(
-    new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
-  );
+  const command = yield* serverSubcommand(WORKER_COMMAND, WORKER_HEAP_MB);
   // One core stays with the server. One worker parses a file at a time without the read overlap
   // in-process reads get, so a pool smaller than two cannot beat reading in process.
+  const capacity = yield* TranscriptParserCapacity;
   const fits = Math.min(
     MAX_WORKERS,
-    NodeOS.availableParallelism() - 1,
-    Math.floor(process.availableMemory() / 4 / WORKER_MEMORY_BYTES),
+    capacity.cores - 1,
+    Math.floor(capacity.availableMemory / 4 / WORKER_MEMORY_BYTES),
   );
   const slots = fits >= 2 ? fits : 0;
   const permits = yield* Semaphore.make(slots);
@@ -98,71 +91,19 @@ export const makeTranscriptParser = Effect.gen(function* () {
   let closed = false;
   let failed = false;
 
-  const stop = (worker: Worker): Promise<void> => {
-    worker.child.kill();
-    return worker.exited;
-  };
+  const stop = (worker: Worker) => worker.process.stop();
 
-  const start = (): Promise<Worker | undefined> => {
-    const child = NodeChildProcess.spawn(
-      executable,
-      [...(isExecutable ? [] : [entry]), WORKER_COMMAND],
-      {
-        stdio: ["ignore", "ignore", "inherit", "ipc"],
-        serialization: "advanced",
-        windowsHide: true,
-        env: {
-          ...environment,
-          ELECTRON_RUN_AS_NODE: "1",
-          NODE_OPTIONS: `${environment.NODE_OPTIONS ?? ""} --max-old-space-size=${WORKER_HEAP_MB}`,
-        },
-      },
-    );
-    return new Promise((resolve) => {
-      const exited = Promise.withResolvers<void>();
-      const worker: Worker = {
-        child,
-        exited: exited.promise,
-        reply: undefined,
-        idleTimer: undefined,
-      };
-      // Owned before the first await, so closing the scope stops a worker that is still starting.
-      live.add(worker);
-      const exit = () => {
-        live.delete(worker);
-        clearTimeout(readyTimer);
-        clearTimeout(worker.idleTimer);
-        const index = idle.indexOf(worker);
-        if (index !== -1) idle.splice(index, 1);
-        const reply = worker.reply;
-        worker.reply = undefined;
-        reply?.(undefined);
-        resolve(undefined);
-        exited.resolve();
-      };
-      const readyTimer = setTimeout(() => child.kill(), WORKER_READY_MS);
-      readyTimer.unref();
-      child.once("exit", exit);
-      // A failed spawn emits only "error".
-      child.once("error", exit);
-      child.on("message", (message: unknown) => {
-        const reply = worker.reply;
-        if (typeof message === "object" && message !== null) {
-          if ("ready" in message) {
-            clearTimeout(readyTimer);
-            resolve(worker);
-            return;
-          }
-          if (reply !== undefined && "result" in message) {
-            worker.reply = undefined;
-            reply(message.result as TranscriptParseResult | null);
-            return;
-          }
-        }
-        // Anything else is not this protocol, so no later reply can be trusted to pair.
-        child.kill();
-      });
+  const start = async (): Promise<Worker | undefined> => {
+    const process = makeUsageTranscriptWorker(command);
+    const worker: Worker = { process, idleTimer: undefined };
+    live.add(worker);
+    void process.exited.then(() => {
+      live.delete(worker);
+      clearTimeout(worker.idleTimer);
+      const index = idle.indexOf(worker);
+      if (index !== -1) idle.splice(index, 1);
     });
+    return (await process.ready) ? worker : undefined;
   };
 
   const lease = Effect.promise(async () => {
@@ -187,19 +128,11 @@ export const makeTranscriptParser = Effect.gen(function* () {
       worker.idleTimer.unref();
     });
 
-  const parse = (worker: Worker, job: TranscriptParseJob) =>
-    Effect.callback<TranscriptParseResult | null | undefined>((resume) => {
-      worker.reply = (result) => resume(Effect.succeed(result));
-      worker.child.send(job, (error) => {
-        if (error) void stop(worker);
-      });
-    });
-
   // An interrupted job stops its worker, whose late reply would otherwise answer the next job.
   const inWorker = (job: TranscriptParseJob) =>
     Effect.acquireUseRelease(
       lease,
-      (worker) => (worker === undefined ? Effect.undefined : parse(worker, job)),
+      (worker) => (worker === undefined ? Effect.undefined : worker.process.parse(job)),
       (worker, exit) => release(worker, Exit.isSuccess(exit) && exit.value !== undefined),
     ).pipe(permits.withPermit);
 

@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the isolated parser process is an external runtime boundary.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeURL from "node:url";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -9,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import { serverSubcommand } from "../cli/serverSubcommand.ts";
 
 const extensions = new Set(["docx", "xlsx", "pptx", "odt", "ods", "odp", "rtf", "epub", "ipynb"]);
 
@@ -45,19 +44,13 @@ export class DocumentText extends Context.Service<
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const executable = yield* HostProcess.ExecutablePath;
-  const isExecutable = yield* HostProcess.IsExecutable;
-  const environment = yield* HostProcess.Environment;
+  const command = yield* serverSubcommand("__document-text", 192);
   const clock = yield* Clock.Clock;
   // A large DOCX worker peaks near 270 MiB RSS, so two slots bound parser memory near 540 MiB.
   const lock = yield* Semaphore.make(2);
   const failed = new Map<string, number>();
   // A cancelled extraction can still be publishing while its retry runs in the other slot.
   let attempt = 0;
-  // In a bundle import.meta.url is bin.mjs; development and tests use this source module.
-  const entry = NodeURL.fileURLToPath(
-    new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
-  );
   const extract = Effect.fn("DocumentText.extract")(function* (path: string) {
     const extension = path.split(".").at(-1)!.toLowerCase();
     const sidecar = `${path}.txt`;
@@ -69,19 +62,15 @@ const make = Effect.gen(function* () {
       try: (signal) =>
         new Promise<string>((resolve, reject) => {
           NodeChildProcess.execFile(
-            executable,
-            [...(isExecutable ? [] : [entry]), "__document-text", path, `.${extension}`],
+            command.executable,
+            [...command.args, path, `.${extension}`],
             {
               signal,
               timeout: 15_000,
               maxBuffer: 4 * 1024 * 1024 + 1024,
               encoding: "utf8",
               windowsHide: true,
-              env: {
-                ...environment,
-                ELECTRON_RUN_AS_NODE: "1",
-                NODE_OPTIONS: `${environment.NODE_OPTIONS ?? ""} --max-old-space-size=192`,
-              },
+              env: command.env,
             },
             (error, stdout) => (error ? reject(error) : resolve(stdout)),
           );

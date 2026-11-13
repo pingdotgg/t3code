@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - workers parse real files, and preloads report their pids through one.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -13,11 +14,15 @@ import * as Scope from "effect/Scope";
 
 import { BUILT_IN_USAGE_DRIVERS } from "../provider/builtInDrivers.ts";
 import { TRANSCRIPT_FORMAT_MAP, TRANSCRIPT_FORMATS } from "./usageTranscriptFormats.ts";
-import { makeTranscriptParser } from "./usageTranscriptParser.ts";
+import { makeTranscriptParser, TranscriptParserCapacity } from "./usageTranscriptParser.ts";
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 // Above the in-process threshold, so these files go to a worker.
 const LARGE_BYTES = 512 * 1024;
+
+const makeWorkerParser = makeTranscriptParser.pipe(
+  Effect.provideService(TranscriptParserCapacity, { cores: 3, availableMemory: 4 * 1024 ** 3 }),
+);
 
 function codexLines(from: number, count: number): string {
   const lines = [
@@ -128,7 +133,7 @@ describe("makeTranscriptParser", () => {
           );
           await NodeFSP.writeFile(small, claudeLine(4, 10));
         });
-        const parser = yield* makeTranscriptParser.pipe(
+        const parser = yield* makeWorkerParser.pipe(
           Effect.provideService(HostProcess.Environment, preload(recordPid(log))),
         );
         const read = (path: string, format: "codex" | "claude") =>
@@ -188,11 +193,49 @@ describe("makeTranscriptParser", () => {
   );
 
   it.live.each([
+    { cores: 2, availableMemory: 4 * 1024 ** 3 },
+    { cores: 8, availableMemory: 1024 ** 3 },
+  ])(
+    "reads large transcripts inline with capacity $cores cores / $availableMemory bytes",
+    (capacity) =>
+      withTempDir((dir) =>
+        Effect.gen(function* () {
+          const path = NodePath.join(dir, "codex.jsonl");
+          const log = NodePath.join(dir, "pids");
+          yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
+          const { size } = yield* Effect.promise(() => NodeFSP.stat(path));
+          const parser = yield* makeTranscriptParser.pipe(
+            Effect.provideService(TranscriptParserCapacity, capacity),
+            Effect.provideService(HostProcess.Environment, preload(recordPid(log))),
+          );
+          assert.deepStrictEqual(
+            yield* parser.read({
+              path,
+              size,
+              provider: "codex",
+              format: TRANSCRIPT_FORMATS.codex,
+              resumeFrom: undefined,
+            }),
+            yield* Effect.promise(() => readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex)),
+          );
+          assert.deepStrictEqual(yield* Effect.promise(() => loggedPids(log)), []);
+        }),
+      ),
+  );
+
+  it.live.each([
     {
       name: "a worker that cannot start",
       environment: process.env,
       // The executable then treats the worker command as a script path and exits.
       isExecutable: true,
+    },
+    {
+      name: "a worker that exits immediately after ready",
+      environment: preload(
+        `process.send({ ready: true }, () => process.exit(9)); await new Promise(() => {});`,
+      ),
+      isExecutable: false,
     },
     {
       name: "a worker that exits mid-job",
@@ -207,7 +250,7 @@ describe("makeTranscriptParser", () => {
         for (const path of paths) {
           yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
         }
-        const parser = yield* makeTranscriptParser.pipe(
+        const parser = yield* makeWorkerParser.pipe(
           Effect.provideService(HostProcess.Environment, environment),
           Effect.provideService(HostProcess.IsExecutable, isExecutable),
         );
@@ -226,7 +269,7 @@ describe("makeTranscriptParser", () => {
             yield* Effect.promise(() => readTranscriptRecords(path, TRANSCRIPT_FORMATS.codex)),
           );
         }
-        // The first failure stops the pool, so the second file never reaches a worker.
+        // The pool emits only one warning across both reads.
         assert.strictEqual(warnings.length, 1);
       }),
     ).pipe(Effect.provide(captureWarnings(warnings)));
@@ -241,11 +284,16 @@ describe("makeTranscriptParser", () => {
           const path = NodePath.join(dir, "codex.jsonl");
           yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
           const { size } = yield* Effect.promise(() => NodeFSP.stat(path));
-          // Workers never reply, so the read is still in flight when it ends.
-          const silent = `${recordPid(log)} const send = process.send.bind(process);
+          const received = NodePath.join(dir, "received");
+          NodeChildProcess.execFileSync("mkfifo", [received]);
+          // Workers acknowledge receipt but never reply, keeping the read in flight.
+          const silent = `${recordPid(log)}
+            import { writeFileSync } from "node:fs";
+            process.once("message", () => writeFileSync(${JSON.stringify(received)}, String(process.pid)));
+            const send = process.send.bind(process);
             process.send = (message, ...rest) => ("ready" in message ? send(message, ...rest) : true);`;
           const scope = yield* Scope.make();
-          const parser = yield* makeTranscriptParser.pipe(
+          const parser = yield* makeWorkerParser.pipe(
             Effect.provideService(HostProcess.Environment, preload(silent)),
             Scope.provide(scope),
           );
@@ -257,6 +305,8 @@ describe("makeTranscriptParser", () => {
             resumeFrom: undefined,
           });
           const reading = yield* read.pipe(Effect.forkChild);
+          const receivedPid = yield* Effect.promise(() => NodeFSP.readFile(received, "utf8"));
+          assert.isAbove(Number(receivedPid), 0);
           if (ending === "closing the scope") {
             yield* Scope.close(scope, Exit.void);
             // A closed parser reads nothing more, in a worker or in process.
@@ -267,6 +317,7 @@ describe("makeTranscriptParser", () => {
             yield* Scope.close(scope, Exit.void);
           }
           const pids = yield* Effect.promise(() => loggedPids(log));
+          assert.isNotEmpty(pids);
           assert.isTrue(pids.every((pid) => !isRunning(pid)));
         }),
       ),
