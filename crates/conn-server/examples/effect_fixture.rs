@@ -22,8 +22,14 @@ fn main() {
     let state_dir = std::env::args()
         .nth(1)
         .expect("usage: effect_fixture <state-dir>");
-    let environment =
-        Arc::new(Environment::load(state_dir.as_ref(), Some("Fixture".into())).unwrap());
+    let environment = Arc::new(
+        Environment::load(
+            state_dir.as_ref(),
+            Some("Fixture".into()),
+            std::env::current_dir().unwrap(),
+        )
+        .unwrap(),
+    );
     let mut table = MethodTable::new();
     server::register(&mut table, &Deps::default());
     let env = environment.clone();
@@ -49,6 +55,7 @@ fn main() {
         table: Arc::new(table),
         auth: auth.clone(),
         descriptor: Arc::new(environment.descriptor.clone()),
+        engine: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

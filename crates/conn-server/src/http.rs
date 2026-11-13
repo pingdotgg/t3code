@@ -14,6 +14,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use conn_engine::{Engine, EngineError};
+
 use crate::{
     auth::{self, AuthStore, ExchangeError, Principal, iso8601, scope_response},
     session::{self, SessionOptions},
@@ -22,6 +24,7 @@ use crate::{
 
 pub const ORCHESTRATION_PROTOCOL_VERSION: u32 = 2;
 const ORCHESTRATION_PROTOCOL_QUERY_PARAM: &str = "orchestrationProtocol";
+const ORCHESTRATION_PROTOCOL_HEADER: &str = "x-t3-orchestration-protocol";
 /// The largest client message `/ws` accepts.
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -31,6 +34,8 @@ pub struct AppState {
     pub auth: Arc<AuthStore>,
     /// `ExecutionEnvironmentDescriptor`.
     pub descriptor: Arc<Value>,
+    /// Backs the orchestration snapshot routes; without it they answer 404.
+    pub engine: Option<Arc<dyn Engine>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -42,6 +47,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/websocket-ticket", post(ticket))
         .route("/api/auth/websocket-ticket/{use}", post(ticket_for))
         .route("/api/auth/pairing-token", post(pairing_token))
+        .route("/api/orchestration/shell", get(shell_snapshot))
+        .route(
+            "/api/orchestration/threads/{thread_id}",
+            get(thread_snapshot),
+        )
         .route("/ws", get(ws))
         .layer(middleware::from_fn(cors))
         .with_state(state)
@@ -246,6 +256,90 @@ async fn pairing_token(
     Json(body).into_response()
 }
 
+/// Checks what every `/api/orchestration/*` route requires: the protocol header, a bearer
+/// token with `orchestration:read`, and an engine.
+fn orchestration_access(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Arc<dyn Engine>, Box<Response>> {
+    if headers
+        .get(ORCHESTRATION_PROTOCOL_HEADER)
+        .and_then(|v| v.to_str().ok())
+        != Some("2")
+    {
+        return Err(Box::new(error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "invalid_command",
+        )));
+    }
+    let Some(token) = bearer(headers) else {
+        return Err(Box::new(auth_invalid("missing_credential")));
+    };
+    let Some(principal) = state.auth.authenticate_bearer(token) else {
+        return Err(Box::new(auth_invalid("invalid_credential")));
+    };
+    if !principal.has_scope("orchestration:read") {
+        return Err(Box::new(
+            Json(json!({
+                "_tag": "EnvironmentScopeRequiredError",
+                "code": "insufficient_scope",
+                "requiredScope": "orchestration:read",
+                "traceId": trace_id(),
+            }))
+            .with_status(StatusCode::FORBIDDEN),
+        ));
+    }
+    state
+        .engine
+        .clone()
+        .ok_or_else(|| Box::new(StatusCode::NOT_FOUND.into_response()))
+}
+
+fn snapshot_failed<E>(reason: &str, error: EngineError<E>) -> Response {
+    if let EngineError::Internal(message) = &error {
+        eprintln!("{reason}: {message}");
+    }
+    Json(json!({
+        "_tag": "EnvironmentInternalError",
+        "code": "internal_error",
+        "reason": reason,
+        "traceId": trace_id(),
+    }))
+    .with_status(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// `GET /api/orchestration/shell`: always the full snapshot, which is valid for any query.
+async fn shell_snapshot(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let engine = match orchestration_access(&state, &headers) {
+        Ok(engine) => engine,
+        Err(response) => return *response,
+    };
+    match engine.shell_snapshot().await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(error) => snapshot_failed("orchestration_snapshot_failed", error),
+    }
+}
+
+/// `GET /api/orchestration/threads/:threadId`. An unknown thread is a plain 404, never the
+/// structured not-found error, which would make the client mark the thread deleted.
+async fn thread_snapshot(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let engine = match orchestration_access(&state, &headers) {
+        Ok(engine) => engine,
+        Err(response) => return *response,
+    };
+    match engine.thread_snapshot(thread_id.into()).await {
+        Ok(Some(snapshot)) => Json(snapshot).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => snapshot_failed("orchestration_thread_snapshot_failed", error),
+    }
+}
+
 async fn ws(
     upgrade: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -354,6 +448,7 @@ mod tests {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
             descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
+            engine: None,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

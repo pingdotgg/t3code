@@ -22,8 +22,9 @@ pub struct Environment {
 }
 
 impl Environment {
-    /// Reads the environment id from `state_dir`, or creates one on first start.
-    pub fn load(state_dir: &Path, label: Option<String>) -> io::Result<Self> {
+    /// Reads the environment id from `state_dir`, or creates one on first start. `cwd` is the
+    /// folder the server reports as its own (the first project).
+    pub fn load(state_dir: &Path, label: Option<String>, cwd: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(state_dir)?;
         let id_file = state_dir.join("environment-id");
         let environment_id = match fs::read_to_string(&id_file) {
@@ -47,7 +48,7 @@ impl Environment {
             .unwrap_or_else(|| "conn-server".into());
         Ok(Self {
             descriptor: descriptor(&environment_id, label.trim()),
-            cwd: std::env::current_dir()?,
+            cwd,
             state_dir: state_dir.to_owned(),
         })
     }
