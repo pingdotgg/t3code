@@ -60,10 +60,10 @@ impl LiveThread {
     }
 
     fn active(&self) -> Option<ActiveRun> {
-        self.state.lock().unwrap().active.clone()
+        lock(&self.state).active.clone()
     }
     fn take_active(&self) -> Option<ActiveRun> {
-        self.state.lock().unwrap().active.take()
+        lock(&self.state).active.take()
     }
 }
 
@@ -124,7 +124,7 @@ impl Inner {
     }
 
     fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
-        self.live.lock().unwrap().get(thread_id).cloned()
+        lock(&self.live).get(thread_id).cloned()
     }
 
     async fn end_run(
@@ -250,10 +250,7 @@ impl Inner {
                     last_used: Mutex::new(Instant::now()),
                     closed: tokio::sync::Notify::new(),
                 });
-                self.live
-                    .lock()
-                    .unwrap()
-                    .insert(thread_id.to_owned(), live.clone());
+                lock(&self.live).insert(thread_id.to_owned(), live.clone());
                 tokio::spawn(
                     self.clone()
                         .pump(thread_id.to_owned(), live.clone(), opened.events),
@@ -263,7 +260,7 @@ impl Inner {
         };
 
         live.touch();
-        let known = live.state.lock().unwrap().provider_thread.clone();
+        let known = lock(&live.state).provider_thread.clone();
         let provider_thread = match (known, context.provider_thread) {
             (Some(provider_thread), _) => provider_thread,
             (None, Some(stored)) => live
@@ -293,7 +290,7 @@ impl Inner {
             .unwrap_or_default()
             .to_owned();
         {
-            let mut state = live.state.lock().unwrap();
+            let mut state = lock(&live.state);
             state.provider_thread = Some(provider_thread.clone());
             state.active = Some(ActiveRun {
                 run_id: run_id.to_owned(),
@@ -497,7 +494,7 @@ impl Inner {
             )
             .await;
         }
-        let mut map = self.live.lock().unwrap();
+        let mut map = lock(&self.live);
         if map
             .get(&thread_id)
             .is_some_and(|current| Arc::ptr_eq(current, &live))
@@ -539,7 +536,7 @@ impl Inner {
     pub(crate) async fn interrupt(self: Arc<Self>, thread_id: String, run_id: String) {
         let live = self.live_thread(&thread_id);
         let target = live.as_ref().and_then(|live| {
-            let state = live.state.lock().unwrap();
+            let state = lock(&live.state);
             let active = state.active.as_ref().filter(|a| a.run_id == run_id)?;
             Some((
                 state.provider_thread.clone()?,
@@ -624,7 +621,7 @@ impl Inner {
             .flatten();
         let live = self.live_thread(&thread_id);
         let target = live.as_ref().and_then(|live| {
-            let state = live.state.lock().unwrap();
+            let state = lock(&live.state);
             let active = state.active.as_ref().filter(|a| a.run_id == run_id)?;
             Some((
                 state.provider_thread.clone()?,
@@ -821,7 +818,7 @@ impl Inner {
     }
 
     pub(crate) async fn close_session(&self, thread_id: &str) {
-        let live = self.live.lock().unwrap().remove(thread_id);
+        let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.

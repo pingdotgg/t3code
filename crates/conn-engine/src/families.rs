@@ -322,7 +322,11 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
             }
         })
         .collect();
-    let first = due[0]["id"].as_str().unwrap_or_default().to_owned();
+    let first = due
+        .first()
+        .and_then(|row| row["id"].as_str())
+        .unwrap_or_default()
+        .to_owned();
     let mut effects = vec![];
     for mut row in due {
         row["completionDelivery"] = json!({"state": "delivered", "observedByRunId": null});
