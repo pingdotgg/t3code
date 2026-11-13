@@ -1,14 +1,17 @@
 import {
+  CheckpointRef,
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffInput,
+  type OrchestrationIsWorkspaceAtCheckpointInput,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -59,6 +62,11 @@ export class CheckpointDiffQuery extends Context.Service<
     readonly getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Effect.Effect<OrchestrationGetFullThreadDiffResult, CheckpointServiceError>;
+
+    /** True only when restoring the checkpoint's files would leave the live workspace as it is. */
+    readonly isWorkspaceAtCheckpoint: (
+      input: OrchestrationIsWorkspaceAtCheckpointInput,
+    ) => Effect.Effect<boolean, CheckpointServiceError>;
   }
 >()("t3/checkpointing/CheckpointDiffQuery") {}
 
@@ -85,6 +93,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const digest = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -312,9 +321,55 @@ export const make = Effect.gen(function* () {
     return turnDiff satisfies OrchestrationGetFullThreadDiffResult;
   });
 
+  const isWorkspaceAtCheckpoint: CheckpointDiffQuery["Service"]["isWorkspaceAtCheckpoint"] =
+    Effect.fn("CheckpointDiffQuery.isWorkspaceAtCheckpoint")(function* (input) {
+      const projection = yield* threads.getCheckpointContext(input.threadId).pipe(
+        Effect.mapError(
+          () =>
+            new CheckpointThreadNotFoundError({
+              operation: "CheckpointDiffQuery.isWorkspaceAtCheckpoint",
+              threadId: input.threadId,
+            }),
+        ),
+      );
+      const checkpoint = projection.checkpoints.find(
+        (candidate) => candidate.ref === input.checkpointRef && candidate.status === "ready",
+      );
+      const scope = projection.checkpointScopes.find(
+        (candidate) => candidate.id === checkpoint?.scopeId,
+      );
+      if (checkpoint === undefined || scope === undefined) return false;
+
+      // Restore puts back exactly what capture records, so snapshot the workspace and compare.
+      const workspaceRef = CheckpointRef.make(
+        `refs/t3/orchestration-v2/workspace-probes/${yield* random.uuidV4()}`,
+      );
+      const numstat = yield* checkpointStore
+        .captureCheckpoint({ cwd: scope.cwd, checkpointRef: workspaceRef })
+        .pipe(
+          Effect.andThen(
+            checkpointStore.diffCheckpoints({
+              cwd: scope.cwd,
+              fromCheckpointRef: checkpoint.ref,
+              toCheckpointRef: workspaceRef,
+              fallbackFromToHead: false,
+              ignoreWhitespace: false,
+              format: "numstat",
+            }),
+          ),
+          Effect.ensuring(
+            checkpointStore
+              .deleteCheckpointRefs({ cwd: scope.cwd, checkpointRefs: [workspaceRef] })
+              .pipe(Effect.ignore),
+          ),
+        );
+      return numstat === "";
+    });
+
   return CheckpointDiffQuery.of({
     getTurnDiff,
     getFullThreadDiff,
+    isWorkspaceAtCheckpoint,
   });
 });
 

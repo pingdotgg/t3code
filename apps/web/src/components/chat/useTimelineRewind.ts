@@ -27,6 +27,7 @@ import { threadEnvironment } from "../../state/threads";
 import { waitForThreadShell } from "../../state/entities";
 import { openRevertConfirm } from "./ChatOverlayHosts";
 import { assetEnvironment } from "../../state/assets";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -83,6 +84,13 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     refresh: true,
   });
 
+  const isWorkspaceAtCheckpoint = useAtomQueryRunner(
+    orchestrationEnvironment.workspaceAtCheckpoint,
+    {
+      reportFailure: false,
+      refresh: true,
+    },
+  );
   const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -125,7 +133,18 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+      const checkpoint = findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount);
+      let workspaceAtCheckpoint = false;
+      // The server refuses file restore outside a worktree, so only a worktree needs the answer.
+      if (activeThread.worktreePath !== null && checkpoint?.status === "ready") {
+        const result = await isWorkspaceAtCheckpoint({
+          environmentId,
+          input: { threadId: activeThread.id, checkpointRef: checkpoint.ref },
+        });
+        if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+        workspaceAtCheckpoint = result._tag === "Success" && result.value.matches;
+      }
+      openRevertConfirm(routeThreadKey, { turnCount, messageId, workspaceAtCheckpoint });
       return;
     }
 

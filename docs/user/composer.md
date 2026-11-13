@@ -174,7 +174,8 @@ On web and desktop, choose **Edit from here** beneath a sent message to rewind
 the conversation to before that message. Choose **Revert and keep changes** to
 leave workspace files as they are, or **Revert files too** to put the workspace back
 to its checkpoint from before that message. That also undoes edits you made yourself.
-File restore is only offered for threads running in a worktree, and it is
+File restore is only offered for threads running in a worktree whose files
+differ from that checkpoint, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
 restoring would erase their changes. A thread that works in the project directory

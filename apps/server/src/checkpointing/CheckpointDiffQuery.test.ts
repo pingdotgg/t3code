@@ -343,3 +343,69 @@ it.effect("preserves an exact-fit filtered patch across batches without a marker
     assert.strictEqual(patchReads, 2);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("reports whether restoring a checkpoint would change the live workspace", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const process = yield* VcsProcess.VcsProcess;
+    const store = yield* CheckpointStore.CheckpointStore;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-workspace-at-checkpoint-" });
+    const git = (args: ReadonlyArray<string>) =>
+      process.run({ operation: "CheckpointDiffQuery.test.git", command: "git", cwd, args });
+    yield* git(["init"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* fs.writeFileString(path.join(cwd, ".gitignore"), "ignored.log\n");
+    yield* fs.writeFileString(path.join(cwd, "README.md"), "initial\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+    // Uncommitted work the checkpoint already holds must not count as a difference.
+    yield* fs.writeFileString(path.join(cwd, "README.md"), "edited before the checkpoint\n");
+
+    const threadId = ThreadId.make("thread:workspace-at-checkpoint");
+    const runId = RunId.make("run:workspace-at-checkpoint");
+    const scopeId = CheckpointScopeId.make("scope:workspace-at-checkpoint");
+    const checkpointRef = CheckpointRef.make("refs/t3/test/workspace-at-checkpoint");
+    yield* store.captureCheckpoint({ cwd, checkpointRef });
+    const query = yield* CheckpointDiffQuery.make.pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getCheckpointContext: () =>
+            Effect.succeed({
+              runs: [{ id: runId, ordinal: 1, status: "completed" }],
+              checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd }],
+              checkpoints: [
+                {
+                  scopeId,
+                  runId,
+                  ordinalWithinScope: 1,
+                  appRunOrdinal: 1,
+                  status: "ready",
+                  ref: checkpointRef,
+                },
+              ],
+            }),
+        }),
+      ),
+    );
+    const matches = query.isWorkspaceAtCheckpoint({ threadId, checkpointRef });
+
+    yield* fs.writeFileString(path.join(cwd, "ignored.log"), "restore leaves ignored files\n");
+    assert.isTrue(yield* matches);
+    yield* fs.writeFileString(path.join(cwd, "untracked.txt"), "a hand edit after the turn\n");
+    assert.isFalse(yield* matches);
+    yield* fs.remove(path.join(cwd, "untracked.txt"));
+    assert.isTrue(yield* matches);
+    yield* fs.writeFileString(path.join(cwd, "README.md"), "edited after the checkpoint\n");
+    assert.isFalse(yield* matches);
+    assert.isFalse(
+      yield* query.isWorkspaceAtCheckpoint({
+        threadId,
+        checkpointRef: CheckpointRef.make("refs/t3/test/unknown"),
+      }),
+    );
+    const refs = yield* git(["for-each-ref", "refs/t3/orchestration-v2/workspace-probes"]);
+    assert.strictEqual(refs.stdout, "");
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -118,6 +118,7 @@ import {
 import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
+  OrchestrationIsWorkspaceAtCheckpointError,
 } from "./checkpointDiff.ts";
 import {
   WorktreeSetupCancelInput,
@@ -1821,6 +1822,15 @@ const WsOrchestrationV2GetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2IsWorkspaceAtCheckpointRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.isWorkspaceAtCheckpoint,
+  {
+    payload: OrchestrationV2RpcSchemas.isWorkspaceAtCheckpoint.input,
+    success: OrchestrationV2RpcSchemas.isWorkspaceAtCheckpoint.output,
+    error: Schema.Union([OrchestrationIsWorkspaceAtCheckpointError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2SearchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.searchThread, {
   payload: OrchestrationV2SearchThreadInput,
   success: OrchestrationV2SearchThreadResult,
@@ -2308,6 +2318,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
+  WsOrchestrationV2IsWorkspaceAtCheckpointRpc,
   WsOrchestrationV2SearchThreadsRpc,
   WsOrchestrationV2SearchThreadRpc,
   WsOrchestrationV2SearchThreadStreamRpc,

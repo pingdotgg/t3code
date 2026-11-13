@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Struct from "effect/Struct";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { CheckpointRef, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Ends a checkpoint diff the server cut off at its output size limit. */
 export const CHECKPOINT_DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -50,6 +50,26 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
+
+export const OrchestrationIsWorkspaceAtCheckpointInput = Schema.Struct({
+  threadId: ThreadId,
+  checkpointRef: CheckpointRef,
+});
+export type OrchestrationIsWorkspaceAtCheckpointInput =
+  typeof OrchestrationIsWorkspaceAtCheckpointInput.Type;
+
+/** `matches` is true only when restoring the checkpoint's files would change nothing. */
+export const OrchestrationIsWorkspaceAtCheckpointResult = Schema.Struct({
+  matches: Schema.Boolean,
+});
+
+export class OrchestrationIsWorkspaceAtCheckpointError extends Schema.TaggedError<OrchestrationIsWorkspaceAtCheckpointError>()(
+  "OrchestrationIsWorkspaceAtCheckpointError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export class OrchestrationGetTurnDiffError extends Schema.TaggedError<OrchestrationGetTurnDiffError>()(
   "OrchestrationGetTurnDiffError",

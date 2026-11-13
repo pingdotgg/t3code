@@ -53,6 +53,7 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
+  OrchestrationIsWorkspaceAtCheckpointError,
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   CLIENT_CAPABILITIES_QUERY_PARAM,
@@ -2030,6 +2031,17 @@ export const layerWsRpc = (
               (cause) =>
                 new OrchestrationGetFullThreadDiffError({
                   message: "Failed to load full thread diff",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.isWorkspaceAtCheckpoint]: (input) =>
+          checkpointDiffQuery.isWorkspaceAtCheckpoint(input).pipe(
+            Effect.map((matches) => ({ matches })),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationIsWorkspaceAtCheckpointError({
+                  message: "Failed to compare the workspace with the checkpoint",
                   cause,
                 }),
             ),

@@ -55,6 +55,8 @@ import {
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
+  OrchestrationIsWorkspaceAtCheckpointInput,
+  OrchestrationIsWorkspaceAtCheckpointResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
@@ -3771,6 +3773,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  isWorkspaceAtCheckpoint: "orchestration.isWorkspaceAtCheckpoint",
   searchThreads: "orchestration.searchThreads",
   searchThread: "orchestration.searchThread",
   searchThreadStream: "orchestration.searchThreadStream",
@@ -4449,6 +4452,10 @@ export const OrchestrationV2RpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  isWorkspaceAtCheckpoint: {
+    input: OrchestrationIsWorkspaceAtCheckpointInput,
+    output: OrchestrationIsWorkspaceAtCheckpointResult,
   },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),

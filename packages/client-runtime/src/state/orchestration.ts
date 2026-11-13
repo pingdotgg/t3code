@@ -218,6 +218,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
       ...onCheckpointDiffAnswer,
     }),
+    // Never cached: the answer follows the live workspace, which changes without an event.
+    workspaceAtCheckpoint: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:workspace-at-checkpoint",
+      tag: ORCHESTRATION_V2_WS_METHODS.isWorkspaceAtCheckpoint,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     threadFind: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-find",
       tag: ORCHESTRATION_V2_WS_METHODS.searchThread,
