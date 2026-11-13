@@ -3265,6 +3265,7 @@ export const make = Effect.gen(function* () {
                 state: value.state,
                 checks: value.checks,
                 observedAt: value.observedAt,
+                ...(value.mergeBlocked === undefined ? {} : { mergeBlocked: value.mergeBlocked }),
               });
             }
             recordStats(

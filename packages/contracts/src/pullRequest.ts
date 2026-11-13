@@ -686,6 +686,8 @@ export const PullRequestChecks = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
+  /** The detail's `mergeBlocked`, read with the checks so a block clears as they refresh. */
+  mergeBlocked: Schema.optional(Schema.Boolean),
 });
 export type PullRequestChecks = typeof PullRequestChecks.Type;
 
