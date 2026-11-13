@@ -687,7 +687,11 @@ it.effect.each([
       yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         assert.include(yield* launcher.resolveAvailableEditors(), editor);
-        yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
+        yield* launcher.launchEditor({
+          editor,
+          cwd: "/workspace with spaces/file.ts:12:4",
+          projectRoot: "/workspace with spaces",
+        });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -703,6 +707,7 @@ it.effect.each([
       assert.ok(spawned);
       assert.equal(spawned.command, executable);
       assert.deepEqual(spawned.args, [
+        "/workspace with spaces",
         "--line",
         "12",
         "--column",
