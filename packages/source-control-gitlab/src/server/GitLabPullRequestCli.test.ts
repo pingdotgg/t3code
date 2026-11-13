@@ -1017,6 +1017,23 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("lists merge request commits past the first page", () =>
+    Effect.gen(function* () {
+      const commits = Array.from({ length: 101 }, (_, index) =>
+        commitJson(String(index + 1).padStart(40, "0")),
+      );
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(commits.slice(0, 100)))))
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(commits.slice(100)))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const result = yield* cli.listCommits({ cwd: "/w", repository: "acme/web", number: 7 });
+
+      expect(result).toHaveLength(101);
+      expect(argsOfCall(1)[1]).toContain("page=2");
+    }),
+  );
+
   it.effect("refuses to revert a merge request that is not merged before any write", () =>
     Effect.gen(function* () {
       mockedExecute
