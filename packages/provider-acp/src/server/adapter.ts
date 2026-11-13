@@ -512,11 +512,19 @@ export interface AcpAdapterV2Flavor {
       nativeTurnId: string,
     ) => NonNullable<EffectAcpSchema.ForkSessionRequest["_meta"]>;
   };
-  /** Compacts with the agent's own request, for agents that answer a `/compact` prompt as chat. */
-  readonly compactSession?: (
-    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
-    sessionId: string,
-  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /**
+   * Compacts with the agent's own request, for agents that answer a `/compact` prompt as chat.
+   * Compaction is refused when `supported` rejects the running agent's `initialize` result.
+   */
+  readonly compactSession?: {
+    readonly supported: (
+      initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
+    ) => boolean;
+    readonly compact: (
+      runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+      sessionId: string,
+    ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  };
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -8276,11 +8284,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
             // Checked after activation: a loaded session advertises its own commands.
+            const compactionSetup = yield* Ref.get(activeSessionSetup);
             if (
-              flavor.compactViaAdvertisedCommand === true &&
               isCompactionMessage(turnInput.message) &&
-              (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId)?.has("compact") !==
-                true
+              ((flavor.compactViaAdvertisedCommand === true &&
+                (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId)?.has("compact") !==
+                  true) ||
+                (flavor.compactSession !== undefined &&
+                  (compactionSetup === null ||
+                    !flavor.compactSession.supported(compactionSetup.initializeResult))))
             ) {
               return yield* new ProviderAdapter.ProviderCompactionUnsupportedError({
                 driver,
@@ -8550,7 +8562,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
                   )
                 : Deferred.succeed(context.promptDispatched, undefined).pipe(
-                    Effect.andThen(compactSession(runtime, requestedSessionId)),
+                    Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                     Effect.as({ stopReason: "end_turn" } satisfies EffectAcpSchema.PromptResponse),
                   )
             ).pipe(
