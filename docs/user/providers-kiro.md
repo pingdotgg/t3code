@@ -38,6 +38,13 @@ not listed yet. Refresh the Kiro provider after adding or removing an agent.
 The thread's model still applies when an agent sets its own `model`. An agent that was removed
 leaves the thread on Kiro's current agent.
 
+## Skills
+
+The `/` and `$` menus list the Kiro skills in `~/.kiro/skills` and in `.kiro/skills` of the folder
+the thread runs in. As in Kiro, a parent folder's `.kiro/skills` is not read, a skill needs a valid
+`name` and a `description` in its `SKILL.md`, and a project skill replaces a `~/.kiro/skills` skill
+of the same name.
+
 ## Permission Modes
 
 Kiro asks before tool calls such as writes and commands, and T3 Code answers by the permission mode:
