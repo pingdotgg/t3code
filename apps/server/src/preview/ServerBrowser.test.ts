@@ -3107,6 +3107,41 @@ it.live("failed session and browser launches release capacity, as does closing a
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a tab opened from an agent's tab joins that agent only while it has room", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const threadId = scope.thread.threadId;
+      const openFrom = (openerTabId: PreviewTabId) =>
+        browser.open({ threadId, url: "https://example.org/", runtime: "server", openerTabId });
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId });
+      const owner = sessions.find((session) => session.tabId === tabId)?.automationOwner;
+      const popup = yield* openFrom(tabId);
+      expect(popup.automationOwner).toBeDefined();
+      expect(popup.automationOwner).toBe(owner);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs?.find((entry) => entry.tabId === popup.tabId)?.openerTabId).toBe(tabId);
+      const open = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      for (let count = 2; count < 8; count++) yield* open;
+
+      const overflow = yield* openFrom(tabId);
+      expect(overflow.automationOwner).toBeUndefined();
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      expect((yield* open).available).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a full server takes back the slot of the longest idle agent tab nobody views", () =>
   Effect.scoped(
     Effect.gen(function* () {
