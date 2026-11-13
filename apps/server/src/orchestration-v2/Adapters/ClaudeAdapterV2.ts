@@ -7506,6 +7506,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : (existingSubagent.effort ??
                 (lifecycleChanged &&
                 input.status !== "running" &&
+                existingSubagent.task.modelSelection !== undefined &&
                 (input.nativeTaskType ?? existingSubagent.nativeTaskType) !==
                   CLAUDE_WORKFLOW_TASK_TYPE
                   ? yield* readSubagentTranscriptEffort(
