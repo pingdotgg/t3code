@@ -938,6 +938,15 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         }
         conn.execute_batch("PRAGMA user_version = 1").map_err(err)?;
     }
+    if version < 2 {
+        // 2: the streaming rows a turn end deletes (`compact_streaming`), without reading the
+        // thread's other events.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS events_streaming ON events(thread_id) WHERE streaming = 1;
+             PRAGMA user_version = 2;",
+        )
+        .map_err(err)?;
+    }
     Ok(())
 }
 
@@ -1088,6 +1097,41 @@ mod tests {
         assert_eq!(tx.entity("t1", "runs", "r1").unwrap().unwrap()["id"], "r1");
         tx.rollback();
         assert!(store.query_json("SELECT body FROM entities", []).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store from before the index gets it when it opens, and the turn-end delete uses it.
+    #[test]
+    fn the_streaming_index_serves_compaction_on_an_old_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-engine-{}-streaming-index",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("engine.sqlite");
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .conn
+                .execute_batch("DROP INDEX IF EXISTS events_streaming; PRAGMA user_version = 1;")
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let plan = store.query_plan(
+            "DELETE FROM events WHERE thread_id = ?1 AND streaming = 1",
+            ["t1"],
+        );
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("USING INDEX events_streaming")),
+            "{plan:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
