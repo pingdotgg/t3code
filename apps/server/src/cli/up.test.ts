@@ -413,4 +413,9 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
     ["# my settings", "T3CODE_PORT=4000", "T3CODE_LAN=true", ""].join("\n"),
   );
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
+  expect(
+    upsertServiceEnv('T3CODE_LAN="a\nb"\nCUSTOM="x\nT3CODE_LAN=y"\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM="x\nT3CODE_LAN=y"\n');
 });
