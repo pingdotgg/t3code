@@ -83,6 +83,13 @@ describe("threadRoutes", () => {
       environmentId: "env-2",
       threadId: "server-thread",
     });
+    expect(
+      resolveActiveThreadRouteRef(
+        target,
+        null,
+        scopeThreadRef("env-2" as never, ThreadId.make("server-thread")),
+      ),
+    ).toEqual({ environmentId: "env-2", threadId: "server-thread" });
   });
 
   it("does not treat a draft's reserved thread ref as an active sidebar thread", () => {
