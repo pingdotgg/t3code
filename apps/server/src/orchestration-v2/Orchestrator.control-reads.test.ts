@@ -2387,6 +2387,25 @@ it.effect("queued-message commands read a long thread's history without walking 
       }
     }
     const activeRun = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    // Stop needs a live provider turn to interrupt.
+    yield* projections.apply({
+      id: EventId.make("event:long-history-reads:active-turn"),
+      type: "provider-turn.updated",
+      threadId,
+      runId: activeRun.id,
+      occurredAt: now,
+      payload: {
+        id: ProviderTurnId.make("provider-turn:long-history-reads"),
+        providerThreadId,
+        nodeId: activeRun.rootNodeId!,
+        runAttemptId: activeRun.activeAttemptId!,
+        nativeTurnRef: { driver, nativeId: "native:long-history-reads", strength: "strong" },
+        ordinal: 4,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
 
     const statements: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
     const observe: Statement.Transformer = (statement) => {
@@ -2449,6 +2468,15 @@ it.effect("queued-message commands read a long thread's history without walking 
       }),
     );
     walks.push(...(yield* historyWalks("queued-message.promote-to-steer")));
+    yield* observed(
+      orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("interrupt:long-history-reads"),
+        threadId,
+        runId: activeRun.id,
+      }),
+    );
+    walks.push(...(yield* historyWalks("run.interrupt")));
 
     const after = yield* projections.getThreadProjection(threadId);
     assert.deepEqual(
