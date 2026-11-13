@@ -31,6 +31,12 @@ const resolved = await Effect.gen(function* () {
     appDir: path.resolve(scripts, env.T3_SCENARIO_APP_DIR ?? ".."),
     home,
     startApp: path.join(scripts, "scenarios/start-app.ts"),
+    // e2e gives the app only PATH, HOME and the temp directory. A scenario that needs more names
+    // it here: exact names or prefixes ending in `*`, separated by commas.
+    inheritEnv: (env.T3_SCENARIO_INHERIT_ENV ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== ""),
     mobile: {
       host: host || "127.0.0.1",
       // A mobile target has no `app.url`, so e2e cannot pick these ports.
@@ -143,6 +149,7 @@ export default {
           executable: resolved.node,
           args: [startApp, "web", T3_HOME, LOOPBACK, "{port}"],
           cwd: APP_DIR,
+          inheritEnv: resolved.inheritEnv,
           startupTimeout: 300_000,
           log: ".e2e/app.log",
         },
@@ -170,6 +177,7 @@ export default {
             MOBILE.host,
           ],
           cwd: APP_DIR,
+          inheritEnv: resolved.inheritEnv,
           startupTimeout: 300_000,
           log: ".e2e/mobile-app.log",
         },
