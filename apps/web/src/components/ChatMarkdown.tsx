@@ -104,6 +104,10 @@ import {
   artifactTemplateFromHastProperties,
   renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
+import {
+  CODEX_WEB_CITATION_START,
+  remarkHideCodexWebCitations,
+} from "@t3tools/shared/codexWebCitations";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { MarkdownMath } from "./chat/MarkdownMath";
 import {
@@ -230,6 +234,8 @@ const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
   renderInsights?: boolean;
+  /** For assistant messages only: a user's prompt shows what they typed. */
+  hideWebCitations?: boolean;
   /** Compact markdown transforms remove blocks before rendering inside a label. */
   inline?: boolean;
   text: string;
@@ -1746,6 +1752,7 @@ const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, Plugga
 
 // One combined list per pair, so a stable extra list shares a renderer and its parse cache.
 const INSIGHT_REMARK_PLUGINS: PluggableList = [remarkAssistantInsights];
+const WEB_CITATION_REMARK_PLUGINS: PluggableList = [remarkHideCodexWebCitations];
 
 function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
   if (extra.length === 0) return shared;
@@ -1814,6 +1821,7 @@ function ChatMarkdown({
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   renderInsights = false,
+  hideWebCitations = false,
   ...props
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
@@ -1837,7 +1845,7 @@ function ChatMarkdown({
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const sharedRemarkPlugins =
+  const sharedRemarkPlugins = withExtraPlugins(
     CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
       componentState.mathEnabled
         ? lineBreaks
@@ -1846,7 +1854,11 @@ function ChatMarkdown({
         : lineBreaks
           ? "breaks"
           : "plain"
-    ];
+    ],
+    hideWebCitations && text.includes(CODEX_WEB_CITATION_START)
+      ? WEB_CITATION_REMARK_PLUGINS
+      : EMPTY_REMARK_PLUGINS,
+  );
   // The incremental parser keeps per-instance state, so its output is not shared.
   const uncachedPlugins = incrementalParsing;
   const remarkPlugins = incrementalParsing

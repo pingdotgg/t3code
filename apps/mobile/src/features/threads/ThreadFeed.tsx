@@ -92,6 +92,7 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
+import { hideCodexWebCitations } from "@t3tools/shared/codexWebCitations";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
@@ -1217,7 +1218,7 @@ function AssistantMarkdownBlocks(props: {
       return (
         <SelectableMarkdownText
           key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          markdown={hideCodexWebCitations(renderCodexInlineDirectivesAsMarkdown(segment.markdown))}
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
@@ -2283,7 +2284,7 @@ function renderFeedEntry(
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel="Copy message"
-              text={renderedText}
+              text={hideCodexWebCitations(renderedText)}
               tintColor={iconSubtleColor}
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}

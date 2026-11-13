@@ -471,6 +471,10 @@
       "types": "./src/codexFileCitations.ts",
       "import": "./src/codexFileCitations.ts"
     },
+    "./codexWebCitations": {
+      "types": "./src/codexWebCitations.ts",
+      "import": "./src/codexWebCitations.ts"
+    },
     "./codexMarkdownDirectives": {
       "types": "./src/codexMarkdownDirectives.ts",
       "import": "./src/codexMarkdownDirectives.ts"
