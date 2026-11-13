@@ -192,26 +192,26 @@ export function replaceThreadLinks(
 }
 
 /**
- * Writes each link with its current title, a hosted link as a v2 link. Unresolved v2 links
- * keep their label and go to `onUnresolved`; null titles are pending. Labeled v1 links may open elsewhere.
+ * Writes each link with its thread's current title, a hosted link as a v2 link. A v2 link `title`
+ * cannot resolve keeps its written label or a neutral one and goes to `onUnresolved`. An unresolved
+ * v1 link becomes plain text, except a labeled one, which may open elsewhere.
  */
 export function relabelThreadLinks(
   markdown: string,
   messageEnvironmentId: EnvironmentId,
-  title: (ref: ScopedThreadRef) => string | null | undefined,
+  title: (ref: ScopedThreadRef) => string | undefined,
   onUnresolved?: (href: string) => void,
 ): string {
   return replaceThreadLinks(markdown, (written, label) => {
     const environmentId = written.environmentId ?? messageEnvironmentId;
     const decoded = percentDecodedThreadLinkId(written.threadId);
     const threadId =
-      title({ environmentId, threadId: written.threadId }) == null &&
+      title({ environmentId, threadId: written.threadId }) === undefined &&
       decoded !== null &&
       title({ environmentId, threadId: decoded }) !== undefined
         ? decoded
         : written.threadId;
     const current = title({ environmentId, threadId });
-    if (current === null) return formatThreadLink(written, label || threadId);
     if (current === undefined) {
       if (label !== undefined && written.environmentId === null) return undefined;
       const unresolvedLabel =
