@@ -456,6 +456,46 @@ function PreviewStreamDocumentView({
             <PdfPreview key={pdfUri} uri={pdfUri} />
           </View>
         ) : null}
+        {status !== "streaming" ? (
+          <View
+            className="absolute inset-0 items-center justify-center gap-4 px-6"
+            style={{ backgroundColor: background }}
+          >
+            {status === "connecting" ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
+            {compact ? null : (
+              <AppText
+                accessibilityLiveRegion="polite"
+                className="text-center text-sm text-foreground-muted"
+              >
+                {status === "error" ? error : "Connecting to browser..."}
+              </AppText>
+            )}
+            {status === "error" && hostSetup && !compact ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Copy ${hostSetup.command}`}
+                className="w-full flex-row items-center gap-2 rounded-xl border border-secondary-border bg-secondary px-4 py-3"
+                onPress={() => {
+                  void Clipboard.setStringAsync(hostSetup.command).catch(() => undefined);
+                }}
+              >
+                <AppText selectable className="flex-1 font-mono text-sm text-secondary-foreground">
+                  {hostSetup.command}
+                </AppText>
+                <AppText className="text-xs text-foreground-muted">Copy</AppText>
+              </Pressable>
+            ) : null}
+            {status === "error" && !gone && !compact ? (
+              <View className="items-center">
+                <Button
+                  label={hostSetup ? "Try again" : "Reconnect"}
+                  tone="secondary"
+                  onPress={onRetry}
+                />
+              </View>
+            ) : null}
+          </View>
+        ) : null}
       </View>
       {!compact && fileChooser && control?.controller === "you" ? (
         <View className="absolute inset-x-3 top-16 gap-3 rounded-xl border border-secondary-border bg-secondary p-4">
@@ -509,46 +549,6 @@ function PreviewStreamDocumentView({
           ) : (
             <AppText className="text-xs text-foreground-muted">Take control to respond.</AppText>
           )}
-        </View>
-      ) : null}
-      {status !== "streaming" ? (
-        <View
-          className="absolute inset-0 items-center justify-center gap-4 px-6"
-          style={{ backgroundColor: background }}
-        >
-          {status === "connecting" ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
-          {compact ? null : (
-            <AppText
-              accessibilityLiveRegion="polite"
-              className="text-center text-sm text-foreground-muted"
-            >
-              {status === "error" ? error : "Connecting to browser..."}
-            </AppText>
-          )}
-          {status === "error" && hostSetup && !compact ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Copy ${hostSetup.command}`}
-              className="w-full flex-row items-center gap-2 rounded-xl border border-secondary-border bg-secondary px-4 py-3"
-              onPress={() => {
-                void Clipboard.setStringAsync(hostSetup.command).catch(() => undefined);
-              }}
-            >
-              <AppText selectable className="flex-1 font-mono text-sm text-secondary-foreground">
-                {hostSetup.command}
-              </AppText>
-              <AppText className="text-xs text-foreground-muted">Copy</AppText>
-            </Pressable>
-          ) : null}
-          {status === "error" && !gone && !compact ? (
-            <View className="items-center">
-              <Button
-                label={hostSetup ? "Try again" : "Reconnect"}
-                tone="secondary"
-                onPress={onRetry}
-              />
-            </View>
-          ) : null}
         </View>
       ) : null}
     </View>
