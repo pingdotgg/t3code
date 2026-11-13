@@ -65,18 +65,18 @@ const cliIsMacApp = Effect.gen(function* () {
 
 const readStatusWithoutCli = Effect.gen(function* () {
   const host = yield* TailscaleHost;
-  // The apps remove their interface when Tailscale disconnects, so its address means it is up.
-  const tailnetIpv4Addresses = Object.entries(host.networkInterfaces()).flatMap(
-    ([name, entries = []]) =>
-      isTailscaleInterface(name, entries)
-        ? entries
-            .filter((entry) => entry.family === "IPv4" && isTailscaleIpv4Address(entry.address))
-            .map((entry) => entry.address)
-        : [],
+  const entries = Object.entries(host.networkInterfaces()).flatMap(([name, entries = []]) =>
+    isTailscaleInterface(name, entries) ? entries : [],
   );
-  const address = tailnetIpv4Addresses[0];
+  const tailnetIpv4Addresses = entries
+    .filter((entry) => entry.family === "IPv4" && isTailscaleIpv4Address(entry.address))
+    .map((entry) => entry.address);
+  // A tailnet can turn IPv4 off, which leaves the interface only its fd7a address.
+  const address =
+    tailnetIpv4Addresses[0] ?? entries.find((entry) => isTailnetHost(entry.address))?.address;
   const status: TailscaleStatus = {
-    running: address !== undefined,
+    // The apps remove their interface when Tailscale disconnects, so its presence means it is up.
+    running: entries.length > 0,
     magicDnsName: address === undefined ? null : yield* host.lookupMagicDnsName(address),
     tailnetIpv4Addresses,
     httpsServeEnabled: null,

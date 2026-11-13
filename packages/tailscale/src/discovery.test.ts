@@ -109,6 +109,23 @@ describe("Tailscale discovery", () => {
     }),
   );
 
+  it.effect("names a tailnet that has IPv4 turned off by its IPv6 address", () =>
+    Effect.gen(function* () {
+      const result = yield* read({
+        platform: "darwin",
+        interfaces: { ...WARP, utun4: [entry("fd7a:115c:a1e0::1")] },
+        names: { "fd7a:115c:a1e0::1": "bb-1.tail1234.ts.net" },
+      });
+      assert.deepStrictEqual(result.status, {
+        running: true,
+        magicDnsName: "bb-1.tail1234.ts.net",
+        tailnetIpv4Addresses: [],
+        httpsServeEnabled: null,
+      });
+      assert.strictEqual(result.spawns, 0);
+    }),
+  );
+
   it.effect("reports Tailscale as stopped when only another VPN holds its IPv4 range", () =>
     Effect.gen(function* () {
       const result = yield* read({

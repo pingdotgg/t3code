@@ -3,6 +3,7 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -111,6 +112,8 @@ function layer(input: {
     Layer.provideMerge(NodeFileSystem.layer),
     Layer.provideMerge(NodeHttpClient.layerUndici),
     Layer.provideMerge(input.spawnerLayer ?? layerMockSpawner()),
+    // The macOS apps are read without the CLI these cases answer through.
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
     Layer.provideMerge(layerNetwork),
     Layer.provideMerge(DesktopConfig.layerTest(env)),
     Layer.provideMerge(layerEnvironment),
