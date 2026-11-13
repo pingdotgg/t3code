@@ -21,7 +21,8 @@ use serde_json::{Map, Value, json};
 pub use subagents::subagent_thread_id;
 use subagents::{ParentCtx, Subagents};
 
-use crate::ids::{self, DRIVER, Env};
+use crate::DRIVER;
+use crate::ids::{self, Env};
 use crate::launch;
 use crate::protocol::{
     AssistantMsg, Block, CanUseTool, ControlRequest, Delta, Elicitation, Inbound, ResultMsg,
@@ -298,7 +299,7 @@ impl<E: Env> Mapper<E> {
             root_node_id: input.root_node_id.as_str().into(),
             provider_thread: provider_thread.clone(),
             provider_thread_id,
-            provider_turn_id: ids::provider_turn_id(&native_turn_id),
+            provider_turn_id: ids::provider_turn_id(DRIVER, &native_turn_id),
             native_turn_id,
             started_at: now.clone(),
             permission_mode: permission_mode.into(),
@@ -1497,18 +1498,8 @@ impl<E: Env> Mapper<E> {
     ) -> Option<(Value, Value, Value)> {
         let uuid = self.env.uuid();
         let turn = self.turn.as_mut()?;
-        let request_id = ids::join_id(
-            "runtime-request",
-            &[
-                "provider",
-                DRIVER,
-                "provider-turn",
-                &turn.provider_turn_id,
-                "native-request",
-                native_request_id,
-                &uuid,
-            ],
-        );
+        let request_id =
+            ids::runtime_request_id(DRIVER, &turn.provider_turn_id, native_request_id, &uuid);
         let node_id = ids::approval_node(&request_id);
         let item_ordinal = ordinal(
             turn,
@@ -1521,7 +1512,7 @@ impl<E: Env> Mapper<E> {
             "id": node_id,
             "threadId": turn.thread_id,
             "runId": turn.run_id,
-            "parentNodeId": parent_node_id.unwrap_or_else(|| ids::node_from_item(native_item_id)),
+            "parentNodeId": parent_node_id.unwrap_or_else(|| ids::node_from_item(DRIVER, native_item_id)),
             "rootNodeId": turn.root_node_id,
             "kind": if questions { "user_input_request" } else { "approval_request" },
             "status": "waiting",
@@ -1597,19 +1588,8 @@ impl<E: Env> Mapper<E> {
             return;
         };
         let native = format!("proposed_plan:{tool_use_id}");
-        let plan_id = ids::join_id(
-            "plan",
-            &[
-                "thread",
-                &turn.thread_id,
-                "provider",
-                DRIVER,
-                "run",
-                &turn.run_id,
-                &uuid,
-            ],
-        );
-        let node_id = ids::node_from_item(&native);
+        let plan_id = ids::plan_id(&turn.thread_id, Some(&turn.run_id), DRIVER, &uuid);
+        let node_id = ids::node_from_item(DRIVER, &native);
         let native_ref = json!({"driver": DRIVER, "nativeId": tool_use_id, "strength": "strong"});
         let item_ordinal = ordinal(turn, &native);
         let node = json!({
@@ -1625,7 +1605,7 @@ impl<E: Env> Mapper<E> {
             "kind": "proposed_plan", "status": "active", "markdown": markdown,
         });
         let item = json!({
-            "id": ids::turn_item_from_item(&native), "threadId": turn.thread_id,
+            "id": ids::turn_item_from_item(DRIVER, &native), "threadId": turn.thread_id,
             "runId": turn.run_id, "nodeId": node_id,
             "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
             "nativeItemRef": native_ref, "parentItemId": null, "ordinal": item_ordinal,
@@ -1822,8 +1802,8 @@ fn assistant_artifacts(
     let item_ordinal = ordinal(turn, item_id);
     let running = status == "running";
     let completed_at = if running { Value::Null } else { json!(now) };
-    let node_id = ids::node_from_item(item_id);
-    let message_id = ids::message_from_item(item_id);
+    let node_id = ids::node_from_item(DRIVER, item_id);
+    let message_id = ids::message_from_item(DRIVER, item_id);
     let native_ref = json!({"driver": DRIVER, "nativeId": item_id, "strength": "strong"});
     emit(
         out,
@@ -1848,7 +1828,7 @@ fn assistant_artifacts(
         }),
     );
     out.push(turn_item(json!({
-        "id": ids::turn_item_from_item(item_id), "threadId": turn.thread_id,
+        "id": ids::turn_item_from_item(DRIVER, item_id), "threadId": turn.thread_id,
         "runId": turn.run_id, "nodeId": node_id,
         "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
         "nativeItemRef": native_ref, "parentItemId": null, "ordinal": item_ordinal,
@@ -1869,7 +1849,7 @@ fn reasoning_item(
 ) {
     let item_ordinal = ordinal(turn, item_id);
     out.push(turn_item(json!({
-        "id": ids::turn_item_from_item(item_id), "threadId": turn.thread_id,
+        "id": ids::turn_item_from_item(DRIVER, item_id), "threadId": turn.thread_id,
         "runId": turn.run_id, "nodeId": turn.root_node_id,
         "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
         "nativeItemRef": {"driver": DRIVER, "nativeId": item_id, "strength": "strong"},
@@ -1884,7 +1864,7 @@ fn reasoning_item(
 fn notice_base(turn: &mut Turn, native_id: &str, now: &str, status: &str) -> Value {
     let item_ordinal = ordinal(turn, native_id);
     json!({
-        "id": ids::turn_item_from_item(native_id), "threadId": turn.thread_id,
+        "id": ids::turn_item_from_item(DRIVER, native_id), "threadId": turn.thread_id,
         "runId": turn.run_id, "nodeId": turn.root_node_id,
         "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
         "nativeItemRef": {"driver": DRIVER, "nativeId": native_id, "strength": "strong"},
@@ -1963,7 +1943,7 @@ pub(crate) fn tool_artifacts(
     } else {
         json!(now)
     };
-    let node_id = ids::node_from_item(id);
+    let node_id = ids::node_from_item(DRIVER, id);
     let native_ref = json!({"driver": DRIVER, "nativeId": id, "strength": "strong"});
     emit(
         out,
@@ -1982,7 +1962,7 @@ pub(crate) fn tool_artifacts(
         item.insert("toolNonExecutionKind".into(), json!(kind));
     }
     let base = json!({
-        "id": ids::turn_item_from_item(id), "threadId": scope.thread_id, "runId": scope.run_id,
+        "id": ids::turn_item_from_item(DRIVER, id), "threadId": scope.thread_id, "runId": scope.run_id,
         "nodeId": node_id, "providerThreadId": scope.provider_thread_id,
         "providerTurnId": scope.provider_turn_id, "nativeItemRef": native_ref,
         "parentItemId": null, "ordinal": call.ordinal, "status": status, "title": null,
@@ -2511,20 +2491,7 @@ impl<E: Env> Mapper<E> {
         let plan_id = self
             .plan_ids
             .entry(projection.clone())
-            .or_insert_with(|| {
-                ids::join_id(
-                    "plan",
-                    &[
-                        "thread",
-                        &turn.thread_id,
-                        "provider",
-                        DRIVER,
-                        "run",
-                        &turn.run_id,
-                        &uuid,
-                    ],
-                )
-            })
+            .or_insert_with(|| ids::plan_id(&turn.thread_id, Some(&turn.run_id), DRIVER, &uuid))
             .clone();
         if let Some(previous) = self.latest_todo.take()
             && previous["id"] != json!(plan_id)
@@ -2533,7 +2500,7 @@ impl<E: Env> Mapper<E> {
             superseded["status"] = json!("superseded");
             emit(out, |v| ProviderEvent::PlanUpdated { plan: v }, superseded);
         }
-        let node_id = ids::node_from_item(&projection);
+        let node_id = ids::node_from_item(DRIVER, &projection);
         let native_ref =
             json!({"driver": DRIVER, "nativeId": native_item_id, "strength": "strong"});
         let item_ordinal = ordinal(turn, &projection);
@@ -2562,7 +2529,7 @@ impl<E: Env> Mapper<E> {
             plan.clone(),
         );
         out.push(turn_item(json!({
-            "id": ids::turn_item_from_item(&projection), "threadId": turn.thread_id,
+            "id": ids::turn_item_from_item(DRIVER, &projection), "threadId": turn.thread_id,
             "runId": turn.run_id, "nodeId": node_id,
             "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
             "nativeItemRef": native_ref, "parentItemId": null, "ordinal": item_ordinal,

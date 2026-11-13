@@ -258,6 +258,16 @@ async fn kill_group(pgid: u32) {
         .await;
 }
 
+/// Whether a process with this pid exists (`kill -0`). For checking that a child ended.
+#[cfg(unix)]
+pub fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 fn spawn_stderr_tail(
     stderr: impl AsyncRead + Unpin + Send + 'static,
     tail: Arc<Mutex<String>>,
@@ -332,12 +342,7 @@ mod tests {
         };
         while !matches!(rx.recv().await, Some(ProcEvent::Exited(_))) {}
         drop(process);
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid])
-            .stderr(Stdio::null())
-            .status()
-            .unwrap()
-            .success();
+        let alive = pid.parse().is_ok_and(pid_alive);
         assert!(!alive, "grandchild {pid} survived the group kill");
     }
 }

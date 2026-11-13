@@ -4,17 +4,15 @@
 //! - [`protocol`]: typed CLI messages with a raw-JSON fallback.
 //! - [`launch`]: executable, argv and environment, matching what `ClaudeAdapterV2` passes.
 //! - [`mapper`]: CLI messages → `ProviderEvent`s and CLI replies (pure, replay-tested).
-//! - [`process`]: the child process and its bounded I/O.
-//! - [`session`]: the `Session` implementation.
+//! - [`session`]: the `Session` implementation. The child process and ids come from
+//!   `conn-provider-support`.
 //!
 //! Reference behaviour: `ClaudeAdapterV2.ts` in `apps/server/src/orchestration-v2/Adapters`.
 //! See `README.md` in this crate for the event mapping and its known differences.
 
 pub mod attachments;
-pub mod ids;
 pub mod launch;
 pub mod mapper;
-pub mod process;
 pub mod protocol;
 pub mod session;
 
@@ -33,11 +31,12 @@ use conn_provider::{
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+pub use conn_provider_support::ids;
 pub use launch::ClaudeConfig;
 pub use session::ClaudeSession;
 
 /// The contract's `ProviderDriverKind` for Claude.
-pub const DRIVER: &str = ids::DRIVER;
+pub const DRIVER: &str = "claudeAgent";
 
 pub struct ClaudeProvider {
     instance_id: ProviderInstanceId,

@@ -165,7 +165,7 @@ pub(crate) fn retry_item(turn: &Turn, state: &RetryState, status: &str, now: &st
         _ => "Provider retry stopped",
     };
     json!({
-        "id": ids::turn_item_from_item(&format!("terminal-failure:{}", turn.provider_turn_id)),
+        "id": ids::turn_item_from_item(DRIVER, &format!("terminal-failure:{}", turn.provider_turn_id)),
         "threadId": turn.thread_id, "runId": turn.run_id, "nodeId": turn.root_node_id,
         "providerThreadId": turn.provider_thread_id, "providerTurnId": turn.provider_turn_id,
         "nativeItemRef": null, "parentItemId": null, "ordinal": state.ordinal,

@@ -16,6 +16,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
+use conn_provider_support::process::LaunchSpec;
 use serde_json::json;
 
 /// What `CLAUDE_HOST_SESSION_VARIABLES` in `ClaudeHome.ts` removes: a parent Claude Code
@@ -120,15 +121,6 @@ pub struct LaunchInput {
     pub allowed_tools: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct LaunchSpec {
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    pub cwd: Option<PathBuf>,
-    pub env_remove: Vec<String>,
-    pub env_set: Vec<(String, String)>,
-}
-
 pub fn launch_spec(config: &ClaudeConfig, input: &LaunchInput) -> LaunchSpec {
     let mut args: Vec<String> = [
         "--output-format",
@@ -190,7 +182,7 @@ pub fn launch_spec(config: &ClaudeConfig, input: &LaunchInput) -> LaunchSpec {
     LaunchSpec {
         program: config.binary.clone(),
         args,
-        cwd: input.cwd.as_ref().map(PathBuf::from),
+        cwd: input.cwd.clone(),
         env_remove: REMOVED_ENV.iter().map(|s| s.to_string()).collect(),
         env_set: env_changes(config, input, |key| std::env::var_os(key).is_some()),
     }

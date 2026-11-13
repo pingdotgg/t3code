@@ -500,7 +500,7 @@ impl<E: Env> Mapper<E> {
                     let native = format!("{}:thinking:{index}", msg.uuid);
                     let ordinal = sub.next_ordinal();
                     out.push(turn_item(json!({
-                        "id": ids::turn_item_from_item(&native), "threadId": sub.child_thread_id,
+                        "id": ids::turn_item_from_item(DRIVER, &native), "threadId": sub.child_thread_id,
                         "runId": null, "nodeId": sub.child_root, "providerThreadId": null,
                         "providerTurnId": null,
                         "nativeItemRef": {"driver": DRIVER, "nativeId": native, "strength": "strong"},
@@ -652,7 +652,7 @@ impl<E: Env> Mapper<E> {
                 .and_then(|t| self.subagents.by_task.get(t))
                 .map(|s| s.node_id.clone())
                 .unwrap_or(parent.root_node_id.clone());
-            let node_id = ids::node_from_item(&format!("task:{}", input.task_id));
+            let node_id = ids::node_from_item(DRIVER, &format!("task:{}", input.task_id));
             let child_thread_id =
                 subagent_thread_id(&format!("{}:{}", parent.provider_thread_id, input.task_id));
             let task = json!({
@@ -676,8 +676,11 @@ impl<E: Env> Mapper<E> {
                 Sub {
                     tool_use_id: input.tool_use_id.to_string(),
                     node_id,
-                    child_root: ids::node_from_item(&format!("task:{}:thread-root", input.task_id)),
-                    item_id: ids::turn_item_from_item(&item_native),
+                    child_root: ids::node_from_item(
+                        DRIVER,
+                        &format!("task:{}:thread-root", input.task_id),
+                    ),
+                    item_id: ids::turn_item_from_item(DRIVER, &item_native),
                     child_thread_id,
                     item_ordinal,
                     next_child: 100,
@@ -942,14 +945,14 @@ fn child_message(
     now: &str,
     out: &mut Vec<Out>,
 ) {
-    let message_id = ids::message_from_item(native_id);
+    let message_id = ids::message_from_item(DRIVER, native_id);
     let mut message = json!({
         "createdBy": "agent", "creationSource": "provider", "id": message_id,
         "threadId": thread_id, "runId": null, "nodeId": root, "role": role, "text": text,
         "attachments": [], "streaming": false, "createdAt": now, "updatedAt": now,
     });
     let mut item = json!({
-        "id": ids::turn_item_from_item(native_id), "threadId": thread_id, "runId": null,
+        "id": ids::turn_item_from_item(DRIVER, native_id), "threadId": thread_id, "runId": null,
         "nodeId": root, "providerThreadId": null, "providerTurnId": null,
         "nativeItemRef": {"driver": DRIVER, "nativeId": native_id, "strength": "strong"},
         "parentItemId": null, "ordinal": ordinal, "status": "completed", "title": null,

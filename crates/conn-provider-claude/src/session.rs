@@ -22,12 +22,14 @@ use conn_provider::{
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::DRIVER;
 use crate::attachments;
 use crate::ids::{self, Env, SystemEnv};
 use crate::launch::{self, ClaudeConfig, LaunchInput, T3_MCP_SERVER};
 use crate::mapper::{Mapper, Out};
-use crate::process::{ExitInfo, ProcEvent, Process};
 use crate::protocol::{Delivery, Inbound, control_request, user_message};
+use conn_provider_support::lines::Line;
+use conn_provider_support::process::{ExitInfo, ProcEvent, Process};
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 /// The SDK leaves boot unbounded; T3 gives it about two minutes on busy hosts.
@@ -238,6 +240,17 @@ impl Inner {
     }
 }
 
+/// A process event with its stdout line already decoded.
+#[allow(clippy::large_enum_variant)] // Moved once per line; boxing adds an allocation each.
+enum Event {
+    Message(Inbound),
+    Oversized(usize),
+    Exited(ExitInfo),
+}
+
+/// A line longer than this is dropped. Large tool results (images as base64) stay below it.
+const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+
 /// The driver: one per process, ends after the process's `Exited`.
 async fn drive(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEvent>) {
     loop {
@@ -257,26 +270,31 @@ async fn drive(inner: Arc<Inner>, generation: u64, mut rx: mpsc::Receiver<ProcEv
         } else {
             rx.recv().await
         };
-        if matches!(event, Some(ProcEvent::Message(_))) {
+        let event = event.map(|event| match event {
+            ProcEvent::Line(Line::Text(text)) => Event::Message(Inbound::decode(&text)),
+            ProcEvent::Line(Line::Oversized(bytes)) => Event::Oversized(bytes),
+            ProcEvent::Exited(info) => Event::Exited(info),
+        });
+        if matches!(event, Some(Event::Message(_))) {
             touch(&mut inner.lock(), Some(generation));
         }
         match event {
-            Some(ProcEvent::Message(Inbound::ControlResponse { request_id, result })) => {
+            Some(Event::Message(Inbound::ControlResponse { request_id, result })) => {
                 if let Some(tx) = inner.lock().controls.remove(&request_id) {
                     let _ = tx.send(result);
                 }
             }
-            Some(ProcEvent::Message(message)) => {
+            Some(Event::Message(message)) => {
                 let (outs, writer) = {
                     let mut state = inner.lock();
                     (state.mapper.handle(message), writer_for(&state, generation))
                 };
                 inner.deliver(writer.as_ref(), outs).await;
             }
-            Some(ProcEvent::Oversized(bytes)) => {
+            Some(Event::Oversized(bytes)) => {
                 eprintln!("conn-provider-claude: dropped a {bytes}-byte CLI line");
             }
-            Some(ProcEvent::Exited(info)) => {
+            Some(Event::Exited(info)) => {
                 on_exit(&inner, generation, &info).await;
                 return;
             }
@@ -431,7 +449,7 @@ fn pending_fork_source(thread: &Value) -> Option<String> {
         .as_str()?
         .strip_prefix(&format!(
             "provider-thread:provider:{}:native-thread:",
-            ids::DRIVER
+            DRIVER
         ))
         .map(str::to_string)
 }
@@ -686,7 +704,7 @@ impl ClaudeSession {
         let inner = &self.inner;
         let spec = launch::launch_spec(&inner.config, &input);
         let (tx, rx) = mpsc::channel(EVENT_CAPACITY);
-        let process = Process::spawn(&spec, tx).map_err(|e| {
+        let process = Process::spawn(&spec, MAX_LINE_BYTES, tx).map_err(|e| {
             failed_err(
                 "start_turn",
                 format!("Could not start Claude ({}): {e}", spec.program.display()),
@@ -784,13 +802,13 @@ fn new_thread(
 ) -> Value {
     let now = SystemEnv.now();
     json!({
-        "id": ids::provider_thread_id(native),
-        "driver": ids::DRIVER,
-        "providerInstanceId": ids::DRIVER,
+        "id": ids::provider_thread_id(DRIVER, native),
+        "driver": DRIVER,
+        "providerInstanceId": DRIVER,
         "providerSessionId": session,
         "appThreadId": app_thread_id,
         "ownerNodeId": owner,
-        "nativeThreadRef": {"driver": ids::DRIVER, "nativeId": native, "strength": "strong"},
+        "nativeThreadRef": {"driver": DRIVER, "nativeId": native, "strength": "strong"},
         "nativeConversationHeadRef": head,
         "status": "idle",
         "firstRunOrdinal": null,
@@ -1057,7 +1075,7 @@ impl Session for ClaudeSession {
                     });
                     let head = match turn_cursor(&target) {
                         Some(cursor) => {
-                            json!({"driver": ids::DRIVER, "nativeId": cursor, "strength": "weak"})
+                            json!({"driver": DRIVER, "nativeId": cursor, "strength": "weak"})
                         }
                         None if !later_turns => Value::Null,
                         None => {
@@ -1132,7 +1150,7 @@ impl Session for ClaudeSession {
                 forked_from["providerTurnId"] = json!(turn_id.as_str());
             }
             let head = up_to
-                .map(|id| json!({"driver": ids::DRIVER, "nativeId": id, "strength": "weak"}))
+                .map(|id| json!({"driver": DRIVER, "nativeId": id, "strength": "weak"}))
                 .unwrap_or(Value::Null);
             let thread = new_thread(
                 self.id.as_str(),

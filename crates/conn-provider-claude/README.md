@@ -6,17 +6,20 @@ protocol and implements `Provider` and `Session` from `conn-provider`. Reference
 
 ## Layout
 
-| Module             | Holds                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------ |
-| `protocol`         | Typed CLI messages; unknown kinds and changed shapes fall back to raw JSON           |
-| `launch`           | Executable, argv, environment, `initialize`, runtime mode → permission mode          |
-| `mapper`           | Pure state machine: CLI messages → `ProviderEvent`s and CLI replies                  |
-| `mapper/subagents` | Subagent rows and their child threads                                                |
-| `mapper/notices`   | Todo lists, API retries, usage limits, failure classes                               |
-| `attachments`      | Image blocks and attachment paths in a user message                                  |
-| `process`          | The child: bounded line reader, stdin writer, stderr tail, reaping, group kill       |
-| `session`          | `Session`: lazy start, control requests, a driver and an idle watcher per process    |
-| `ids`              | `IdAllocatorV2` id formats, clock, uuid. General; a Codex crate needs the same thing |
+| Module             | Holds                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| `protocol`         | Typed CLI messages; unknown kinds and changed shapes fall back to raw JSON            |
+| `launch`           | Executable, argv, environment, `initialize`, runtime mode → permission mode           |
+| `mapper`           | Pure state machine: CLI messages → `ProviderEvent`s and CLI replies                   |
+| `mapper/subagents` | Subagent rows and their child threads                                                 |
+| `mapper/notices`   | Todo lists, API retries, usage limits, failure classes                                |
+| `attachments`      | Image blocks and attachment paths in a user message                                   |
+| `session`          | `Session`: lazy start, control requests, a driver and an idle watcher per process     |
+| `ids`              | Re-export of `conn-provider-support::ids`; `DRIVER` (`claudeAgent`) lives in `lib.rs` |
+
+The child process (bounded line reader, stdin writer, stderr tail, reaping, group kill), id
+formats and the clock come from `conn-provider-support`, shared with the Codex provider. A
+`session` driver decodes each stdout line with `Inbound::decode`.
 
 No crate replaces `protocol`. The closest, `claude-codes` 2.1.323 (tracks CLI 2.1.322), is about
 23k lines, pulls in `chrono` and `uuid`, breaks with nearly every CLI release, and lacks typed
