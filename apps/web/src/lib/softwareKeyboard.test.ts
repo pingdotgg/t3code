@@ -173,14 +173,20 @@ describe("pinning the shell to the keyboard viewport", () => {
   // iPad Pro 13-inch Safari: the layout viewport keeps its height under the keyboard.
   it("sizes the shell to the keyboard and undoes Safari's scroll, then restores the layout", () => {
     const { root, properties, stop, move, scrollTo } = pinFixture();
-    move("resize", 1222, 0);
+    // While the keyboard animates in, Safari pans before the viewport loses height.
+    move("scroll", 1290, 403);
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
     expect(root.dataset.keyboardViewport).toBeUndefined();
 
     move("resize", 887, 0);
     expect(root.dataset.keyboardViewport).toBe("");
     expect(Object.fromEntries(properties)).toEqual({ "--keyboard-viewport-height": "887px" });
     move("scroll", 887, 403);
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+
+    // A hardware keyboard's shortcut bar.
+    move("resize", 1222, 0);
+    expect(Object.fromEntries(properties)).toEqual({ "--keyboard-viewport-height": "1222px" });
 
     move("resize", 1290, 0);
     expect(root.dataset.keyboardViewport).toBeUndefined();
@@ -188,7 +194,7 @@ describe("pinning the shell to the keyboard viewport", () => {
 
     move("resize", 400, 300, 2);
     expect(root.dataset.keyboardViewport).toBeUndefined();
-    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledTimes(2);
 
     move("resize", 887, 0);
     stop();

@@ -103,13 +103,19 @@ export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): 
   };
 
   const update = () => {
-    const height = Math.round(viewport.height);
     // Pinch zoom also shrinks the visual viewport, and the page must stay pannable then.
     if (
       viewport.scale > 1.01 ||
-      root.clientHeight - height <= KEYBOARD_THRESHOLD ||
       !win.document.activeElement?.closest('[data-slot="sidebar-wrapper"]')
     ) {
+      if (pinnedHeight) unpin();
+      return;
+    }
+    // Safari pans while the keyboard animates in, before the viewport reports its final height.
+    if (viewport.offsetTop > 0) win.scrollTo(0, 0);
+    const height = Math.round(viewport.height);
+    // Any overlay, the shortcut bar of a hardware keyboard included, would hide the field now.
+    if (root.clientHeight - height <= 1) {
       if (pinnedHeight) unpin();
       return;
     }
@@ -118,7 +124,6 @@ export function pinShellToKeyboardViewport(win: PinWindow, isDesktop: boolean): 
       root.style.setProperty("--keyboard-viewport-height", `${height}px`);
       root.dataset.keyboardViewport = "";
     }
-    if (viewport.offsetTop > 0) win.scrollTo(0, 0);
   };
 
   update();
