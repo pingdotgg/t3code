@@ -141,6 +141,41 @@ it.each([
   ).toBe(program);
 });
 
+// systemd rejects a unit whose executable has a control character, quote or backslash, even quoted.
+it.each([
+  ["a double quote", '/home/theo/T3 "Data"'],
+  ["a single quote", "/home/theo/Theo's T3"],
+  ["a backslash", "/home/theo/T3\\Data"],
+  ["a newline", "/home/theo/T3\nData"],
+])("renders a loadable unit, or refuses, for a T3 home with %s", (_, baseDir) => {
+  let unit: string;
+  try {
+    unit = BootService.renderBootServiceUnit({
+      program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
+      baseDir,
+      logPath: `${baseDir}/userdata/logs/boot-service.log`,
+      unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    });
+  } catch {
+    return;
+  }
+  for (const line of unit.split("\n")) {
+    expect(line === "" || line.startsWith("[") || line.includes("=")).toBe(true);
+  }
+  const execStart = unit.split("\n").find((line) => line.startsWith("ExecStart="));
+  const executable = execStart
+    ?.slice("ExecStart=".length)
+    .match(/^"((?:\\.|[^"\\])*)"|^(\S+)/)
+    ?.slice(1)
+    .find((group) => group !== undefined)
+    ?.replace(/\\(.)/g, "$1");
+  expect(executable).toBeDefined();
+  const unsafe = [...(executable ?? "")].filter(
+    (char) => char.charCodeAt(0) < 0x20 || `"'\\`.includes(char),
+  );
+  expect(unsafe).toEqual([]);
+});
+
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
 
