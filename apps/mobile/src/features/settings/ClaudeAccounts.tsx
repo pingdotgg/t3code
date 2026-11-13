@@ -10,7 +10,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { TextInput, View } from "react-native";
+import { TextInput, useWindowDimensions, View } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -59,26 +59,27 @@ function useProviderInstanceMutation(environment: SettingsTarget) {
 export function ClaudeAccount({
   environment,
   provider,
-  divider,
 }: {
   readonly environment: SettingsTarget;
   readonly provider: ServerProvider;
-  readonly divider: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const { run, pending, error } = useProviderInstanceMutation(environment);
   const instance = environment.serverConfig.settings.providerInstances[provider.instanceId];
   const configDir = claudeConfigDir(instance);
   const name = provider.displayName ?? "Claude";
+  // A signed-in account needs no label; the row only speaks up when something is off.
   const status = !provider.enabled
     ? "Turned off"
     : provider.auth.status === "authenticated"
-      ? "Signed in"
+      ? null
       : provider.auth.status === "unauthenticated"
         ? "Not signed in"
         : !provider.installed
           ? "Not installed"
           : "Sign-in not checked";
+  // Matches ListRowLayout: large text stacks the status below instead of squeezing the name.
+  const stacked = useWindowDimensions().fontScale >= 1.5;
   const removable =
     provider.instanceId !== DEFAULT_CLAUDE_INSTANCE_ID &&
     !isManagedSettingPath(
@@ -115,15 +116,27 @@ export function ClaudeAccount({
     );
   }
   return (
-    <View className={divider ? "border-t border-border-subtle" : undefined}>
-      <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
-        <View className="min-w-0 shrink grow gap-0.5">
-          <Text textRole="body" className="text-foreground" numberOfLines={1}>
+    <View className="border-t border-border-subtle">
+      <View className="min-h-14 flex-row items-center gap-3 px-4 py-1.5">
+        <View
+          className={
+            stacked
+              ? "min-w-0 shrink grow gap-0.5"
+              : "min-w-0 shrink grow flex-row items-center gap-3"
+          }
+        >
+          <Text
+            textRole="body"
+            className={stacked ? "text-foreground" : "min-w-0 shrink grow text-foreground"}
+            numberOfLines={1}
+          >
             {name}
           </Text>
-          <Text textRole="footnote" className="text-foreground-muted">
-            {status}
-          </Text>
+          {status ? (
+            <Text textRole="footnote" className="text-foreground-muted">
+              {status}
+            </Text>
+          ) : null}
         </View>
         {editing ? null : (
           <Menu
