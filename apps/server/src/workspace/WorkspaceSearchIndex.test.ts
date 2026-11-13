@@ -135,7 +135,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
         expect(result.entries).toEqual([{ kind: "file", path: "dir\\one/report.txt" }]);
       }),
-    ),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("continues whole-word searches after a filtered grep page", () =>
