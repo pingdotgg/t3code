@@ -3322,6 +3322,11 @@ describe("PiAdapterV2", () => {
         { mode: "parallel", runId: "par-1", asyncId: "par-1" },
       );
       yield* launch(
+        "call_chain",
+        { chain: [{ parallel: [{ agent: "planner" }] }, { parallel: [{ agent: "auditor" }] }] },
+        { mode: "chain", runId: "chain-1", asyncId: "chain-1" },
+      );
+      yield* launch(
         "call_status",
         { action: "status", id: "run-1" },
         { mode: "management", asyncId: "run-1" },
@@ -3351,14 +3356,23 @@ describe("PiAdapterV2", () => {
         runId: "wf-1",
         workflowRunId: "wf-1",
         agent: "workflow",
-        status: "failed",
+        status: "completed",
         childRuns: [
           { runId: "child-a", workflowKey: "alpha", agent: "scout", status: "completed" },
-          { runId: "child-b", workflowKey: "beta", agent: "scout", status: "failed" },
+          { runId: "child-b", workflowKey: "beta", agent: "scout", status: "running" },
         ],
       });
       yield* takeSubagent("scout", "completed");
-      yield* takeSubagent("scout", "failed");
+      yield* takeSubagent("scout", "running");
+      // The workflow's dispatch completed with beta still running; beta's outcome comes later.
+      yield* notice({
+        runId: "wf-1",
+        agent: "workflow",
+        status: "failed",
+        childRuns: [{ runId: "child-b", workflowKey: "beta", agent: "scout", status: "failed" }],
+      });
+      const beta = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(beta.type === "subagent.updated" && beta.subagent.status === "failed");
 
       // A parallel run's notice can precede the widget that shows its last child done.
       yield* widget(2, [
@@ -3389,6 +3403,28 @@ describe("PiAdapterV2", () => {
       );
       assert.isTrue(tester.type === "subagent.updated" && tester.subagent.status === "completed");
 
+      // The widget lists one parallel group of a chain at a time, each from position zero.
+      const chainGroup = (generatedAt: number, children: ReadonlyArray<unknown>) =>
+        widget(generatedAt, [{ id: "chain-1", kind: "subagent", state: "running", children }]);
+      yield* chainGroup(3, [{ id: "child-p", kind: "step", state: "complete", agent: "planner" }]);
+      yield* takeSubagent("planner", "completed");
+      yield* chainGroup(4, [{ id: "step:1", kind: "step", state: "pending", agent: "auditor" }]);
+      yield* chainGroup(5, [{ id: "child-u", kind: "step", state: "running", agent: "auditor" }]);
+      yield* takeSubagent("auditor", "pending");
+      const auditor = yield* takeEvent((event) => event.type === "subagent.updated");
+      assert.isTrue(
+        auditor.type === "subagent.updated" &&
+          auditor.subagent.title === "auditor" &&
+          auditor.subagent.status === "running",
+      );
+      yield* notice({
+        runId: "chain-1",
+        agent: "chain",
+        status: "completed",
+        childRuns: [{ runId: "child-u", agent: "auditor", status: "completed" }],
+      });
+      yield* takeSubagent("auditor", "completed");
+
       // Stop asks pi-subagents to end the child; its row waits for the reported outcome.
       yield* runtime.interruptTurn({
         providerThread,
@@ -3398,7 +3434,7 @@ describe("PiAdapterV2", () => {
       const stop = yield* fake.takeRequest("prompt");
       assert.equal(stop["message"], "/t3-stop-subagents run-1");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      yield* widget(3, [{ id: "run-1", kind: "subagent", state: "running" }]);
+      yield* widget(6, [{ id: "run-1", kind: "subagent", state: "running" }]);
       yield* notice({ runId: "run-1", agent: "reviewer", status: "stopped" });
       const stopped = yield* takeEvent((event) => event.type === "subagent.updated");
       assert.isTrue(

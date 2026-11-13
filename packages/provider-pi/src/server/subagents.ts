@@ -35,13 +35,14 @@ interface BackgroundRun<Owner> {
   readonly asyncId: string;
   readonly workflow: boolean;
   readonly members: Map<string, PiBackgroundSubagent<Owner>>;
-  /** Chain and parallel steps by the run id the widget gave them, which is how a notice names them. */
+  /** Chain and parallel steps' positions by the run id the widget gave them, which is how a notice names them. */
   readonly stepKeys: Map<string, string>;
   stopRequested: boolean;
 }
 
 const ASYNC_WIDGET_KEY = "subagent-async";
 const ASYNC_WIDGET_PREFIX = "PI_SUBAGENT_ASYNC_JSON:";
+const PLACEHOLDER_STEP_ID = /^step:(\d+)$/;
 
 const SnapshotNode = Schema.Struct({
   id: Schema.String,
@@ -163,14 +164,21 @@ export function makePiBackgroundSubagents<Owner>() {
     return [next];
   };
 
-  /** Children the run's own outcome did not name end with the run. */
+  /**
+   * Children the run's own outcome did not name end with the run. A workflow can finish its
+   * dispatch while children it names as running go on, so those keep the run tracked.
+   */
   const settleRun = (
     run: BackgroundRun<Owner>,
     status: PiBackgroundSubagentStatus | undefined,
+    running: ReadonlySet<string> = new Set(),
   ): ReadonlyArray<PiBackgroundSubagent<Owner>> => {
     if (status === undefined || !isSettled(status)) return [];
-    runs.delete(run.asyncId);
-    return [...run.members.keys()].flatMap((key) => update(run, key, status));
+    const keys = [...run.members.keys()];
+    if (!run.workflow || !keys.some((key) => running.has(key))) runs.delete(run.asyncId);
+    return keys.flatMap((key) =>
+      run.workflow && running.has(key) ? [] : update(run, key, status),
+    );
   };
 
   const applySnapshot = (
@@ -178,19 +186,33 @@ export function makePiBackgroundSubagents<Owner>() {
     node: SnapshotRun,
   ): ReadonlyArray<PiBackgroundSubagent<Owner>> => {
     const steps = (node.children ?? []).filter((child) => child.kind === "step");
+    // Workflow steps are named by their key. Chain and parallel steps trade a `step:<position>`
+    // placeholder for a run id once they start, and the widget lists only the active parallel
+    // group: a new run id sits relative to a listed step of known position, else after the last.
+    const positions = steps.map((step) => {
+      const placeholder = PLACEHOLDER_STEP_ID.exec(step.id)?.[1];
+      const known = placeholder ?? run.stepKeys.get(step.id);
+      return known === undefined ? undefined : Number(known);
+    });
+    const anchor = positions.findIndex((position) => position !== undefined);
+    const first =
+      anchor === -1
+        ? Math.max(-1, ...[...run.stepKeys.values()].map(Number)) + 1
+        : positions[anchor]! - anchor;
+    const running = new Set<string>();
     const changed = steps.flatMap((step, index) => {
-      // Workflow steps are named by their key. Chain and parallel steps trade a placeholder id for
-      // a run id once they start, so only their position is stable.
-      const key = run.workflow ? step.id : String(index);
-      run.stepKeys.set(step.id, key);
-      return update(run, key, backgroundStatus(step.state), {
+      const key = run.workflow ? step.id : String(first + index);
+      if (!PLACEHOLDER_STEP_ID.test(step.id)) run.stepKeys.set(step.id, key);
+      const status = backgroundStatus(step.state);
+      if (status === "running") running.add(key);
+      return update(run, key, status, {
         title: step.agent ?? run.members.get(key)?.title ?? step.label ?? step.id,
         model: step.model,
       });
     });
     const rootStatus = backgroundStatus(node.state);
     const single = steps.length === 0 && !run.workflow ? update(run, "0", rootStatus) : [];
-    return [...changed, ...single, ...settleRun(run, rootStatus)];
+    return [...changed, ...single, ...settleRun(run, rootStatus, running)];
   };
 
   const observeWidget = (frame: PiRpcRecord): ReadonlyArray<PiBackgroundSubagent<Owner>> => {
@@ -220,19 +242,21 @@ export function makePiBackgroundSubagents<Owner>() {
     return notice.runs.flatMap((notified) => {
       const run = notified.runId === undefined ? undefined : runs.get(notified.runId);
       if (run === undefined) return [];
+      const running = new Set<string>();
       const children = (notified.childRuns ?? []).flatMap((child) => {
         const key = run.workflow
           ? child.workflowKey
           : child.runId === undefined
             ? undefined
             : run.stepKeys.get(child.runId);
-        return key === undefined
-          ? []
-          : update(run, key, backgroundStatus(child.status), {
-              title: child.agent ?? run.members.get(key)?.title ?? key,
-            });
+        if (key === undefined) return [];
+        const status = backgroundStatus(child.status);
+        if (status === "running") running.add(key);
+        return update(run, key, status, {
+          title: child.agent ?? run.members.get(key)?.title ?? key,
+        });
       });
-      return [...children, ...settleRun(run, backgroundStatus(notified.status))];
+      return [...children, ...settleRun(run, backgroundStatus(notified.status), running)];
     });
   };
 
