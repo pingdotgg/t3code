@@ -16,3 +16,10 @@
 - How: `ProviderInstanceIcon` takes an optional `modelSlug`; `ModelListRow` and `ProviderModelPicker` pass it. Lint rules ruled out Sparkles and raw palette colors.
 - Deploy: web-only, so the new `apps/web/dist` was copied into `apps/server/dist/client`; no service restart. The web build took ~45 min on the hub (disk-bound).
 - Next: keep "Auto" shown in the composer after the first message (needs the thread to remember the Auto selection).
+
+## 2026-11-13 — Auto shows the model it routes to
+
+- What: the `auto` entry keeps the logo of the provider it routes to (the Claude logo while Claude has room) with a small route badge, and its label names the model and account, e.g. "Auto · Opus 5.5 (B)", in the picker rows and on the composer button.
+- Why: Tomáš wanted to see which Claude model Auto uses; the plain route icon hid it.
+- How: `describeAutoRoute` (web) runs the server's `resolveAutoModelSelection` on the client's provider snapshots, at the composer's Auto level, on a minute clock. The server still decides per message (a thread may stay on its current model until 90% used).
+- Tests: `autoRoute.test.ts` (2 tests: A/B pick per level, fallback to Grok). The test run alone took ~14 min on the hub.
