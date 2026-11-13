@@ -67,11 +67,16 @@ pub(crate) async fn subscribe_shell(
     let (first, mut cursor) = inner
         .db(move |store| -> Result<(Vec<Value>, u64), String> {
             let high = store.high_water();
-            Ok(match after {
-                // Every shell change is kept, so any cursor this store issued can resume.
-                Some(after) if after <= high => (store.shell_changes_after(after)?, high),
-                Some(_) if fallback => (vec![json!({"kind": "snapshot-required"})], high),
-                _ => (
+            let resumed = match after.filter(|after| *after <= high) {
+                Some(after) => store.shell_changes_since(after)?,
+                None => None,
+            };
+            Ok(match resumed {
+                Some(items) => (items, high),
+                None if after.is_some() && fallback => {
+                    (vec![json!({"kind": "snapshot-required"})], high)
+                }
+                None => (
                     vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot()?})],
                     high,
                 ),
@@ -97,7 +102,15 @@ pub(crate) async fn subscribe_shell(
             }
             let after = cursor;
             let items = match inner
-                .db(move |store| store.shell_changes_after(after))
+                .db(move |store| -> Result<Vec<Value>, String> {
+                    // A reader that fell behind retention starts over from a snapshot.
+                    Ok(match store.shell_changes_since(after)? {
+                        Some(items) => items,
+                        None => {
+                            vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot()?})]
+                        }
+                    })
+                })
                 .await
             {
                 Ok(items) => items,
@@ -107,7 +120,10 @@ pub(crate) async fn subscribe_shell(
                 }
             };
             for item in items {
-                cursor = cursor.max(item["sequence"].as_u64().unwrap_or(cursor));
+                let sequence = item["sequence"]
+                    .as_u64()
+                    .or(item["snapshot"]["snapshotSequence"].as_u64());
+                cursor = cursor.max(sequence.unwrap_or(cursor));
                 if !send(&tx, item, shell_error).await {
                     return;
                 }

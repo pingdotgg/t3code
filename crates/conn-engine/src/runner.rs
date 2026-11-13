@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use conn_contract::{ProviderThread, ProviderTurnId, from_json, to_json};
 use conn_provider::{
     EnsureThreadInput, InterruptInput, OpenSessionInput, ProviderEvent, ResumeThreadInput,
-    RuntimePolicy, RuntimeRequestResponse, Session, TurnInput, TurnMessage, TurnStatus,
+    RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, TurnInput, TurnMessage, TurnStatus,
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -18,7 +18,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run};
+use crate::commands::{failure, finish_run, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::store::Draft;
 
@@ -104,18 +104,30 @@ impl Inner {
     }
 
     async fn end_run(
-        &self,
+        self: &Arc<Self>,
         thread_id: &str,
         run_id: &str,
         status: &'static str,
         failure: Option<Value>,
     ) {
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
-        if let Err(e) = self
-            .write(move |tx| finish_run(tx, &thread_id, &run_id, status, failure))
-            .await
-        {
-            eprintln!("conn-engine: could not end run: {e}");
+        let held_on_failure = failure
+            .as_ref()
+            .is_some_and(|f| f["class"] != "validation_error");
+        let next = self
+            .write(move |tx| {
+                finish_run(tx, &thread_id, &run_id, status, failure)?;
+                // A failure holds the queue, so queued messages do not hit the same wall.
+                if held_on_failure {
+                    hold_queue(tx, &thread_id)?;
+                }
+                start_next_queued(tx, &thread_id, None)
+            })
+            .await;
+        match next {
+            Ok(Some(effect)) => self.spawn_effect(effect),
+            Ok(None) => {}
+            Err(e) => eprintln!("conn-engine: could not end run: {e}"),
         }
     }
 
@@ -503,6 +515,80 @@ impl Inner {
             self.close_session(&thread_id).await;
         }
         self.end_run(&thread_id, &run_id, "interrupted", None).await;
+    }
+
+    /// Delivers a steer to the running provider turn. When the provider declines or the turn
+    /// already ended, the message goes to the queue instead (`EffectWorker.ts` follow-up).
+    pub(crate) async fn steer(
+        self: Arc<Self>,
+        thread_id: String,
+        run_id: String,
+        message_id: String,
+    ) {
+        let (tid, mid) = (thread_id.clone(), message_id.clone());
+        let message = self
+            .db(move |store| -> Result<Option<Value>, String> {
+                let tx = store.tx()?;
+                let message = tx.entity(&tid, "messages", &mid);
+                tx.rollback();
+                message
+            })
+            .await
+            .ok()
+            .flatten();
+        let live = self.live_thread(&thread_id);
+        let target = live.as_ref().and_then(|live| {
+            let state = live.state.lock().unwrap();
+            let active = state.active.as_ref().filter(|a| a.run_id == run_id)?;
+            Some((
+                state.provider_thread.clone()?,
+                active.provider_turn_id.clone()?,
+            ))
+        });
+        let delivered = match (live, target, &message) {
+            (Some(live), Some((provider_thread, provider_turn_id)), Some(message)) => live
+                .session
+                .steer_turn(SteerInput {
+                    thread_id: thread_id.as_str().into(),
+                    run_id: run_id.as_str().into(),
+                    provider_thread,
+                    provider_turn_id,
+                    message: TurnMessage {
+                        message_id: message_id.as_str().into(),
+                        text: message["text"].as_str().unwrap_or_default().to_owned(),
+                        attachments: from_json(message["attachments"].clone()).unwrap_or_default(),
+                    },
+                    model_selection: None,
+                })
+                .await
+                .is_ok(),
+            _ => false,
+        };
+        if delivered {
+            return;
+        }
+        let Some(message) = message else { return };
+        let mut command = json!({
+            "type": "message.dispatch",
+            "commandId": format!("command:steer-follow-up:{message_id}"),
+            "threadId": thread_id,
+            "messageId": message_id,
+            "text": message["text"],
+            "attachments": message["attachments"],
+            "dispatchMode": {"type": "queue_after_active"},
+            "steerFollowUpOfRunId": run_id,
+            "createdBy": message["createdBy"],
+            "creationSource": message["creationSource"],
+        });
+        if message["context"].is_object() {
+            command["context"] = message["context"].clone();
+        }
+        if let Err(
+            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
+        ) = self.dispatch_value(command).await
+        {
+            eprintln!("conn-engine: could not queue a declined steer: {e}");
+        }
     }
 
     pub(crate) async fn respond(self: Arc<Self>, thread_id: String, request: Value) {

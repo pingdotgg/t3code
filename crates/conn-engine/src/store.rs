@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS shell_changes (
   seq  INTEGER PRIMARY KEY,
   item TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS receipts (
   command_id   TEXT PRIMARY KEY,
   command_type TEXT NOT NULL,
@@ -110,6 +114,13 @@ fn streams_only(event_type: &str) -> bool {
 }
 
 pub(crate) type StoreResult<T> = Result<T, String>;
+
+/// Shell changes kept for resuming streams. An older cursor gets a fresh snapshot instead.
+pub(crate) const SHELL_CHANGES_KEEP: i64 = 1024;
+/// Command receipts kept for retries. Clients retry within seconds, not thousands of commands.
+pub(crate) const RECEIPTS_KEEP: i64 = 4096;
+/// Retention runs when the sequence crosses a multiple of this, not on every commit.
+const PRUNE_EVERY: u64 = 256;
 
 fn err(e: rusqlite::Error) -> String {
     format!("store: {e}")
@@ -215,6 +226,23 @@ impl Store {
             "archivedThreads": [],
             "projects": projects,
         }))
+    }
+
+    /// Shell changes after `after`, or `None` when retention already dropped some of them.
+    pub(crate) fn shell_changes_since(&self, after: u64) -> StoreResult<Option<Vec<Value>>> {
+        let pruned: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE((SELECT value FROM meta WHERE key = 'shell_pruned_through'), 0)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        // Every change above the pruned mark is kept.
+        if (after as i64) < pruned {
+            return Ok(None);
+        }
+        self.shell_changes_after(after).map(Some)
     }
 
     pub(crate) fn shell_changes_after(&self, after: u64) -> StoreResult<Vec<Value>> {
@@ -681,6 +709,9 @@ impl Tx<'_> {
                 )
                 .map_err(err)?;
         }
+        if high / PRUNE_EVERY != (self.start.saturating_sub(1)) / PRUNE_EVERY {
+            prune(&self.tx)?;
+        }
         self.tx.commit().map_err(err)?;
         Ok(high)
     }
@@ -694,6 +725,31 @@ impl Tx<'_> {
     pub(crate) fn conn(&self) -> &Connection {
         &self.tx
     }
+}
+
+/// Bounds the tables that only serve resumes and retries. Events and projections stay: they
+/// are the history clients read.
+fn prune(conn: &Connection) -> StoreResult<()> {
+    conn.execute(
+        "INSERT INTO meta (key, value)
+         SELECT 'shell_pruned_through', seq FROM shell_changes ORDER BY seq DESC LIMIT 1 OFFSET ?1
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [SHELL_CHANGES_KEEP],
+    )
+    .map_err(err)?;
+    conn.execute(
+        "DELETE FROM shell_changes WHERE seq <= COALESCE(
+           (SELECT value FROM meta WHERE key = 'shell_pruned_through'), 0)",
+        [],
+    )
+    .map_err(err)?;
+    conn.execute(
+        "DELETE FROM receipts WHERE sequence < (
+           SELECT sequence FROM receipts ORDER BY sequence DESC LIMIT 1 OFFSET ?1)",
+        [RECEIPTS_KEEP],
+    )
+    .map_err(err)?;
+    Ok(())
 }
 
 /// One event before it gets its sequence, id and time.

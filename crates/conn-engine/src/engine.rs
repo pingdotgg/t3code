@@ -220,15 +220,24 @@ impl Inner {
             self.notify.send_replace(seq);
         }
         for effect in effects {
-            let inner = self.clone();
-            tokio::spawn(async move { inner.run_effect(effect).await });
+            self.spawn_effect(effect);
         }
         Ok((seq, replayed))
+    }
+
+    pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
+        let inner = self.clone();
+        tokio::spawn(async move { inner.run_effect(effect).await });
     }
 
     async fn run_effect(self: Arc<Self>, effect: Effect) {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
+            Effect::Steer {
+                thread_id,
+                run_id,
+                message_id,
+            } => self.steer(thread_id, run_id, message_id).await,
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,

@@ -32,7 +32,11 @@ impl Drop for TempDb {
 }
 
 fn open(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>) {
-    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    open_with(db, FakeProvider::new("claudeAgent"))
+}
+
+fn open_with(db: &TempDb, provider: FakeProvider) -> (SqliteEngine, Arc<FakeProvider>) {
+    let provider = Arc::new(provider);
     let mut config = EngineConfig::new(db.path());
     config.projects = vec![ProjectConfig {
         title: "Project".into(),
@@ -478,5 +482,322 @@ async fn launch_thread_creates_and_starts_in_one_call() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+fn message_with(
+    thread: &str,
+    command: &str,
+    text: &str,
+    mode: Value,
+    intent: Option<&str>,
+) -> Value {
+    let mut m = message(thread, command, text);
+    m["dispatchMode"] = mode;
+    if let Some(intent) = intent {
+        m["deliveryIntent"] = json!(intent);
+    }
+    m
+}
+
+async fn projection(engine: &SqliteEngine, thread: &str) -> Value {
+    engine.get_thread_projection(thread.into()).await.unwrap()
+}
+
+fn run_statuses(projection: &Value) -> Vec<(String, String)> {
+    projection["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_str().unwrap().to_owned(),
+                r["status"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn item_texts(projection: &Value) -> Vec<String> {
+    projection["visibleTurnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let item = &row["item"];
+            format!(
+                "{} {}",
+                item["inputIntent"]
+                    .as_str()
+                    .unwrap_or(item["type"].as_str().unwrap()),
+                item["text"].as_str().unwrap_or("")
+            )
+        })
+        .collect()
+}
+
+/// Waits on the thread stream until the provider turn of the running run is live.
+async fn until_provider_turn<E: serde::Serialize>(
+    stream: &mut Subscription<conn_contract::ThreadStreamItem, E>,
+) {
+    loop {
+        let item = next(stream).await;
+        if item["event"]["type"] == "provider-turn.updated" {
+            return;
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_message_sent_during_a_turn_queues_and_starts_after_it() {
+    let db = TempDb::new("queue");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    // The client's "queue" sends `queue_after_active`; a plain start while busy queues too.
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c3",
+            "second",
+            json!({"type": "queue_after_active"}),
+            None,
+        ),
+    )
+    .await;
+    dispatch(&engine, message("t1", "c4", "third")).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "running".into()),
+            ("run:t1:2".into(), "queued".into()),
+            ("run:t1:3".into(), "queued".into())
+        ]
+    );
+    assert_eq!(p["runs"][1]["queuePosition"], 1);
+    assert_eq!(p["runs"][2]["queuePosition"], 2);
+    // Queued messages have no turn item yet, and the shell still shows the running run.
+    assert_eq!(item_texts(&p), ["turn_start hang"]);
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["status"], "running");
+    assert_eq!(shell["threads"][0]["activeRunId"], "run:t1:1");
+
+    // Reorder: third before second.
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.reorder", "commandId": "c5", "threadId": "t1",
+               "runId": "run:t1:3", "beforeRunId": "run:t1:2"}),
+    )
+    .await;
+    // Edit the text of a queued message.
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.edit", "commandId": "c6", "threadId": "t1",
+               "runId": "run:t1:2", "text": "second, edited"}),
+    )
+    .await;
+
+    // Ending the turn (not with Stop) starts the queue in order.
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c7", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    for _ in 0..3 {
+        until_run_ends(&mut thread).await;
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "interrupted".into()),
+            ("run:t1:2".into(), "completed".into()),
+            ("run:t1:3".into(), "completed".into())
+        ]
+    );
+    assert_eq!(
+        item_texts(&p),
+        [
+            "turn_start hang",
+            "queued_turn third",
+            "assistant_message echo: third",
+            "queued_turn second, edited",
+            "assistant_message echo: second, edited",
+        ]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stop_holds_the_queue_until_resume() {
+    let db = TempDb::new("hold");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "later")).await;
+    dispatch(&engine, message("t1", "c4", "cancel me")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c5", "threadId": "t1"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued");
+    assert_eq!(p["runs"][1]["queueHeld"], true);
+
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.cancel", "commandId": "c6", "threadId": "t1", "runId": "run:t1:3"}),
+    )
+    .await;
+    // Starting a queued run while busy is refused; here the thread is stopped, so it is not.
+    dispatch(
+        &engine,
+        json!({"type": "queue.resume", "commandId": "c7", "threadId": "t1"}),
+    )
+    .await;
+    loop {
+        let events = until_run_ends(&mut thread).await;
+        if events.last().unwrap().1["id"] == "run:t1:2" {
+            break;
+        }
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "interrupted".into()),
+            ("run:t1:2".into(), "completed".into()),
+            ("run:t1:3".into(), "cancelled".into())
+        ]
+    );
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["status"], "completed");
+    assert_eq!(shell["threads"][0]["latestRunId"], "run:t1:2");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_steer_reaches_the_running_turn() {
+    let db = TempDb::new("steer");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c3",
+            "also this",
+            json!({"type": "start_immediately"}),
+            Some("steer"),
+        ),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_statuses(&p), [("run:t1:1".into(), "completed".into())]);
+    assert_eq!(
+        item_texts(&p),
+        [
+            "turn_start hang",
+            "steer also this",
+            "assistant_message steered: also this"
+        ]
+    );
+    assert_eq!(p["messages"][1]["runId"], "run:t1:1");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_declined_steer_waits_first_in_the_queue() {
+    let db = TempDb::new("steer-declined");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent").without_steering());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "queued first")).await;
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c4",
+            "steer me",
+            json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+            None,
+        ),
+    )
+    .await;
+    // The follow-up lands after the decline; wait for its run.
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "run.created"
+            && item["event"]["payload"]["userMessageId"] == "message:c4"
+        {
+            break;
+        }
+    }
+    let p = projection(&engine, "t1").await;
+    let queued: Vec<_> = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["status"] == "queued")
+        .map(|r| (r["userMessageId"].clone(), r["queuePosition"].clone()))
+        .collect();
+    assert_eq!(
+        queued,
+        [
+            (json!("message:c3"), json!(2)),
+            (json!("message:c4"), json!(1))
+        ]
+    );
+    assert_eq!(
+        item_texts(&p),
+        ["turn_start hang", "queued_turn steer me"],
+        "the steer item now waits in the queue"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c5", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    for _ in 0..3 {
+        until_run_ends(&mut thread).await;
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        item_texts(&p),
+        [
+            "turn_start hang",
+            "queued_turn steer me",
+            "assistant_message echo: steer me",
+            "queued_turn queued first",
+            "assistant_message echo: queued first",
+        ]
     );
 }
