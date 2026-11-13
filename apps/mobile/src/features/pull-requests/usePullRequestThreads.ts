@@ -3,7 +3,12 @@ import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigationState, useRoute } from "@react-navigation/native";
+import {
+  StackActions,
+  useNavigation,
+  useNavigationState,
+  useRoute,
+} from "@react-navigation/native";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import {
   AuthOrchestrationOperateScope,
@@ -16,7 +21,6 @@ import { formatComposerContextReference } from "@t3tools/shared/composerContextR
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
-import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 import { pullRequestComposerContext } from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
@@ -82,14 +86,15 @@ export function usePullRequestThreads(
   const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
   const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
-  const openDetail = useOpenWorkspaceDetail();
+  const navigation = useNavigation();
   const pending = useRef(false);
   const previousPrompts = useRef(new Map<string, string>());
   const openThread = (thread: LinkedThread) => {
     openThreadRoute({ environmentId: params.environmentId, threadId: thread.id });
   };
-  const openThreadRoute = (destination: ReactNavigation.RootParamList["Thread"]) =>
-    openDetail({ name: "Thread", params: destination });
+  const openThreadRoute = (destination: ReactNavigation.RootParamList["Thread"]) => {
+    navigation.dispatch(StackActions.push("Thread", destination));
+  };
   const [busy, setBusy] = useState(false);
   const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
     if (!pr || !canAsk || pending.current) return;
