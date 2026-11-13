@@ -188,24 +188,26 @@ export function useUpdateEverything(
           ...(providers.machines.length > 0
             ? {
                 stageServers: () =>
-                  Promise.all(
+                  new Map(
                     servers
                       .filter(
                         (server) =>
                           machines.find((machine) => machine.environmentId === server.environmentId)
                             ?.serverConfig?.environment.capabilities.serverUpdateStaging === true,
                       )
-                      .map((server) =>
+                      .map((server) => [
+                        server.environmentId,
                         stageServerUpdate({
                           environmentId: server.environmentId,
                           input: { targetVersion: server.targetVersion, stageOnly: true },
                         }),
-                      ),
+                      ]),
                   ),
               }
             : {}),
-          updateServers: async () => {
+          updateServers: async (staged) => {
             const runs = servers.map(async (server) => {
+              await staged.get(server.environmentId);
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,
