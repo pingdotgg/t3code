@@ -66,6 +66,10 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
   }
 }
 
+/** Where No project threads keep their folders, whether or not this T3 home allows them. */
+export const scratchFolderRoot = (baseDir: string, path: Path.Path) =>
+  path.resolve(baseDir, "scratch");
+
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
 
 // The spawner checks cwd before spawning, so NotFound from spawn itself means a missing executable.
@@ -255,7 +259,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
           if (repositoryRoot === null) {
-            return Effect.succeed(Result.succeed(path.resolve(config.baseDir, "scratch")));
+            return Effect.succeed(Result.succeed(scratchFolderRoot(config.baseDir, path)));
           }
           const unavailable = new ScratchUnavailableError({
             baseDir: config.baseDir,

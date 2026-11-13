@@ -1,11 +1,21 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  SecretProviderId,
+  ServerConfigStreamEvent,
+  UsageLimitSourceId,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
+} from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -25,6 +35,14 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       "Named hub",
       "hub.test:8317",
       "Usage limit source",
+    ]);
+    // Only an http(s) hub URL names an endpoint an agent can be sent to.
+    expect(snapshots.map((source) => source.origin)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      "https://hub.test:8317",
+      undefined,
     ]);
     expect(() =>
       encodeConfigEvent({
@@ -155,3 +173,135 @@ it.effect("reads a management key from its secret provider", () => {
     ]),
   );
 });
+
+const NOW = Date.parse("2026-11-13T12:00:00.000Z");
+const at = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(NOW + hours * 3_600_000));
+const spent = (id: string, hours: number): ServerProviderUsageWindow => ({
+  id,
+  kind: "weekly",
+  label: id,
+  usedPercent: 100,
+  resetsAt: at(hours),
+});
+const hub = (
+  accounts: ReadonlyArray<{
+    driver?: string;
+    windows?: ReadonlyArray<ServerProviderUsageWindow>;
+    unavailable?: true;
+  }>,
+): UsageLimitSourceSnapshot => ({
+  id: UsageLimitSourceId.make("hub"),
+  kind: "cliproxy",
+  label: "hub",
+  checkedAt: at(0),
+  accounts: accounts.map((account, index) => ({
+    id: `account-${index}`,
+    driver: ProviderDriverKind.make(account.driver ?? "claudeAgent"),
+    usageLimits: {
+      checkedAt: at(0),
+      windows: account.windows ?? [],
+      ...(account.unavailable ? { unavailable: { reason: "probeFailed" as const } } : {}),
+    },
+  })),
+});
+
+it.each([
+  {
+    name: "earliest refill when every account is spent, each at its latest spent window",
+    accounts: [
+      { windows: [spent("five_hour", 1), spent("seven_day", 3)] },
+      { windows: [spent("five_hour", 2)] },
+      { driver: "codex", windows: [] },
+    ],
+    model: "claude-haiku-5-5",
+    expected: at(2),
+  },
+  {
+    name: "unknown while an account still has room",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { windows: [] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "unknown while an account could not be read",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { unavailable: true as const }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "unknown when a spent window has no reset or already reset",
+    accounts: [{ windows: [{ ...spent("five_hour", 1), resetsAt: undefined }] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "a model-scoped weekly window blocks only its own model",
+    accounts: [{ windows: [spent("seven_day_fable", 5)] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+  {
+    name: "a model-scoped weekly window blocks its own model",
+    accounts: [{ windows: [spent("seven_day_fable", 5)] }],
+    model: "claude-fable-5-2",
+    expected: at(5),
+  },
+  {
+    name: "no account of the driver",
+    accounts: [{ driver: "codex", windows: [spent("five_hour", 1)] }],
+    model: "claude-haiku-5-5",
+    expected: null,
+  },
+])("hub pool reset: $name", ({ accounts, model, expected }) => {
+  expect(
+    UsageLimitSources.hubPoolResetAt(
+      [hub(accounts)],
+      ProviderDriverKind.make("claudeAgent"),
+      model,
+      NOW,
+    ),
+  ).toBe(expected);
+});
+
+it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold the failure", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const roomLeft = { ...hub([{ windows: [spent("five_hour", 2)] }]), origin: "http://hub.test" };
+    const cached = {
+      ...roomLeft,
+      accounts: roomLeft.accounts.map((account) => ({
+        ...account,
+        usageLimits: {
+          ...account.usageLimits,
+          windows: account.usageLimits.windows.map((window) => ({ ...window, usedPercent: 99 })),
+        },
+      })),
+    };
+    let current: ReadonlyArray<UsageLimitSourceSnapshot> = [cached];
+    let refresh: Effect.Effect<void> = Effect.sync(() => {
+      current = [roomLeft];
+    });
+    const lookup = UsageLimitSources.UsageLimitResetFallback.pipe(
+      Effect.flatMap((fallback) =>
+        fallback.resetAt(ProviderDriverKind.make("claudeAgent"), "http://hub.test", null),
+      ),
+      Effect.provide(
+        UsageLimitSources.layerResetFallback.pipe(
+          Layer.provide(
+            Layer.mock(UsageLimitSources.UsageLimitSources)({
+              current: Effect.sync(() => current),
+              refresh: Effect.suspend(() => refresh),
+            }),
+          ),
+        ),
+      ),
+    );
+    // The last poll saw room; the account was spent after it.
+    expect(yield* lookup).toBe(at(2));
+    current = [cached];
+    refresh = Effect.never;
+    const stalled = yield* Effect.forkChild(lookup);
+    yield* TestClock.adjust("5 seconds");
+    expect(yield* Fiber.join(stalled)).toBeNull();
+  }),
+);

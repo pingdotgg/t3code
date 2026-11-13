@@ -2044,6 +2044,7 @@ export type ThreadSnapshot = {
       readonly createdBy: Wire10;
       readonly creationSource: Wire11;
       readonly scheduledTaskId?: Wire8;
+      readonly followsThreadSelection?: true | undefined;
       readonly senderThreadId?: Wire8;
       readonly linkedSender?: Wire66;
       readonly idleCompaction?: Wire67;
@@ -2402,6 +2403,7 @@ export type OrchestrationCommand =
       readonly worktreePath?: string | null | undefined;
       readonly expectedWorktreePath?: string | null | undefined;
       readonly expectedBranch?: string | null | undefined;
+      readonly continuation?: { readonly messageId: string; readonly text: string } | undefined;
       readonly expectedEmpty?: Wire6;
       readonly limitRecovery?:
         | {
