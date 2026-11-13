@@ -46,12 +46,6 @@ const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim()
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredReleaseChannel =
   process.env.T3CODE_BUILT_DEV === "1" ? "dev" : process.env.VITE_RELEASE_CHANNEL?.trim() || "";
-const configuredAppVersion =
-  process.env.APP_VERSION?.trim() ||
-  resolveTaggedSourceVersion(`${import.meta.dirname}/../..`, pkg.version, [
-    "apps/server/package.json",
-    "apps/web/package.json",
-  ]);
 const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
@@ -301,7 +295,16 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
+  // The dev server runs beside a source server that reports the raw manifest version.
+  const configuredAppVersion =
+    process.env.APP_VERSION?.trim() ||
+    (command === "build"
+      ? resolveTaggedSourceVersion(`${import.meta.dirname}/../..`, pkg.version, [
+          "apps/server/package.json",
+          "apps/web/package.json",
+        ])
+      : pkg.version);
   return {
     run: {
       tasks: {
