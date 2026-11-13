@@ -3,7 +3,35 @@ import * as NodeChildProcess from "node:child_process";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type { serverSubcommand } from "../cli/serverSubcommand.ts";
-import type { TranscriptParsePosition, TranscriptParseResult } from "./usageTranscriptReader.ts";
+import { TRANSCRIPT_FORMAT_MAP } from "./usageTranscriptFormats.ts";
+import {
+  readTranscriptRecords,
+  type TranscriptParsePosition,
+  type TranscriptParseResult,
+} from "./usageTranscriptReader.ts";
+
+export const USAGE_TRANSCRIPT_WORKER_COMMAND = "__usage-transcript-worker";
+
+/**
+ * Runs in a `__usage-transcript-worker` child: parses one transcript per message with the
+ * same reader and formats the server uses, until the server disconnects.
+ */
+export function runUsageTranscriptWorker(): void {
+  const send = process.send?.bind(process);
+  if (send === undefined) throw new Error("The usage transcript worker needs an IPC channel.");
+  process.on("disconnect", () => process.exit(0));
+  process.on("message", (job: TranscriptParseJob) => {
+    const format = TRANSCRIPT_FORMAT_MAP.get(job.provider);
+    void (
+      format === undefined
+        ? Promise.resolve(null)
+        : readTranscriptRecords(job.path, format, job.resumeFrom)
+    )
+      .then((result) => send({ result } satisfies TranscriptWorkerMessage))
+      .catch(() => process.exit(1));
+  });
+  send({ ready: true } satisfies TranscriptWorkerMessage);
+}
 
 export type TranscriptWorkerMessage =
   | { readonly ready: true }
@@ -73,30 +101,44 @@ export function makeUsageTranscriptWorker(
       }
       if (initialized && reply !== undefined && "result" in message) {
         const result = message.result;
+        if (result === null) {
+          settle(null);
+          return;
+        }
         if (
-          result === null ||
-          (typeof result === "object" &&
-            result !== null &&
-            "records" in result &&
-            Array.isArray(result.records) &&
-            "tailRecords" in result &&
-            Array.isArray(result.tailRecords) &&
-            "malformedRecords" in result &&
-            typeof result.malformedRecords === "number" &&
-            "resumed" in result &&
-            typeof result.resumed === "boolean" &&
-            "position" in result &&
-            typeof result.position === "object" &&
-            result.position !== null &&
-            "resumeOffset" in result.position &&
-            typeof result.position.resumeOffset === "number" &&
-            "guardLength" in result.position &&
-            typeof result.position.guardLength === "number" &&
-            "guardHash" in result.position &&
-            typeof result.position.guardHash === "number" &&
-            "state" in result.position)
+          typeof result === "object" &&
+          result !== null &&
+          "records" in result &&
+          Array.isArray(result.records) &&
+          "tailRecords" in result &&
+          Array.isArray(result.tailRecords) &&
+          "malformedRecords" in result &&
+          typeof result.malformedRecords === "number" &&
+          "resumed" in result &&
+          typeof result.resumed === "boolean" &&
+          "position" in result &&
+          typeof result.position === "object" &&
+          result.position !== null &&
+          "resumeOffset" in result.position &&
+          typeof result.position.resumeOffset === "number" &&
+          "guardLength" in result.position &&
+          typeof result.position.guardLength === "number" &&
+          "guardHash" in result.position &&
+          typeof result.position.guardHash === "number" &&
+          "state" in result.position
         ) {
-          settle(result as TranscriptParseResult | null);
+          settle({
+            records: result.records,
+            tailRecords: result.tailRecords,
+            malformedRecords: result.malformedRecords,
+            resumed: result.resumed,
+            position: {
+              resumeOffset: result.position.resumeOffset,
+              guardLength: result.position.guardLength,
+              guardHash: result.position.guardHash,
+              state: result.position.state,
+            } satisfies TranscriptParsePosition,
+          } satisfies TranscriptParseResult);
           return;
         }
       }

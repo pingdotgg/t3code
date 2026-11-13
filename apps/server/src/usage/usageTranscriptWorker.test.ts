@@ -2,11 +2,14 @@ import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { serverSubcommand } from "../cli/serverSubcommand.ts";
-import { makeUsageTranscriptWorker } from "./usageTranscriptWorker.ts";
+import {
+  makeUsageTranscriptWorker,
+  USAGE_TRANSCRIPT_WORKER_COMMAND,
+} from "./usageTranscriptWorker.ts";
 
 it.live("settles a parse leased before the worker exited", () =>
   Effect.gen(function* () {
-    const command = yield* serverSubcommand("__usage-transcript-worker", 2048).pipe(
+    const command = yield* serverSubcommand(USAGE_TRANSCRIPT_WORKER_COMMAND, 2048).pipe(
       Effect.provideService(HostProcess.Environment, {
         ...process.env,
         NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(
@@ -42,7 +45,7 @@ it.live.each([
   Effect.gen(function* () {
     const script = `process.on("message", () => { ${action} });
       process.send({ ready: true }); await new Promise(() => {});`;
-    const command = yield* serverSubcommand("__usage-transcript-worker", 2048).pipe(
+    const command = yield* serverSubcommand(USAGE_TRANSCRIPT_WORKER_COMMAND, 2048).pipe(
       Effect.provideService(HostProcess.Environment, {
         ...process.env,
         NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(script)}`,
@@ -65,7 +68,7 @@ it.live.each([
 
 it.live("settles a job when the IPC send throws", () =>
   Effect.gen(function* () {
-    const command = yield* serverSubcommand("__usage-transcript-worker", 2048);
+    const command = yield* serverSubcommand(USAGE_TRANSCRIPT_WORKER_COMMAND, 2048);
     const worker = yield* Effect.acquireRelease(
       Effect.sync(() => makeUsageTranscriptWorker(command)),
       (worker) => Effect.promise(() => worker.stop()),

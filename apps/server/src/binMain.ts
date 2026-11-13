@@ -20,7 +20,7 @@ export async function runCliCommand() {
       process.exitCode = 2;
     }
   } else if (command === "__usage-transcript-worker") {
-    const { runUsageTranscriptWorker } = await import("./usage/usageTranscriptParser.ts");
+    const { runUsageTranscriptWorker } = await import("./usage/usageTranscriptWorker.ts");
     runUsageTranscriptWorker();
   } else if (command === "__managed-chatgpt-token") {
     const { runManagedChatGptTokenCli } = await import("./cli/managedChatGptToken.ts");

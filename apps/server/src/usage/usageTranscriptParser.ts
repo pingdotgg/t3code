@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off -- Parse workers are IPC child processes, which Effect's process API does not expose; their ready and idle deadlines live with the process callbacks.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off -- Owns worker-pool idle timers; IPC lifecycle lives in usageTranscriptWorker.
 import * as NodeOS from "node:os";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
@@ -11,14 +11,13 @@ import * as Semaphore from "effect/Semaphore";
 import { serverSubcommand } from "../cli/serverSubcommand.ts";
 import {
   makeUsageTranscriptWorker,
+  USAGE_TRANSCRIPT_WORKER_COMMAND,
   type TranscriptParseJob,
-  type TranscriptWorkerMessage,
   type UsageTranscriptWorker,
 } from "./usageTranscriptWorker.ts";
 import { TRANSCRIPT_FORMAT_MAP } from "./usageTranscriptFormats.ts";
 import { readTranscriptRecords, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const WORKER_COMMAND = "__usage-transcript-worker";
 // Below this a parse costs well under a millisecond in process: tiny appends never start a worker,
 // and files this small hold about 1% of a cold history's bytes.
 const INLINE_PARSE_BYTES = 256 * 1024;
@@ -49,32 +48,13 @@ interface Worker {
 }
 
 /**
- * Runs in a `__usage-transcript-worker` child: parses one transcript per message with the
- * same reader and formats the server uses, until the server disconnects.
- */
-export function runUsageTranscriptWorker(): void {
-  const send = process.send?.bind(process);
-  if (send === undefined) throw new Error("The usage transcript worker needs an IPC channel.");
-  process.on("disconnect", () => process.exit(0));
-  process.on("message", (job: TranscriptParseJob) => {
-    const format = TRANSCRIPT_FORMAT_MAP.get(job.provider);
-    void (
-      format === undefined
-        ? Promise.resolve(null)
-        : readTranscriptRecords(job.path, format, job.resumeFrom)
-    ).then((result) => send({ result } satisfies TranscriptWorkerMessage));
-  });
-  send({ ready: true } satisfies TranscriptWorkerMessage);
-}
-
-/**
  * `readTranscriptRecords` on a pool of child processes, so a cold history uses several cores.
  * The pool fits the host's cores and available memory. Small parses, hosts that fit fewer than
  * two workers and formats a worker cannot load stay in process, as do all reads after any worker
  * failure. Closing the scope stops every worker, and reads still running end interrupted.
  */
 export const makeTranscriptParser = Effect.gen(function* () {
-  const command = yield* serverSubcommand(WORKER_COMMAND, WORKER_HEAP_MB);
+  const command = yield* serverSubcommand(USAGE_TRANSCRIPT_WORKER_COMMAND, WORKER_HEAP_MB);
   // One core stays with the server. One worker parses a file at a time without the read overlap
   // in-process reads get, so a pool smaller than two cannot beat reading in process.
   const capacity = yield* TranscriptParserCapacity;

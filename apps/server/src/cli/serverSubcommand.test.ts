@@ -18,7 +18,7 @@ it.effect.each([false, true])(
       if (isExecutable) assert.deepStrictEqual(command.args, ["__document-text"]);
       else {
         assert.lengthOf(command.args, 2);
-        assert.match(command.args[0]!, /\/apps\/server\/src\/bin\.ts$/);
+        assert.match(command.args[0]!.replaceAll("\\", "/"), /\/apps\/server\/src\/bin\.ts$/);
       }
       assert.deepStrictEqual(command.env, {
         ...environment,

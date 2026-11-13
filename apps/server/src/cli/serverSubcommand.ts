@@ -11,6 +11,7 @@ export const serverSubcommand = Effect.fn("serverSubcommand")(function* (
   const executable = yield* HostProcess.ExecutablePath;
   const isExecutable = yield* HostProcess.IsExecutable;
   const environment = yield* HostProcess.Environment;
+  // Bundling places this module in bin.mjs; source execution resolves from src/cli.
   const entry = NodeURL.fileURLToPath(
     new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
   );

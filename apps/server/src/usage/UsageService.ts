@@ -1126,8 +1126,8 @@ export const make = Effect.gen(function* () {
         const created = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
         inflightScans.set(key, created);
         // The service owns shared scans, so caller departure cannot cancel one; finished scans warm
-        // the cache. Register writes before releasing waiters, but start writing after delivering
-        // their summary. Closing the service interrupts its scans, and their waiters with them.
+        // the cache. Register writes before releasing waiters.
+        // Closing the service interrupts its scans, and their waiters with them.
         const scan = yield* readWindow(input, settings, provisional).pipe(
           Effect.tap(() => schedulePersist),
           Effect.forkIn(serviceScope),

@@ -1,5 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - workers parse real files, and preloads report their pids through one.
-import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics nodeBuiltinImport:off -- Real workers report job receipt over loopback sockets.
+import * as NodeNet from "node:net";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -117,8 +117,9 @@ describe("makeTranscriptParser", () => {
     }
   });
 
-  it.live("parses large transcripts in workers with the in-process result", () =>
-    withTempDir((dir) =>
+  it.live("parses large transcripts in workers with the in-process result", () => {
+    const warnings: unknown[] = [];
+    return withTempDir((dir) =>
       Effect.gen(function* () {
         const log = NodePath.join(dir, "pids");
         const codex = NodePath.join(dir, "codex.jsonl");
@@ -188,9 +189,10 @@ describe("makeTranscriptParser", () => {
         const pids = yield* Effect.promise(() => loggedPids(log));
         assert.isAtLeast(pids.length, 1);
         assert.isAtMost(pids.length, 2);
+        assert.deepStrictEqual(warnings, []);
       }),
-    ),
-  );
+    ).pipe(Effect.provide(captureWarnings(warnings)));
+  });
 
   it.live.each([
     { cores: 2, availableMemory: 4 * 1024 ** 3 },
@@ -231,7 +233,7 @@ describe("makeTranscriptParser", () => {
       isExecutable: true,
     },
     {
-      name: "a worker that exits immediately after ready",
+      name: "a worker that exits after ready",
       environment: preload(
         `process.send({ ready: true }, () => process.exit(9)); await new Promise(() => {});`,
       ),
@@ -242,6 +244,22 @@ describe("makeTranscriptParser", () => {
       environment: preload(`process.on("message", () => process.exit(9));`),
       isExecutable: false,
     },
+    {
+      name: "a worker whose result send throws",
+      environment: preload(`
+        const send = process.send.bind(process);
+        process.send = (message, ...rest) => {
+          if ("result" in message) throw new Error("Cannot send result");
+          return send(message, ...rest);
+        };
+        process.on("unhandledRejection", async () => {
+          const { writeFileSync } = await import("node:fs");
+          writeFileSync(process.env.USAGE_TEST_UNHANDLED, "unhandled rejection");
+          send({ ready: true });
+        });
+      `),
+      isExecutable: false,
+    },
   ])("reads in process after $name", ({ environment, isExecutable }) => {
     const warnings: unknown[] = [];
     return withTempDir((dir) =>
@@ -250,8 +268,12 @@ describe("makeTranscriptParser", () => {
         for (const path of paths) {
           yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
         }
+        const unhandled = NodePath.join(dir, "unhandled");
         const parser = yield* makeWorkerParser.pipe(
-          Effect.provideService(HostProcess.Environment, environment),
+          Effect.provideService(HostProcess.Environment, {
+            ...environment,
+            USAGE_TEST_UNHANDLED: unhandled,
+          }),
           Effect.provideService(HostProcess.IsExecutable, isExecutable),
         );
         for (const path of paths) {
@@ -271,6 +293,14 @@ describe("makeTranscriptParser", () => {
         }
         // The pool emits only one warning across both reads.
         assert.strictEqual(warnings.length, 1);
+        assert.isFalse(
+          yield* Effect.promise(() =>
+            NodeFSP.access(unhandled).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        );
       }),
     ).pipe(Effect.provide(captureWarnings(warnings)));
   });
@@ -284,12 +314,45 @@ describe("makeTranscriptParser", () => {
           const path = NodePath.join(dir, "codex.jsonl");
           yield* Effect.promise(() => NodeFSP.writeFile(path, codexLines(0, 140)));
           const { size } = yield* Effect.promise(() => NodeFSP.stat(path));
-          const received = NodePath.join(dir, "received");
-          NodeChildProcess.execFileSync("mkfifo", [received]);
+          const receipt = yield* Effect.acquireRelease(
+            Effect.promise(async () => {
+              const received = Promise.withResolvers<string>();
+              let connection: NodeNet.Socket | undefined;
+              const server = NodeNet.createServer((socket) => {
+                connection = socket;
+                let pid = "";
+                socket.setEncoding("utf8");
+                socket.on("data", (chunk) => {
+                  pid += chunk;
+                });
+                socket.once("end", () => received.resolve(pid));
+                socket.on("error", received.reject);
+              });
+              await new Promise<void>((resolve, reject) => {
+                server.once("error", reject);
+                server.listen(0, "127.0.0.1", resolve);
+              });
+              const address = server.address();
+              assert.isNotNull(address);
+              assert.isNotString(address);
+              return {
+                port: (address as NodeNet.AddressInfo).port,
+                received: received.promise,
+                close: () =>
+                  new Promise<void>((resolve) => {
+                    connection?.destroy();
+                    server.close(() => resolve());
+                  }),
+              };
+            }),
+            (receipt) => Effect.promise(receipt.close),
+          );
           // Workers acknowledge receipt but never reply, keeping the read in flight.
           const silent = `${recordPid(log)}
-            import { writeFileSync } from "node:fs";
-            process.once("message", () => writeFileSync(${JSON.stringify(received)}, String(process.pid)));
+            import { connect } from "node:net";
+            process.once("message", () => {
+              const socket = connect(${receipt.port}, "127.0.0.1", () => socket.end(String(process.pid)));
+            });
             const send = process.send.bind(process);
             process.send = (message, ...rest) => ("ready" in message ? send(message, ...rest) : true);`;
           const scope = yield* Scope.make();
@@ -305,7 +368,7 @@ describe("makeTranscriptParser", () => {
             resumeFrom: undefined,
           });
           const reading = yield* read.pipe(Effect.forkChild);
-          const receivedPid = yield* Effect.promise(() => NodeFSP.readFile(received, "utf8"));
+          const receivedPid = yield* Effect.promise(() => receipt.received);
           assert.isAbove(Number(receivedPid), 0);
           if (ending === "closing the scope") {
             yield* Scope.close(scope, Exit.void);
