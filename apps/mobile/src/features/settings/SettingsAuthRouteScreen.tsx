@@ -21,8 +21,6 @@ const USER_PROFILE_CUSTOM_PAGES = [
   },
 ] satisfies UserProfileCustomPage[];
 
-const CLIENT_REFRESH_TIMEOUT_MS = 8_000;
-
 // Without cloud config the app has no entry point here and appLinking drops the deep link.
 export function SettingsAuthRouteScreen() {
   return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
@@ -42,17 +40,11 @@ function ConfiguredSettingsAuthRouteScreen() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes Clerk's JS client from the native device token once, so a session native Clerk already holds is adopted instead of AuthView failing with session_exists
   useEffect(() => {
     if (!isLoaded || hasBeenSignedIn || !isRefreshingClient) return;
-    // A stalled reload must not leave the sheet blank; past this, the form beats waiting.
-    const timeout = setTimeout(() => setIsRefreshingClient(false), CLIENT_REFRESH_TIMEOUT_MS);
     adoptNativeClerkSession()
       .catch((error: unknown) => {
         console.warn("[clerk] could not refresh the client from the native session", error);
       })
-      .finally(() => {
-        clearTimeout(timeout);
-        setIsRefreshingClient(false);
-      });
-    return () => clearTimeout(timeout);
+      .finally(() => setIsRefreshingClient(false));
   }, [isLoaded, hasBeenSignedIn, isRefreshingClient]);
 
   // Clerk reports sign-out only through its auth store (the native profile view

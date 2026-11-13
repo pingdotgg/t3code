@@ -117,12 +117,16 @@ it("a reopened screen waits for the refresh a dismissed screen left in flight", 
   expect(reopened.container.textContent).toContain("sign-in form");
 });
 
-it("offers the sign-in form when the client refresh stalls", async () => {
+it("offers the sign-in form when the client refresh stalls, and ignores its late result", async () => {
   vi.useFakeTimers();
   using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
-  using screen = setup(new Promise<FakeClient>(() => {}));
+  const { promise, resolve } = Promise.withResolvers<FakeClient>();
+  using screen = setup(promise);
   expect(screen.container.textContent).not.toContain("sign-in form");
 
   await act(async () => vi.advanceTimersByTime(8_000));
   expect(screen.container.textContent).toContain("sign-in form");
+
+  await act(async () => resolve(client([{ id: "sess_late", status: "active" }])));
+  expect(harness.clerk.setActive).not.toHaveBeenCalled();
 });
