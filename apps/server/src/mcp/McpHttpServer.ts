@@ -1008,6 +1008,7 @@ const withToolAnalytics =
         : threads.value
             .getThreadRecords(ThreadId.make(threadId), ["runs", "messages"], {
               runIds: [runId],
+              messageRunIds: [runId],
               messageRoles: ["user"],
             })
             .pipe(
