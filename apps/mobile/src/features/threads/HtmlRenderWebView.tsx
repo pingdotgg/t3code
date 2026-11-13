@@ -26,6 +26,7 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
+  BALLOT_TAP_WINDOW_MS,
   createBallotToken,
   createBallotTapGate,
   ballotScript,
@@ -68,7 +69,7 @@ const FIELD_FOCUS_MESSAGE_TYPE = "t3-html-render-field-focus";
 // frame can fit it: a page that scrolls inside the thread hides its end and fights the thread's
 // scrolling. A focused text field reports where it is, so the thread can lift it above the
 // keyboard: the page can't, since the keyboard doesn't resize it.
-const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);window.addEventListener("load",report);document.addEventListener("focusin",function(e){var t=e.target;if(!t||!(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type)))return;var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom});},true);})();true;`;
+const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h+","+window.innerWidth;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);window.addEventListener("load",report);document.addEventListener("focusin",function(e){var t=e.target;if(!t||!(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type)))return;var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom});},true);document.addEventListener("focusout",function(){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});},true);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
@@ -106,14 +107,19 @@ function readOverflowMessage(data: string): OverflowReport | null {
 
 function readFieldFocusMessage(
   data: string,
-): { readonly top: number; readonly bottom: number } | null {
+): { readonly top: number; readonly bottom: number } | "blur" | null {
   try {
     const message: unknown = JSON.parse(data);
-    return typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === FIELD_FOCUS_MESSAGE_TYPE &&
-      "top" in message &&
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      !("type" in message) ||
+      message.type !== FIELD_FOCUS_MESSAGE_TYPE
+    ) {
+      return null;
+    }
+    if ("blur" in message && message.blur === true) return "blur";
+    return "top" in message &&
       typeof message.top === "number" &&
       Number.isFinite(message.top) &&
       "bottom" in message &&
@@ -134,7 +140,7 @@ export type HtmlRenderFieldMeasure = () => Promise<{
 
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
-// Live page heights by attachment and frame width. The feed sizes rows before they mount, and a
+// Live frame heights (the page's height, fitted) by attachment and frame width. The feed sizes rows before they mount, and a
 // row that mounts again (scrolled back into view) must not shrink to the server's guess and regrow.
 // The feed gives these rows fixed sizes, which it never re-measures, so it re-renders on a change.
 const liveHeights = new Map<string, number>();
@@ -169,8 +175,10 @@ export function HtmlRenderWebView(props: {
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
-  readonly onContentHeight?: (height: number) => void;
-  readonly onFieldFocus?: (measure: HtmlRenderFieldMeasure) => void;
+  /** `afterTap` is true when the reader touched the page just before it resized. */
+  readonly onContentHeight?: (height: number, afterTap: boolean) => void;
+  /** A focused text field's position, or null when it loses focus. */
+  readonly onFieldFocus?: (measure: HtmlRenderFieldMeasure | null) => void;
   /** Custom build: picks a ballot's `t3Compose(text)` hands to the message box after a tap. */
   readonly onBallotPicks?: (text: string) => void;
 }) {
@@ -195,6 +203,7 @@ export function HtmlRenderWebView(props: {
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
   const frame = useRef<ViewInstance>(null);
+  const lastTouchAt = useRef<number | null>(null);
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = { uri: props.uri + htmlRenderThemeFragment(initialTheme) };
@@ -223,9 +232,10 @@ export function HtmlRenderWebView(props: {
       // the message box just after a tap (a touch that barely moved), not on load, on its own
       // timer or during a scroll.
       onTouchStart={isBallot ? (event) => tapGate.touchStart(touchPoint(event)) : undefined}
-      onTouchEnd={
-        isBallot ? (event) => handOverPicks(tapGate.touchEnd(touchPoint(event))) : undefined
-      }
+      onTouchEnd={(event) => {
+        lastTouchAt.current = Date.now();
+        if (isBallot) handOverPicks(tapGate.touchEnd(touchPoint(event)));
+      }}
       onTouchCancel={isBallot ? () => tapGate.touchCancel() : undefined}
       style={
         props.nested
@@ -282,10 +292,20 @@ export function HtmlRenderWebView(props: {
                       ? current
                       : { x: next.x, y: next.y },
                   );
-                  if (next.height !== undefined) props.onContentHeight?.(next.height);
+                  if (next.height !== undefined) {
+                    const touchedAt = lastTouchAt.current;
+                    props.onContentHeight?.(
+                      next.height,
+                      touchedAt !== null && Date.now() - touchedAt <= BALLOT_TAP_WINDOW_MS,
+                    );
+                  }
                   return;
                 }
                 const field = props.nested ? readFieldFocusMessage(event.nativeEvent.data) : null;
+                if (field === "blur") {
+                  props.onFieldFocus?.(null);
+                  return;
+                }
                 if (field !== null) {
                   props.onFieldFocus?.(
                     () =>
@@ -320,20 +340,21 @@ export function ThreadHtmlRender(props: {
   readonly render: HtmlRenderReference;
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
-  /** Called with the old frame height just before a live page height resizes the frame. */
-  readonly onResize?: (previousHeight: number) => void;
-  readonly onFieldFocus?: (measure: HtmlRenderFieldMeasure) => void;
+  /** Called with the old row height just before the reader's tap resizes the frame. */
+  readonly onResize?: (previousRowHeight: number) => void;
+  readonly onFieldFocus?: (measure: HtmlRenderFieldMeasure | null) => void;
 }) {
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
   const liveHeight = useSyncExternalStore(subscribeHtmlRenderLiveHeights, () =>
     htmlRenderLiveHeight(attachmentId, props.frameWidth),
   );
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth, liveHeight);
-  const handleContentHeight = (next: number) => {
-    if (htmlRenderFrameHeight(props.render, props.frameWidth, next) !== height) {
-      props.onResize?.(htmlRenderRowHeight(height));
-    }
+  const height = liveHeight ?? htmlRenderFrameHeight(props.render, props.frameWidth);
+  const handleContentHeight = (contentHeight: number, afterTap: boolean) => {
+    // Storing the fitted height drops changes the frame can't show (past the cap or under the floor).
+    const next = htmlRenderFrameHeight(props.render, props.frameWidth, contentHeight);
+    if (next === height) return;
+    if (afterTap) props.onResize?.(htmlRenderRowHeight(height));
     setHtmlRenderLiveHeight(attachmentId, props.frameWidth, next);
   };
   const fileName = htmlRenderFileName(title);

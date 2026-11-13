@@ -1649,8 +1649,8 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onHtmlRenderResize: (rowKey: string, previousHeight: number) => void;
-    readonly onHtmlRenderFieldFocus: (measure: HtmlRenderFieldMeasure) => void;
+    readonly onHtmlRenderResize: (rowKey: string, previousRowHeight: number) => void;
+    readonly onHtmlRenderFieldFocus: (measure: HtmlRenderFieldMeasure | null) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -1737,7 +1737,7 @@ function renderFeedEntry(
         render={entry.render}
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
-        onResize={(previousHeight) => props.onHtmlRenderResize(entry.id, previousHeight)}
+        onResize={(previousRowHeight) => props.onHtmlRenderResize(entry.id, previousRowHeight)}
         onFieldFocus={props.onHtmlRenderFieldFocus}
       />
     );
@@ -3432,27 +3432,36 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   };
 
   // A page taller than the screen is never the list's anchor (it anchors the first row fully on
-  // screen), so a ballot growing under the reader's finger would slide up. Hold the page's own row
-  // while it is on screen; off screen, the default anchor already keeps the view still.
-  const onHtmlRenderResize = (rowKey: string, previousHeight: number) => {
+  // screen), so a ballot growing under the reader's tap would slide up, or follow the end at the
+  // bottom of the thread. Hold the page's own row while it is on screen, as a disclosure does.
+  const onHtmlRenderResize = (rowKey: string, previousRowHeight: number) => {
     const list = listRef.current;
-    if (!list || list.getState().isFollowingEnd) return;
+    if (!list) return;
+    const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
+    if (working && list.getState().isFollowingEnd) return;
     const anchor = list.anchorVisibleContent({ key: rowKey, hold: false });
     if (anchor === undefined) return;
-    const viewport = list.getState().scrollLength;
-    if (anchor.offset < previousHeight && anchor.offset > -viewport) {
+    if (anchor.offset < previousRowHeight && anchor.offset > -list.getState().scrollLength) {
+      list.cancelScroll();
       list.anchorVisibleContent({ key: rowKey });
     }
   };
 
   // The keyboard covers the feed without resizing pages, so a note field in a ballot would sit
   // under it. Once the keyboard is up, scroll just enough to show the field above the composer.
-  const onHtmlRenderFieldFocus = (measure: HtmlRenderFieldMeasure) => {
+  const fieldReveal = useRef<{ cancel: () => void } | null>(null);
+  const onHtmlRenderFieldFocus = (measure: HtmlRenderFieldMeasure | null) => {
+    // Only the latest focused field counts; an earlier one may be off screen by now.
+    fieldReveal.current?.cancel();
+    fieldReveal.current = null;
+    if (measure === null) return;
+    let cancelled = false;
     const reveal = async () => {
       const keyboardHeight = KeyboardController.state().height;
       const list = listRef.current;
-      if (!list || keyboardHeight <= 0) return;
+      if (cancelled || !list || keyboardHeight <= 0) return;
       const field = await measure();
+      if (cancelled) return;
       const visibleBottom =
         windowHeight - keyboardHeight - contentInsetEndAdjustment.get() - HTML_RENDER_FIELD_GAP;
       if (field.bottom <= visibleBottom) return;
@@ -3462,6 +3471,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       });
     };
     if (KeyboardController.isVisible()) {
+      fieldReveal.current = { cancel: () => (cancelled = true) };
       void reveal();
       return;
     }
@@ -3469,7 +3479,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       shown.remove();
       void reveal();
     });
-    setTimeout(() => shown.remove(), HTML_RENDER_FIELD_KEYBOARD_WAIT_MS);
+    const expire = setTimeout(() => shown.remove(), HTML_RENDER_FIELD_KEYBOARD_WAIT_MS);
+    fieldReveal.current = {
+      cancel: () => {
+        cancelled = true;
+        shown.remove();
+        clearTimeout(expire);
+      },
+    };
   };
 
   const preserveDisclosurePosition = (anchorKey: string | null) => {
@@ -3589,11 +3606,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(
-        htmlRenderFrameHeight(
-          entry.render,
-          contentWidth,
-          htmlRenderLiveHeight(entry.render.attachmentId, contentWidth),
-        ),
+        htmlRenderLiveHeight(entry.render.attachmentId, contentWidth) ??
+          htmlRenderFrameHeight(entry.render, contentWidth),
       );
     }
     if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
