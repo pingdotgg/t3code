@@ -1422,19 +1422,36 @@ describe("CodexAdapterV2 session initialize", () => {
     ),
   );
 
-  // regression: #24300 a stopped shared app-server left turn/start pending forever
-  it.effect("fails turn/start that the shared app-server never answers", () =>
+  const turnPreamble = codexReplayPreamble({
+    nativeThreadId: "turn-start-unanswered",
+    nativeTurnId: "turn-unanswered",
+    prompt: "Hello",
+  });
+  // regression: #24300 a stopped shared app-server left a loaded thread's next turn pending forever
+  it.effect.each([
+    {
+      method: "config/read",
+      entries: [
+        ...turnPreamble.slice(0, 5),
+        {
+          type: "expect_outbound",
+          label: "config/read",
+          frame: {
+            id: 3,
+            method: "config/read",
+            params: { cwd: "/workspace", includeLayers: false },
+          },
+        } satisfies CodexReplay.CodexAppServerReplayEntry,
+      ],
+    },
+    { method: "turn/start", entries: turnPreamble.slice(0, 6) },
+  ])("fails a turn whose $method the shared app-server never answers", ({ entries }) =>
     Effect.gen(function* () {
       const written = yield* Deferred.make<void>();
-      const preamble = codexReplayPreamble({
-        nativeThreadId: "turn-start-unanswered",
-        nativeTurnId: "turn-unanswered",
-        prompt: "Hello",
-      });
       const session = yield* openReplaySession(
         makeCodexReplayTranscript({
           scenario: "turn-start-unanswered",
-          entries: [...preamble.slice(0, 6), requestWritten],
+          entries: [...entries, requestWritten],
         }),
         awaitRequestWritten(written),
       );
@@ -1462,10 +1479,10 @@ describe("CodexAdapterV2 session initialize", () => {
 
       assert.isTrue(
         Option.isSome(settled),
-        `startTurn was still waiting on turn/start after ${UNANSWERED_REQUEST_BUDGET}`,
+        `startTurn was still waiting after ${UNANSWERED_REQUEST_BUDGET}`,
       );
       if (Option.isSome(settled)) {
-        assert.isTrue(failedOnDeadline(settled.value), "turn/start did not fail on the deadline");
+        assert.isTrue(failedOnDeadline(settled.value), "startTurn did not fail on the deadline");
       }
     }).pipe(
       Effect.scoped,

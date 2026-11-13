@@ -519,7 +519,7 @@ function codexMcpToolOutput(
 
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
-// Session setup and turn/start answer promptly; silence this long means a wedged app-server.
+// Session setup and turn start requests answer promptly; silence this long means a wedged app-server.
 const CODEX_APP_SERVER_REQUEST_DEADLINE = "2 minutes";
 
 class CodexAppServerUnresponsiveError extends Schema.TaggedError<CodexAppServerUnresponsiveError>()(
@@ -7358,6 +7358,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.catch(() =>
                   Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
                 ),
+                withAppServerDeadline("config/read"),
               );
             const turnStartParams = yield* buildCodexTurnStartParams({
               cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
