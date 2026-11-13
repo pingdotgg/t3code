@@ -35,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -1183,9 +1184,21 @@ export const make = Effect.gen(function* () {
           .recordConnectRequestClient(pairingLinkId, client)
           .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
 
+  // Finding a device's open request and creating one must not interleave, or two mints at
+  // once would leave two requests with the same code.
+  const connectIssueLock = yield* Semaphore.make(1);
   const issueConnectCredential: EnvironmentAuth["Service"]["issueConnectCredential"] = Effect.fn(
     "EnvironmentAuth.issueConnectCredential",
   )(function* ({ proofKeyThumbprint, requireApproval }) {
+    return yield* issueConnectCredentialLocked({ proofKeyThumbprint, requireApproval }).pipe(
+      connectIssueLock.withPermits(1),
+    );
+  });
+  // Untraced: the issueConnectCredential span above already covers it.
+  const issueConnectCredentialLocked = Effect.fnUntraced(function* ({
+    proofKeyThumbprint,
+    requireApproval,
+  }: Parameters<EnvironmentAuth["Service"]["issueConnectCredential"]>[0]) {
     const mustWait =
       requireApproval &&
       !(yield* bootstrapCredentials

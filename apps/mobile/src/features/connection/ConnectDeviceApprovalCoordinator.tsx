@@ -37,16 +37,24 @@ export function ConnectDeviceApprovalCoordinator() {
   );
 }
 
+/** "gone": the request expired or was answered elsewhere before this answer arrived. */
+type ApprovalAnswer = "done" | "failed" | "gone";
+
 interface QueuedApprovalPrompt extends ConnectDeviceApprovalPrompt {
-  readonly approve: () => Promise<boolean>;
-  readonly deny: () => Promise<boolean>;
+  readonly approve: () => Promise<ApprovalAnswer>;
+  readonly deny: () => Promise<ApprovalAnswer>;
 }
 
 // One queue for every host: a second Android alert would replace an unanswered first one.
 const approvalPrompts = createApprovalPromptQueue<QueuedApprovalPrompt>((prompt, answer) => {
-  const respond = (action: () => Promise<boolean>, failure: string) => () =>
-    void action().then((ok) => {
-      if (ok) return answer("done");
+  const respond = (action: () => Promise<ApprovalAnswer>, failure: string) => () =>
+    void action().then((outcome) => {
+      if (outcome === "done") return answer("done");
+      if (outcome === "gone") {
+        return Dialog.alert("Request no longer waiting", "It expired or was answered elsewhere.", [
+          { text: "OK", onPress: () => answer("done") },
+        ]);
+      }
       Dialog.alert(failure, "The request is still waiting. Try again.", [
         { text: "OK", onPress: () => answer("retry") },
       ]);
@@ -87,10 +95,13 @@ function EnvironmentApprovalWatcher(props: {
           approve({
             environmentId: props.environmentId,
             input: { pairingLinkId: prompt.pairingLinkId },
-          }).then((result) => result._tag === "Success"),
+          }).then((result) =>
+            result._tag !== "Success" ? "failed" : result.value.approved ? "done" : "gone",
+          ),
         deny: () =>
           deny({ environmentId: props.environmentId, input: { id: prompt.pairingLinkId } }).then(
-            (result) => result._tag === "Success",
+            (result) =>
+              result._tag !== "Success" ? "failed" : result.value.revoked ? "done" : "gone",
           ),
       })),
     );

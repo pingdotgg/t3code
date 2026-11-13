@@ -5,6 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AuthAccessWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { useEffect, useRef, useState } from "react";
 
 import { authEnvironment } from "../state/auth";
@@ -82,20 +83,28 @@ function ConnectDeviceRequestToasts({
   const requests =
     access.data?.type === "snapshot"
       ? access.data.payload.pairingLinks.flatMap((link) =>
-          link.connectDeviceRequest ? [{ id: link.id, request: link.connectDeviceRequest }] : [],
+          link.connectDeviceRequest
+            ? [{ id: link.id, request: link.connectDeviceRequest, expiresAt: link.expiresAt }]
+            : [],
         )
       : null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens, updates and closes imperative toastManager toasts to match the pending requests
   useEffect(() => {
     if (requests === null) return;
-    const pendingIds = new Set(requests.map(({ id }) => id));
+    // The server publishes no event when a request expires, so the toast ends itself then.
+    const now = Date.now();
+    const live = requests.flatMap((entry) => {
+      const remainingMs = DateTime.toEpochMillis(entry.expiresAt) - now;
+      return remainingMs > 0 ? [{ ...entry, remainingMs }] : [];
+    });
+    const pendingIds = new Set(live.map(({ id }) => id));
     for (const [id, tracked] of toasts.current) {
       if (pendingIds.has(id)) continue;
       toastManager.close(tracked.toastId);
       toasts.current.delete(id);
     }
-    for (const { id, request } of requests) {
+    for (const { id, request, remainingMs } of live) {
       const device = describeConnectDeviceClient(request);
       const renderedKey = `${request.verificationCode}:${device}`;
       const tracked = toasts.current.get(id);
@@ -108,7 +117,7 @@ function ConnectDeviceRequestToasts({
         type: "info",
         title: `A device wants to connect to ${environmentLabel}`,
         description: `${device}. Approve only if it shows code ${request.verificationCode}.`,
-        timeout: 0,
+        timeout: remainingMs,
         actionProps: {
           children: "Approve",
           onClick: () => {

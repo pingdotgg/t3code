@@ -750,7 +750,7 @@ function ConfiguredCloudLinkRow({
           }
         />
       ) : null}
-      {managedTunnelActive && !signedOut && connectDeviceApproval ? (
+      {managedTunnelActive && connectDeviceApproval ? (
         <SettingsRow
           title={searchableSetting("connect-device-approval").title}
           description="Devices that sign in to your T3 Connect account wait until someone already connected here approves them."

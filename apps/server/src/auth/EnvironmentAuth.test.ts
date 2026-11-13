@@ -319,10 +319,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               { proofKeyThumbprint: deviceKey },
             );
 
-          const requested = yield* serverAuth.issueConnectCredential({
+          // Relay mints can arrive together; they must share one request and one code.
+          const mint = serverAuth.issueConnectCredential({
             proofKeyThumbprint: deviceKey,
             requireApproval: true,
           });
+          const [requested, concurrent] = yield* Effect.all([mint, mint], {
+            concurrency: "unbounded",
+          });
+          expect(concurrent.credential).toBe(requested.credential);
           expect((yield* exchange(requested.credential).pipe(Effect.flip))._tag).toBe(
             "ServerAuthConnectApprovalPendingError",
           );
