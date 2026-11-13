@@ -301,6 +301,11 @@ it.live("applies the work to the same commit there, deletions included", () =>
     // The same work again changes nothing and is not a conflict.
     NodeFS.rmSync(stagingDir, { recursive: true });
     expect(yield* applyWorkFiles(input)).toEqual({ files: 2, deletions: 0 });
+    // A path both written and deleted would lose its backup, so it is refused untouched.
+    NodeFS.rmSync(stagingDir, { recursive: true });
+    const twice = yield* applyWorkFiles({ ...input, deletions: ["a.ts"] }).pipe(Effect.flip);
+    expect(twice.reason).toBe("invalid_archive");
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.ts"), "utf8")).toBe("changed");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -583,6 +588,27 @@ it.live("refuses a global pax header, which GNU tar applies to every entry after
       NodeZlib.gzipSync(
         Buffer.concat([
           tarEntry("pax_global_header", "g", Buffer.from("18 size=157286400\n")),
+          tarEntry("empty.txt", "0", Buffer.alloc(0)),
+          Buffer.alloc(1024),
+        ]),
+      ),
+    );
+    const refused = yield* listArchive(archive).pipe(Effect.flip);
+    expect(refused.reason).toBe("invalid_archive");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses an archive of header records that would take unbounded work to read", () =>
+  Effect.gen(function* () {
+    const dir = yield* tempDir;
+    const archive = NodePath.join(dir, "names.tgz");
+    // 65 long-name records of 1 MiB each gzip to under 100 KiB and name no file.
+    const longName = tarEntry("././@LongLink", "L", Buffer.alloc(1024 * 1024));
+    NodeFS.writeFileSync(
+      archive,
+      NodeZlib.gzipSync(
+        Buffer.concat([
+          ...Array.from({ length: 65 }, () => longName),
           tarEntry("empty.txt", "0", Buffer.alloc(0)),
           Buffer.alloc(1024),
         ]),

@@ -308,6 +308,8 @@ const TAR_BLOCK = 512;
 /** Pax and GNU long-name records hold a few names; a bigger one is not an archive a T3 server wrote. */
 const TAR_MAX_METADATA_BYTES = 1024 * 1024;
 const TAR_MAX_ENTRIES = WORK_FILES_MAX_COUNT * 4;
+/** All pax and long-name records together, headers included; far above what real names need. */
+const TAR_MAX_METADATA_TOTAL_BYTES = 64 * 1024 * 1024;
 
 const nulTerminated = (bytes: Buffer) => {
   const end = bytes.indexOf(0);
@@ -378,6 +380,7 @@ const readArchiveEntries = async (archivePath: string) => {
   let longName: string | null = null;
   let fileCount = 0;
   let expandedBytes = 0;
+  let metadataBytes = 0;
   let ended = false;
   try {
     for await (const chunk of gunzip as AsyncIterable<Buffer>) {
@@ -434,6 +437,10 @@ const readArchiveEntries = async (archivePath: string) => {
         // Metadata for the entry after it: pax records and GNU long names.
         if (flag === "x" || flag === "L" || flag === "K") {
           if (size > TAR_MAX_METADATA_BYTES) throw invalid("The archive has an oversized header.");
+          metadataBytes += TAR_BLOCK + size;
+          if (metadataBytes > TAR_MAX_METADATA_TOTAL_BYTES) {
+            throw invalid("The archive has too many header records.");
+          }
           collecting = { type: flag, size };
           continue;
         }
@@ -562,11 +569,19 @@ const targetConflict = Effect.fn("WorkFiles.targetConflict")(function* (
   if (!stat.isFile()) return "it is a link or a folder there";
   // An identical file is no change, so sending the same work again is a no-op.
   if (incoming !== null) {
-    const [here, there] = yield* Effect.all([
-      fileSystemCall("read a file there", () => NodeFSP.readFile(NodePath.join(root, ...segments))),
-      fileSystemCall("read an extracted file", () => NodeFSP.readFile(incoming)),
-    ]);
-    if (here.equals(there)) return null;
+    // Sizes first, so a large file there is read only when it could be identical.
+    const incomingSize = yield* fileSystemCall("read an extracted file", () =>
+      NodeFSP.lstat(incoming).then((file) => file.size),
+    );
+    if (incomingSize === stat.size) {
+      const [here, there] = yield* Effect.all([
+        fileSystemCall("read a file there", () =>
+          NodeFSP.readFile(NodePath.join(root, ...segments)),
+        ),
+        fileSystemCall("read an extracted file", () => NodeFSP.readFile(incoming)),
+      ]);
+      if (here.equals(there)) return null;
+    }
     // Copying onto it would change its other names too.
     if (stat.nlink > 1) return "it is a hard link to another file there";
   }
@@ -722,6 +737,13 @@ export const applyWorkFiles = Effect.fn("WorkFiles.apply")(function* (input: App
     if (!isSafeRelativePath(path)) {
       return yield* invalid(`A deletion names an unsafe path: "${path}".`);
     }
+  }
+  // A second write or delete of one path would back up the first one's result, not the original.
+  const seen = new Set<string>();
+  for (const path of [...files.map((file) => file.path), ...input.deletions]) {
+    const key = path.normalize("NFC");
+    if (seen.has(key)) return yield* invalid(`The work files name ${path} more than once.`);
+    seen.add(key);
   }
   const lock = yield* checkoutLock(input.root);
   // A half-applied copy cannot be left behind: once the lock is held, the apply
