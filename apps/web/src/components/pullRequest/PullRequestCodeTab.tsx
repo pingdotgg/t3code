@@ -395,7 +395,8 @@ function PullRequestCodeTab({
   const effectiveFoldOverride =
     foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
   const diffLayout = settings.diffLayout;
-  const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
@@ -825,7 +826,10 @@ function PullRequestCodeTab({
       extendRange ? lastViewedFileKey : null,
     );
     setLastViewedFileKey(fileKey);
-    for (const file of range) setViewed(file.path, viewed);
+    for (const file of range) {
+      // A commit's diff names that commit's version of the file, not the head's.
+      setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
+    }
     setFoldChoices((current) =>
       range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
     );
@@ -1312,7 +1316,7 @@ function PullRequestCodeTab({
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={wordWrap}
-              onCheckedChange={(checked) => setWordWrap(checked)}
+              onCheckedChange={(checked) => setWordWrapOverride(checked)}
             >
               Wrap lines
             </DropdownMenuCheckboxItem>
@@ -1383,7 +1387,7 @@ function PullRequestCodeTab({
                   size="sm"
                   pressed={wordWrap}
                   onPressedChange={(pressed) => {
-                    setWordWrap(Boolean(pressed));
+                    setWordWrapOverride(Boolean(pressed));
                   }}
                 />
               }
