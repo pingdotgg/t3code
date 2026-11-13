@@ -29,6 +29,7 @@ import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
 import { markdownReferenceDefinitions } from "../../lib/markdownDocument";
+import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 import {
@@ -87,20 +88,21 @@ function MarkdownImage(props: {
   readonly alt: string | null;
   readonly onPreview: (source: FilePreviewSource) => void;
 }) {
-  const media = usePullRequestMediaUrl(props.href);
+  const href = normalizeNativeMarkdownUrl(props.href);
+  const media = usePullRequestMediaUrl(href);
   const context = useContext(PullRequestMediaContext);
   const withGallery = useFilePreviewGallery();
   return (
     <ThreadMarkdownImageView
       uri={media.uri}
-      sourceKey={props.href}
+      sourceKey={href}
       cacheKey={media.cacheKey}
-      unavailable={media.unavailable || !/^https?:\/\//i.test(props.href)}
+      unavailable={media.unavailable || !/^https?:\/\//i.test(href)}
       alt={props.alt}
       onPressPreview={(source) =>
         props.onPreview(
           withGallery({
-            ...pullRequestImageSource(props.href, context),
+            ...pullRequestImageSource(href, context),
             name: source.name,
             sourceIdentifier: source.sourceIdentifier,
           }),
@@ -238,7 +240,9 @@ function PullRequestMarkdownContent(props: {
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
   const resolveMediaUrl = (href: string) =>
-    changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
+    normalizeNativeMarkdownUrl(
+      changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href,
+    );
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
     void openPullRequest(href);

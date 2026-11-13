@@ -13,6 +13,7 @@ import {
 } from "./pullRequestMarkdown.ts";
 import {
   changeRequestReferenceAutolinker,
+  pullRequestMediaResource,
   resolveChangeRequestMediaUrl,
 } from "./pullRequestReferences.ts";
 
@@ -36,6 +37,35 @@ const split = (body: string) =>
     visit(definitionParser.parse(markdown), 0);
     return [...definitions.values()];
   });
+
+describe("Azure DevOps PR walkthrough", () => {
+  it("preserves the clickable GIF and promotes the separate MP4 link to authenticated video", () => {
+    const base =
+      "https://dev.azure.com/org/project/_apis/git/repositories/repo/pullRequests/42/attachments/demo";
+    const thumbnail = `[![Application walkthrough](${base}.gif)](${base}.mp4)`;
+    const segments = splitPullRequestBody(
+      `${thumbnail}\n\n[Watch or download the walkthrough (MP4)](${base}.mp4)`,
+    );
+    expect(segments).toEqual([
+      { id: "markdown:0", kind: "markdown", sourceOffset: 0, text: thumbnail },
+      { id: "attachment:1", kind: "attachment", media: "video", url: `${base}.mp4` },
+    ]);
+    for (const ext of ["gif", "mp4"]) {
+      expect(pullRequestMediaResource(`${base}.${ext}`, "/repo")).toEqual({
+        _tag: "azure-devops-media",
+        cwd: "/repo",
+        url: `${base}.${ext}`,
+      });
+    }
+    expect(pullRequestMediaResource("https://example.test/demo.mp4", "/repo")).toBeNull();
+    expect(
+      pullRequestMediaResource("https://github.com/o/r/blob/main/demo.gif", "/repo"),
+    ).toMatchObject({
+      _tag: "github-media",
+      url: "https://raw.githubusercontent.com/o/r/main/demo.gif",
+    });
+  });
+});
 
 describe("pull request body segmentation", () => {
   it("lifts a GitHub upload without guessing its type and keeps the prose around it", () => {

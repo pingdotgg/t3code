@@ -17,6 +17,18 @@ import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
+import * as Logger from "effect/Logger";
+import * as AssetAccess from "./assets/AssetAccess.ts";
+import * as AzureDevOpsMedia from "./assets/AzureDevOpsMedia.ts";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
+import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 
 import {
   injectMcpAppCsp,
@@ -36,6 +48,86 @@ import * as ServerConfig from "./config.ts";
 
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+
+describe("Azure DevOps media failures", () => {
+  it.each(["download", "response"] as const)(
+    "logs only safe diagnostics for a %s failure",
+    async (failure) => {
+      const warnings: unknown[] = [];
+      const logger = Logger.make(({ message }) => {
+        warnings.push(message);
+      });
+      using _resolveAsset = vi.spyOn(AssetAccess, "resolveAsset").mockReturnValue(
+        Effect.succeed({
+          kind: "azure-devops-media",
+          cwd: "/private-workspace",
+          url: "https://dev.azure.com/private-org/private-project/_apis/git/repositories/private-repo/pullRequests/42/attachments/private.mp4?private-query=secret",
+          expiresAt: 1000,
+        }),
+      );
+      const cli = TestSourceControlHost.layer({
+        process: {
+          run: () =>
+            failure === "download"
+              ? Effect.fail(
+                  new VcsProcessSpawnError({
+                    operation: "execute",
+                    command: "az",
+                    cwd: "/private-workspace",
+                    argumentCount: 1,
+                    cause: new Error("private-credential"),
+                  }),
+                )
+              : Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }),
+        },
+      });
+      const layerApp = Layer.mergeAll(
+        ServerHttp.layerAssetRoute,
+        AzureDevOpsMedia.layer.pipe(Layer.provide(cli)),
+        NodeHttpPlatform.layer,
+        Logger.layer([logger], { mergeWithExisting: false }),
+        // The stubbed resolver bypasses these other asset kinds; unexpected access must fail.
+        Layer.succeed(SourceControlBuiltInDrivers.SourceControlDrivers)([]),
+        Layer.succeed(HttpClient.HttpClient)(
+          HttpClient.make(() => Effect.die("Unexpected provider request")),
+        ),
+        Layer.mock(NativeAppIconResolver.NativeAppIconResolver)({}),
+        Layer.mock(Orchestrator.OrchestratorV2)({}),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-azure-http-test-" }),
+        Layer.mock(AssetSigner.AssetSigner)({}),
+        Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+      ).pipe(Layer.provideMerge(NodeServices.layer));
+      const { handler, dispose } = HttpRouter.toWebHandler(layerApp, { disableLogger: true });
+      try {
+        const response = await handler(
+          new Request("https://server.example/api/assets/private-capability/private.mp4"),
+        );
+        expect(response.status).toBe(502);
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        expect(warnings).toEqual([
+          [
+            "Failed to fetch Azure DevOps media.",
+            {
+              origin: "https://dev.azure.com",
+              errorType:
+                failure === "download" ? "AzureDevOpsMediaFetchError" : "FileResponseError",
+            },
+          ],
+        ]);
+        expect(JSON.stringify(warnings)).not.toContain("private-");
+      } finally {
+        await dispose();
+      }
+    },
+  );
+});
 
 describe("MCP app asset responses", () => {
   it.effect(
