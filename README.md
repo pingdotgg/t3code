@@ -125,7 +125,7 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 | `conn-contract`         | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
 | `conn-engine`           | `Engine` trait; SQLite event store, projections, streams, turn runner |
 | `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`                      |
-| `conn-provider-claude`  | The Claude provider (see [Claude](#claude))                           |
+| `conn-provider-claude`  | The Claude provider, through the official Agent SDK in the SDK host (see [Claude](#claude)) |
 | `conn-provider-codex`   | The Codex provider over `codex app-server` (JSON-RPC on stdio)        |
 | `conn-provider-support` | Ids, line framing and the process supervisor shared by CLI providers  |
 | `conn-mcp`              | `/mcp`: T3 tools over MCP Streamable HTTP; see its README             |
@@ -444,4 +444,25 @@ What a real Conn session hits that this server does not do:
 
 ## Claude
 
-Claude will go through the official Claude Agent SDK in a Node helper.
+Claude runs through Anthropic's official Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`, at
+the T3 server's version), as in the T3 server. The SDK runs in the SDK host
+(`helpers/sdk-host`), a small Node program that the Rust server starts with the first Claude
+session and stops after the last. An idle server runs no Node. A Claude session adds one SDK
+host for all sessions: about 44 MB of private memory on macOS arm64.
+
+- **From a checkout:** run `npm ci` in `helpers/sdk-host` once. The server then runs
+  `helpers/sdk-host/index.mjs` with `node` from `PATH`.
+- **In a container:** build the single executable with `helpers/sdk-host/build-sea.sh` and put
+  `conn-sdk-host` beside the `conn-server` binary. `--sdk-host <path>` or `CONN_SDK_HOST`
+  names another place.
+- **Proofs, with no model call:** `crates/conn-provider-claude/tools/conformance/run.sh`
+  proves that the `claude` CLI gets the same argv, environment and stdin from the Conn Server
+  as from the T3 server. `crates/conn-provider-claude/tools/t3-replay/run.sh` replays the T3
+  server's own Claude transcripts against our session (15 of 39 pass; its README lists the
+  rest with reasons). Both need `CONN_MONOREPO`.
+- **Live:** `cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1` runs
+  11 tests on Claude Haiku through the SDK host.
+
+Known gaps are in `crates/conn-provider-claude/README.md`: the read-only sandbox and `dontAsk`
+(the provider interface carries no sandbox policy yet), stopping background tasks, some
+settings, and a Linux build of the SDK host.

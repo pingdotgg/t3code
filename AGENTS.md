@@ -44,7 +44,7 @@ shutdown. Follow it byte for byte where a provider can see it.
 
 | Provider | The official way, as the T3 server uses it | Here |
 | --- | --- | --- |
-| Claude | Anthropic's Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), at the T3 server's version | The SDK runs in a small Node helper that the Rust server starts. The helper starts with the first session and stops after the last. |
+| Claude | Anthropic's Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), at the T3 server's version | `crates/conn-provider-claude` and the SDK host (`helpers/sdk-host`), a small Node program that the Rust server starts with the first session and stops after the last |
 | Codex | `codex app-server`, JSON-RPC over stdio | `crates/conn-provider-codex` |
 | Cursor, OpenCode, Muse | The vendor's SDK | Not built. They go in the same Node helper. |
 | Grok, Kiro, fx, Antigravity, ACP registry | ACP (Agent Client Protocol) over stdio | Not built. One Rust ACP provider for all of them. |
@@ -57,8 +57,12 @@ shutdown. Follow it byte for byte where a provider can see it.
 - Pin the same SDK and CLI versions as the T3 server at the pinned Conn commit.
 - A change to a provider needs a comparison of what we send with what the T3 server sends for
   the same input, from recordings or a stub executable. Reading the code is not proof.
-- Until the Node helper is merged, `crates/conn-provider-claude` still holds an older driver
-  that writes the SDK protocol itself. Do not extend it and run no live turn through it.
+- The Node helper is the SDK host, `helpers/sdk-host` (protocol in its `PROTOCOL.md`). It runs
+  every vendor SDK; a new SDK provider is one more driver module there, not a second helper.
+- The proofs for Claude: `crates/conn-provider-claude/tools/conformance/run.sh` (a stub CLI
+  records argv, environment and stdin from both servers; they must be equal) and
+  `tools/t3-replay/run.sh` (the T3 server's own Claude transcripts against our session). Rerun
+  both on every SDK, CLI or pin change.
 
 ## Safety
 
@@ -81,6 +85,8 @@ CONN_MONOREPO=<conn checkout> tools/check.sh     # every check that needs no mod
 eval "$(tools/conn-checkout --source <conn git dir or URL>)"    # a Conn checkout at conn.pin
 CONN_MONOREPO=<checkout at the new commit> tools/bump-conn.sh <commit>   # move the pin, regenerate, check, report
 cargo run -p conn-server -- serve --state-dir /tmp/conn-state --project <dir>
+(cd helpers/sdk-host && npm ci)                  # once, so Claude can run from a checkout
+CONN_MONOREPO=<conn checkout> crates/conn-provider-claude/tools/conformance/run.sh
 ```
 
 `tools/check.sh` runs format, clippy with warnings as errors, the tests, the release build,
