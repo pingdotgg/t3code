@@ -34,6 +34,13 @@ const ACTIVITY_MAX_LENGTH = 120;
 // Parsing is synchronous, and nobody listens to a longer message through a live region.
 const MESSAGE_MAX_LENGTH = 2_000;
 
+/** The first `maxLength` code points of `text`, or null when it has no more than that. */
+function cutText(text: string, maxLength: number): string | null {
+  if (text.length <= maxLength) return null;
+  const characters = Array.from(text);
+  return characters.length > maxLength ? characters.slice(0, maxLength).join("") : null;
+}
+
 // On screen these labels are a path or a query beside an icon.
 function withVerb(work: WorkLogEntry, label: string) {
   if (work.itemType === "file_change") return `Editing ${label}`;
@@ -66,7 +73,8 @@ function stepLabel(work: WorkLogEntry, workspaceRoot: string | undefined): strin
   const label = liveWorkEntryLabel(work, workspaceRoot, true).replace(/\s+/g, " ").trim();
   if (label === "") return null;
   const spoken = withVerb(work, label);
-  return spoken.length > ACTIVITY_MAX_LENGTH ? `${spoken.slice(0, ACTIVITY_MAX_LENGTH)}…` : spoken;
+  const cut = cutText(spoken, ACTIVITY_MAX_LENGTH);
+  return cut === null ? spoken : `${cut}…`;
 }
 
 /**
@@ -189,11 +197,12 @@ export function nextTurnDetailAnnouncement(
           previous.messages.get(message.id) !== true &&
           (message.fresh || previous.messages.has(message.id)),
       )
-      .map((message) =>
-        message.text.length > MESSAGE_MAX_LENGTH
-          ? `${markdownPlainText(message.text.slice(0, MESSAGE_MAX_LENGTH))} More in the thread.`
-          : markdownPlainText(message.text),
-      )
+      .map((message) => {
+        const cut = cutText(message.text, MESSAGE_MAX_LENGTH);
+        return cut === null
+          ? markdownPlainText(message.text)
+          : `${markdownPlainText(cut)} More in the thread.`;
+      })
       .filter((text) => text !== "")
       .map((text) => `${MESSAGE_AUTHOR}: ${text}`),
     activity:
