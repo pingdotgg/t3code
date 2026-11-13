@@ -11,14 +11,25 @@ export const readProviderEndpoints = Effect.fn("OpenCode2Client.providerEndpoint
   connection: OpenCode2Server.OpenCode2Connection,
   directory: string,
 ) {
-  return yield* connection.client.provider.list({ location: { directory } }).pipe(
-    Effect.map((list) => {
+  return yield* Effect.all(
+    [
+      connection.client.provider.list({ location: { directory } }),
+      connection.client.model.list({ location: { directory } }),
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(([providers, models]) => {
       const endpoints = new Map<string, string>();
-      // Two providers that claim one integration with different endpoints leave
-      // it unknown: the probe must not guess which one meters the key.
-      const conflicting = new Set<string>();
-      const record = (key: string, baseURL: string) => {
-        if (conflicting.has(key)) return;
+      // A provider whose endpoint is unknown, or whose providers disagree, leaves
+      // the integration unknown: the probe must not guess which one meters the key.
+      const unknown = new Set<string>();
+      const record = (key: string, baseURL: string | undefined) => {
+        if (unknown.has(key)) return;
+        if (baseURL === undefined) {
+          endpoints.delete(key);
+          unknown.add(key);
+          return;
+        }
         const known = endpoints.get(key);
         if (known === undefined) {
           endpoints.set(key, baseURL);
@@ -26,12 +37,29 @@ export const readProviderEndpoints = Effect.fn("OpenCode2Client.providerEndpoint
         }
         if (known !== baseURL) {
           endpoints.delete(key);
-          conflicting.add(key);
+          unknown.add(key);
         }
       };
-      for (const provider of list.data) {
-        const baseURL = provider.settings?.baseURL;
-        if (typeof baseURL !== "string") continue;
+      const providerEndpoint = new Map<string, string | undefined>();
+      for (const provider of providers.data) {
+        providerEndpoint.set(
+          provider.id,
+          typeof provider.settings?.baseURL === "string" ? provider.settings.baseURL : undefined,
+        );
+      }
+      // A model can resolve to another endpoint on its own, so the provider's
+      // endpoint is not the one every model goes to.
+      for (const model of models.data) {
+        const baseURL =
+          typeof model.settings?.baseURL === "string" ? model.settings.baseURL : undefined;
+        if (baseURL === undefined) continue;
+        const provider = providerEndpoint.get(model.providerID);
+        if (provider !== undefined && provider !== baseURL) {
+          providerEndpoint.set(model.providerID, undefined);
+        }
+      }
+      for (const provider of providers.data) {
+        const baseURL = providerEndpoint.get(provider.id);
         record(provider.id, baseURL);
         if (provider.integrationID !== undefined) record(provider.integrationID, baseURL);
       }

@@ -10,6 +10,11 @@ interface ProviderEntry {
   readonly baseURL?: string;
 }
 
+interface ModelEntry {
+  readonly providerID: string;
+  readonly baseURL?: string;
+}
+
 /** The provider list OpenCode answers with, with its resolved settings. */
 const providerEntry = ({ id, integrationID, baseURL }: ProviderEntry) => ({
   id,
@@ -17,11 +22,20 @@ const providerEntry = ({ id, integrationID, baseURL }: ProviderEntry) => ({
   ...(baseURL === undefined ? {} : { settings: { baseURL } }),
 });
 
-const connectionWith = (providers: readonly ProviderEntry[]) =>
+/** The model list OpenCode answers with, with its resolved settings. */
+const modelEntry = ({ providerID, baseURL }: ModelEntry) => ({
+  providerID,
+  ...(baseURL === undefined ? {} : { settings: { baseURL } }),
+});
+
+const connectionWith = (providers: readonly ProviderEntry[], models: readonly ModelEntry[] = []) =>
   ({
     client: {
       provider: {
         list: () => Effect.succeed({ data: providers.map(providerEntry) }),
+      },
+      model: {
+        list: () => Effect.succeed({ data: models.map(modelEntry) }),
       },
     },
   }) as unknown as OpenCode2Server.OpenCode2Connection;
@@ -64,7 +78,7 @@ describe("readProviderEndpoints", () => {
     }),
   );
 
-  it.effect("keeps an endpoint when its providers agree", () =>
+  it.effect("leaves an integration unknown when one of its providers has no endpoint", () =>
     Effect.gen(function* () {
       const endpoints = yield* readProviderEndpoints(
         connectionWith([
@@ -73,12 +87,51 @@ describe("readProviderEndpoints", () => {
             integrationID: "minimax-coding-plan",
             baseURL: "https://api.minimax.io/anthropic/v1",
           },
-          {
-            id: "minimax-coding-plan-eu",
-            integrationID: "minimax-coding-plan",
-            baseURL: "https://api.minimax.io/anthropic/v1",
-          },
+          { id: "minimax-gateway", integrationID: "minimax-coding-plan" },
         ]),
+        "/work",
+      );
+      assert.strictEqual(endpoints.get("minimax-coding-plan"), undefined);
+    }),
+  );
+
+  it.effect("leaves a provider unknown when one of its models resolves elsewhere", () =>
+    Effect.gen(function* () {
+      const endpoints = yield* readProviderEndpoints(
+        connectionWith(
+          [
+            {
+              id: "minimax-coding-plan",
+              integrationID: "minimax-coding-plan",
+              baseURL: "https://api.minimax.io/anthropic/v1",
+            },
+          ],
+          [{ providerID: "minimax-coding-plan", baseURL: "https://gateway.example/v1" }],
+        ),
+        "/work",
+      );
+      assert.strictEqual(endpoints.get("minimax-coding-plan"), undefined);
+    }),
+  );
+
+  it.effect("keeps an endpoint when its providers and models agree", () =>
+    Effect.gen(function* () {
+      const endpoints = yield* readProviderEndpoints(
+        connectionWith(
+          [
+            {
+              id: "minimax-coding-plan",
+              integrationID: "minimax-coding-plan",
+              baseURL: "https://api.minimax.io/anthropic/v1",
+            },
+            {
+              id: "minimax-coding-plan-eu",
+              integrationID: "minimax-coding-plan",
+              baseURL: "https://api.minimax.io/anthropic/v1",
+            },
+          ],
+          [{ providerID: "minimax-coding-plan", baseURL: "https://api.minimax.io/anthropic/v1" }],
+        ),
         "/work",
       );
       assert.strictEqual(
@@ -95,6 +148,9 @@ describe("readProviderEndpoints", () => {
           client: {
             provider: {
               list: () => Effect.die("no server"),
+            },
+            model: {
+              list: () => Effect.succeed({ data: [] }),
             },
           },
         } as unknown as OpenCode2Server.OpenCode2Connection,
