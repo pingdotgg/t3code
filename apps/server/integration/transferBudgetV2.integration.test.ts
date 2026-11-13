@@ -190,6 +190,7 @@ const layerEnrichment = Layer.unwrap(
         Effect.succeed({
           repositoryIdentity: FLEET_PROJECT_IDENTITY,
           faviconPath: null,
+          repositoryRoot: null,
           repositoryIdentityResolved: true,
         }),
       subscribeChanges: PubSub.subscribe(changes),

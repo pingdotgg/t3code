@@ -1,4 +1,3 @@
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
   type ModelSelection,
@@ -14,12 +13,14 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { providerMessageText } from "./providerMessageText.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
@@ -103,6 +104,7 @@ export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
   | EventSink.EventSinkV2
+  | Path.Path
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
@@ -111,6 +113,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const path = yield* Path.Path;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -422,6 +425,7 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const thread = yield* projections.getThread(input.threadId);
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -433,9 +437,11 @@ export const layer: Layer.Layer<
                 : { modelSelection: input.modelSelection }),
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
+                text: providerMessageText({
+                  path,
+                  message,
+                  checkoutRoot: thread.worktreePath,
+                  agentCwd: loaded.session.value.providerSession.cwd,
                 }),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

@@ -587,6 +587,7 @@ export const make = Effect.gen(function* () {
       Effect.map((enrichment) => ({
         ...shell,
         repositoryIdentity: enrichment.repositoryIdentity,
+        repositoryRoot: enrichment.repositoryRoot,
       })),
     );
 

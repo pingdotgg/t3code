@@ -6,6 +6,9 @@ import {
   normalizeProjectPathForDispatch,
   resolvePastedPath,
   resolveWorkspaceFilePath,
+  rebaseWorkspaceFilePath,
+  threadAgentCwd,
+  confirmedThreadAgentCwd,
 } from "./path.ts";
 
 describe("path helpers", () => {
@@ -123,5 +126,42 @@ describe("workspaceRelativeFilePath", () => {
     ["\\\\server\\share\\repo\\..\\notes.md", "\\\\server\\share\\repo", null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("threadAgentCwd", () => {
+  it.each([
+    ["/repo/ios", "/repo", "/wt/a", "/wt/a/ios"],
+    ["/repo/ios/", "/repo/", "/wt/a/", "/wt/a/ios"],
+    ["C:\\repo\\apps\\ios", "C:\\repo", "C:\\wt\\a", "C:\\wt\\a\\apps\\ios"],
+    ["/repo", "/repo", "/wt/a", "/wt/a"],
+    ["/repository", "/repo", "/wt/a", "/wt/a"],
+    ["/repo/ios", undefined, "/wt/a", "/wt/a"],
+    ["/repo/ios", "/repo", null, "/repo/ios"],
+  ])("places %s of %s in %s", (projectRoot, repositoryRoot, worktreePath, expected) => {
+    expect(threadAgentCwd({ projectRoot, repositoryRoot, worktreePath })).toBe(expected);
+  });
+});
+
+describe("rebaseWorkspaceFilePath", () => {
+  it.each([
+    ["docs/setup.md", "/wt/a/ios", "/wt/a", "ios/docs/setup.md"],
+    ["/wt/a/README.md", "/wt/a/ios", "/wt/a", "README.md"],
+    ["docs/setup.md", "/wt/a", "/wt/a", "docs/setup.md"],
+    ["/elsewhere/SKILL.md", "/wt/a/ios", "/wt/a", "/elsewhere/SKILL.md"],
+    ["docs/setup.md", null, "/wt/a", "docs/setup.md"],
+  ])("re-roots %s from %s at %s", (path, cwd, workspaceRoot, expected) => {
+    expect(rebaseWorkspaceFilePath(path, cwd, workspaceRoot)).toBe(expected);
+  });
+});
+
+describe("confirmedThreadAgentCwd", () => {
+  it.each([
+    ["a directory", { isSuccess: true, data: { kind: "directory" } }, "/wt/a/ios"],
+    ["a file", { isSuccess: true, data: { kind: "file" } }, "/wt/a"],
+    ["missing", { isSuccess: true, data: null }, "/wt/a"],
+    ["not answered", { isSuccess: false, data: null }, "/wt/a/ios"],
+  ])("resolves a subdirectory that is %s", (_name, metadata, expected) => {
+    expect(confirmedThreadAgentCwd("/wt/a/ios", "/wt/a", metadata)).toBe(expected);
   });
 });

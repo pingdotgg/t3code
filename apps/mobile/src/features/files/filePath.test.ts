@@ -5,9 +5,25 @@ import {
   isAudioPreviewFile,
   isMarkdownPreviewFile,
   needsWorkspaceFileContents,
+  resolveAgentFileLinkPath,
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
+
+describe("resolveAgentFileLinkPath", () => {
+  it.each([
+    ["/wt/ios", "/wt", "src/a.ts", "ios/src/a.ts"],
+    ["/wt/ios", "/wt", "../shared/file.ts", "shared/file.ts"],
+    ["/wt/ios", "/wt", "../../etc/passwd", null],
+    ["/wt/ios", "/wt", "/wt/README.md", "/wt/README.md"],
+    ["/wt/ios", "/wt", "~notes.md", "ios/~notes.md"],
+    ["/home/maria/wt/ios", "/home/maria/wt", "~/notes.md", "/home/maria/notes.md"],
+    ["/wt", "/wt", "src/a.ts", "src/a.ts"],
+    [null, "/wt", "src/a.ts", "src/a.ts"],
+  ])("resolves a link from %s in %s: %s", (agentCwd, workspaceRoot, path, expected) => {
+    expect(resolveAgentFileLinkPath(agentCwd, workspaceRoot, path)).toBe(expected);
+  });
+});
 
 describe("resolveFileLinkPath", () => {
   it.each([

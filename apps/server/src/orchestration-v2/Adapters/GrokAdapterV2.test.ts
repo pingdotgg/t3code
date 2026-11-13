@@ -341,10 +341,11 @@ describe("Grok launch permission mode", () => {
       }).pipe(
         Effect.provide(
           RuntimePolicy.layerFromProjectStore.pipe(
+            Layer.provide(NodeServices.layer),
             Layer.provide(ServerSettings.layerTest()),
             Layer.provide(
               Layer.mock(ProjectStore.ProjectStoreV2)({
-                get: () => Effect.die("the thread has a worktree"),
+                get: () => Effect.succeedNone,
               }),
             ),
             Layer.provide(

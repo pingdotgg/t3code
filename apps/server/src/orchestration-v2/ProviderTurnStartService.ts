@@ -54,6 +54,7 @@ import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDeliv
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { providerMessageText } from "./providerMessageText.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ContextHandoffBackgroundWorkError,
@@ -748,9 +749,11 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
+      const userText = providerMessageText({
+        path,
+        message,
+        checkoutRoot: projection.thread.worktreePath,
+        agentCwd: resolvedRuntimePolicy.cwd,
       });
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =

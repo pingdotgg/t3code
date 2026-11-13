@@ -39,6 +39,7 @@ describe("resolveMarkdownMediaPreview", () => {
     ["/tmp/frame%23one.png", "/tmp/frame#one.png"],
     ["/tmp/frame%3Fone.png", "/tmp/frame?one.png"],
     ["/tmp/frame%2523one.png", "/tmp/frame%23one.png"],
+    ["screenshot.png", "/repo/ios/screenshot.png", "/repo/ios"],
     ["file://server/share/frame.png", "\\\\server\\share\\frame.png", "\\\\server\\share"],
     ["\\\\server\\share\\frame.png", "\\\\server\\share\\frame.png", "\\\\server\\share"],
   ])("keeps encoded filename and UNC semantics for %s", (href, path, workspaceRoot = "/repo") => {

@@ -55,6 +55,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import { useThreadAgentCwd } from "./useThreadAgentCwd";
 
 import {
   clearComposerDraftContent,
@@ -188,6 +189,12 @@ export function NewTaskDraftScreen(props: {
   })();
   const { onReconnectEnvironment } = useRemoteConnections();
   const environmentRuntime = useRemoteEnvironmentRuntime(selectedProject?.environmentId ?? null);
+  // A new worktree does not exist yet; its agent starts where the project is.
+  const agentCwd = useThreadAgentCwd(
+    selectedProject?.environmentId ?? null,
+    selectedProject ?? null,
+    flow.workspaceMode === "worktree" ? null : (flow.selectedWorktreePath ?? null),
+  );
   const connectionState = environmentRuntime?.connectionState ?? "offline";
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -1009,6 +1016,7 @@ export function NewTaskDraftScreen(props: {
         onRemoveQueuedEditAttachment={() => {}}
         projectWorkspaceRoot={selectedProject.workspaceRoot}
         threadCwd={flow.workspaceCwd}
+        agentCwd={agentCwd}
         selectedThreadQueueCount={0}
         queuedMessages={[]}
         dispatchingMessageId={null}

@@ -166,3 +166,48 @@ export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): s
     ? `${base}\\${path.replaceAll("/", "\\")}`
     : `${base}/${path}`;
 }
+
+/**
+ * Where a thread's agent works. A worktree checks out the whole repository, so a
+ * project rooted in a repository subdirectory keeps that subdirectory inside it.
+ * `repositoryRoot` is the checkout containing `projectRoot`, when known.
+ */
+export function threadAgentCwd(input: {
+  readonly projectRoot: string;
+  readonly repositoryRoot?: string | null | undefined;
+  readonly worktreePath: string | null;
+}): string {
+  const { projectRoot, repositoryRoot, worktreePath } = input;
+  if (worktreePath === null) return projectRoot;
+  const subdirectory = workspaceRelativeFilePath(projectRoot, repositoryRoot);
+  if (subdirectory === null || subdirectory === ".") return worktreePath;
+  return resolveWorkspaceFilePath(subdirectory.replace(/\/+$/, ""), worktreePath);
+}
+
+/**
+ * Re-roots `path`, relative to `cwd` or absolute, as a path relative to
+ * `workspaceRoot`: an agent in a project subdirectory works below the checkout
+ * root the file panel shows. Returns `path` when it is outside that root.
+ */
+export function rebaseWorkspaceFilePath(
+  path: string,
+  cwd: string | null | undefined,
+  workspaceRoot: string | null | undefined,
+): string {
+  if (!cwd) return path;
+  return workspaceRelativeFilePath(resolveWorkspaceFilePath(path, cwd), workspaceRoot) ?? path;
+}
+
+/**
+ * A client's `threadAgentCwd`. The server starts the agent at the worktree root
+ * when the branch has no directory at `candidate`, and only a successful
+ * metadata answer can tell a client that: a query that is off, pending or failed
+ * leaves the candidate standing.
+ */
+export function confirmedThreadAgentCwd(
+  candidate: string,
+  worktreePath: string,
+  metadata: { readonly isSuccess: boolean; readonly data: { readonly kind: string } | null },
+): string {
+  return metadata.isSuccess && metadata.data?.kind !== "directory" ? worktreePath : candidate;
+}

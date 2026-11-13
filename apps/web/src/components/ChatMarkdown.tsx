@@ -8,7 +8,11 @@ import {
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import {
+  isHostPath,
+  rebaseWorkspaceFilePath,
+  resolveWorkspaceFilePath,
+} from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
   AuthFilesystemReadScope,
@@ -69,6 +73,7 @@ import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { InlineAudioPreview } from "./files/InlineAudioPreview";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import { FilePanelRootContext } from "./chat/FilePanelRootContext";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -519,6 +524,11 @@ function useChatMarkdownState({
   sourceControlMediaRepository,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
+  const filePanelRoot = use(FilePanelRootContext);
+  const openInFilePanel = (ref: ScopedThreadRef, path: string, line?: number) =>
+    useRightPanelStore
+      .getState()
+      .openFile(ref, rebaseWorkspaceFilePath(path, cwd, filePanelRoot ?? cwd), line);
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
   const mediaScopeKey = [
@@ -591,9 +601,7 @@ function useChatMarkdownState({
       httpBaseUrl:
         environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
       createAssetUrl,
-      onOpenFile: threadRef
-        ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
-        : undefined,
+      onOpenFile: threadRef ? (path) => openInFilePanel(threadRef, path) : undefined,
     }).then(
       (preview) => {
         if (preview && mediaRequestId.current === requestId) {
@@ -836,8 +844,7 @@ function useChatMarkdownState({
     if (!threadRef) return;
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
-    const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+    const openAt = (path: string) => openInFilePanel(threadRef, path, fileLinkMeta.line);
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||

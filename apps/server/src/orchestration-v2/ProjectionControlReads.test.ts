@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -281,6 +282,7 @@ it.effect.each(storageCases)(
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeedSome({
+            providerSession: { cwd: "/workspace" },
             interruptTurn: () =>
               Effect.sync(() => {
                 calls.push("interrupt");
@@ -393,7 +395,7 @@ it.effect.each(storageCases)(
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(Layer.merge(layerSessions, layerEvents)),
+            Layer.provide(Layer.mergeAll(layerSessions, layerEvents, Path.layer)),
           ),
         ),
       );

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  MessageId,
   type ModelSelection,
   NodeId,
   type OrchestrationV2ProviderThread,
@@ -19,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -307,6 +309,7 @@ it.effect(
             layerProjection,
             layerSessionManager,
             Layer.mock(EventSink.EventSinkV2)({}),
+            Path.layer,
           ),
         ),
       );
@@ -356,4 +359,98 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect("steers with checkout mentions resolved for an agent in a subdirectory", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:steer-mention");
+    const providerSessionId = ProviderSessionId.make("provider-session:steer-mention");
+    const providerThreadId = ProviderThreadId.make("provider-thread:steer-mention");
+    const providerTurnId = ProviderTurnId.make("provider-turn:steer-mention");
+    const messageId = MessageId.make("message:steer-mention");
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const projection = makeProjection({
+      now,
+      threadId,
+      providerThread,
+      providerTurnId,
+      attemptId: RunAttemptId.make("run-attempt:steer-mention"),
+    });
+    const steeredText = yield* Ref.make<string | null>(null);
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(projection.thread),
+            getProviderControlContext: () =>
+              Effect.succeed({
+                providerThread,
+                providerTurn: projection.providerTurns[0],
+                attempt: undefined,
+                message: {
+                  id: messageId,
+                  text: "Read [App.swift](t3-context://v1/mention/ctx_app)",
+                  context: {
+                    version: 1,
+                    records: [
+                      {
+                        version: 1,
+                        contextId: "ctx_app",
+                        label: "ios/App.swift",
+                        kind: "mention",
+                        path: "ios/App.swift",
+                      },
+                    ],
+                  },
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                } as never,
+                run: { id: RunId.make("run:steer-mention") } as never,
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: () =>
+              Effect.succeedSome({
+                providerSession: { cwd: "/workspace/ios" },
+                steerTurn: ({ message }: { message: { text: string } }) =>
+                  Ref.set(steeredText, message.text),
+              } as never),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          Path.layer,
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.steer({
+        threadId,
+        providerSessionId,
+        providerThreadId,
+        providerTurnId,
+        messageId,
+      });
+    }).pipe(Effect.provide(layerControl));
+
+    assert.include(yield* Ref.get(steeredText), "path: /workspace/ios/App.swift");
+  }),
 );
