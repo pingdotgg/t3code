@@ -36,6 +36,8 @@ export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Folders below `cwd` the restore leaves as they are, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;

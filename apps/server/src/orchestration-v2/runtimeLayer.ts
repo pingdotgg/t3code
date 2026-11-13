@@ -60,6 +60,7 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -67,7 +68,7 @@ export const layerEventInfrastructure = Layer.mergeAll(
 );
 
 const layerWorkspaceFoldersProvided = WorkspaceFolders.layer.pipe(
-  Layer.provide(ProjectStore.layer),
+  Layer.provide(Layer.merge(ProjectStore.layer, TaskFolderStore.layer)),
 );
 
 const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
@@ -235,6 +236,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerContextHandoffServiceProvided,
       IdAllocator.layer,
       ProjectStore.layer,
+      TaskFolderStore.layer,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       // Reuse the continuation worker's layer reference so memoization shares one request queue.
       ProviderContinuationRequests.layer,

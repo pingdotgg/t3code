@@ -723,7 +723,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
-  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus);
+  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus, props.project);
   const pr = linkedPullRequestStatus?.pr ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const currentLinkedPr = supportsMultiplePullRequests
@@ -1696,7 +1696,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
-  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus);
+  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus, props.project);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,

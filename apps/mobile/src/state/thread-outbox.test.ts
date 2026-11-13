@@ -1262,6 +1262,19 @@ describe("thread outbox", () => {
         creation: { ...creationMessage.creation, branch: "" },
       }),
     ).toBe(false);
+    const plainFolderCreation = {
+      ...creationMessage,
+      creation: {
+        ...creationMessage.creation,
+        branch: null,
+        repositories: ["/workspace/api"],
+        startsFromRepositoryDefaults: true,
+      },
+    } satisfies QueuedThreadMessage;
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(plainFolderCreation))).toEqual(
+      plainFolderCreation,
+    );
+    expect(isQueuedThreadCreationSendable(plainFolderCreation)).toBe(true);
     expect(isQueuedThreadCreationSendable({ ...creationMessage, modelSelection: undefined })).toBe(
       false,
     );

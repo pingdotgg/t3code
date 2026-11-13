@@ -602,7 +602,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && flow.isGitRepo && !selectedBranchName)
     ) {
       return null;
     }
@@ -703,7 +703,8 @@ export function NewTaskDraftScreen(props: {
         ? "Wait for the project clone to finish."
         : flow.submitting
           ? "Starting the thread…"
-          : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+          : flow.workspaceMode === "worktree" &&
+              (!flow.isGitRepoKnown || (flow.isGitRepo && !flow.selectedBranchName))
             ? "Choose a base branch before creating a worktree."
             : null
       : "Wait for shared content to finish importing.";
@@ -715,7 +716,9 @@ export function NewTaskDraftScreen(props: {
     void KeyboardController.dismiss({ animated: true });
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
-  const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
+  const openContextPicker = (
+    routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskRepositories",
+  ) => {
     if (isComposerInteractionLocked) {
       return;
     }
@@ -867,12 +870,15 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const startsNewWorktree = flow.workspaceMode === "worktree";
+  const offersRepositoryChoice =
+    startsNewWorktree && (flow.worktreeRepositoryChoices?.length ?? 0) > 0;
   const workspaceControls = (
-    <View className="flex-row items-center gap-1 px-2">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-2">
       <ComposerInlineControl
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
+        disabled={isComposerInteractionLocked || !(flow.isGitRepo || flow.tracksGitRepositories)}
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -886,17 +892,40 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
       />
 
-      <View className="min-w-0 shrink">
-        <ComposerInlineControl
-          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
-          icon="arrow.triangle.branch"
-          label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
-          maxWidth="100%"
-          onPress={() => openContextPicker("NewTaskBranch")}
-        />
-      </View>
+      {offersRepositoryChoice ? (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityHint="Chooses the repositories the new worktree holds"
+            accessibilityLabel={`Repositories in the new worktree: ${flow.worktreeRepositorySelection.label}`}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder.badge.plus"
+            label={flow.worktreeRepositorySelection.label}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskRepositories")}
+            {...(flow.worktreeRepositorySelection.needsChoice ? { tone: "warning" as const } : {})}
+          />
+        </View>
+      ) : null}
+      {startsNewWorktree && !flow.isGitRepo ? (
+        <View className="min-h-8 min-w-0 shrink justify-center px-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            Each repository starts from its own default branch
+          </Text>
+        </View>
+      ) : (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityLabel={`${startsNewWorktree ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked || !flow.isGitRepo}
+            icon="arrow.triangle.branch"
+            label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskBranch")}
+          />
+        </View>
+      )}
     </View>
   );
 

@@ -314,7 +314,19 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
     separateBackground: false,
     items: [
       ...(repositoriesOnly
-        ? []
+        ? // A worktree thread of such a folder still has a branch: its repositories are on it.
+          props.currentBranch === null
+          ? []
+          : [
+              {
+                id: "git-status",
+                title: compactMenuBranchLabel(props.currentBranch),
+                icon: "point.topleft.down.curvedto.point.bottomright.up",
+                disabled: true,
+                subtitle: "Repository worktrees",
+                onPress: () => {},
+              },
+            ]
         : [
             {
               id: "git-status",

@@ -25,6 +25,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
+import { layerTaskFoldersWithGit } from "./workspace/TaskFolders.testkit.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Settings from "./serverSettings.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -362,6 +364,10 @@ const cleanupFixture = (
     let gitInspections = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
+    let taskFolders: Pick<TaskFolders.TaskFolders["Service"], "find" | "remove"> = {
+      find: () => Effect.succeed(null),
+      remove: () => Effect.succeed({ removed: [], kept: [] }),
+    };
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
@@ -485,10 +491,18 @@ const cleanupFixture = (
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
+      Effect.provideService(TaskFolders.TaskFolders, {
+        find: (target: string) => taskFolders.find(target),
+        remove: (input: Parameters<TaskFolders.TaskFolders["Service"]["remove"]>[0]) =>
+          taskFolders.remove(input),
+      } as unknown as TaskFolders.TaskFolders["Service"]),
     );
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
       repo,
+      setTaskFolders: (service: typeof taskFolders) => {
+        taskFolders = service;
+      },
       setTerminals: (terminals: TerminalSummary[]) =>
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
       editBeforeRemoval: () => {
@@ -726,6 +740,79 @@ it.live("keeps an ignored repository inside a registered submodule", () =>
         reason: "Contains a nested Git repository",
       });
       expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+    }),
+  ),
+);
+
+it.live("removes a task folder's clean worktrees and keeps the one with uncommitted work", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, command, setTaskFolders, setThreads } = yield* cleanupFixture();
+      const trackedRepository = Effect.fnUntraced(function* (name: string) {
+        const folder = `${repo}/dist/${name}`;
+        yield* fs.makeDirectory(folder, { recursive: true });
+        yield* command(folder, ["init", "-b", "main"]);
+        yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
+        yield* command(folder, ["config", "user.name", "Cleanup test"]);
+        yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
+        yield* command(folder, ["add", "."]);
+        yield* command(folder, ["commit", "-m", "initial"]);
+        return { name, path: folder };
+      });
+      const api = yield* trackedRepository("api");
+      const web = yield* trackedRepository("web");
+      const context = yield* Layer.build(
+        layerTaskFoldersWithGit({
+          workspaceRoot: repo,
+          trackedFolders: [api, web],
+          thread: null,
+        }).pipe(Layer.provide(NodeCrypto.layer)),
+      );
+      const taskFolders = Context.get(context, TaskFolders.TaskFolders);
+      const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
+      const { taskFolder } = yield* taskFolders.create({
+        plan: plan!,
+        branch: "task",
+        projectStart: { refName: "main", baseRefName: "main" },
+        startFromOrigin: false,
+      });
+      const root = taskFolder.root;
+      // A nested worktree's uncommitted work must survive its thread's cleanup.
+      yield* fs.writeFileString(`${root}/dist/api/tracked.txt`, "uncommitted\n");
+      setTaskFolders(taskFolders);
+      setThreads([shell({ branch: "task", worktreePath: root })]);
+
+      const report = yield* service.runNow;
+
+      expect(
+        report.entries
+          .filter((entry) => entry.path?.startsWith(root))
+          .map(({ path, outcome, reason }) => ({ path, outcome, reason }))
+          .toSorted((left, right) => left.path!.localeCompare(right.path!)),
+      ).toEqual([
+        { path: root, outcome: "kept", reason: "Holds a repository that was kept" },
+        {
+          path: `${root}/dist/api`,
+          outcome: "kept",
+          reason: "Has uncommitted changes (1 file)",
+        },
+        { path: `${root}/dist/web`, outcome: "removed", reason: expect.any(String) },
+      ]);
+      expect(yield* fs.readFileString(`${root}/dist/api/tracked.txt`)).toBe("uncommitted\n");
+      expect(yield* fs.exists(`${root}/dist/web`)).toBe(false);
+      // The thread is alive, so the record keeps the whole layout for when it resumes.
+      expect((yield* taskFolders.find(root))?.repositories).toHaveLength(2);
+
+      yield* command(`${root}/dist/api`, ["checkout", "--", "tracked.txt"]);
+      const second = yield* service.runNow;
+
+      expect(second.entries.filter((entry) => entry.path?.startsWith(root))).toEqual(
+        [`${root}/dist/api`, root].map((path) =>
+          expect.objectContaining({ path, outcome: "removed" }),
+        ),
+      );
+      expect(yield* fs.exists(root)).toBe(false);
+      expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
     }),
   ),
 );

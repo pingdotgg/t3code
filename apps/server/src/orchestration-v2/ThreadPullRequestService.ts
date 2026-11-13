@@ -156,13 +156,13 @@ export const make = Effect.gen(function* () {
   )(function* (
     thread: Pick<
       OrchestrationV2ThreadShell,
-      "id" | "worktreePath" | "archivedAt" | "pullRequests" | "linkedPullRequest"
+      "id" | "worktreePath" | "branch" | "archivedAt" | "pullRequests" | "linkedPullRequest"
     >,
     project: OrchestrationProjectShell,
     refresh: boolean,
   ) {
     const tracked = new Set((project.trackedFolders ?? []).map((folder) => folder.path));
-    if (tracked.size === 0 || thread.worktreePath !== null || thread.archivedAt !== null) return;
+    if (tracked.size === 0 || thread.archivedAt !== null) return;
     const { checkpointScopes } = yield* orchestrator.getCheckpointContext(thread.id);
     const cwds = new Set(
       checkpointScopes.flatMap((scope) =>
@@ -177,6 +177,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const local = yield* git.localStatus({ cwd });
           if (!local.isRepo || local.refName === null || local.isDefaultRef) return;
+          // A worktree thread's repositories are on its branch. A scope recorded before the
+          // thread moved still names the shared checkout, whose branch is someone else's.
+          if (thread.worktreePath !== null && local.refName !== thread.branch) return;
           const detected = yield* git.branchPullRequest(
             { cwd, branch: local.refName },
             { refresh, confirmTerminal: false },

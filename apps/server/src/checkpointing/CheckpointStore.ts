@@ -32,6 +32,8 @@ export interface RestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Folders below `cwd` the restore leaves as they are, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface DiffCheckpointsInput {

@@ -26,6 +26,7 @@ import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./P
 import * as ProjectStore from "./ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 
 it.effect.each([
   "nested",
@@ -99,6 +100,7 @@ it.effect.each([
           ServerSettings.layerTest(),
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
+          layerNoTaskFolders,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: () => Effect.succeedSome({ workspaceRoot: parent } as never),
@@ -192,6 +194,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
     const isolated = yield* isCheckpointRestoreIsolated(
       { id: ThreadId.make("restore-removed"), worktreePath },
       { cwd: worktreePath },
+      null,
       {
         fileSystem,
         path,
@@ -202,6 +205,56 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
       },
     );
     assert.isTrue(isolated);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("counts a task folder's repository worktrees as part of what a restore changes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-v2-restore-task-folder-" }),
+    );
+    // The worktrees directory is reached through a symlink; the other thread holds the real path.
+    const real = path.join(parent, "real", "task");
+    const named = path.join(parent, "linked", "task");
+    yield* fileSystem.makeDirectory(path.join(real, "shop"), { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(real, "web"));
+    yield* fileSystem.symlink(path.join(parent, "real"), path.join(parent, "linked"));
+    const worktreePath = path.join(named, "shop");
+    const other = {
+      id: ThreadId.make("restore-task-folder-other"),
+      projectId: ProjectId.make("restore-project"),
+      deletedAt: null,
+      worktreePath: path.join(real, "web"),
+      activeRunId: null,
+      lineage: {},
+    };
+    const isolated = (repositories: ReadonlyArray<string>) =>
+      isCheckpointRestoreIsolated(
+        { id: ThreadId.make("restore-task-folder"), worktreePath },
+        { cwd: path.join(real, "shop") },
+        {
+          repositories: repositories.map((folder) => ({
+            repositoryPath: "/tracked/web",
+            worktreePath: folder,
+            name: "web",
+          })),
+        },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [other], archivedThreads: [] }),
+            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+
+    assert.isTrue(yield* isolated([]));
+    assert.isFalse(yield* isolated([path.join(named, "web")]));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -235,6 +288,7 @@ it.effect.each([
       const result = yield* isCheckpointRestoreIsolated(
         { id: parentId, worktreePath },
         { cwd: worktreePath },
+        null,
         {
           fileSystem,
           path,
