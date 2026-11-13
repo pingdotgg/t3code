@@ -41,7 +41,6 @@ import {
   parseGitHubRepositorySelector,
   parsePullRequestReference,
   resolveGitHubRepository,
-  selectGitHubHeadRepositoryNameWithOwner,
   type GitHubRepositoryLocator,
 } from "./gitHubRepositoryResolution.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -1071,15 +1070,14 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
-        const headOwner = /^([^:/\s]+):/u.exec(input.headSelector.trim())?.[1];
+        // An `owner:branch` head names no repository when the fork shares the base's owner.
+        const [headOwner, headName] = input.headRepository?.split("/") ?? [];
         const headRepository =
-          headOwner === undefined
-            ? null
-            : selectGitHubHeadRepositoryNameWithOwner({
-                remotes: (yield* readRemotes(input.cwd)).remotes,
-                base: locator,
-                headOwner,
-              });
+          headOwner?.toLowerCase() === locator.owner.toLowerCase() &&
+          headName !== undefined &&
+          headName.toLowerCase() !== locator.name.toLowerCase()
+            ? input.headRepository
+            : undefined;
         yield* rest({
           host: locator.host,
           operation: "createPullRequest",
@@ -1090,7 +1088,7 @@ export const make = Effect.gen(function* () {
           body: {
             base: input.baseRefName,
             head: input.headSelector,
-            ...(headRepository === null ? {} : { head_repo: headRepository }),
+            ...(headRepository === undefined ? {} : { head_repo: headRepository }),
             title: input.title,
             body,
             maintainer_can_modify: true,

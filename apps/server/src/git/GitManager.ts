@@ -2446,6 +2446,9 @@ export const make = Effect.gen(function* () {
         cwd,
         baseRefName: baseBranch,
         headSelector: headContext.preferredHeadSelector,
+        headRepository: headContext.isCrossRepository
+          ? (headContext.headRepositoryNameWithOwner ?? undefined)
+          : undefined,
         title: generated.title,
         bodyFile,
       })

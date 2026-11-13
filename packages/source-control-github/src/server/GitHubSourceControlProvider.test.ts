@@ -608,6 +608,7 @@ describe("GitHubSourceControlProvider writes", () => {
         cwd: "/repo",
         baseRefName: "main",
         headSelector: "acme:feature",
+        headRepository: "acme/web-fork",
         title: "Title",
         bodyFile,
       });
@@ -620,6 +621,15 @@ describe("GitHubSourceControlProvider writes", () => {
         body: "Body",
         maintainer_can_modify: true,
       });
+      yield* gh.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "acme:feature",
+        headRepository: "acme/web",
+        title: "Title",
+        bodyFile,
+      });
+      assert.notProperty(requests[1]!.body, "head_repo");
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
   });
 
