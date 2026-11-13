@@ -47,6 +47,8 @@ export interface ComposerEditorProps {
   >;
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly selection?: ComposerEditorSelection;
+  /** Where the `@` of a search still being typed sits; that text is not drawn as a mention chip. */
+  readonly searchingMentionStart?: number | null;
   readonly placeholder?: string;
   readonly autoFocus?: boolean;
   readonly editable?: boolean;
