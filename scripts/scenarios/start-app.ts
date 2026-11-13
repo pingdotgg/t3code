@@ -23,6 +23,8 @@ import { ScenarioError } from "./shell.ts";
 const BASE_WEB_PORT = 5733;
 // The replay agent `vp run dev` registers: free, recorded turns through the real adapter.
 const REPLAY = { instanceId: "devReplay", model: "showcase" };
+// A turn on this instance never ends, for scenarios that need the thread to stay working.
+const HANG_INSTANCE = "devHang";
 // Generated text (titles) cannot go to the replay agent: the server swaps an ACP agent for the
 // first enabled real provider, else its default, Codex. So every provider it could fall back to
 // is off and Codex is a command that only fails: no run reaches a paid model.
@@ -52,7 +54,11 @@ esac
 
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
+const prepareHome = Effect.fn("startApp.prepareHome")(function* (
+  home: string,
+  node: string,
+  checkout: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.remove(home, { recursive: true, force: true });
@@ -70,16 +76,31 @@ const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
     path.join(home, "userdata/settings.json"),
     yield* encodeSettings({
       defaultModelSelection: REPLAY,
-      providerInstances: Object.fromEntries(
-        REAL_PROVIDERS.map((driver) => [
-          driver,
-          {
+      providerInstances: {
+        ...Object.fromEntries(
+          REAL_PROVIDERS.map((driver) => [
             driver,
-            enabled: false,
-            ...(driver === "codex" ? { config: { binaryPath: noModel } } : {}),
+            {
+              driver,
+              enabled: false,
+              ...(driver === "codex" ? { config: { binaryPath: noModel } } : {}),
+            },
+          ]),
+        ),
+        [HANG_INSTANCE]: {
+          driver: "acpRegistry",
+          displayName: "Hang (dev)",
+          config: {
+            source: "local",
+            commandPath: "/usr/bin/env",
+            commandArgs: [
+              "T3_ACP_HANG_PROMPT_FOREVER=1",
+              node,
+              path.join(checkout, "apps/server/scripts/acp-mock-agent.ts"),
+            ],
           },
-        ]),
-      ),
+        },
+      },
     }),
   );
 });
@@ -125,7 +146,7 @@ const startApp = Effect.fn("startApp")(function* (input: {
   const node = yield* HostProcess.ExecutablePath;
   const checkout = yield* HostProcess.WorkingDirectory;
   const hostEnvironment = yield* HostProcess.Environment;
-  yield* prepareHome(input.home);
+  yield* prepareHome(input.home, node, checkout);
   const env = {
     ...hostEnvironment,
     PATH: `${path.join(input.home, "bin")}:${hostEnvironment.PATH ?? ""}`,
