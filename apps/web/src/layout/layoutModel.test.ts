@@ -409,6 +409,12 @@ describe("layoutChatSwaps", () => {
       swaps: [],
     },
     {
+      case: "focus moving to a thread already open in the same pane",
+      before: [[[["A!", "~D"]]]],
+      after: [[[["A", "~D!"]]]],
+      swaps: ["A>D focus only"],
+    },
+    {
       case: "a ghost opening beside a terminal with no chat",
       before: [[[["t:A!"]]]],
       after: [[[["t:A", "~D!"]]]],
@@ -419,7 +425,7 @@ describe("layoutChatSwaps", () => {
       target.kind === "server" ? target.threadRef.threadId : target.kind;
     expect(
       layoutChatSwaps(layoutOf(...before), layoutOf(...after)).map(
-        ({ from, to }) => `${name(from)}>${name(to)}`,
+        ({ from, to, focusOnly }) => `${name(from)}>${name(to)}${focusOnly ? " focus only" : ""}`,
       ),
     ).toEqual(swaps);
   });
