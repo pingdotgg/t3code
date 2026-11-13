@@ -167,6 +167,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   readonly request: (input: {
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
     readonly headers: EnvironmentHttpAuthHeaders;
+    readonly requestUrl: string;
   }) => Effect.Effect<A, E, R>;
   /** Some endpoints report rejected credentials in a successful response. */
   readonly isUnauthorizedResponse?: (response: NoInfer<A>) => boolean;
@@ -225,7 +226,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         withEnvironmentRequestInit(
           authorization,
           input.requestInit,
-          input.request({ client, headers }),
+          input.request({ client, headers, requestUrl }),
         ),
       ).pipe(Effect.result);
 
