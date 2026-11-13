@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -227,6 +228,7 @@ import {
   readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
+import * as TailscaleServePublisher from "./tailscaleServePublisher.ts";
 
 // Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
 const HTTP_ROUTER_CONFIG = {
@@ -878,6 +880,7 @@ const layerMakeServer = Layer.unwrap(
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
+    const tailscaleServeProblem = yield* SubscriptionRef.make<string | undefined>(undefined);
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
     const layerLauncher = ServiceLauncherClient.layer;
@@ -910,13 +913,21 @@ const layerMakeServer = Layer.unwrap(
           serviceManaged: launcher.managed,
           managedPolicy: yield* ManagedPolicy.loadedPolicy(yield* ManagedPolicy.ManagedPolicy),
         });
-        yield* ownership
-          .publish(state)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to persist server runtime state", { cause }),
-            ),
+        const publish = (problem: string | undefined) =>
+          ownership
+            .publish(problem === undefined ? state : { ...state, tailscaleServeProblem: problem })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to persist server runtime state", { cause }),
+              ),
+            );
+        yield* publish(undefined);
+        if (config.tailscaleServeEnabled) {
+          yield* SubscriptionRef.changes(tailscaleServeProblem).pipe(
+            Stream.runForEach(publish),
+            Effect.forkScoped,
           );
+        }
       }),
     );
     const tailscaleServeRootHolder = (target: { readonly host: string; readonly port: number }) =>
@@ -941,41 +952,7 @@ const layerMakeServer = Layer.unwrap(
                 localHost: localHost.replace(/^\[|\]$/gu, ""),
                 servePort: config.tailscaleServePort,
               };
-              const holder = yield* tailscaleServeRootHolder({
-                host: route.localHost,
-                port: localPort,
-              }).pipe(Effect.orElseSucceed(() => "unreadable" as const));
-              if (holder === "other" || holder === "unreadable") {
-                yield* Effect.logWarning(
-                  holder === "other"
-                    ? "Tailscale Serve left off; its port already serves another server or app"
-                    : "Tailscale Serve left off; its current routes could not be read",
-                  { localPort, servePort: config.tailscaleServePort },
-                );
-                return route;
-              }
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost,
-              }).pipe(
-                Effect.as(route),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning(
-                    cause._tag === "TailscaleCommandExitError" &&
-                      cause.stderrDiagnostic === "unsupported-target"
-                      ? `Tailscale Serve left off; this Tailscale install can only proxy to localhost, not ${localHost}. Bind --host 127.0.0.1 or 0.0.0.0 instead`
-                      : "Failed to configure Tailscale Serve",
-                    { cause, localPort, servePort: config.tailscaleServePort },
-                  ).pipe(Effect.as(null)),
-                ),
-              );
+              return route;
             }),
             (configured) =>
               configured
@@ -1027,38 +1004,24 @@ const layerMakeServer = Layer.unwrap(
                   )
                 : Effect.void,
           ).pipe(
-            // Startup is not the only time the route can go stale, so whoever finds it on a dead
-            // port takes it back.
+            // Startup is not the only time Tailscale can fail or the route go stale, so it is
+            // retried until published and taken back when found on a dead port.
             Effect.tap((configured) =>
               configured === null
                 ? Effect.void
-                : Effect.sleep("30 seconds").pipe(
-                    Effect.andThen(
-                      tailscaleServeRootHolder({
-                        host: configured.localHost,
-                        port: configured.localPort,
-                      }),
-                    ),
-                    Effect.flatMap((holder) =>
-                      holder === "dead"
-                        ? ensureTailscaleServe({
-                            localPort: configured.localPort,
-                            servePort: configured.servePort,
-                            localHost: configured.urlHost,
-                          }).pipe(
-                            Effect.andThen(
-                              Effect.logInfo("Tailscale Serve repaired", {
-                                localPort: configured.localPort,
-                                servePort: configured.servePort,
-                              }),
-                            ),
-                          )
-                        : Effect.void,
-                    ),
-                    Effect.ignore,
-                    Effect.forever,
-                    Effect.forkScoped,
-                  ),
+                : TailscaleServePublisher.keepTailscaleServePublished({
+                    route: configured,
+                    readHolder: tailscaleServeRootHolder({
+                      host: configured.localHost,
+                      port: configured.localPort,
+                    }).pipe(Effect.orElseSucceed(() => "unreadable" as const)),
+                    ensure: ensureTailscaleServe({
+                      localPort: configured.localPort,
+                      servePort: configured.servePort,
+                      localHost: configured.urlHost,
+                    }),
+                    problem: tailscaleServeProblem,
+                  }).pipe(Effect.forkScoped),
             ),
           ),
         ).pipe(Layer.provide(NetService.layer))
@@ -1288,6 +1251,9 @@ const layerMakeServer = Layer.unwrap(
         ),
       ),
       Layer.provide(layerActivation),
+      Layer.provide(
+        Layer.succeed(TailscaleServePublisher.TailscaleServeProblem, tailscaleServeProblem),
+      ),
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),

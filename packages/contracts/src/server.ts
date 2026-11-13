@@ -693,6 +693,8 @@ export const ServerConfig = Schema.Struct({
   settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */
   managedPolicy: Schema.optionalKey(ManagedPolicySummary),
+  /** Why Tailscale Serve is off although this server was asked to publish through it. */
+  tailscaleServeProblem: Schema.optionalKey(Schema.String),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and

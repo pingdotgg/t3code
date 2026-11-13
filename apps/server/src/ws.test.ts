@@ -240,6 +240,29 @@ it.effect("resends a reveal kind and remote targets that outlast the snapshot ti
   }),
 );
 
+it.effect("resends the config when the Tailscale Serve problem changes", () =>
+  Effect.gen(function* () {
+    const events = yield* withLateConfigDiscovery(
+      snapshotConfig({ availableEditors: ["file-manager"], tailscaleServeProblem: "denied" }),
+      Stream.empty,
+      {
+        resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
+        resolveFileManagerRevealKind: () => Effect.undefined,
+      },
+      { resolveTargets: () => Effect.succeed([]) },
+      { resolve: () => Effect.succeed([]) },
+      Stream.make("denied", "timed out", undefined),
+    ).pipe(
+      Stream.filter((event) => event.type === "snapshot"),
+      Stream.map((event) => event.config.tailscaleServeProblem),
+      Stream.runCollect,
+    );
+
+    // The problem the snapshot already carried is not sent again.
+    assert.deepEqual(Array.from(events), ["timed out", undefined]);
+  }),
+);
+
 it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
   Effect.gen(function* () {
     // Each discovery finishes only once the other two have started, so a

@@ -32,6 +32,8 @@ export const PersistedServerRuntimeState = Schema.Struct({
       }),
     ),
   ),
+  // Why Tailscale Serve is off although this server was asked to publish through it.
+  tailscaleServeProblem: Schema.optional(Schema.String),
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 

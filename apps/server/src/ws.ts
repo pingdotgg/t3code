@@ -20,6 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
@@ -187,6 +188,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TailscaleServePublisher from "./tailscaleServePublisher.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
@@ -331,6 +333,7 @@ export const withLateConfigDiscovery = <E, R>(
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
   directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
+  tailscaleServeProblems: Stream.Stream<string | undefined> = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -363,9 +366,19 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((endpoints) => ({ type: "directEndpointsResolved" as const, endpoints })),
   );
 
+  const tailscaleServeProblemChanges = tailscaleServeProblems.pipe(
+    Stream.map((problem) => ({ type: "tailscaleServeProblemChanged" as const, problem })),
+  );
+
   return Stream.merge(
     liveUpdates,
-    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
+    Stream.merge(
+      lateEditorConfig,
+      Stream.merge(
+        lateRemoteOpenTargets,
+        Stream.merge(lateDirectEndpoints, tailscaleServeProblemChanges),
+      ),
+    ),
   ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
@@ -390,6 +403,17 @@ export const withLateConfigDiscovery = <E, R>(
               return [current, []];
             }
             const next = { ...current, directEndpoints: event.endpoints };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "tailscaleServeProblemChanged": {
+            if (current.tailscaleServeProblem === event.problem) {
+              return [current, []];
+            }
+            const { tailscaleServeProblem: _problem, ...rest } = current;
+            const next =
+              event.problem === undefined
+                ? rest
+                : { ...rest, tailscaleServeProblem: event.problem };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1510,6 +1534,7 @@ export const layerWsRpc = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
+      const tailscaleServeProblem = yield* TailscaleServePublisher.TailscaleServeProblem;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
@@ -1816,6 +1841,10 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
+        const currentTailscaleServeProblem =
+          tailscaleServeProblem === undefined
+            ? undefined
+            : yield* SubscriptionRef.get(tailscaleServeProblem);
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
@@ -1868,6 +1897,9 @@ export const layerWsRpc = (
           ...(serverSettings.managedPolicy === undefined
             ? {}
             : { managedPolicy: serverSettings.managedPolicy }),
+          ...(currentTailscaleServeProblem === undefined
+            ? {}
+            : { tailscaleServeProblem: currentTailscaleServeProblem }),
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
@@ -3419,6 +3451,9 @@ export const layerWsRpc = (
                   resolveTargets: () => Fiber.join(remoteTargets),
                 },
                 { resolve: () => Fiber.join(directResult) },
+                tailscaleServeProblem === undefined
+                  ? Stream.empty
+                  : SubscriptionRef.changes(tailscaleServeProblem),
               );
               return Stream.concat(
                 rpcInitialItems([

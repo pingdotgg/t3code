@@ -5,6 +5,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -15,6 +16,7 @@ import * as ServiceProtection from "../cloud/serviceProtection.ts";
 import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveEntryPath } from "./invocation.ts";
 
@@ -175,6 +177,7 @@ function formatServiceStatus(
   status: BootService.BootServiceStatus,
   cliVersion: string,
   protection?: ServiceProtection.ServiceProtectionState,
+  tailscaleServeProblem?: string,
 ): string {
   if (!status.supported) {
     return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler";
@@ -191,9 +194,14 @@ function formatServiceStatus(
     ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;
-  const problems = (status.problems ?? []).map(
-    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
-  );
+  const problems = [
+    ...(status.problems ?? []).map(
+      (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+    ),
+    ...(tailscaleServeProblem === undefined
+      ? []
+      : [`  Tailscale Serve: off. ${tailscaleServeProblem}`]),
+  ];
   if (
     !status.current &&
     status.installedVersion !== undefined &&
@@ -358,7 +366,16 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
                 Effect.provide(ProcessRunner.layer),
               )
             : undefined;
-        yield* Console.log(formatServiceStatus(status, packageJson.version, protection));
+        const runtime = yield* readLiveServerRuntimeState(
+          (yield* ServerConfig.ServerConfig).serverRuntimeStatePath,
+        );
+        const tailscaleServeProblem = Option.match(runtime, {
+          onNone: () => undefined,
+          onSome: (state) => (state.serviceManaged ? state.tailscaleServeProblem : undefined),
+        });
+        yield* Console.log(
+          formatServiceStatus(status, packageJson.version, protection, tailscaleServeProblem),
+        );
       }),
     ),
   ),
