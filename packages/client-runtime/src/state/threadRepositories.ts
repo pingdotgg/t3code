@@ -6,6 +6,8 @@ import type {
   OrchestrationV2ThreadProjection,
   RunId,
   ThreadTurnRepositoryDiff,
+  VcsStatusResult,
+  WorkspaceFolder,
 } from "@t3tools/contracts";
 
 type ChangedFiles = OrchestrationV2Checkpoint["files"];
@@ -335,4 +337,148 @@ export function repositorySectionForPath(
     }
   }
   return match;
+}
+
+/** How many repository sections a thread shows before the rest fold behind "Show N more". */
+export const THREAD_REPOSITORY_SECTIONS_VISIBLE = 4;
+
+/** A tracked repository the user asked to see in a thread, besides those the thread changed. */
+export interface PinnedThreadRepository {
+  /** The tracked folder's path; matches `ThreadRepositoryScope.repositoryPath`. */
+  readonly repositoryPath: string;
+  readonly name: string;
+}
+
+/** One repository a thread shows Git state and actions for. */
+export interface ThreadRepositorySection {
+  /** Stable across renders and reorders; the repository's path. */
+  readonly key: string;
+  readonly name: string;
+  /** The folder Git commands run in. */
+  readonly cwd: string;
+  /** Pinned sections can be removed; changed ones stay for as long as the thread has them. */
+  readonly origin: "pinned" | "changed";
+}
+
+export interface ThreadRepositorySections {
+  readonly visible: ReadonlyArray<ThreadRepositorySection>;
+  /** Folded away until the user asks for them. Clients render and subscribe for none of these. */
+  readonly hidden: ReadonlyArray<ThreadRepositorySection>;
+}
+
+const NO_SECTIONS: ThreadRepositorySections = Object.freeze({
+  visible: Object.freeze([]),
+  hidden: Object.freeze([]),
+});
+
+/**
+ * The repositories a thread changed, most recently changed first. A repository no turn has a
+ * checkpoint for yet sorts last, by name.
+ */
+export function threadChangedRepositories(
+  projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">,
+): ReadonlyArray<ThreadRepositoryScope> {
+  const scopes = threadRepositoryScopes(projection);
+  if (scopes.length < 2) return scopes;
+  const lastChange = new Map<CheckpointScopeId, number>();
+  for (const [index, checkpoint] of projection.checkpoints.entries()) {
+    if (checkpoint.runId !== null) lastChange.set(checkpoint.scopeId, index);
+  }
+  // `scopes` is by name already, and the sort is stable.
+  return [...scopes].sort(
+    (left, right) => (lastChange.get(right.scopeId) ?? -1) - (lastChange.get(left.scopeId) ?? -1),
+  );
+}
+
+/**
+ * The repository sections of a thread: pinned ones in the order they were pinned, then the ones
+ * the thread changed. `threadCwd` is the thread's own folder, which has its own Git controls.
+ */
+export function threadRepositorySections(input: {
+  readonly changed: ReadonlyArray<ThreadRepositoryScope>;
+  readonly pinned: ReadonlyArray<PinnedThreadRepository>;
+  readonly threadCwd: string | null;
+  readonly showAll: boolean;
+}): ThreadRepositorySections {
+  if (input.changed.length === 0 && input.pinned.length === 0) return NO_SECTIONS;
+  const seen = new Set<string>(input.threadCwd === null ? [] : [input.threadCwd]);
+  const sections: ThreadRepositorySection[] = [];
+  const add = (section: ThreadRepositorySection) => {
+    if (seen.has(section.key)) return;
+    seen.add(section.key);
+    sections.push(section);
+  };
+  for (const pin of input.pinned) {
+    add({ key: pin.repositoryPath, name: pin.name, cwd: pin.repositoryPath, origin: "pinned" });
+  }
+  for (const scope of input.changed) {
+    add({ key: scope.repositoryPath, name: scope.name, cwd: scope.cwd, origin: "changed" });
+  }
+  if (input.showAll || sections.length <= THREAD_REPOSITORY_SECTIONS_VISIBLE) {
+    return { visible: sections, hidden: NO_SECTIONS.hidden };
+  }
+  return {
+    visible: sections.slice(0, THREAD_REPOSITORY_SECTIONS_VISIBLE),
+    hidden: sections.slice(THREAD_REPOSITORY_SECTIONS_VISIBLE),
+  };
+}
+
+/** Adds a pin at the end; pinning a repository twice keeps its place. */
+export function pinThreadRepository(
+  pinned: ReadonlyArray<PinnedThreadRepository>,
+  repository: PinnedThreadRepository,
+): ReadonlyArray<PinnedThreadRepository> {
+  return pinned.some((entry) => entry.repositoryPath === repository.repositoryPath)
+    ? pinned
+    : [...pinned, repository];
+}
+
+export function unpinThreadRepository(
+  pinned: ReadonlyArray<PinnedThreadRepository>,
+  repositoryPath: string,
+): ReadonlyArray<PinnedThreadRepository> {
+  const next = pinned.filter((entry) => entry.repositoryPath !== repositoryPath);
+  return next.length === pinned.length ? pinned : next;
+}
+
+/** The tracked Git repositories a thread can still add: not its own folder, not shown yet. */
+export function pinnableThreadRepositories(input: {
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">>;
+  readonly sections: ThreadRepositorySections;
+  readonly threadCwd: string | null;
+}): ReadonlyArray<PinnedThreadRepository> {
+  const shown = new Set(
+    [...input.sections.visible, ...input.sections.hidden].map((section) => section.key),
+  );
+  return input.folders.flatMap((folder) =>
+    folder.state !== "git" || folder.path === input.threadCwd || shown.has(folder.path)
+      ? []
+      : [{ repositoryPath: folder.path, name: folder.name }],
+  );
+}
+
+/** What a collapsed repository section shows; null until the first status arrives. */
+export interface RepositorySectionSummary {
+  /** Null on a detached HEAD. */
+  readonly branch: string | null;
+  readonly isRepository: boolean;
+  readonly changedFiles: number;
+  readonly insertions: number;
+  readonly deletions: number;
+  /** The branch's pull request, from the last remote read anyone made of this folder. */
+  readonly pullRequest: NonNullable<VcsStatusResult["pr"]> | null;
+}
+
+export function repositorySectionSummary(
+  status: VcsStatusResult | null | undefined,
+): RepositorySectionSummary | null {
+  if (status == null) return null;
+  return {
+    branch: status.refName,
+    isRepository: status.isRepo,
+    changedFiles: status.workingTree.files.length,
+    insertions: status.workingTree.insertions,
+    deletions: status.workingTree.deletions,
+    pullRequest: status.pr,
+  };
 }

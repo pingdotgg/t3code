@@ -25,6 +25,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadRepositorySections } from "./ThreadRepositorySections";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
   ThreadDetailsContext,
@@ -178,6 +179,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             props.activeProjectName !== undefined &&
             (props.isGitRepo || (project?.trackedFolders?.length ?? 0) === 0) &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
+          // A thread in its own worktree reaches no tracked repository.
+          repositories:
+            offersGit &&
+            density !== "essential" &&
+            props.worktreePath === null &&
+            (project?.trackedFolders?.length ?? 0) > 0 &&
+            visible.gitActions,
         };
         return (
           <>
@@ -232,7 +240,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
-              {show.branch || show.pullRequests || show.git ? (
+              {show.branch || show.pullRequests || show.git || show.repositories ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
                   title="Version Control"
@@ -256,10 +264,22 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         showActions={visible.gitActions}
                         showChanges={visible.changes}
                         gitCwd={props.gitCwd}
+                        name={props.activeProjectName ?? ""}
                         workspaceMutationId={props.workspaceMutationId}
                         activeThreadRef={activeThreadRef}
                         {...(props.draftId ? { draftId: props.draftId } : {})}
                         {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                      />
+                    ) : null}
+                    {show.repositories ? (
+                      <ThreadRepositorySections
+                        environmentId={props.environmentId}
+                        threadId={props.threadId}
+                        projectId={props.projectId}
+                        isServerThread={props.isServerThread}
+                        threadCwd={props.gitCwd}
+                        explainsEmpty={!props.isGitRepo}
+                        showActions={visible.gitActions}
                       />
                     ) : null}
                   </div>
