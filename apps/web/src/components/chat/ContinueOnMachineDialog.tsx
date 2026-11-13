@@ -54,7 +54,19 @@ export function ContinueOnMachineDialogHost() {
 type Stage =
   | { readonly kind: "pick" }
   | { readonly kind: "checking"; readonly link: PeerLinkSummary }
-  | { readonly kind: "ask"; readonly link: PeerLinkSummary; readonly summary: WorkFilesSummary }
+  | {
+      readonly kind: "ask";
+      readonly link: PeerLinkSummary;
+      readonly summary: WorkFilesSummary;
+      readonly error: null;
+    }
+  /** The files could not be read; continuing without them is still possible. */
+  | {
+      readonly kind: "ask";
+      readonly link: PeerLinkSummary;
+      readonly summary: null;
+      readonly error: string;
+    }
   | { readonly kind: "running"; readonly link: PeerLinkSummary; readonly mode: WorkFilesMode };
 
 const failureMessage = (error: unknown) =>
@@ -103,6 +115,8 @@ function ContinueOnMachineDialog({
     );
 
   const run = async (link: PeerLinkSummary, mode: WorkFilesMode) => {
+    // Where the user was when they asked; moving anywhere else while it runs means they moved on.
+    const askedAt = router.latestLocation;
     setStage({ kind: "running", link, mode });
     const result = await continueThread({
       environmentId: threadRef.environmentId,
@@ -118,8 +132,7 @@ function ContinueOnMachineDialog({
     const openThread = () =>
       void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(target) });
     // Opens the thread as a new local one opens, once this window's connection there has it.
-    const openWhenItArrives = async () => {
-      const location = router.latestLocation;
+    const openWhenItArrives = async (location: typeof askedAt) => {
       const arrived = await waitForThreadShell(target, CONTINUED_THREAD_WAIT_MS);
       const next = afterContinuedThreadWait({
         arrived,
@@ -144,6 +157,7 @@ function ContinueOnMachineDialog({
       );
     };
     const turnOnAndOpen = async () => {
+      const clickedAt = router.latestLocation;
       const enabled = await setEnvironmentEnabled({
         environmentId: continued.environmentId,
         enabled: true,
@@ -160,7 +174,7 @@ function ContinueOnMachineDialog({
         }
         return;
       }
-      await openWhenItArrives();
+      await openWhenItArrives(clickedAt);
     };
     const saved = readEnvironment(continued.environmentId);
     const followThrough = continuedThreadFollowThrough({
@@ -203,7 +217,7 @@ function ContinueOnMachineDialog({
         data: { hideCopyButton: true },
       }),
     );
-    if (followThrough.kind === "open") await openWhenItArrives();
+    if (followThrough.kind === "open") await openWhenItArrives(askedAt);
   };
 
   const choose = async (link: PeerLinkSummary) => {
@@ -213,8 +227,12 @@ function ContinueOnMachineDialog({
       input: { threadId: threadRef.threadId },
     });
     if (result._tag === "Failure") {
-      onClose();
-      if (!isAtomCommandInterrupted(result)) fail(link, squashAtomCommandFailure(result));
+      if (isAtomCommandInterrupted(result)) {
+        onClose();
+        return;
+      }
+      const error = failureMessage(squashAtomCommandFailure(result));
+      setStage({ kind: "ask", link, summary: null, error });
       return;
     }
     const summary = result.value;
@@ -223,21 +241,24 @@ function ContinueOnMachineDialog({
       await run(link, "skip");
       return;
     }
-    setStage({ kind: "ask", link, summary });
+    setStage({ kind: "ask", link, summary, error: null });
   };
 
   if (stage.kind === "ask" || (stage.kind === "running" && stage.mode === "transfer")) {
-    const summary = stage.kind === "ask" ? stage.summary : null;
+    const description =
+      stage.kind !== "ask"
+        ? `Sending the work files to ${stage.link.label}…`
+        : stage.error !== null
+          ? `The work files could not be read: ${stage.error}`
+          : (stage.summary.refusal ?? workFilesDescription(stage.summary));
+    const canTransfer =
+      stage.kind === "ask" && stage.error === null && stage.summary.refusal == null;
     return (
       <AlertDialog open onOpenChange={(open) => !open && !busy && onClose()}>
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>Transfer the current work files too?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {summary === null
-                ? `Sending the work files to ${stage.link.label}…`
-                : (summary.refusal ?? workFilesDescription(summary))}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{description}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" disabled={busy} />}>
@@ -247,7 +268,7 @@ function ContinueOnMachineDialog({
               Continue without files
             </Button>
             <Button
-              disabled={busy || summary?.refusal != null}
+              disabled={busy || !canTransfer}
               onClick={() => void run(stage.link, "transfer")}
             >
               {busy ? "Transferring…" : "Transfer files"}

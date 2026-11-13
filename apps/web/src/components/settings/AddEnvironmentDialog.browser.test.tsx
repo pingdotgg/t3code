@@ -97,7 +97,7 @@ describe("AddEnvironmentDialog", () => {
     await expectDefaultModeAfterReopen();
   });
 
-  it("fills in each new address a Connect link names, also while it is open", async () => {
+  it("fills in each new address a Connect link names, also while it is open, and drops the code", async () => {
     using _bridge = setup();
     const dialog = (initialHost: string) => (
       <AppAtomRegistryProvider>
@@ -116,8 +116,12 @@ describe("AddEnvironmentDialog", () => {
     const host = page.getByPlaceholder("backend.example.com");
     await expect.element(host).toHaveValue("https://studio.example.com");
 
+    await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "STUDIO1");
+
     await screen.rerender(dialog("https://devbox.example.com"));
     await expect.element(host).toHaveValue("https://devbox.example.com");
+    // The code typed for the first address never goes to the second.
+    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("");
   });
 
   it("clears the form after dismissing it on SSH", async () => {
