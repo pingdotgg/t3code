@@ -330,6 +330,36 @@ it.effect("paces scheduled compaction while preserving retention state and fixed
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
+it.effect("traces a provider batch as one span, not one per SQL statement", () => {
+  const traced: string[] = [];
+  const tracer = Tracer.make({
+    span(options) {
+      const span = new Tracer.NativeSpan(options);
+      traced.push(span.name);
+      return span;
+    },
+  });
+  return Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    traced.length = 0;
+    const thread = makeThread(ThreadId.make("thread:traced-batch"), now);
+    yield* sink.withProviderBatch(
+      sink.write({ events: [threadCreatedEvent({ id: "traced-created", thread, now })] }),
+    );
+    yield* sink.withProviderBatch(Effect.void);
+    assert.deepEqual(
+      traced.filter((name) => name !== "orchestrationV2.EventSink.write"),
+      ["orchestrationV2.EventSink.providerBatch", "orchestrationV2.EventSink.providerBatch"],
+    );
+  }).pipe(
+    Effect.provide(Layer.fresh(layerTest)),
+    Effect.withTracer(tracer),
+    Effect.withTracerEnabled(true),
+    Effect.provideService(Statement.SpanPropagationEnabled, true),
+  );
+});
+
 it.effect(
   "commits an ordered provider batch atomically and publishes only after the outer commit",
   () =>
