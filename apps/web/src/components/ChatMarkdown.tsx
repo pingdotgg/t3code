@@ -647,7 +647,7 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -1055,19 +1055,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
-    const alert =
-      GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
+    const alertKind = String((props as Record<string, unknown>)["data-alert"] ?? "");
+    const alert = GITHUB_ALERT_PRESENTATIONS[alertKind];
     if (!alert) {
       return <blockquote {...props}>{children}</blockquote>;
     }
     return (
       <div
         role="note"
+        data-markdown-alert={alertKind}
         dir={props.dir}
         className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
       >
         <p
           data-thread-find-ignore="true"
+          data-markdown-alert-label=""
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
         >
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
