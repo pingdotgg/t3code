@@ -156,6 +156,7 @@ describe("toolOutputIndicatesFailure", () => {
       "<exited with exit code 2>",
       "Exited with exit code 1",
       "exit code: 127",
+      "clean exit first, then ExIt CoDe: 3",
     ])
       expect(toolOutputIndicatesFailure(text)).toBe(true);
   });
@@ -167,6 +168,9 @@ describe("toolOutputIndicatesFailure", () => {
       "Exited with exit code 0",
       "cannot find path",
       "is not recognized",
+      "exit",
+      "not found",
+      "the path cannot be found",
     ]) {
       expect(toolOutputIndicatesFailure(text)).toBe(false);
     }
@@ -195,6 +199,8 @@ describe("toolOutputImages", () => {
     expect(output).toEqual({ content, structuredContent });
     expect(mcpToolResultOutput({ content: [text], structuredContent })).toBe(structuredContent);
     expect(mcpToolResultOutput({ content })).toBe(content);
+    expect(mcpToolResultOutput({ content: [text], structuredContent: {} })).toEqual([text]);
+    expect(mcpToolResultOutput({ content: [text], structuredContent: [] })).toEqual([text]);
   });
 
   it("skips types the server must not serve inline", () => {
