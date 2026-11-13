@@ -559,6 +559,8 @@ const make = Effect.gen(function* () {
           // `:/text` is a commit search, which cannot be asked for a commit type.
           if (startRef.startsWith(":") || (yield* git.hasCommit({ cwd, refName: "HEAD" })))
             return false;
+          // Any local branch means Git can still resolve bases like `main...other` that rev-parse rejects.
+          if ((yield* git.listLocalBranchNames(cwd)).length > 0) return false;
           return !(yield* git.hasCommit({ cwd, refName: startRef === "-" ? "@{-1}" : startRef }));
         }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
         if (unborn) {

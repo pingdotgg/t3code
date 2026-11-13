@@ -1289,14 +1289,33 @@ it.effect.each(["stable", "upstream/release"])(
     ),
 );
 
-it.effect("starts a new worktree thread in a repository with no commits", () =>
+it.effect.each([
+  { name: "a repository with no commits", setup: [], baseRef: "main", worktree: false },
+  {
+    name: "an orphan branch beside branches with commits",
+    setup: [
+      ["commit", "--allow-empty", "-m", "initial"],
+      ["branch", "other"],
+      ["checkout", "--orphan", "empty"],
+    ],
+    baseRef: "main...other",
+    worktree: true,
+  },
+])("launches a new worktree thread from $name", (scenario) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-unborn-" });
     const cwd = `${directory}/repo`;
     yield* fs.makeDirectory(cwd);
-    yield* git.execute({ operation: "launch-test", cwd, args: ["init", "-b", "main"] });
+    for (const args of [
+      ["init", "-b", "main"],
+      ["config", "user.email", "test@example.com"],
+      ["config", "user.name", "Test"],
+      ...scenario.setup,
+    ]) {
+      yield* git.execute({ operation: "launch-test", cwd, args });
+    }
 
     const harness = makeHarness({
       hasCommit: ({ refName }) =>
@@ -1310,6 +1329,7 @@ it.effect("starts a new worktree thread in a repository with no commits", () =>
             Effect.as(true),
             Effect.orElseSucceed(() => false),
           ),
+      git: { listLocalBranchNames: () => git.listLocalBranchNames(cwd) },
       createWorktree: (input, options) =>
         git.createWorktree({ ...input, cwd, path: `${directory}/worktree` }, options),
     });
@@ -1320,11 +1340,14 @@ it.effect("starts a new worktree thread in a repository with no commits", () =>
           command: "command:launch:unborn",
           thread: "thread:launch:unborn",
           message: "Say hello",
-          workspace: { type: "worktree", baseRef: "main" },
+          workspace: { type: "worktree", baseRef: scenario.baseRef, branch: "feature" },
         }),
       );
       const projection = yield* preparationSettled(launched.threadId);
-      assert.equal(projection.thread.worktreePath, null);
+      assert.equal(
+        projection.thread.worktreePath,
+        scenario.worktree ? `${directory}/worktree` : null,
+      );
       assert.equal(projection.runs[0]?.status, "starting");
     }).pipe(Effect.provide(harness.layer));
   }).pipe(
