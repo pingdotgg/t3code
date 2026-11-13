@@ -1434,6 +1434,94 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("clears saved waits while native shell recovery is stalled", () =>
+    Effect.gen(function* () {
+      const ids = ["sh_one", "sh_two", "sh_three"];
+      const info = (id: string) => ({
+        id,
+        command: "sleep 600",
+        status: "running",
+        cwd: WORK,
+        shell: "/bin/sh",
+        file: "/remote/output",
+        metadata: { sessionID: SESSION },
+        time: { started: 1 },
+      });
+      const response = (data: unknown) => ({ location: { directory: WORK }, data });
+      const gate = makeProviderReplayGate(["recovery-stalled", "recovery-start"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          event("session.execution.succeeded", { sessionID: "ses_unrelated" }, "recovery-start"),
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("shell.list", "<any>"),
+          reply("shell.list", "<hang>"),
+          event("session.execution.succeeded", { sessionID: "ses_unrelated" }, "recovery-stalled"),
+          out("shell.get", { id: ids[0] }),
+          reply("shell.get", "<hang>"),
+          out("session.active"),
+          replyData("session.active", {}),
+          ...ids.map((id) => out("shell.output", { id })),
+          ...ids.map(() => reply("shell.output", "<hang>")),
+        ],
+        {
+          version: "2.2.1",
+          replayGate: gate,
+          pendingBackgroundTasks: ids.map((taskId) => ({
+            taskId,
+            kind: "command" as const,
+            description: "sleep 600",
+            awaited: true,
+          })),
+          shellRecovery: [
+            out("shell.list", "<any>"),
+            reply("shell.list", response(ids.map(info))),
+            ...ids.flatMap((id) => [
+              out("shell.get", { id }),
+              reply("shell.get", response(info(id))),
+              out("shell.output", { id }),
+              reply("shell.output", response({ output: "", cursor: 0, size: 0, truncated: false })),
+            ]),
+          ],
+        },
+      );
+      gate.release("recovery-start");
+      yield* Effect.promise(() => gate.waitForReached("recovery-stalled"));
+      const cleared = yield* runtime.awaitBackgroundTasks!({
+        providerThread: thread,
+        taskIds: ids,
+        awaited: false,
+      }).pipe(Effect.timeout("15 seconds"), Effect.forkScoped);
+      gate.release("recovery-stalled");
+      yield* TestClock.adjust("15 seconds");
+      assert.deepEqual(yield* Fiber.join(cleared), { matched: ids });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.pendingBackgroundTasks?.length === ids.length &&
+            event.providerThread.pendingBackgroundTasks.every((task) => task.awaited !== true),
+        ),
+        Stream.runCollect,
+      );
+      const unmarked = events.at(-1);
+      assert.deepEqual(
+        unmarked?.type === "provider_thread.updated"
+          ? unmarked.providerThread.pendingBackgroundTasks
+          : undefined,
+        ids.map((taskId) => ({ taskId, kind: "command", description: "sleep 600" })),
+      );
+      assert.deepEqual(
+        yield* runtime.awaitBackgroundTasks!({
+          providerThread: thread,
+          taskIds: ids,
+          awaited: true,
+        }),
+        { matched: ids },
+      );
+    }),
+  );
+
   it.effect("restores the native descendant owner of a saved awaited shell", () =>
     Effect.gen(function* () {
       const id = "sh_descendant";

@@ -1919,6 +1919,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       (effect, state) =>
         lock.withPermit(
           effect.pipe(
+            // Allow status checks after inventory timeout without exhausting the wait command's deadline.
+            Effect.timeout("10 seconds"),
             Effect.ensuring(
               Effect.gen(function* () {
                 for (const [id, shell] of shells) {
