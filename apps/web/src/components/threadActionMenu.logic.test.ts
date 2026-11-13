@@ -76,7 +76,7 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
 
-  it("offers Mark unread only when the thread is not running", () => {
+  it("offers Mark unread only to threads that are neither running nor Working", () => {
     const offersMarkUnread = (isRunning: boolean, isWorking = false) =>
       buildThreadActionMenuItems({ ...baseState, isRunning, isWorking }).some(
         (item) => item.id === "mark-unread" && !item.disabled,
