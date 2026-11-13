@@ -47,6 +47,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -485,6 +486,9 @@ export default function ChatView(props: ChatViewProps) {
     label: "load earlier thread history",
     reportFailure: false,
   });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -831,6 +835,15 @@ export default function ChatView(props: ChatViewProps) {
       )
     : undefined;
   const isServerThread = serverThread !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- usage is only re-probed on demand, so a new draft asks the server for fresh limits (throttled per environment)
+  useEffect(() => {
+    if (draftId === null || isServerThread) return;
+    void refreshUsageLimits(
+      environmentId,
+      () => refreshProviders({ environmentId, input: {} }),
+      true,
+    );
+  }, [draftId, environmentId, isServerThread, refreshProviders]);
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
