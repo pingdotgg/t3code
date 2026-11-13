@@ -96,6 +96,7 @@ const registeredActivityPushTokens = new Map<string, number>();
 let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let lastNativePushToken: string | null = null;
+let registeredWithPushToken = false;
 let nativePushTokenRotations = 0;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
@@ -116,6 +117,12 @@ function setRegistrationStatus(next: AgentAwarenessRegistrationStatus): void {
 
 export function getAgentAwarenessRegistrationStatus(): AgentAwarenessRegistrationStatus {
   return registrationStatus;
+}
+
+// Live Activities use their own push tokens, so device registration alone does not mean
+// the relay can deliver notifications.
+export function agentAwarenessNotificationsReady(): boolean {
+  return registrationStatus === "registered" && registeredWithPushToken;
 }
 
 export function subscribeAgentAwarenessRegistrationStatus(listener: () => void): () => void {
@@ -368,13 +375,6 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
   ].join("|");
 }
 
-// Notifications are not set up until the relay holds a token for them.
-function acceptedRegistrationStatus(
-  body: RelayDeviceRegistrationRequest,
-): AgentAwarenessRegistrationStatus {
-  return body.preferences.notificationsEnabled && !body.pushToken ? "failed" : "registered";
-}
-
 const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWithRelay")(function* (
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
@@ -423,7 +423,8 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     persisted.signature === signature &&
     !needsAndroidReplay
   ) {
-    setRegistrationStatus(acceptedRegistrationStatus(payload));
+    registeredWithPushToken = Boolean(payload.pushToken);
+    setRegistrationStatus("registered");
     return;
   }
 
@@ -439,7 +440,8 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     return;
   }
   if (body.platform === "android") androidDeviceReplayedAt = yield* Clock.currentTimeMillis;
-  setRegistrationStatus(acceptedRegistrationStatus(payload));
+  registeredWithPushToken = Boolean(payload.pushToken);
+  setRegistrationStatus("registered");
   yield* Effect.promise(() =>
     saveAgentAwarenessRegistrationRecord({
       identity,
@@ -873,6 +875,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   registrationStatus = "unknown";
+  registeredWithPushToken = false;
   androidDeviceReplayedAt = null;
   lastNativePushToken = null;
   nativePushTokenRotations = 0;

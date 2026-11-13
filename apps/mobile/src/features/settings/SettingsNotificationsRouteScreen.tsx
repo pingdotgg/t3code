@@ -34,6 +34,7 @@ import {
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
+  agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
@@ -192,7 +193,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
-      if (getAgentAwarenessRegistrationStatus() === "registered") {
+      if (agentAwarenessNotificationsReady()) {
         Dialog.alert("Notifications enabled", "Agent notifications are enabled for this device.");
       } else {
         Dialog.alert(

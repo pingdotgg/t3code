@@ -30,6 +30,7 @@ import type { Preferences } from "../../persistence/mobile-preferences";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
+  agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
@@ -736,7 +737,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return registrations;
   };
 
-  it.effect("does not report a device registered when its push token lookup fails", () => {
+  it.effect("does not report notifications ready when its push token lookup fails", () => {
     const registrations = stubAndroidDeviceRelay();
     vi.mocked(Notifications.getDevicePushTokenAsync).mockRejectedValue(
       new Error("Default FirebaseApp is not initialized"),
@@ -746,7 +747,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       yield* runBackgroundOperations();
 
-      expect(getAgentAwarenessRegistrationStatus()).toBe("failed");
+      // Live Activities register with their own tokens, so the device stays registered.
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+      expect(agentAwarenessNotificationsReady()).toBe(false);
       expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
       expect(registrations[0]).not.toHaveProperty("pushToken");
     }).pipe(
@@ -774,7 +777,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* refreshAgentAwarenessRegistration();
 
       expect(registrations).toMatchObject([{ preferences: { notificationsEnabled: true } }]);
-      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+      expect(agentAwarenessNotificationsReady()).toBe(true);
 
       // A lookup that started before a rotation must not replace the rotated token.
       let resolveStaleLookup: (token: { type: "android"; data: string }) => void = () => {};
