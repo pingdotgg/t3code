@@ -493,7 +493,10 @@ async function vcs(ctx) {
 
 async function rustVcs(ctx) {
   const target = await ctx.startRustServer(undefined, prepareVcsRepo);
+  const start = ctx.memory(target, "started");
   await vcsViews(ctx, target, "rust-project");
+  // Status and branch streams are open on the project here.
+  ctx.log(`memory KB ${JSON.stringify({ start, diff: ctx.memory(target, "diff-open") })}`);
 }
 
 export const SCENARIOS = {

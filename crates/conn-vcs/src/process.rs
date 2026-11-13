@@ -391,6 +391,7 @@ mod tests {
         let ProcessError::Exit { code, stderr, .. } = err else {
             panic!("{err:?}")
         };
+        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(code, 128);
         assert!(stderr.contains("not a git repository"), "{stderr}");
     }
