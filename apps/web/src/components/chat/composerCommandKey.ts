@@ -16,6 +16,7 @@ import {
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
+import { composerItemAnswersTrigger } from "@t3tools/shared/composerTrigger";
 import { type PendingUserInput } from "../../session-logic";
 import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
@@ -237,7 +238,10 @@ export function composerCommandKeyHandler(input: {
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
+      // The refs lag a keystroke, so the highlighted row may belong to an earlier query.
+      const selectable =
+        selectedItem && (trigger === null || composerItemAnswersTrigger(selectedItem, trigger));
+      if ((key === "Enter" || key === "Tab") && selectable) {
         onSelectComposerItem(selectedItem);
         return true;
       }

@@ -964,6 +964,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   readOnly={isSubmissionLocked}
                   skills={composerMenu.skills}
                   selection={composerMenu.selection}
+                  searchingMentionStart={
+                    composerMenu.trigger?.kind === "path" ? composerMenu.trigger.rangeStart : null
+                  }
                   onChangeText={(text) => {
                     if (!isSubmissionLocked) props.onChangeDraftMessage(text);
                   }}

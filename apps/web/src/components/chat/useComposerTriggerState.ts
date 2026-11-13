@@ -1,10 +1,36 @@
+import { continueComposerPathTrigger } from "@t3tools/shared/composerTrigger";
 import { useRef, useState } from "react";
 
-import type { ComposerTrigger } from "../../composer-logic";
+import { detectComposerTrigger, type ComposerTrigger } from "../../composer-logic";
 
 export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | null) {
   const [trigger, setActiveTrigger] = useState(initialTrigger);
+  // Handlers can run twice before a render, so the trigger an edit continues is read from here.
+  const activeTriggerRef = useRef(trigger);
   const dismissedTriggerRef = useRef<ComposerTrigger | null>(null);
+
+  const activate = (next: ComposerTrigger | null) => {
+    activeTriggerRef.current = next;
+    setActiveTrigger(next);
+  };
+
+  /**
+   * The trigger at the caret, where a space continues the `@` search that was already active.
+   * Selecting text ends that continuation.
+   */
+  const detectTrigger = (text: string, cursor: number, hasSelection = false) => {
+    return continueComposerPathTrigger({
+      text,
+      cursor,
+      detected: detectComposerTrigger(text, cursor),
+      previous: hasSelection ? null : activeTriggerRef.current,
+    });
+  };
+
+  /** Ends `candidate` unless a newer edit already replaced it. */
+  const endTrigger = (candidate: ComposerTrigger | null) => {
+    if (candidate !== null && activeTriggerRef.current === candidate) activate(null);
+  };
 
   const resolveTrigger = (candidate: ComposerTrigger | null) => {
     const dismissed = dismissedTriggerRef.current;
@@ -21,18 +47,26 @@ export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | 
     if (candidate === null || activeTrigger !== null) {
       dismissedTriggerRef.current = null;
     }
-    setActiveTrigger(activeTrigger);
+    activate(activeTrigger);
   };
 
   const dismissTrigger = (candidate: ComposerTrigger | null) => {
     dismissedTriggerRef.current = candidate;
-    setActiveTrigger(null);
+    activate(null);
   };
 
   const resetTrigger = (candidate: ComposerTrigger | null) => {
     dismissedTriggerRef.current = null;
-    setActiveTrigger(candidate);
+    activate(candidate);
   };
 
-  return { trigger, setTrigger, resolveTrigger, dismissTrigger, resetTrigger };
+  return {
+    trigger,
+    detectTrigger,
+    endTrigger,
+    setTrigger,
+    resolveTrigger,
+    dismissTrigger,
+    resetTrigger,
+  };
 }

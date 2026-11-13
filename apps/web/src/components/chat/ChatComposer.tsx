@@ -51,7 +51,10 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  composerItemAnswersTrigger,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -977,6 +980,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const {
     trigger: composerTrigger,
+    detectTrigger: detectContinuedComposerTrigger,
+    endTrigger: endComposerTrigger,
     setTrigger: setComposerTrigger,
     resolveTrigger: resolveComposerTrigger,
     dismissTrigger: dismissComposerTrigger,
@@ -985,6 +990,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLiteralPendingAnswer ? null : detectComposerTrigger(prompt, prompt.length),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const detectActiveComposerTrigger = (text: string, cursor: number) => {
+    const selection = composerEditorRef.current?.readSelectionRange();
+    return detectContinuedComposerTrigger(
+      text,
+      cursor,
+      selection !== undefined && selection.start !== selection.end,
+    );
+  };
   const composerSuggestionId = useId();
   const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
   const promptHistoryPositionRef = useRef<{
@@ -1109,6 +1122,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
+    spacedQueryIsEmpty: composerSpacedQueryIsEmpty,
+    spacedQueryRuledOut: composerSpacedQueryRuledOut,
   } = useComposerMenuItems({
     composerTrigger,
     environmentId,
@@ -1131,7 +1146,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
-  const composerMenuOpen = Boolean(composerTrigger);
+  const composerMenuOpen = Boolean(composerTrigger) && !composerSpacedQueryIsEmpty;
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
@@ -1149,6 +1164,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerMenuOpenRef.current = composerMenuOpen;
     composerMenuItemsRef.current = composerMenuItems;
     activeComposerMenuItemRef.current = activeComposerMenuItem;
+    // Ends a spaced query whose search settled empty, so prose after `@word` stops searching.
+    if (composerSpacedQueryRuledOut) endComposerTrigger(composerTrigger);
   });
 
   const isComposerApprovalState = activePendingApproval !== null;
@@ -1569,7 +1586,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
       );
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
@@ -1692,7 +1709,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+      cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
@@ -1869,7 +1886,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       snapshot,
       trigger: isLiteralPendingAnswer
         ? null
-        : resolveComposerTrigger(detectComposerTrigger(snapshot.value, snapshot.expandedCursor)),
+        : resolveComposerTrigger(
+            detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
+          ),
     };
   };
 
@@ -1881,7 +1900,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerSelectLockRef.current = false;
     });
     const { snapshot, trigger } = resolveActiveComposerTrigger();
-    if (!trigger) return;
+    if (!trigger || !composerItemAnswersTrigger(item, trigger)) return;
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;

@@ -23,6 +23,7 @@ import {
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
+import { composerItemAnswersTrigger } from "@t3tools/shared/composerTrigger";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 import type { ComposerTrigger } from "../../composer-logic";
@@ -124,7 +125,9 @@ export function useComposerMenuItems({
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  const threadSearch = useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, {
+    titlesOnly: true,
+  });
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
@@ -200,7 +203,7 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return [
+      const pathItems: ComposerCommandItem[] = [
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
           environmentId,
@@ -232,6 +235,7 @@ export function useComposerMenuItems({
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
       ];
+      return pathItems.filter((item) => composerItemAnswersTrigger(item, composerTrigger));
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
@@ -406,6 +410,16 @@ export function useComposerMenuItems({
         pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
+  // A query with a space shows only while something contains it, so prose after `@word` gets
+  // no picker. It ends once its search settles empty; a capped list waits for the next word.
+  const spacedQueryIsEmpty =
+    composerTriggerKind === "path" && pathTriggerQuery.includes(" ") && items.length === 0;
+  const spacedQueryRuledOut =
+    spacedQueryIsEmpty &&
+    !workspaceEntries.isPending &&
+    !threadSearch.isPending &&
+    !threadSearch.hasOlderRows &&
+    !(workspaceEntries.truncated && pathTriggerQuery.endsWith(" "));
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
@@ -429,5 +443,5 @@ export function useComposerMenuItems({
       : "No matching command.";
   })();
 
-  return { items, isLoading, emptyState };
+  return { items, isLoading, emptyState, spacedQueryIsEmpty, spacedQueryRuledOut };
 }

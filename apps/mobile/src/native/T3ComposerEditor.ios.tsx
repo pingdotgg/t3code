@@ -141,6 +141,7 @@ export function ComposerEditor({
   skills = EMPTY_SKILLS,
   models = EMPTY_MODELS,
   selection,
+  searchingMentionStart,
   style,
   textStyle,
   onChangeText,
@@ -175,6 +176,11 @@ export function ComposerEditor({
       preserveTrailingFrom: confirmedTokens.tokens,
     });
     setConfirmedTokens({ value: props.value, tokens });
+  }
+  if (searchingMentionStart != null) {
+    tokens = tokens.filter(
+      (token) => token.type !== "mention" || token.start !== searchingMentionStart,
+    );
   }
   const bodyText = useScaledTextRole("body");
   const theme = useUniwindTheme();

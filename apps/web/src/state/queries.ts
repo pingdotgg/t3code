@@ -110,6 +110,8 @@ export function useThreadSearch(
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly query: string;
   readonly isPending: boolean;
+  /** Older threads were found whose rows reach the caller's shells a render after `isPending` clears. */
+  readonly hasOlderRows: boolean;
 } {
   // A pasted wall of text searches by its start rather than failing the request.
   const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
@@ -163,6 +165,7 @@ export function useThreadSearch(
     matches: visible.matches,
     query: visible.query,
     isPending,
+    hasOlderRows: result.rows.length > 0,
   };
 }
 
