@@ -16,6 +16,7 @@ export type ProviderUsageLimitsReport = ProviderUsageLimitsUpdate & {
   readonly complete?: boolean;
   /** Only a complete reading carries these; with no windows it publishes why limits are unavailable. */
   readonly group?: ServerProviderUsageLimits["group"];
+  readonly externalUsage?: ServerProviderUsageLimits["externalUsage"];
   readonly unavailable?: ServerProviderUsageLimits["unavailable"];
 };
 

@@ -766,6 +766,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           windows: limits.windows,
           complete: true,
           ...(limits.group === undefined ? {} : { group: limits.group }),
+          ...(limits.externalUsage === undefined ? {} : { externalUsage: limits.externalUsage }),
           ...(limits.unavailable === undefined ? {} : { unavailable: limits.unavailable }),
         }),
       );

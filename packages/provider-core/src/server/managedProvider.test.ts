@@ -926,10 +926,14 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("publishes a complete reading's group and unavailable state", () =>
+  it.effect("publishes a complete reading's group, usage link and unavailable state", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const group = { id: "glm", label: "Z.ai" };
+        const externalUsage = {
+          label: "Z.ai usage",
+          url: "https://z.ai/manage-apikey/subscription",
+        };
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
           getSettings: Effect.succeed({ enabled: true }),
@@ -948,11 +952,13 @@ describe("makeManagedServerProvider", () => {
           checkedAt: "2026-04-10T00:00:04.000Z",
           complete: true,
           group,
+          externalUsage,
           windows,
         });
         assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
           checkedAt: "2026-04-10T00:00:04.000Z",
           group,
+          externalUsage,
           windows,
         });
 

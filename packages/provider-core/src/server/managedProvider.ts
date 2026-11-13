@@ -258,6 +258,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           ? {
               ...makeUsageLimits(update),
               ...(update.group === undefined ? {} : { group: update.group }),
+              ...(update.externalUsage === undefined
+                ? {}
+                : { externalUsage: update.externalUsage }),
               ...(update.unavailable === undefined ? {} : { unavailable: update.unavailable }),
             }
           : applyUsageLimitsUpdate({
