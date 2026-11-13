@@ -18,7 +18,8 @@ use std::{
 };
 
 use conn_contract::{
-    AuthClientMetadata, AuthClientSession, AuthEnvironmentScope, AuthPairingLink, from_json,
+    AuthClientMetadata, AuthClientMetadataDeviceType, AuthClientSession, AuthEnvironmentScope,
+    AuthPairingLink, from_json,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -264,8 +265,15 @@ impl ClientInfo {
     }
 
     pub fn to_contract(&self) -> AuthClientMetadata {
-        from_json(serde_json::to_value(self).expect("client info serializes"))
-            .unwrap_or_else(|_| from_json(serde_json::json!({ "deviceType": "unknown" })).unwrap())
+        AuthClientMetadata {
+            label: self.label.clone(),
+            ip_address: self.ip_address.clone(),
+            user_agent: self.user_agent.clone(),
+            device_type: from_json(serde_json::Value::String(self.device_type.clone()))
+                .unwrap_or(AuthClientMetadataDeviceType::Unknown),
+            os: self.os.clone(),
+            browser: self.browser.clone(),
+        }
     }
 }
 
@@ -530,9 +538,12 @@ impl AuthStore {
     }
 
     /// A pairing link with the standard client scopes.
-    pub fn issue_pairing_code(&self, label: Option<String>, ttl_ms: u64) -> IssuedPairingCode {
+    pub fn issue_pairing_code(
+        &self,
+        label: Option<String>,
+        ttl_ms: u64,
+    ) -> io::Result<IssuedPairingCode> {
         self.issue_pairing(PairingRequest::standard(label, ttl_ms))
-            .expect("auth file writable")
     }
 
     /// A one-time pairing link. The caller has checked the scopes.
@@ -621,7 +632,9 @@ impl AuthStore {
                 outcome = Err(ExchangeError::ScopeNotGranted);
                 return Vec::new();
             }
-            let grant = state.pairing.remove(&key).expect("grant present");
+            let Some(grant) = state.pairing.remove(&key) else {
+                return Vec::new();
+            };
             let mut client = client.clone();
             if client.label.is_none() {
                 client.label = grant.label.clone();
@@ -1317,7 +1330,7 @@ mod tests {
     #[test]
     fn pairing_codes_are_single_use_and_case_insensitive() {
         let store = AuthStore::in_memory();
-        let issued = store.issue_pairing_code(None, PAIRING_CODE_TTL_MS);
+        let issued = store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).unwrap();
         assert_eq!(issued.code.len(), PAIRING_CODE_LENGTH);
         assert!(
             issued
@@ -1351,7 +1364,10 @@ mod tests {
     #[test]
     fn exchange_narrows_and_checks_scopes() {
         let store = AuthStore::in_memory();
-        let code = store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code;
+        let code = store
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
         assert_eq!(
             store
                 .exchange(&code, Some(&["root".into()]), ClientInfo::default())
@@ -1370,7 +1386,10 @@ mod tests {
             session.principal.scopes,
             vec!["orchestration:read".to_owned()]
         );
-        let code = store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code;
+        let code = store
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
         assert_eq!(
             store
                 .exchange(&code, Some(&["review:write".into()]), ClientInfo::default())
@@ -1405,7 +1424,7 @@ mod tests {
     #[test]
     fn expired_codes_are_refused() {
         let store = AuthStore::in_memory();
-        let code = store.issue_pairing_code(None, 0).code;
+        let code = store.issue_pairing_code(None, 0).unwrap().code;
         assert_eq!(
             store
                 .exchange(&code, None, ClientInfo::default())
@@ -1417,7 +1436,10 @@ mod tests {
     #[test]
     fn tickets_are_bound_to_their_route_and_session() {
         let store = AuthStore::in_memory();
-        let code = store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code;
+        let code = store
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
         let session = store.exchange(&code, None, ClientInfo::default()).unwrap();
         assert!(store.issue_ticket("not-a-token", Some("rpc")).is_none());
         let (rpc, _) = store.issue_ticket(&session.token, Some("rpc")).unwrap();
@@ -1438,14 +1460,20 @@ mod tests {
         let mut changes = store.subscribe();
         let me = store
             .exchange(
-                &store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code,
+                &store
+                    .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+                    .unwrap()
+                    .code,
                 None,
                 ClientInfo::default(),
             )
             .unwrap();
         let other = store
             .exchange(
-                &store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code,
+                &store
+                    .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+                    .unwrap()
+                    .code,
                 None,
                 ClientInfo::default(),
             )
@@ -1484,7 +1512,10 @@ mod tests {
         let store = AuthStore::in_memory();
         let session = store
             .exchange(
-                &store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code,
+                &store
+                    .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+                    .unwrap()
+                    .code,
                 None,
                 ClientInfo::default(),
             )
@@ -1503,9 +1534,14 @@ mod tests {
         let dir = temp_dir("auth");
         let file = dir.join("auth.json");
         let store = AuthStore::open(file.clone()).unwrap();
-        let code = store.issue_pairing_code(None, PAIRING_CODE_TTL_MS).code;
+        let code = store
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
         let session = store.exchange(&code, None, ClientInfo::default()).unwrap();
-        let link = store.issue_pairing_code(Some("later".into()), PAIRING_CODE_TTL_MS);
+        let link = store
+            .issue_pairing_code(Some("later".into()), PAIRING_CODE_TTL_MS)
+            .unwrap();
         let saved = fs::read_to_string(&file).unwrap();
         assert!(!saved.contains(&session.token));
         assert!(!saved.contains(&link.code));
@@ -1549,7 +1585,9 @@ mod tests {
         let listed = server.client_session(&principal.session_id, None).unwrap();
         assert_eq!(listed.client.label.as_deref(), Some("Orbit Gateway"));
         // The server's own write keeps the CLI's session.
-        server.issue_pairing_code(None, PAIRING_CODE_TTL_MS);
+        server
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap();
         assert!(cli.authenticate_bearer(&issued.token).is_some());
         fs::remove_dir_all(dir).unwrap();
     }

@@ -433,7 +433,8 @@ mod tests {
         assert_eq!(snapshot["revision"], 1);
         let code = env
             .auth
-            .issue_pairing_code(Some("Phone".into()), PAIRING_CODE_TTL_MS);
+            .issue_pairing_code(Some("Phone".into()), PAIRING_CODE_TTL_MS)
+            .unwrap();
         let upserted = stream.recv().await.unwrap().unwrap();
         assert_eq!(upserted["type"], "pairingLinkUpserted");
         assert_eq!(upserted["payload"]["label"], "Phone");

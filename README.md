@@ -1,6 +1,6 @@
-# conn-server (spike)
+# conn-server
 
-A Rust server for Conn clients. It speaks the same client contract as `apps/server`, with a far
+The Conn Server: a Rust server for Conn clients. It speaks the same client contract as `apps/server`, with a far
 smaller memory footprint. This is a spike: we reproduce behaviour at three boundaries only (the
 client contract, `/mcp`, the provider CLI protocols). We do not translate the TypeScript.
 
@@ -13,29 +13,41 @@ client contract, `/mcp`, the provider CLI protocols). We do not translate the Ty
 ```sh
 cd native/conn-server
 cargo build --release
-./target/release/conn-server --state-dir /tmp/conn-state --project ~/code/my-repo
+./target/release/conn-server serve --host 127.0.0.1 --port 3773 --base-dir /tmp/conn-home
+./target/release/conn-server --state-dir /tmp/conn-state --project ~/code/my-repo   # the spike's form
 ```
 
-| Flag                           | Default                                    | Meaning                                                      |
-| ------------------------------ | ------------------------------------------ | ------------------------------------------------------------ |
-| `--listen <host:port>`         | `127.0.0.1:0` (free port)                  | Use `0.0.0.0:<port>` to serve other machines                 |
-| `--state-dir <dir>`            | `$CONN_SERVER_HOME`, else `~/.conn-server` | Environment id, sessions, `engine.sqlite`                    |
-| `--project <dir>` (repeatable) | the current folder                         | Folders offered as projects; the first is the server's `cwd` |
-| `--label <name>`               | `$HOSTNAME`, else `conn-server`            | Environment label in clients                                 |
+The command line follows the T3 server's (`t3 serve`, `t3 pair`, `t3 auth …`,
+`t3 project add`); [`crates/conn-server/DROP-IN.md`](crates/conn-server/DROP-IN.md) lists what
+Orbit and Conn desktop run and what the Conn Server does with it. `conn-server --help` prints
+every command.
 
-At start it prints the address, the environment id, the method coverage and a `pairingUrl`.
+| Flag or variable                            | Default                                                | Meaning                                                            |
+| ------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------ |
+| `--host`, `--port` (`T3CODE_HOST`, `_PORT`) | `127.0.0.1`, first free from 3773                      | Listen address; `--listen <host:port>` sets both                   |
+| `--base-dir` (`T3CODE_HOME`)                | `~/.t3`                                                | T3 home; state lives in `<home>/userdata`, shared with T3's format |
+| `--state-dir`                               | `<home>/userdata`                                      | The state directory itself (`$CONN_SERVER_HOME` still works)       |
+| `--project <dir>` (repeatable)              | the current folder in the bare form; none with `serve` | Folders offered as projects, plus `projects.json` (`project add`)  |
+| `--label <name>`                            | the host name                                          | Environment label in clients                                       |
+| `--mode desktop`, `--bootstrap-fd <fd>`     | web                                                    | Conn desktop's start: reads its bootstrap line, accepts its token  |
+
+At start it takes the home's ownership lock (exit 78 when another server holds it), prints the
+address, the environment id, the method coverage and a `pairingUrl`, and writes
+`server-runtime.json`. SIGTERM or SIGINT stops it cleanly.
 Turns run the `claude` CLI from `PATH` with the user's own Claude settings, as `apps/server`
-does. Stop the server with SIGTERM. A turn that was running when the server stopped ends as
-failed on the next start, with a message to send it again.
+does. A turn that was running when the server stopped ends as failed on the next start, with
+a message to send it again.
 
 ## Pair a client
 
 The server speaks the remote-environment path: bearer token plus WebSocket ticket. In Conn,
 open **Settings › Connections › Add environment › Remote link** and paste the `pairingUrl`
 (`http://<host>:<port>/pair#token=<code>`). The code is single use and valid 24 hours; each
-start prints a new one. Pairings persist in `<state-dir>/sessions.json`, so a paired client
-reconnects after a restart without pairing again. There are no browser cookie sessions, so
-the server's own origin (`/pair` in a browser) does not work; use Connections.
+start prints a new one, and `conn-server pair` or `auth pairing create` issue more while it
+runs. Sessions and pairing links persist in `<state-dir>/auth.json`, so a paired client
+reconnects after a restart without pairing again; **Settings › Sharing & access** lists and
+revokes them. There are no browser cookie sessions, so the server's own origin (`/pair` in a
+browser) does not work; use Connections.
 
 ## Tests
 
@@ -50,15 +62,16 @@ cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1   # real 
 
 From the repo root, after `vp i` and `cargo build --release --examples` in this folder:
 
-| Check             | Command                                                                                                                                                                                               | Proves                                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Effect client     | `node native/conn-server/crates/conn-server/tools/effect-client.mjs native/conn-server/target/release/conn-server`                                                                                    | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                      |
-| Ack window        | same, with `native/conn-server/target/release/examples/effect_fixture --fixture`                                                                                                                      | Ack window and `Interrupt`                                                                           |
-| Client reducers   | `cargo run -p conn-engine --features fake-provider --example export_turn -- /tmp/x.json` then `node native/conn-server/crates/conn-engine/tools/client-check.mjs /tmp/x.json`                         | Shell and thread streams rebuild the right state in the client's reducers                            |
-| Replay            | `node native/conn-server/crates/conn-server/tools/replay.mjs native/conn-server/target/release/examples/replay_server`                                                                                | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect |
-| Recordings decode | `cargo test --manifest-path native/conn-server/fixtures/decode-check/Cargo.toml`                                                                                                                      | Every recorded frame decodes with `conn_wire`                                                        |
-| Contract current  | `node native/conn-server/crates/conn-contract/tools/gen-contract.mjs --check`                                                                                                                         | Generated types match `packages/contracts`                                                           |
-| Real web client   | `(cd apps/web && vp build)` then `node native/conn-server/fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-permission rust-stop --rust native/conn-server/target/release/conn-server` | Pair, turn, restart, approval and stop in headless Chromium; see `fixtures/README.md`                |
+| Check               | Command                                                                                                                                                                                                             | Proves                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Effect client       | `node native/conn-server/crates/conn-server/tools/effect-client.mjs native/conn-server/target/release/conn-server`                                                                                                  | Pairing, ticket, connect streams decode in Effect's `RpcClient`                                                            |
+| Ack window          | same, with `native/conn-server/target/release/examples/effect_fixture --fixture`                                                                                                                                    | Ack window and `Interrupt`                                                                                                 |
+| Client reducers     | `cargo run -p conn-engine --features fake-provider --example export_turn -- /tmp/x.json` then `node native/conn-server/crates/conn-engine/tools/client-check.mjs /tmp/x.json`                                       | Shell and thread streams rebuild the right state in the client's reducers                                                  |
+| Replay              | `node native/conn-server/crates/conn-server/tools/replay.mjs native/conn-server/target/release/examples/replay_server`                                                                                              | Every call in the `remote` and `turn` recordings gets a decodable answer or the not-supported defect                       |
+| Recordings decode   | `cargo test --manifest-path native/conn-server/fixtures/decode-check/Cargo.toml`                                                                                                                                    | Every recorded frame decodes with `conn_wire`                                                                              |
+| Contract current    | `node native/conn-server/crates/conn-contract/tools/gen-contract.mjs --check`                                                                                                                                       | Generated types match `packages/contracts`                                                                                 |
+| Real web client     | `(cd apps/web && vp build)` then `node native/conn-server/fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-permission rust-stop rust-settings --rust native/conn-server/target/release/conn-server` | Pair, turn, restart, approval, stop, a settings change and a client revoked in headless Chromium; see `fixtures/README.md` |
+| Keybinding defaults | `node native/conn-server/crates/conn-server/tools/gen-keybindings.mjs --check`                                                                                                                                      | The compiled-in defaults match `packages/shared`                                                                           |
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so the replay calls
 no model. The `rust-*` scenarios spend about five Haiku turns.
@@ -307,13 +320,16 @@ to the socket.
 
 ## Status
 
-**Coverage:** 15 of 235 methods (9 of 32 streams), from the method table at startup.
+**Coverage:** 26 of 235 methods (12 of 32 streams), from the method table at startup.
 
-| Area          | Methods                                                                                                                                                |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Connect       | `subscribeServerConfig`, `subscribeServerLifecycle`, `server.probe`, `server.reportClientActivity`                                                     |
-| Threads       | `orchestration.subscribeShell`, `subscribeThread`, `launchThread`, `dispatchCommand`, `getThreadProjection`                                            |
-| Empty answers | `subscribeTerminalMetadata`, `subscribeProjectClones`, `subscribeDeviceState`, `panels.requests`, `scheduledTasks.subscribe`, `preview.reportProfiles` |
+| Area          | Methods                                                                                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect       | `subscribeServerConfig`, `subscribeServerLifecycle`, `server.probe`, `server.reportClientActivity`                                                             |
+| Config        | `server.getConfig`, `updateSettings`, `upsertKeybinding`, `removeKeybinding`, `refreshProviders`, `getHostResources`, `getProcessDiagnostics`, `signalProcess` |
+| Access        | `subscribeAuthAccess`; HTTP `/api/auth/clients`, `clients/revoke`, `clients/revoke-others`, `pairing-links/revoke`, scoped `pairing-token`                     |
+| Providers     | `provider.auth.subscribe`, `provider.install.subscribe` (idle states)                                                                                          |
+| Threads       | `orchestration.subscribeShell`, `subscribeThread`, `launchThread`, `dispatchCommand`, `getThreadProjection`                                                    |
+| Empty answers | `subscribeTerminalMetadata`, `subscribeProjectClones`, `subscribeDeviceState`, `panels.requests`, `scheduledTasks.subscribe`, `preview.reportProfiles`         |
 
 `dispatchCommand` handles `thread.create`, `message.dispatch`, `run.interrupt`, `thread.stop`,
 `runtime-request.respond`, `thread.archive`/`unarchive`/`delete`/`visit`,
@@ -360,7 +376,7 @@ What a real Conn session hits that this server does not do:
   `vcs.listRefs`, `server.discoverSourceControl`), diffs (`review.getDiffPreview`), files
   (`projects.readFile`, `assets.createUrl`, so no project favicon), previews, annotations,
   discovered local servers, archived and older-settled shell reads, terminals, provider
-  refresh, settings writes, and every other method not listed above.
+  sign-in and install flows, and every other method not listed above.
 - **No checkpoints:** turns are not captured as git refs, so no diff or restore.
 - **One project set at start:** clients cannot add projects.
 - **Busy thread:** a message sent while a turn runs is refused, not queued or steered.
@@ -368,7 +384,7 @@ What a real Conn session hits that this server does not do:
 - **No `/mcp`:** agents cannot reach T3 tools.
 - **Claude only:** no Codex or other providers. Gaps in the Claude provider are listed in
   `crates/conn-provider-claude/README.md` (subagents, attachments, todo lists, retries).
-- **Auth:** bearer and ticket only. No cookie sessions, DPoP, relay or access management.
-  `pairing-token` issues standard codes only.
-- **Desktop-local backend:** Conn desktop's own `--bootstrap-fd` start is not implemented.
+- **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
+- **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still
+  spawns the T3 server (`DROP-IN.md` §2).
 - **Each start prints a new pairing code**; unspent ones expire after 24 hours.

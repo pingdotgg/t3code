@@ -181,6 +181,17 @@ fn read(path: &Path) -> io::Result<Map<String, Value>> {
     }
 }
 
+/// `slot` as an object, replacing whatever else a hand-edited file left there.
+fn ensure_object(slot: &mut Value) -> &mut Map<String, Value> {
+    if !slot.is_object() {
+        *slot = Value::Object(Map::new());
+    }
+    match slot {
+        Value::Object(map) => map,
+        _ => unreachable!("the slot was set to an object above"),
+    }
+}
+
 /// `deepMerge`: objects merge key by key; anything else replaces.
 fn deep_merge(current: &mut Value, patch: Value) {
     match (current, patch) {
@@ -205,13 +216,7 @@ fn merge_entries(current: &mut Map<String, Value>, key: &str, patch: Value) {
     let Value::Object(patch) = patch else {
         return;
     };
-    let entries = current
-        .entry(key)
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !entries.is_object() {
-        *entries = Value::Object(Map::new());
-    }
-    let entries = entries.as_object_mut().expect("object");
+    let entries = ensure_object(current.entry(key).or_insert(Value::Null));
     for (id, value) in patch {
         if value.is_null() {
             entries.remove(&id);
@@ -340,7 +345,7 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
             if change["hidden"] == true {
                 hidden.push(change["model"].clone());
             }
-            entry["hiddenModels"] = Value::Array(hidden);
+            ensure_object(entry).insert("hiddenModels".into(), Value::Array(hidden));
         }
         settings.insert(
             "providerModelPreferences".into(),
@@ -354,7 +359,7 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
         let entry = preferences
             .entry(provider)
             .or_insert_with(|| json!({ "hiddenModels": [], "modelOrder": [] }));
-        entry["modelOrder"] = order["modelOrder"].clone();
+        ensure_object(entry).insert("modelOrder".into(), order["modelOrder"].clone());
         settings.insert(
             "providerModelPreferences".into(),
             Value::Object(preferences),
@@ -363,13 +368,11 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
 
     // The text generation model: named fields replace, options merge by id.
     if let Some(Value::Object(selection)) = selection {
-        let current = settings
-            .entry("textGenerationModelSelection")
-            .or_insert_with(|| json!({}));
-        if !current.is_object() {
-            *current = json!({});
-        }
-        let current = current.as_object_mut().expect("object");
+        let current = ensure_object(
+            settings
+                .entry("textGenerationModelSelection")
+                .or_insert(Value::Null),
+        );
         for (key, value) in selection {
             if key == "options"
                 && let (Some(Value::Array(stored)), Value::Array(patch)) =
@@ -395,22 +398,12 @@ fn merge_source_control_hosts(settings: &mut Map<String, Value>, patch: Value) {
     let Value::Object(patch) = patch else {
         return;
     };
-    let hosts = settings
-        .entry("sourceControlHosts")
-        .or_insert_with(|| json!({}));
-    if !hosts.is_object() {
-        *hosts = json!({});
-    }
-    let hosts = hosts.as_object_mut().expect("object");
+    let hosts = ensure_object(settings.entry("sourceControlHosts").or_insert(Value::Null));
     for (kind, fields) in patch {
         let Value::Object(fields) = fields else {
             continue;
         };
-        let saved = hosts.entry(kind).or_insert_with(|| json!({}));
-        if !saved.is_object() {
-            *saved = json!({});
-        }
-        let saved = saved.as_object_mut().expect("object");
+        let saved = ensure_object(hosts.entry(kind).or_insert(Value::Null));
         for (field, value) in fields {
             if field == "tokens"
                 && let Value::Object(tokens) = &value
@@ -445,13 +438,7 @@ fn apply_provider_instance_mutation(
         .as_str()
         .ok_or("the mutation names no instanceId")?
         .to_owned();
-    let instances = settings
-        .entry("providerInstances")
-        .or_insert_with(|| json!({}));
-    if !instances.is_object() {
-        *instances = json!({});
-    }
-    let instances = instances.as_object_mut().expect("object");
+    let instances = ensure_object(settings.entry("providerInstances").or_insert(Value::Null));
     match operation.as_str() {
         "create" | "upsert" => {
             let mut config = mutation
@@ -521,7 +508,7 @@ fn redact(value: &mut Value) {
                         *field = Value::String(SECRET_REDACTED.into());
                     }
                 } else if SECRET_MAPS.contains(&key.as_str()) && field.is_object() {
-                    for secret in field.as_object_mut().expect("object").values_mut() {
+                    for secret in ensure_object(field).values_mut() {
                         if secret.as_str().is_some_and(|s| !s.is_empty()) {
                             *secret = Value::String(SECRET_REDACTED.into());
                         }
@@ -530,9 +517,10 @@ fn redact(value: &mut Value) {
                     && let Value::Array(variables) = field
                 {
                     for variable in variables {
-                        if variable["sensitive"] == true && variable["value"] != "" {
-                            variable["value"] = Value::String(String::new());
-                            variable["valueRedacted"] = Value::Bool(true);
+                        let hide = variable["sensitive"] == true && variable["value"] != "";
+                        if hide && let Some(object) = variable.as_object_mut() {
+                            object.insert("value".into(), Value::String(String::new()));
+                            object.insert("valueRedacted".into(), Value::Bool(true));
                         }
                     }
                 } else {
@@ -686,6 +674,46 @@ mod tests {
         assert_eq!(saved["config"]["serverPassword"], "pw");
         assert_eq!(saved["environment"][0]["value"], "s3cret");
         assert_eq!(saved["displayName"], "OpenCode");
+    }
+
+    #[test]
+    fn odd_shapes_in_a_hand_edited_file_never_panic() {
+        let next = patched(
+            json!({
+                "providerModelPreferences": { "codex": 7 },
+                "textGenerationModelSelection": "x",
+                "sourceControlHosts": { "github": [] },
+                "textGenerators": 3,
+            }),
+            json!({
+                "setModelsHidden": [{ "provider": "codex", "model": "m", "hidden": true }],
+                "setProviderModelOrder": { "provider": "codex", "modelOrder": ["m"] },
+                "textGenerationModelSelection": { "model": "b" },
+                "sourceControlHosts": { "github": { "tokens": { "GitHub.com": "t" } } },
+                "textGenerators": { "a": { "kind": "x" } },
+            }),
+        );
+        assert_eq!(
+            next["providerModelPreferences"]["codex"]["modelOrder"],
+            json!(["m"])
+        );
+        assert_eq!(
+            next["sourceControlHosts"]["github"]["tokens"]["github.com"],
+            "t"
+        );
+        let mut view =
+            json!({ "providerInstances": { "x": { "environment": ["KEY", 3] } }, "tokens": 5 });
+        redact(&mut view);
+        let mut settings = Map::new();
+        settings.insert(
+            "providerInstances".into(),
+            json!({ "x": { "environment": [1] } }),
+        );
+        apply_provider_instance_mutation(
+            &mut settings,
+            json!({ "operation": "upsert", "instanceId": "x", "instance": { "environment": [2, { "name": "K", "value": "", "valueRedacted": true }] } }),
+        )
+        .unwrap();
     }
 
     #[test]

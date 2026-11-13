@@ -1,13 +1,14 @@
-// Writes the default keybindings from packages/shared into keybindings.defaults.json, which
-// conn-server compiles in, and the TypeScript compile of them into keybindings.resolved.json,
-// which its tests compare with. `--check` fails when either is stale (run after an upstream sync).
-// From the repo root after `vp i`: `node native/conn-server/crates/conn-server/tools/gen-keybindings.mjs`.
+// Writes packages/shared's default keybindings to keybindings.defaults.json (compiled in) and
+// their TypeScript compile to keybindings.resolved.json (tests). `--check` fails when stale.
+// Needs a Conn checkout after `vp i`: `$CONN_MONOREPO`, else the checkout around this folder.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 const crateDir = NodeURL.fileURLToPath(new URL("../", import.meta.url));
-const repoDir = NodePath.resolve(crateDir, "../../../..");
+const repoDir = NodePath.resolve(
+  process.env.CONN_MONOREPO ?? NodePath.resolve(crateDir, "../../../.."),
+);
 const outputs = {
   defaults: NodePath.join(crateDir, "keybindings.defaults.json"),
   resolved: NodePath.join(crateDir, "keybindings.resolved.json"),
@@ -37,17 +38,17 @@ const defaults = {
   ),
   late: lateDefaults,
 };
-const texts = {
-  // Compact: it is compiled into the binary.
-  defaults: `${JSON.stringify(defaults)}\n`,
-  resolved: `${JSON.stringify(shared.DEFAULT_RESOLVED_KEYBINDINGS, null, 2)}\n`,
-};
+const values = { defaults, resolved: shared.DEFAULT_RESOLVED_KEYBINDINGS };
+const texts = Object.fromEntries(
+  Object.entries(values).map(([name, value]) => [name, `${JSON.stringify(value, null, 2)}\n`]),
+);
 
 let stale = false;
 for (const [name, path] of Object.entries(outputs)) {
   if (process.argv.includes("--check")) {
-    const current = NodeFS.existsSync(path) ? NodeFS.readFileSync(path, "utf8") : "";
-    if (current !== texts[name]) {
+    // Compare values: the repository formatter may lay the file out differently.
+    const current = NodeFS.existsSync(path) ? NodeFS.readFileSync(path, "utf8") : "null";
+    if (JSON.stringify(JSON.parse(current)) !== JSON.stringify(values[name])) {
       console.error(`${path} is stale; run this tool without --check`);
       stale = true;
     }

@@ -14,7 +14,9 @@ import { redactText, redactValue, addSecret } from "./redact.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const repo = NodePath.resolve(here, "../../../..");
+// The Conn monorepo (web client, TypeScript server): `$CONN_MONOREPO`, else the checkout
+// this folder sits in.
+const repo = NodePath.resolve(process.env.CONN_MONOREPO ?? NodePath.resolve(here, "../../../.."));
 const sessionsDir = NodePath.resolve(here, "../sessions");
 const require = NodeModule.createRequire(NodePath.join(repo, "apps/server/package.json"));
 const { chromium } = require("playwright-core");

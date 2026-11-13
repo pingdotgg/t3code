@@ -101,8 +101,11 @@ async fn cors(request: Request, next: Next) -> Response {
 
 async fn health(State(state): State<AppState>) -> Json<Value> {
     let coverage = state.table.coverage();
+    // The T3 server has no `/health`; this route is how a caller tells the Conn Server apart.
     Json(json!({
         "status": "ok",
+        "server": "conn-server",
+        "version": env!("CARGO_PKG_VERSION"),
         "contractCommit": conn_contract::contract_commit(),
         "methods": { "implemented": coverage.implemented, "total": coverage.total },
     }))
@@ -704,6 +707,7 @@ mod tests {
 
         let code = auth
             .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .unwrap()
             .code;
         let form = format!(
             "grant_type={}&subject_token={code}&subject_token_type={}&requested_token_type={}",
@@ -801,6 +805,7 @@ mod tests {
             .exchange(
                 &auth
                     .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+                    .unwrap()
                     .code,
                 None,
                 ClientInfo::default(),
@@ -920,7 +925,9 @@ mod tests {
         assert_eq!((status, body.as_str()), (200, r#"{"revoked":true}"#));
         assert!(auth.authenticate_bearer(&device.token).is_none());
 
-        let unused = auth.issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS);
+        let unused = auth
+            .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .unwrap();
         let (_, body) = post(
             "/api/auth/pairing-links/revoke",
             &format!(r#"{{"id":"{}"}}"#, unused.id),
@@ -941,6 +948,7 @@ mod tests {
             .exchange(
                 &auth
                     .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+                    .unwrap()
                     .code,
                 None,
                 ClientInfo::default(),
@@ -999,6 +1007,7 @@ mod tests {
         let (addr, auth) = serve().await;
         let code = auth
             .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .unwrap()
             .code;
         let form = format!(
             "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token={code}&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token"

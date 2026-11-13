@@ -542,9 +542,10 @@ fn run_inner(command: Command) -> Result<(), String> {
     match command {
         Command::Help => print(format!("{USAGE}\n")),
         Command::Version => print(format!(
-            "conn-server {} (T3 contract {})\n",
+            "conn-server {} (T3 server {} contract, Conn commit {})\n",
             env!("CARGO_PKG_VERSION"),
-            crate::environment::CONTRACT_SERVER_VERSION
+            crate::environment::CONTRACT_SERVER_VERSION,
+            conn_contract::contract_commit()
         )),
         Command::Serve(_) => return Err("serve runs from main".into()),
         Command::Pair {

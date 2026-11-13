@@ -161,8 +161,10 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     println!("methods: {}", state.table.coverage());
     if !is_desktop {
         // One code, valid 24 hours, spent by the first device that pairs.
-        let pairing = auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS);
-        println!("pairingUrl: {}/pair#token={}", runtime.origin, pairing.code);
+        match auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS) {
+            Ok(pairing) => println!("pairingUrl: {}/pair#token={}", runtime.origin, pairing.code),
+            Err(error) => eprintln!("conn-server: could not issue a pairing code: {error}"),
+        }
     }
 
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
@@ -177,7 +179,7 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
                 eprintln!("conn-server: {error}");
             }
         }
-        signal = shutdown_signal() => {
+        signal = shutdown_signal(is_desktop) => {
             eprintln!("conn-server: {signal}, stopping");
             let _ = stop_tx.send(true);
             // Open WebSockets keep the graceful stop waiting; give them a moment, no more.
@@ -187,20 +189,36 @@ pub async fn serve(options: ServeOptions, providers: Vec<Arc<dyn Provider>>) {
     runtime.clear(&state_dir);
 }
 
-/// Resolves on SIGTERM (systemd, Conn desktop) or SIGINT (a terminal).
-async fn shutdown_signal() -> &'static str {
+/// Resolves on SIGTERM (systemd, Conn desktop) or SIGINT (a terminal), or, for a desktop
+/// backend, when the desktop that started it is gone (`launcherWatch.ts`).
+async fn shutdown_signal(watch_parent: bool) -> &'static str {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
         let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
         let mut int = signal(SignalKind::interrupt()).expect("SIGINT handler");
+        let parent = std::os::unix::process::parent_id();
+        let parent_gone = async move {
+            if !watch_parent {
+                return std::future::pending().await;
+            }
+            let mut tick = tokio::time::interval(Duration::from_secs(2));
+            loop {
+                tick.tick().await;
+                if std::os::unix::process::parent_id() != parent {
+                    return;
+                }
+            }
+        };
         tokio::select! {
             _ = term.recv() => "SIGTERM",
             _ = int.recv() => "SIGINT",
+            _ = parent_gone => "the desktop that started this server exited",
         }
     }
     #[cfg(not(unix))]
     {
+        let _ = watch_parent;
         let _ = tokio::signal::ctrl_c().await;
         "Ctrl-C"
     }
