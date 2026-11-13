@@ -9,7 +9,73 @@ const historyEncoder = new TextEncoder();
 // A BOM at a retained chunk boundary is terminal data, not an encoding marker.
 const historyDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
-/** The final `maxBytes` of UTF-8 a client retains, starting at a code point boundary. */
+// Escape-sequence parser state, enough to tell whether a position is inside a
+// sequence. Like libghostty, only ESC starts one; C1 code points print as text.
+export const TERMINAL_SEQUENCE_GROUND = 0;
+const SEQUENCE_ESCAPE = 1;
+const SEQUENCE_INTERMEDIATE = 2;
+const SEQUENCE_CSI = 3;
+const SEQUENCE_STRING = 4;
+
+function nextTerminalSequenceState(state: number, code: number): number {
+  if (code === 0x1b) return SEQUENCE_ESCAPE;
+  if (code === 0x18 || code === 0x1a) return TERMINAL_SEQUENCE_GROUND;
+  switch (state) {
+    case TERMINAL_SEQUENCE_GROUND:
+      return state;
+    case SEQUENCE_STRING:
+      return code === 0x07 || code === 0x9c ? TERMINAL_SEQUENCE_GROUND : state;
+    case SEQUENCE_CSI:
+      return code >= 0x40 && code <= 0x7e ? TERMINAL_SEQUENCE_GROUND : state;
+  }
+  if (state === SEQUENCE_ESCAPE) {
+    if (code === 0x5b) return SEQUENCE_CSI;
+    // OSC, DCS, SOS, PM and APC run until a string terminator.
+    if (code === 0x5d || code === 0x50 || code === 0x58 || code === 0x5e || code === 0x5f) {
+      return SEQUENCE_STRING;
+    }
+  }
+  if (code < 0x20) return state;
+  return code <= 0x2f ? SEQUENCE_INTERMEDIATE : TERMINAL_SEQUENCE_GROUND;
+}
+
+/** The parser state after `text[0, end)`, starting from `state`. */
+export function terminalSequenceStateAfter(text: string, state: number, end = text.length): number {
+  // ESC enters the escape state from any state, so only the text after the last one matters.
+  let index = end > 0 ? text.lastIndexOf("\u001b", end - 1) : -1;
+  if (index !== -1) {
+    state = SEQUENCE_ESCAPE;
+    index += 1;
+  } else if (state === TERMINAL_SEQUENCE_GROUND) {
+    return state;
+  } else {
+    index = 0;
+  }
+  for (; index < end; index += 1) {
+    state = nextTerminalSequenceState(state, text.charCodeAt(index));
+  }
+  return state;
+}
+
+/**
+ * The first index of `text` outside an escape sequence when parsing starts in
+ * `state`, or `-1` with the state at its end when the sequence does not finish.
+ */
+export function terminalSequenceExit(
+  text: string,
+  state: number,
+): { readonly index: number; readonly state: number } {
+  for (let index = 0; index < text.length; index += 1) {
+    if (state === TERMINAL_SEQUENCE_GROUND) return { index, state };
+    state = nextTerminalSequenceState(state, text.charCodeAt(index));
+  }
+  return { index: state === TERMINAL_SEQUENCE_GROUND ? text.length : -1, state };
+}
+
+/**
+ * The final `maxBytes` of UTF-8 a client retains, starting at a code point
+ * boundary outside any escape sequence. `history` must start outside one.
+ */
 export function retainedTerminalHistory(history: string, maxBytes: number): string {
   if (maxBytes <= 0) {
     return "";
@@ -29,7 +95,14 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
     start += 1;
   }
 
-  return historyDecoder.decode(encoded.subarray(start));
+  // Lone surrogates round-trip as U+FFFD, so UTF-16 lengths match the input.
+  const retained = historyDecoder.decode(encoded.subarray(start));
+  const cut = history.length - retained.length;
+  const exit = terminalSequenceExit(
+    retained,
+    terminalSequenceStateAfter(history, TERMINAL_SEQUENCE_GROUND, cut),
+  );
+  return exit.index === -1 ? "" : retained.slice(exit.index);
 }
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;

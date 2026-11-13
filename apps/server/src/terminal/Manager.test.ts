@@ -13,6 +13,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceExit,
+  terminalSequenceStateAfter,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -347,7 +350,12 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
     bytes += next;
     start -= 1;
   }
-  return points.slice(start).join("");
+  const kept = points.slice(start).join("");
+  const exit = terminalSequenceExit(
+    kept,
+    terminalSequenceStateAfter(text, TERMINAL_SEQUENCE_GROUND, text.length - kept.length),
+  );
+  return exit.index === -1 ? "" : kept.slice(exit.index);
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {

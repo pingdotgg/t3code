@@ -6,6 +6,9 @@ import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceExit,
+  terminalSequenceStateAfter,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -900,6 +903,8 @@ export class BoundedTerminalHistory {
   private cachedValue: string | null = "";
   private generation = 0;
   private appendedLength = 0;
+  // Escape-sequence parser state where the retained history starts.
+  private sequenceState = TERMINAL_SEQUENCE_GROUND;
 
   constructor(maxLines: number, initial: string, maxBytes = DEFAULT_HISTORY_BYTE_LIMIT) {
     this.maxLines = maxLines;
@@ -981,6 +986,7 @@ export class BoundedTerminalHistory {
 
   private discardChunk(): void {
     const first = this.chunks[this.start]!;
+    this.sequenceState = terminalSequenceStateAfter(first.data, this.sequenceState);
     this.byteLength -= first.byteLength;
     this.lineBreaks -= first.lineBreaks;
     this.chunks[this.start++] = undefined;
@@ -992,6 +998,7 @@ export class BoundedTerminalHistory {
       this.discardChunk();
       return;
     }
+    this.sequenceState = terminalSequenceStateAfter(first.data, this.sequenceState, offset);
     first.data = first.data.slice(offset);
     first.byteLength -= byteLength;
     first.lineBreaks -= lineBreaks;
@@ -1039,6 +1046,17 @@ export class BoundedTerminalHistory {
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
+    // Never start retained history inside a sequence whose beginning was evicted.
+    while (this.sequenceState !== TERMINAL_SEQUENCE_GROUND && this.start < this.chunks.length) {
+      const first = this.chunks[this.start]!;
+      const { index } = terminalSequenceExit(first.data, this.sequenceState);
+      if (index === -1) {
+        this.discardChunk();
+        continue;
+      }
+      const dropped = first.data.slice(0, index);
+      this.trimChunk(index, Buffer.byteLength(dropped), dropped.split("\n").length - 1);
+    }
     if (
       this.start === this.chunks.length ||
       (this.start > 2_048 && this.start * 2 >= this.chunks.length)
@@ -1058,6 +1076,7 @@ export class BoundedTerminalHistory {
     this.lineBreaks = 0;
     this.lastCodeUnit = undefined;
     this.cachedValue = "";
+    this.sequenceState = TERMINAL_SEQUENCE_GROUND;
   }
 
   persistenceUpdate(previous?: TerminalHistoryPersistenceCursor) {

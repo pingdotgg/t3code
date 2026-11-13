@@ -1,4 +1,9 @@
-import { retainedTerminalHistory } from "@t3tools/contracts";
+import {
+  retainedTerminalHistory,
+  TERMINAL_SEQUENCE_GROUND,
+  terminalSequenceExit,
+  terminalSequenceStateAfter,
+} from "@t3tools/contracts";
 
 export interface TerminalOutputChunk {
   readonly startOffset: number;
@@ -12,6 +17,8 @@ export interface TerminalOutputState {
   readonly retainedBytes: number;
   readonly resetVersion: number;
   readonly nextOffset: number;
+  /** Escape-sequence parser state where the retained output starts. */
+  readonly sequenceState: number;
 }
 
 export interface TerminalOutputCursor {
@@ -54,6 +61,7 @@ export const EMPTY_TERMINAL_OUTPUT_STATE = Object.freeze<TerminalOutputState>({
   retainedBytes: 0,
   resetVersion: 0,
   nextOffset: 0,
+  sequenceState: TERMINAL_SEQUENCE_GROUND,
 });
 
 interface Utf8Chunk {
@@ -162,6 +170,14 @@ function trimOutputChunkStart(
   };
 }
 
+function sliceOutputChunkStart(chunk: TerminalOutputChunk, offset: number): TerminalOutputChunk {
+  return {
+    startOffset: chunk.startOffset + offset,
+    data: chunk.data.slice(offset),
+    byteLength: chunk.byteLength - textEncoder.encode(chunk.data.slice(0, offset)).byteLength,
+  };
+}
+
 function appendOutput(
   current: TerminalOutputState,
   data: string,
@@ -175,6 +191,13 @@ function appendOutput(
       retainedBytes: 0,
       resetVersion: current.resetVersion + 1,
       nextOffset: current.nextOffset + data.length,
+      sequenceState: terminalSequenceStateAfter(
+        data,
+        current.chunks.reduce(
+          (state, chunk) => terminalSequenceStateAfter(chunk.data, state),
+          current.sequenceState,
+        ),
+      ),
     };
   }
   const appended = splitOutputChunks(
@@ -185,6 +208,7 @@ function appendOutput(
 
   const chunks = [...current.chunks, ...appended.chunks];
   let retainedBytes = current.retainedBytes + appended.byteLength;
+  let sequenceState = current.sequenceState;
   let firstRetainedIndex = 0;
   while (retainedBytes > maxBufferBytes && firstRetainedIndex < chunks.length) {
     const first = chunks[firstRetainedIndex]!;
@@ -192,6 +216,11 @@ function appendOutput(
     if (bytesToDrop < first.byteLength) {
       const trimmed = trimOutputChunkStart(first, bytesToDrop);
       retainedBytes -= first.byteLength - trimmed.byteLength;
+      sequenceState = terminalSequenceStateAfter(
+        first.data,
+        sequenceState,
+        first.data.length - trimmed.data.length,
+      );
       if (trimmed.byteLength > 0) {
         chunks[firstRetainedIndex] = trimmed;
       } else {
@@ -200,6 +229,7 @@ function appendOutput(
       break;
     }
     retainedBytes -= first.byteLength;
+    sequenceState = terminalSequenceStateAfter(first.data, sequenceState);
     firstRetainedIndex += 1;
   }
 
@@ -210,10 +240,30 @@ function appendOutput(
     if (excessChunks > 0) {
       for (const chunk of retainedChunks.slice(0, excessChunks)) {
         retainedBytes -= chunk.byteLength;
+        sequenceState = terminalSequenceStateAfter(chunk.data, sequenceState);
       }
       retainedChunks = retainedChunks.slice(excessChunks);
     }
   }
+
+  // Never start retained output inside a sequence whose beginning was evicted.
+  let firstGroundIndex = 0;
+  while (sequenceState !== TERMINAL_SEQUENCE_GROUND && firstGroundIndex < retainedChunks.length) {
+    const first = retainedChunks[firstGroundIndex]!;
+    const exit = terminalSequenceExit(first.data, sequenceState);
+    sequenceState = exit.state;
+    if (exit.index === -1 || exit.index === first.data.length) {
+      retainedBytes -= first.byteLength;
+      firstGroundIndex += 1;
+    } else {
+      const trimmed = sliceOutputChunkStart(first, exit.index);
+      retainedBytes -= first.byteLength - trimmed.byteLength;
+      retainedChunks = retainedChunks.slice(firstGroundIndex);
+      retainedChunks[0] = trimmed;
+      firstGroundIndex = 0;
+    }
+  }
+  if (firstGroundIndex > 0) retainedChunks = retainedChunks.slice(firstGroundIndex);
 
   return {
     generation: current.generation,
@@ -221,6 +271,7 @@ function appendOutput(
     retainedBytes,
     resetVersion: current.resetVersion,
     nextOffset: appended.nextOffset,
+    sequenceState,
   };
 }
 
@@ -241,6 +292,10 @@ function resetOutput(
     retainedBytes: reset.byteLength,
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
+    sequenceState:
+      retained.length > 0
+        ? TERMINAL_SEQUENCE_GROUND
+        : terminalSequenceStateAfter(data, TERMINAL_SEQUENCE_GROUND),
   };
 }
 
