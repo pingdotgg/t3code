@@ -3,7 +3,7 @@
 //! crate costs more binary than this whole file.
 
 use std::{
-    io::{self, BufRead, Read, Write},
+    io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     time::Duration,
@@ -181,7 +181,7 @@ impl Args {
         self.flags.iter().any(|(n, _)| n == name)
     }
 
-    fn state_dir(&self) -> PathBuf {
+    fn state_dir(&self) -> Result<PathBuf, String> {
         home::resolve_state_dir(
             self.value("--state-dir").map(PathBuf::from),
             self.value("--base-dir")
@@ -232,7 +232,7 @@ pub fn parse(raw: Vec<String>) -> Result<Command, String> {
         return Ok(Command::Version);
     }
     let words: Vec<&str> = args.positionals.iter().map(String::as_str).collect();
-    let state_dir = args.state_dir();
+    let state_dir = args.state_dir()?;
     let json = args.has("--json");
     match words.as_slice() {
         ["help", ..] => Ok(Command::Help),
@@ -443,27 +443,114 @@ pub struct DesktopBootstrapEnvelope {
     pub desktop_bootstrap_secret: Option<String>,
 }
 
+/// How long the desktop has to write its bootstrap line, as in `bootstrap.ts`.
+const BOOTSTRAP_TIMEOUT: Duration = Duration::from_millis(1000);
+/// The longest bootstrap line we read. The real envelope is a few hundred bytes.
+const MAX_BOOTSTRAP_LINE: usize = 64 * 1024;
+
 /// Reads one line from `fd` within a second, as `bootstrap.ts` does. `None` when the fd is
-/// not open or nothing arrives.
+/// not open, nothing complete arrives in time, or the line is longer than the cap.
 pub fn read_bootstrap(fd: u32) -> Option<DesktopBootstrapEnvelope> {
+    let file = match open_bootstrap_fd(fd) {
+        Ok(file) => file,
+        Err(error) => {
+            eprintln!("conn-server: cannot read the bootstrap fd {fd}: {error}");
+            return None;
+        }
+    };
+    let line = match read_line_within(&file, BOOTSTRAP_TIMEOUT, MAX_BOOTSTRAP_LINE) {
+        Ok(line) => line,
+        Err(error) => {
+            eprintln!("conn-server: ignoring the bootstrap envelope: {error}");
+            return None;
+        }
+    };
+    match serde_json::from_slice(line.trim_ascii()) {
+        Ok(envelope) => Some(envelope),
+        Err(error) => {
+            eprintln!("conn-server: ignoring the bootstrap envelope: {error}");
+            None
+        }
+    }
+}
+
+/// Opens `fd` through its path, as `bootstrap.ts` does. Where the path refuses (a socket
+/// under `/proc/self/fd` gives ENXIO on Linux), reads the fd itself.
+fn open_bootstrap_fd(fd: u32) -> io::Result<std::fs::File> {
     let path = if Path::new("/proc/self/fd").exists() {
         format!("/proc/self/fd/{fd}")
     } else {
         format!("/dev/fd/{fd}")
     };
-    let file = std::fs::File::open(path).ok()?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        let _ = io::BufReader::new(file).read_line(&mut line);
-        let _ = tx.send(line);
-    });
-    let line = rx.recv_timeout(Duration::from_millis(1000)).ok()?;
-    match serde_json::from_str(line.trim()) {
-        Ok(envelope) => Some(envelope),
-        Err(error) => {
-            eprintln!("conn-server: ignoring the bootstrap envelope: {error}");
-            None
+    match std::fs::File::open(path) {
+        Err(error) if reopen_refused(&error) => duplicate_fd(fd),
+        result => result,
+    }
+}
+
+/// `isBootstrapFdPathDuplicationError`: ENXIO, EINVAL, EPERM or EACCES.
+fn reopen_refused(error: &io::Error) -> bool {
+    use rustix::io::Errno;
+    Errno::from_io_error(error).is_some_and(|errno| {
+        [Errno::NXIO, Errno::INVAL, Errno::PERM, Errno::ACCESS].contains(&errno)
+    })
+}
+
+/// A duplicate of our own `fd`, through `pidfd_getfd` on ourselves (Linux 5.6 or later),
+/// which needs no `unsafe` here.
+#[cfg(target_os = "linux")]
+fn duplicate_fd(fd: u32) -> io::Result<std::fs::File> {
+    use rustix::process::{PidfdFlags, PidfdGetfdFlags, getpid, pidfd_getfd, pidfd_open};
+    let target = i32::try_from(fd).map_err(io::Error::other)?;
+    let me = pidfd_open(getpid(), PidfdFlags::empty())?;
+    Ok(std::fs::File::from(pidfd_getfd(
+        &me,
+        target,
+        PidfdGetfdFlags::empty(),
+    )?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn duplicate_fd(_fd: u32) -> io::Result<std::fs::File> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
+/// Reads up to the first newline, or to the end, within `timeout` and `cap` bytes. Waits
+/// with `poll`, so a writer that stalls holds no thread.
+fn read_line_within(file: &std::fs::File, timeout: Duration, cap: usize) -> io::Result<Vec<u8>> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let deadline = std::time::Instant::now() + timeout;
+    let mut line = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        let wait = Timespec::try_from(left).map_err(io::Error::other)?;
+        let mut fds = [PollFd::new(file, PollFlags::IN)];
+        match poll(&mut fds, Some(&wait)) {
+            Ok(0) => continue,
+            Ok(_) => {}
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+        }
+        let n = match (&*file).read(&mut chunk) {
+            Ok(n) => n,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        let read = chunk.get(..n).unwrap_or_default();
+        let end = read.iter().position(|b| *b == b'\n');
+        line.extend_from_slice(read.get(..end.unwrap_or(n)).unwrap_or_default());
+        if line.len() > cap {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("the line is longer than {cap} bytes"),
+            ));
+        }
+        if n == 0 || end.is_some() {
+            return Ok(line);
         }
     }
 }
@@ -976,6 +1063,59 @@ mod tests {
         assert!(parse(args("auth session issue --bogus 1")).is_err());
         assert!(parse(args("auth session issue --scopes root")).is_err());
         assert!(parse(args("frobnicate")).is_err());
+    }
+
+    /// Conn desktop on Linux hands over a socket, which `/proc/self/fd/N` cannot reopen
+    /// (ENXIO); the reader then reads the fd itself. On macOS `/dev/fd/N` opens it.
+    #[cfg(unix)]
+    #[test]
+    fn reads_the_bootstrap_line_from_a_socket() {
+        use std::os::fd::AsRawFd;
+        let (mut writer, reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        writer
+            .write_all(b"{\"mode\":\"desktop\",\"desktopBootstrapToken\":\"tok\"}\n")
+            .unwrap();
+        let fd = u32::try_from(reader.as_raw_fd()).unwrap();
+        let envelope = read_bootstrap(fd).unwrap();
+        assert_eq!(envelope.mode.as_deref(), Some("desktop"));
+        assert_eq!(envelope.desktop_bootstrap_token.as_deref(), Some("tok"));
+    }
+
+    /// A writer that never finishes its line costs a second, not a thread forever, and a line
+    /// past the cap is refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_or_oversized_bootstrap_line_is_refused() {
+        use std::os::fd::AsRawFd;
+        let (mut writer, reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        writer.write_all(b"{\"mode\":").unwrap();
+        let started = std::time::Instant::now();
+        assert!(read_bootstrap(u32::try_from(reader.as_raw_fd()).unwrap()).is_none());
+        assert!(started.elapsed() < Duration::from_secs(3));
+
+        let (mut writer, reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        let fd = u32::try_from(reader.as_raw_fd()).unwrap();
+        let host = "h".repeat(MAX_BOOTSTRAP_LINE);
+        let line = format!("{{\"mode\":\"desktop\",\"host\":\"{host}\"}}\n");
+        let feeder = std::thread::spawn(move || {
+            let _ = writer.write_all(line.as_bytes());
+        });
+        assert!(read_bootstrap(fd).is_none());
+        drop(reader);
+        feeder.join().unwrap();
+    }
+
+    #[test]
+    fn falls_back_to_the_fd_where_t3_does() {
+        for errno in [
+            rustix::io::Errno::NXIO,
+            rustix::io::Errno::INVAL,
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::ACCESS,
+        ] {
+            assert!(reopen_refused(&io::Error::from(errno)));
+        }
+        assert!(!reopen_refused(&io::Error::from(rustix::io::Errno::BADF)));
     }
 
     #[test]

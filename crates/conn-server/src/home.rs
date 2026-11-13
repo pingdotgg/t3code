@@ -19,28 +19,37 @@ pub const EXIT_STATE_DIR_OWNED: i32 = 78;
 /// Where state lives. `--state-dir` names it directly; otherwise it is `<home>/userdata`, the
 /// home being `--base-dir`, `$T3CODE_HOME`, or `~/.t3`. `$CONN_SERVER_HOME` (the spike's
 /// variable) still names a state directory when nothing else is set.
-pub fn resolve_state_dir(state_dir: Option<PathBuf>, base_dir: Option<PathBuf>) -> PathBuf {
-    if let Some(dir) = state_dir {
-        return dir;
-    }
-    let env = |name| {
-        std::env::var_os(name)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    if let Some(home) = base_dir.or_else(|| env("T3CODE_HOME")) {
-        return expand_tilde(home).join("userdata");
-    }
-    if let Some(dir) = env("CONN_SERVER_HOME") {
-        return dir;
-    }
-    let home = env("HOME").expect("HOME, T3CODE_HOME or --state-dir");
-    home.join(".t3").join("userdata")
+/// Fails only when nothing names a folder: no flag, no `$T3CODE_HOME` and no `$HOME`.
+pub fn resolve_state_dir(
+    state_dir: Option<PathBuf>,
+    base_dir: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    resolve_state_dir_with(state_dir, base_dir, |name| std::env::var_os(name))
 }
 
-fn expand_tilde(path: PathBuf) -> PathBuf {
-    match (path.strip_prefix("~"), std::env::var_os("HOME")) {
-        (Ok(rest), Some(home)) => PathBuf::from(home).join(rest),
+fn resolve_state_dir_with(
+    state_dir: Option<PathBuf>,
+    base_dir: Option<PathBuf>,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(dir) = state_dir {
+        return Ok(dir);
+    }
+    let env = |name| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(home) = base_dir.or_else(|| env("T3CODE_HOME")) {
+        return Ok(expand_tilde(home, env("HOME")).join("userdata"));
+    }
+    if let Some(dir) = env("CONN_SERVER_HOME") {
+        return Ok(dir);
+    }
+    let home = env("HOME")
+        .ok_or("no state folder: set HOME or T3CODE_HOME, or pass --state-dir or --base-dir")?;
+    Ok(home.join(".t3").join("userdata"))
+}
+
+fn expand_tilde(path: PathBuf, home: Option<PathBuf>) -> PathBuf {
+    match (path.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => home.join(rest),
         _ => path,
     }
 }
@@ -204,6 +213,25 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_home_is_an_error_not_a_panic() {
+        let none = |_: &str| None;
+        assert!(resolve_state_dir_with(None, None, none).is_err());
+        assert_eq!(
+            resolve_state_dir_with(Some("/s".into()), None, none),
+            Ok(PathBuf::from("/s"))
+        );
+        let home = |name: &str| (name == "HOME").then(|| "/home/u".into());
+        assert_eq!(
+            resolve_state_dir_with(None, None, home),
+            Ok(PathBuf::from("/home/u/.t3/userdata"))
+        );
+        assert_eq!(
+            resolve_state_dir_with(None, Some("~/t3".into()), home),
+            Ok(PathBuf::from("/home/u/t3/userdata"))
+        );
+    }
+
+    #[test]
     fn one_server_owns_a_state_directory() {
         let dir = temp_dir();
         let first = acquire_ownership(&dir).unwrap();
@@ -253,11 +281,11 @@ mod tests {
     fn the_state_directory_follows_t3_home() {
         assert_eq!(
             resolve_state_dir(Some("/s".into()), Some("/b".into())),
-            PathBuf::from("/s")
+            Ok(PathBuf::from("/s"))
         );
         assert_eq!(
             resolve_state_dir(None, Some("/b".into())),
-            PathBuf::from("/b/userdata")
+            Ok(PathBuf::from("/b/userdata"))
         );
     }
 }

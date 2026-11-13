@@ -21,6 +21,7 @@ use conn_contract::{
     AuthClientMetadata, AuthClientMetadataDeviceType, AuthClientSession, AuthEnvironmentScope,
     AuthPairingLink, from_json,
 };
+use conn_files::signer::{constant_time_eq, hmac_sha256};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
@@ -66,6 +67,8 @@ pub const PAIRING_CODE_TTL_MS: u64 = 5 * MINUTE_MS;
 pub const STARTUP_PAIRING_CODE_TTL_MS: u64 = 24 * 60 * MINUTE_MS;
 pub const SESSION_TTL_MS: u64 = 30 * 24 * 60 * MINUTE_MS;
 pub const TICKET_TTL_MS: u64 = 5 * MINUTE_MS;
+/// The longest life a session or pairing link can get: ten years.
+pub const MAX_TTL_MS: u64 = 10 * 366 * 24 * 60 * MINUTE_MS;
 
 /// Subjects as `EnvironmentAuth.ts` names them.
 pub const SUBJECT_ONE_TIME_TOKEN: &str = "one-time-token";
@@ -126,7 +129,7 @@ impl DesktopBootstrap {
         Self {
             token,
             secret,
-            expires_at_ms: now_ms() + DESKTOP_TOKEN_TTL_MS,
+            expires_at_ms: expires_at(now_ms(), DESKTOP_TOKEN_TTL_MS),
             remote_reachable,
         }
     }
@@ -155,29 +158,6 @@ pub fn desktop_token(secret: &str, window: u64) -> String {
         secret.as_bytes(),
         format!("t3-desktop-bootstrap:{window}").as_bytes(),
     ))
-}
-
-fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut block = [0u8; 64];
-    if key.len() > 64 {
-        block[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let pad = |byte: u8| block.map(|b| b ^ byte);
-    let inner = Sha256::new()
-        .chain_update(pad(0x36))
-        .chain_update(message)
-        .finalize();
-    Sha256::new()
-        .chain_update(pad(0x5c))
-        .chain_update(inner)
-        .finalize()
-        .into()
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// `authScopeResponse`: legacy `scopes` plus the full grant as `permissions`.
@@ -346,6 +326,8 @@ pub enum ExchangeError {
     InvalidScope,
     /// None of the requested scopes is in the grant.
     ScopeNotGranted,
+    /// The new session could not be saved; nothing changed.
+    Storage,
 }
 
 /// A client may not revoke its own session (`current_session_revoke_not_allowed`).
@@ -430,6 +412,7 @@ struct AuthFile {
     pairing_links: Vec<StoredPairing>,
 }
 
+#[derive(Clone)]
 struct Ticket {
     session: Hash,
     audience: Option<String>,
@@ -439,13 +422,16 @@ struct Ticket {
 /// Size and modification time of the auth file as last read or written.
 type Stamp = (u64, SystemTime);
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct State {
     pairing: HashMap<Hash, StoredPairing>,
     sessions: HashMap<Hash, StoredSession>,
     tickets: HashMap<Hash, Ticket>,
     /// Open sockets per session id.
     connections: HashMap<String, usize>,
+    /// When each session last opened a socket, kept in memory so a socket open writes no
+    /// file. Holds only ids of live sessions.
+    last_connected: HashMap<String, u64>,
     stamp: Option<Stamp>,
 }
 
@@ -468,6 +454,9 @@ impl State {
             keep
         });
         self.tickets.retain(|_, ticket| ticket.expires_at_ms > now);
+        let sessions = &self.sessions;
+        self.last_connected
+            .retain(|id, _| sessions.values().any(|s| &s.id == id));
         changes
     }
 
@@ -557,7 +546,7 @@ impl AuthStore {
             subject: SUBJECT_ONE_TIME_TOKEN.into(),
             label: request.label,
             created_at_ms: now,
-            expires_at_ms: now + request.ttl_ms,
+            expires_at_ms: expires_at(now, request.ttl_ms),
         };
         let issued = IssuedPairingCode {
             id: link.id.clone(),
@@ -608,15 +597,26 @@ impl AuthStore {
                 client: session.client.clone(),
             };
             let id = session.id.clone();
+            // `replaceActiveForSubjectAndMethod`: the desktop holds one session at a time.
             let written = self.write(|state| {
+                let mut changes = Vec::new();
+                state.sessions.retain(|_, s| {
+                    let replaced =
+                        s.subject == SUBJECT_DESKTOP_BOOTSTRAP && s.method == session.method;
+                    if replaced {
+                        changes.push(AccessChange::ClientRemoved(s.id.clone()));
+                    }
+                    !replaced
+                });
                 state.sessions.insert(hash(&token), session);
-                vec![AccessChange::ClientUpserted(id)]
+                changes.push(AccessChange::ClientUpserted(id));
+                changes
             });
             return match written {
                 Ok(()) => Ok(issued),
                 Err(error) => {
                     eprintln!("conn-server: could not save auth state: {error}");
-                    Err(ExchangeError::InvalidCredential)
+                    Err(ExchangeError::Storage)
                 }
             };
         }
@@ -656,7 +656,7 @@ impl AuthStore {
         });
         if let Err(error) = written {
             eprintln!("conn-server: could not save auth state: {error}");
-            return Err(ExchangeError::InvalidCredential);
+            return Err(ExchangeError::Storage);
         }
         outcome
     }
@@ -712,7 +712,7 @@ impl AuthStore {
             .get(&session)
             .filter(|s| s.expires_at_ms > now)?;
         let ticket = random_hex(32);
-        let expires_at_ms = now + TICKET_TTL_MS;
+        let expires_at_ms = expires_at(now, TICKET_TTL_MS);
         state.tickets.insert(
             hash(&ticket),
             Ticket {
@@ -781,7 +781,7 @@ impl AuthStore {
         sessions.sort_by_key(|s| (std::cmp::Reverse(s.issued_at_ms), s.id.clone()));
         sessions
             .into_iter()
-            .map(|s| session_to_contract(s, &state.connections, current))
+            .map(|s| session_to_contract(s, &state, current))
             .collect()
     }
 
@@ -790,7 +790,7 @@ impl AuthStore {
         self.refresh(&mut state);
         state
             .session_by_id(id)
-            .map(|(_, s)| session_to_contract(s, &state.connections, current))
+            .map(|(_, s)| session_to_contract(s, &state, current))
     }
 
     pub fn revoke_pairing_link(&self, id: &str) -> io::Result<bool> {
@@ -851,19 +851,16 @@ impl AuthStore {
         Ok(removed.len())
     }
 
-    /// Marks a socket of `session_id` open until the guard drops. Records the connect time.
+    /// Marks a socket of `session_id` open until the guard drops. Records the connect time in
+    /// memory only: a socket open touches no file.
     pub fn connect(self: &Arc<Self>, session_id: &str) -> ConnectionGuard {
-        let result = self.write(|state| {
-            *state.connections.entry(session_id.to_owned()).or_default() += 1;
-            let now = now_ms();
-            if let Some(session) = state.sessions.values_mut().find(|s| s.id == session_id) {
-                session.last_connected_at_ms = Some(now);
-            }
-            vec![AccessChange::ClientUpserted(session_id.to_owned())]
-        });
-        if let Err(error) = result {
-            eprintln!("conn-server: could not save auth state: {error}");
+        let mut state = self.lock();
+        *state.connections.entry(session_id.to_owned()).or_default() += 1;
+        if state.session_by_id(session_id).is_some() {
+            state.last_connected.insert(session_id.to_owned(), now_ms());
         }
+        drop(state);
+        self.announce(vec![AccessChange::ClientUpserted(session_id.to_owned())]);
         ConnectionGuard {
             store: self.clone(),
             session_id: session_id.to_owned(),
@@ -961,7 +958,8 @@ impl AuthStore {
         Ok(())
     }
 
-    /// Runs `change` on fresh state under the cross-process lock, saves, and announces.
+    /// Runs `change` on a copy of fresh state under the cross-process lock, saves it, and
+    /// only then keeps it and announces. When the save fails, memory stays as it was.
     fn write(&self, change: impl FnOnce(&mut State) -> Vec<AccessChange>) -> io::Result<()> {
         let _file_lock = match &self.file {
             Some(path) => Some(lock_file(path)?),
@@ -969,19 +967,21 @@ impl AuthStore {
         };
         let mut state = self.lock();
         self.refresh(&mut state);
-        let changes = change(&mut state);
+        let mut next = state.clone();
+        let changes = change(&mut next);
         if !changes.is_empty()
             && let Some(path) = &self.file
         {
             let file = AuthFile {
                 version: 1,
-                sessions: state.sessions.values().cloned().collect(),
-                pairing_links: state.pairing.values().cloned().collect(),
+                sessions: next.sessions.values().cloned().collect(),
+                pairing_links: next.pairing.values().cloned().collect(),
             };
-            let bytes = serde_json::to_vec_pretty(&file).expect("auth file serializes");
+            let bytes = serde_json::to_vec_pretty(&file).map_err(io::Error::other)?;
             write_private(path, &bytes)?;
-            state.stamp = stamp(path);
+            next.stamp = stamp(path);
         }
+        *state = next;
         drop(state);
         self.announce(changes);
         Ok(())
@@ -1022,7 +1022,7 @@ fn new_session(
         method: METHOD_BEARER.into(),
         client,
         issued_at_ms: now,
-        expires_at_ms: now + ttl_ms,
+        expires_at_ms: expires_at(now, ttl_ms),
         last_connected_at_ms: None,
     };
     (token, session)
@@ -1042,6 +1042,12 @@ fn narrow(grant: Vec<String>, requested: Option<&[String]>) -> Vec<String> {
     granted
 }
 
+/// When something made at `now` with `ttl_ms` to live expires. The life is capped at
+/// [`MAX_TTL_MS`], so no TTL overflows.
+fn expires_at(now: u64, ttl_ms: u64) -> u64 {
+    now.saturating_add(ttl_ms.min(MAX_TTL_MS))
+}
+
 fn principal_of(session: &StoredSession) -> Principal {
     Principal {
         session_id: session.id.clone(),
@@ -1058,11 +1064,14 @@ fn contract_scopes(scopes: &[&String]) -> Vec<AuthEnvironmentScope> {
         .collect()
 }
 
+/// The full grant. A scope this build does not know is left out, as the client's decode
+/// would drop it anyway.
 fn permissions(scopes: &[String]) -> Option<Vec<Option<AuthEnvironmentScope>>> {
     Some(
         scopes
             .iter()
-            .map(|s| from_json(serde_json::Value::String(s.clone())).ok())
+            .filter_map(|s| from_json(serde_json::Value::String(s.clone())).ok())
+            .map(Some)
             .collect(),
     )
 }
@@ -1081,9 +1090,14 @@ fn pairing_to_contract(link: &StoredPairing) -> AuthPairingLink {
 
 fn session_to_contract(
     session: &StoredSession,
-    connections: &HashMap<String, usize>,
+    state: &State,
     current: Option<&str>,
 ) -> AuthClientSession {
+    let last_connected_at_ms = state
+        .last_connected
+        .get(&session.id)
+        .copied()
+        .max(session.last_connected_at_ms);
     AuthClientSession {
         session_id: session.id.clone(),
         subject: session.subject.clone(),
@@ -1094,8 +1108,8 @@ fn session_to_contract(
         client: session.client.to_contract(),
         issued_at: iso8601(session.issued_at_ms),
         expires_at: iso8601(session.expires_at_ms),
-        last_connected_at: session.last_connected_at_ms.map(iso8601),
-        connected: connections.get(&session.id).is_some_and(|n| *n > 0),
+        last_connected_at: last_connected_at_ms.map(iso8601),
+        connected: state.connections.get(&session.id).is_some_and(|n| *n > 0),
         current: current == Some(session.id.as_str()),
     }
 }
@@ -1529,6 +1543,49 @@ mod tests {
         assert!(!store.client_session(&id, None).unwrap().connected);
     }
 
+    /// Opening a socket touches no file: the connect time lives in memory.
+    #[test]
+    fn connecting_does_not_write_the_file() {
+        let dir = temp_dir("auth-connect");
+        let file = dir.join("auth.json");
+        let store = AuthStore::open(file.clone()).unwrap();
+        let session = store
+            .exchange(
+                &store
+                    .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+                    .unwrap()
+                    .code,
+                None,
+                ClientInfo::default(),
+            )
+            .unwrap();
+        let saved = fs::read_to_string(&file).unwrap();
+        let id = session.principal.session_id.clone();
+        let mut changes = store.subscribe();
+        let guard = store.connect(&id);
+        assert_eq!(fs::read_to_string(&file).unwrap(), saved);
+        assert_eq!(
+            changes.try_recv().unwrap(),
+            AccessChange::ClientUpserted(id.clone())
+        );
+        let listed = store.client_session(&id, None).unwrap();
+        assert!(listed.connected);
+        assert!(listed.last_connected_at.is_some());
+        // Another process's write does not lose it.
+        let cli = AuthStore::open(file).unwrap();
+        cli.issue_pairing_code(None, PAIRING_CODE_TTL_MS).unwrap();
+        assert!(
+            store
+                .client_session(&id, None)
+                .unwrap()
+                .last_connected_at
+                .is_some()
+        );
+        drop(guard);
+        assert!(!store.client_session(&id, None).unwrap().connected);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn state_survives_a_restart_and_only_hashes_are_stored() {
         let dir = temp_dir("auth");
@@ -1557,6 +1614,37 @@ mod tests {
             Some(session.principal)
         );
         assert_eq!(reopened.pairing_links().len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A write that fails leaves memory as it was: the code stays unspent, no session appears
+    /// that nobody holds, and the caller learns it was a storage failure.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_changes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("auth-readonly");
+        let file = dir.join("auth.json");
+        let store = AuthStore::open(file.clone()).unwrap();
+        let code = store
+            .issue_pairing_code(None, PAIRING_CODE_TTL_MS)
+            .unwrap()
+            .code;
+        let saved = fs::read(&file).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = store.exchange(&code, None, ClientInfo::default());
+        let sessions_while_failed = store.client_sessions(None).len();
+        let links_while_failed = store.pairing_links().len();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(failed.unwrap_err(), ExchangeError::Storage);
+        assert_eq!((sessions_while_failed, links_while_failed), (0, 1));
+        assert_eq!(fs::read(&file).unwrap(), saved);
+        // The next write saves only what it made; the code still works once.
+        let session = store.exchange(&code, None, ClientInfo::default()).unwrap();
+        let reopened = AuthStore::open(file).unwrap();
+        assert_eq!(reopened.client_sessions(None).len(), 1);
+        assert!(reopened.authenticate_bearer(&session.token).is_some());
+        assert!(reopened.pairing_links().is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1658,6 +1746,79 @@ mod tests {
                 .exchange("ignored", None, ClientInfo::default())
                 .is_err()
         );
+    }
+
+    /// `replaceActiveForSubjectAndMethod`: each desktop exchange replaces the desktop's
+    /// earlier session, so they do not pile up. Other sessions stay.
+    #[test]
+    fn a_desktop_exchange_replaces_the_earlier_desktop_session() {
+        let store = AuthStore::in_memory();
+        store.set_desktop_bootstrap(DesktopBootstrap::new("desktop-token".into(), None, false));
+        let other = store
+            .issue_session(SessionRequest {
+                scopes: vec!["access:read".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let first = store
+            .exchange("desktop-token", None, ClientInfo::default())
+            .unwrap();
+        let mut changes = store.subscribe();
+        let second = store
+            .exchange("desktop-token", None, ClientInfo::default())
+            .unwrap();
+        assert_eq!(store.authenticate_bearer(&first.token), None);
+        assert!(store.authenticate_bearer(&second.token).is_some());
+        assert!(store.authenticate_bearer(&other.token).is_some());
+        assert_eq!(store.client_sessions(None).len(), 2);
+        let mut seen = Vec::new();
+        while let Ok(change) = changes.try_recv() {
+            seen.push(change);
+        }
+        assert!(seen.contains(&AccessChange::ClientRemoved(first.principal.session_id)));
+    }
+
+    /// A scope this build does not know (a newer CLI wrote it) is left out of `permissions`,
+    /// never sent as `null`.
+    #[test]
+    fn unknown_scopes_are_left_out_of_permissions() {
+        let store = AuthStore::in_memory();
+        let issued = store
+            .issue_session(SessionRequest {
+                scopes: vec!["orchestration:read".into(), "future:scope".into()],
+                label: None,
+                subject: None,
+                ttl_ms: SESSION_TTL_MS,
+            })
+            .unwrap();
+        let listed = store
+            .client_session(&issued.principal.session_id, None)
+            .unwrap();
+        let json = serde_json::to_value(&listed).unwrap();
+        assert_eq!(
+            json["permissions"],
+            serde_json::json!(["orchestration:read"])
+        );
+    }
+
+    /// No TTL can overflow an expiry; the CLI takes any number.
+    #[test]
+    fn huge_ttls_saturate_to_the_cap() {
+        let store = AuthStore::in_memory();
+        let issued = store
+            .issue_session(SessionRequest {
+                scopes: vec!["orchestration:read".into()],
+                label: None,
+                subject: None,
+                ttl_ms: u64::MAX,
+            })
+            .unwrap();
+        assert!(store.authenticate_bearer(&issued.token).is_some());
+        assert!(issued.principal.expires_at_ms <= now_ms() + MAX_TTL_MS);
+        let code = store.issue_pairing_code(None, u64::MAX).unwrap();
+        assert!(code.expires_at_ms > now_ms());
     }
 
     #[test]

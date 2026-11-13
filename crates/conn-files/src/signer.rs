@@ -72,26 +72,40 @@ impl Signer {
     }
 }
 
-pub fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
-    let mut ipad = [0x36u8; 64];
-    let mut opad = [0x5cu8; 64];
-    for (i, byte) in key.iter().enumerate() {
-        ipad[i] ^= byte;
-        opad[i] ^= byte;
+/// HMAC-SHA256 (RFC 2104) with a key of any length.
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut block = [0u8; 64];
+    let hashed: [u8; 32];
+    let key = if key.len() > block.len() {
+        hashed = Sha256::digest(key).into();
+        &hashed[..]
+    } else {
+        key
+    };
+    for (slot, byte) in block.iter_mut().zip(key) {
+        *slot = *byte;
     }
+    let pad = |byte: u8| block.map(|b| b ^ byte);
     let inner = Sha256::new()
-        .chain_update(ipad)
+        .chain_update(pad(0x36))
         .chain_update(message)
         .finalize();
     Sha256::new()
-        .chain_update(opad)
+        .chain_update(pad(0x5c))
         .chain_update(inner)
         .finalize()
         .into()
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+/// Compares two secrets in time that depends only on their length. `black_box` keeps the
+/// compiler from ending the loop at the first difference.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len()
+        && std::hint::black_box(
+            a.iter()
+                .zip(b)
+                .fold(0u8, |acc, (x, y)| std::hint::black_box(acc | (x ^ y))),
+        ) == 0
 }
 
 pub fn random_bytes<const N: usize>() -> [u8; N] {
@@ -194,6 +208,21 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hmac_takes_keys_of_any_length() {
+        // RFC 4231 case 6: a 131-byte key, longer than the block.
+        assert_eq!(
+            hex(&hmac_sha256(
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            )),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+    }
 
     #[test]
     fn hmac_matches_rfc_4231_shape() {
