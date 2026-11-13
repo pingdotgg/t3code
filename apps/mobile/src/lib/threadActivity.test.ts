@@ -54,7 +54,36 @@ it("shows a captured MCP app for a failed deferred write", () => {
     input: {},
     output: { t3McpApp: mcpApp, result: { content: [], isError: true } },
   };
-  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([{ type: "mcp-app", app: mcpApp }]);
+  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([
+    { type: "activity-group" },
+    { type: "mcp-app", app: mcpApp },
+  ]);
+});
+
+it("keeps an MCP app call's tool activity beside its app card", () => {
+  const mcpApp = {
+    attachmentId: "repro-app-html",
+    server: "repro",
+    tool: "aggregate_rum_events",
+    resourceUri: "ui://repro/dataviz",
+  };
+  const item: OrchestrationV2TurnItem = {
+    ...base("repro-app", "2026-08-29T00:00:00.000Z", 1),
+    type: "dynamic_tool",
+    toolName: "repro.aggregate_rum_events",
+    input: { query: "@type:view" },
+    output: {
+      t3McpApp: mcpApp,
+      result: { content: [{ type: "text", text: "Notice\nview\tcount\n/home\t42" }] },
+    },
+  };
+  const feed = buildThreadFeed([projected(item, 0)]);
+  expect(feed).toContainEqual(expect.objectContaining({ type: "mcp-app", app: mcpApp }));
+  const activities = feed.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+  expect(activities).toHaveLength(1);
+  expect(activities[0]?.getFullDetail()).toContain("@type:view");
 });
 
 it("keeps historical plan detail accessible from its paged turn item", () => {
@@ -1468,6 +1497,16 @@ describe("buildThreadFeed", () => {
         phase === "final_answer",
       );
     }
+    const confirmed = { ...answer, phase: "final_answer" as const };
+    const continued = buildThreadFeed(
+      [user, confirmed, passed, final].map((item, index) => projected(item, index)),
+    );
+    expect(
+      deriveThreadFeedPresentation(continued, null, new Set()).some(
+        (row) => row.type === "message" && row.message.id === answer.messageId,
+      ),
+    ).toBe(true);
+    expect(rows([user, confirmed, passed, final], "zen")).toEqual(["user", "answer", "final"]);
     expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
     expect(rows([user, steer, answer, step], "zen", running)).toEqual([
       "user",

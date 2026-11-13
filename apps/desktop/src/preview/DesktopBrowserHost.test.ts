@@ -309,7 +309,7 @@ describe("DesktopBrowserHost", () => {
 
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("sends a page one screenshot at a time", () =>
@@ -328,7 +328,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
       expect(debuggee.sent).toEqual([1, 3, 2]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["frames", "refused wait", "timeout", "refused retry"] as const)(
@@ -523,7 +523,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(2);
       expect(debuggee.sent).toEqual([1, 2, 3]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("drops screenshots a released relay left waiting", () =>
@@ -595,7 +595,7 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(1);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle once Chromium can no longer answer its pending command", () =>
@@ -783,7 +783,7 @@ describe("DesktopBrowserHost", () => {
       yield* turn(false);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false, true]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("paints for a screenshot queued behind one its viewer abandoned mid-capture", () =>
@@ -821,7 +821,7 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(4);
       yield* settle;
       expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops painting for a queued screenshot once its session detaches", () =>
@@ -860,7 +860,7 @@ describe("DesktopBrowserHost", () => {
       expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("never sends a screenshot whose session detached while focus was changing", () =>
@@ -884,7 +884,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.settleFocus();
       yield* settle;
       expect(debuggee.sent).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("holds no focus for a screenshot still queued when the agent's turn ends", () =>
@@ -914,7 +914,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.release();
       yield* settle;
       expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>
@@ -935,7 +935,7 @@ describe("DesktopBrowserHost", () => {
       expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle after a person's input through a viewer that then closed", () =>
@@ -964,7 +964,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a page's screencast when a child session's screencast is refused", () =>
@@ -986,7 +986,7 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(2);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("ignores a screencast that arrives on a session after it detached", () =>
@@ -1012,7 +1012,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("lets a guest throttle once the session waiting on its command detaches", () =>
@@ -1039,7 +1039,7 @@ describe("DesktopBrowserHost", () => {
       });
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("never sends a screenshot queued by a session that has since detached", () =>
@@ -1070,7 +1070,7 @@ describe("DesktopBrowserHost", () => {
 
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a streamed guest focused until its screencast ends", () =>
@@ -1131,7 +1131,7 @@ describe("DesktopBrowserHost", () => {
       });
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("paints a hidden guest only while the screenshot it is taking is pending", () =>
@@ -1157,7 +1157,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.release();
       yield* settle;
       expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops painting for a screenshot Chromium never answers once its document goes", () =>
@@ -1202,7 +1202,7 @@ describe("DesktopBrowserHost", () => {
       host.detach(key);
       yield* settle;
       expect(painting).toEqual([true, false, true, false, true, false, true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("paints a streamed guest until its last screencast ends", () =>
@@ -1233,7 +1233,7 @@ describe("DesktopBrowserHost", () => {
       });
       yield* settle;
       expect(painting).toEqual([true, false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a guest's one screencast running until its last streaming session stops", () =>
@@ -1270,7 +1270,7 @@ describe("DesktopBrowserHost", () => {
       yield* raw({ id: 6, method: "Page.stopScreencast", sessionId: "t3-preview-page-2" });
       yield* settle;
       expect(nativeStops()).toBe(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a session's screencast when another of its starts is refused", () =>
@@ -1333,7 +1333,7 @@ describe("DesktopBrowserHost", () => {
       debuggee.emit("Page.screencastFrame", { data: "frame", sessionId: 2 });
       yield* settle;
       expect(frames).toEqual(["t3-preview-page-1", "t3-preview-page-2"]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops a guest's screencast once its last streaming session detaches", () =>
@@ -1372,7 +1372,7 @@ describe("DesktopBrowserHost", () => {
       expect(answered.toSorted()).toEqual([3, 4, 5, 6]);
       yield* settle;
       expect(nativeStops()).toBe(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops a screencast whose start lands after its session detached", () =>
@@ -1402,7 +1402,7 @@ describe("DesktopBrowserHost", () => {
       expect(debuggee.methods.at(-1), "left the late screencast running").toBe(
         "Page.stopScreencast",
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("saves a server tab's download under its CDP guid where the server asked", () =>
@@ -1437,7 +1437,7 @@ describe("DesktopBrowserHost", () => {
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(true);
       expect(paths).toEqual(["/srv/downloads/guid-1"]);
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(false);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("tells a download the person clicked from one the agent's input started", () =>
@@ -1535,6 +1535,6 @@ describe("DesktopBrowserHost", () => {
       expect(JSON.parse((next as { message: string }).message)).toMatchObject({
         method: "Page.loadEventFired",
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });
