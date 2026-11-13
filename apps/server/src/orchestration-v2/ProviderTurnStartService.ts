@@ -1584,9 +1584,6 @@ export const layer: Layer.Layer<
       if (!runningWrite.committed) {
         return;
       }
-      const routableSubagents = projection.subagents.filter((subagent) =>
-        RunExecutionService.canRouteRelatedSubagent(subagent.status),
-      );
       const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
         handoff: OrchestrationV2ContextHandoff,
       ) {
@@ -1716,11 +1713,11 @@ export const layer: Layer.Layer<
         attempt: runningAttempt,
         attemptId: attempt.id,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        relatedThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.childThreadId === null ? [] : [subagent.childThreadId],
+        relatedThreadIds: projection.subagentRoutes.flatMap((route) =>
+          route.childThreadId === null ? [] : [route.childThreadId],
         ),
-        relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+        relatedProviderThreadIds: projection.subagentRoutes.flatMap((route) =>
+          route.providerThreadId === null ? [] : [route.providerThreadId],
         ),
         providerTurnOrdinal:
           Math.max(

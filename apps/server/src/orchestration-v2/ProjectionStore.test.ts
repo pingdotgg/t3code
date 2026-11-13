@@ -6815,6 +6815,36 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         /^SEARCH .*\((?:thread_id=\? AND )?run_id=\?(?: AND thread_id=\?)?\)/m,
       );
 
+      // Turn start finds earlier /compact and /goal messages and routable subagents through indexes,
+      // without parsing every user message or reading subagent payloads.
+      const context = traceSqlStatements();
+      yield* projectionStore
+        .getTurnStartContext(threadId, selectedRunId)
+        .pipe(Effect.withTracer(context.tracer));
+      const contextPlan = Effect.fn("contextPlan")(function* (
+        table: string,
+        params: ReadonlyArray<string>,
+      ) {
+        const statement = context.statements.find((candidate) =>
+          candidate.includes(`FROM orchestration_v2_projection_${table}\n`),
+        );
+        assert.isDefined(statement);
+        return (yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${statement}`,
+          params,
+        ))
+          .map((row) => row.detail)
+          .join("\n");
+      });
+      assert.include(
+        yield* contextPlan("messages", [threadId, threadId, selectedRunId, threadId]),
+        "USING INDEX orchestration_v2_projection_messages_turn_start_command_idx",
+      );
+      assert.include(
+        yield* contextPlan("subagents", [threadId]),
+        "USING COVERING INDEX orchestration_v2_projection_subagents_routing_idx",
+      );
+
       assert.deepEqual((yield* readItems(threadId, emptyRunId)).ids, []);
       assert.deepEqual(
         (yield* readItems(threadId, RunId.make("run:turn-start-items:missing"))).ids,
