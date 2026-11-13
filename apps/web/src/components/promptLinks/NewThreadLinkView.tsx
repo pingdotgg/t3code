@@ -17,7 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { type EnvironmentId, type ProjectId, SCRATCH_BLOCKED_HELP_URL } from "@t3tools/contracts";
 import {
   type NewThreadLink,
   type PromptLinkRepository,
@@ -32,7 +32,7 @@ import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "rea
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { isElectron } from "~/env";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useScratchProject } from "~/hooks/useScratchProject";
+import { scratchBlockedCopy, useScratchProject } from "~/hooks/useScratchProject";
 import { newProjectId } from "~/lib/utils";
 import { useProjects, useThreadShells, waitForProject } from "~/state/entities";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -56,7 +56,12 @@ import { placeLinkedPrompt, warnAboutHiddenCharacters } from "./linkedPrompt";
 type LinkState =
   | { readonly status: "opening" }
   | { readonly status: "opened" }
-  | { readonly status: "failed"; readonly message: string; readonly title?: string }
+  | {
+      readonly status: "failed";
+      readonly message: string;
+      readonly title?: string;
+      readonly scratchBlocked?: boolean;
+    }
   | { readonly status: "missing-repository"; readonly repository: PromptLinkRepository }
   | {
       readonly status: "pull-request-checkout";
@@ -114,7 +119,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const handleNewThread = useNewThreadHandler();
-  const { scratchEnvironmentId, openScratchProject } = useScratchProject();
+  const { scratchEnvironmentId, scratchBlocked, openScratchProject } = useScratchProject();
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
@@ -189,13 +194,19 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   };
 
   const openScratchDraft = async () => {
-    const environmentId = scratchEnvironmentId(lastActiveEnvironmentId());
+    const lastActive = lastActiveEnvironmentId();
+    const environmentId = scratchEnvironmentId(lastActive);
     const project = environmentId === null ? null : await openScratchProject(environmentId);
     if (project === null) {
-      setState({
-        status: "failed",
-        message: gt("None of your machines can start a thread without a project right now."),
-      });
+      const blocked = environmentId === null ? scratchBlocked(lastActive) : null;
+      setState(
+        blocked === null
+          ? {
+              status: "failed",
+              message: gt("None of your machines can start a thread without a project right now."),
+            }
+          : { status: "failed", message: scratchBlockedCopy(blocked), scratchBlocked: true },
+      );
       return;
     }
     await openDraft(
@@ -381,10 +392,19 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       );
     case "failed":
       return (
-        <LinkPage
-          title={state.title ?? gt("Could not open the link")}
-          description={state.message}
-        />
+        <LinkPage title={state.title ?? gt("Could not open the link")} description={state.message}>
+          {state.scratchBlocked ? (
+            <Button
+              size="sm"
+              variant="outline"
+              render={
+                <a href={SCRATCH_BLOCKED_HELP_URL} target="_blank" rel="noopener noreferrer" />
+              }
+            >
+              <T>How to fix</T>
+            </Button>
+          ) : null}
+        </LinkPage>
       );
     case "missing-repository": {
       const name = `${state.repository.owner}/${state.repository.name}`;
