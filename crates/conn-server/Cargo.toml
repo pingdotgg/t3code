@@ -23,7 +23,11 @@ getrandom = "0.3"
 sha2 = { version = "0.10", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+# `signal`: a clean stop on SIGTERM and SIGINT.
+tokio = { workspace = true, features = ["signal"] }
+# The ownership lock shared with the T3 server (`server-owner.sqlite`); already in the tree
+# through conn-engine, same version and features.
+rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
 
 [dev-dependencies]
 # examples/replay_server.rs: the scripted provider instead of Claude.

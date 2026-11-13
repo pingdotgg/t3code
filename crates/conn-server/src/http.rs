@@ -1,11 +1,11 @@
 //! HTTP routes: the environment descriptor, pairing and auth, and the `/ws` upgrade.
 //! Shapes follow `packages/contracts/src/environmentHttp.ts` and `auth.ts`.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
-    Form, Json, Router,
-    extract::{Path, Query, Request, State, WebSocketUpgrade},
+    Extension, Form, Json, Router,
+    extract::{ConnectInfo, Path, Query, Request, State, WebSocketUpgrade},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -17,7 +17,10 @@ use serde_json::{Value, json};
 use conn_engine::{Engine, EngineError};
 
 use crate::{
-    auth::{self, AuthStore, ExchangeError, Principal, iso8601, scope_response},
+    auth::{
+        self, AccessChange, AuthStore, ClientInfo, ExchangeError, PairingRequest, Principal,
+        iso8601, scope_response,
+    },
     session::{self, SessionOptions},
     table::{CallContext, MethodTable},
 };
@@ -49,6 +52,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/websocket-ticket", post(ticket))
         .route("/api/auth/websocket-ticket/{use}", post(ticket_for))
         .route("/api/auth/pairing-token", post(pairing_token))
+        .route("/api/auth/pairing-links/revoke", post(revoke_pairing_link))
+        .route("/api/auth/clients", get(clients))
+        .route("/api/auth/clients/revoke", post(revoke_client))
+        .route(
+            "/api/auth/clients/revoke-others",
+            post(revoke_other_clients),
+        )
         .route("/api/orchestration/shell", get(shell_snapshot))
         .route(
             "/api/orchestration/threads/{thread_id}",
@@ -104,11 +114,11 @@ async fn descriptor(State(state): State<AppState>) -> Json<Value> {
 
 async fn session_state(State(state): State<AppState>, headers: HeaderMap) -> Json<Value> {
     let Some(principal) = bearer(&headers).and_then(|t| state.auth.authenticate_bearer(t)) else {
-        return Json(json!({ "authenticated": false, "auth": auth::descriptor() }));
+        return Json(json!({ "authenticated": false, "auth": state.auth.descriptor() }));
     };
     let mut body = scope_response(&principal.scopes);
     body["authenticated"] = json!(true);
-    body["auth"] = auth::descriptor();
+    body["auth"] = state.auth.descriptor();
     body["sessionMethod"] = json!("bearer-access-token");
     body["expiresAt"] = json!(iso8601(principal.expires_at_ms));
     Json(body)
@@ -123,6 +133,8 @@ struct TokenRequest {
     requested_token_type: String,
     scope: Option<String>,
     client_label: Option<String>,
+    client_device_type: Option<String>,
+    client_os: Option<String>,
 }
 
 const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
@@ -131,6 +143,7 @@ const BOOTSTRAP_TOKEN_TYPE: &str = "urn:t3:params:oauth:token-type:environment-b
 
 async fn token(
     State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     Form(request): Form<TokenRequest>,
 ) -> Response {
@@ -154,10 +167,24 @@ async fn token(
         .scope
         .as_deref()
         .map(|scope| scope.split_whitespace().map(str::to_owned).collect());
-    let label = request.client_label.filter(|l| !l.trim().is_empty());
+    let device_type = request.client_device_type.filter(|d| {
+        matches!(
+            d.as_str(),
+            "desktop" | "mobile" | "tablet" | "bot" | "unknown"
+        )
+    });
+    let client = ClientInfo::from_request(
+        request.client_label,
+        device_type,
+        request.client_os.filter(|o| !o.trim().is_empty()),
+        headers
+            .get(header::USER_AGENT)
+            .and_then(|v| v.to_str().ok()),
+        peer.map(|Extension(ConnectInfo(addr))| addr.ip().to_canonical().to_string()),
+    );
     match state
         .auth
-        .exchange(&request.subject_token, requested.as_deref(), label)
+        .exchange(&request.subject_token, requested.as_deref(), client)
     {
         Ok(issued) => Json(json!({
             "access_token": issued.token,
@@ -210,7 +237,7 @@ fn issue_ticket(state: &AppState, headers: &HeaderMap, route: Option<&str>) -> R
     }
 }
 
-/// `AuthCreatePairingCredentialInput`. Codes always carry the standard client scopes.
+/// `AuthCreatePairingCredentialInput`.
 #[derive(Deserialize, Default)]
 struct PairingTokenRequest {
     label: Option<String>,
@@ -218,26 +245,61 @@ struct PairingTokenRequest {
     access: Option<String>,
 }
 
+/// The bearer session behind a request that needs `scope`, or the response refusing it.
+fn require_scope(
+    state: &AppState,
+    headers: &HeaderMap,
+    scope: &str,
+) -> Result<Principal, Response> {
+    let Some(token) = bearer(headers) else {
+        return Err(auth_invalid("missing_credential"));
+    };
+    let Some(principal) = state.auth.authenticate_bearer(token) else {
+        return Err(auth_invalid("invalid_credential"));
+    };
+    if !principal.has_scope(scope) {
+        return Err(scope_required(scope));
+    }
+    Ok(principal)
+}
+
+/// `EnvironmentScopeRequiredError`, 403.
+fn scope_required(scope: &str) -> Response {
+    Json(json!({
+        "_tag": "EnvironmentScopeRequiredError",
+        "code": "insufficient_scope",
+        "requiredScope": auth::legacy_parent(scope),
+        "requiredPermission": scope,
+        "traceId": trace_id(),
+    }))
+    .with_status(StatusCode::FORBIDDEN)
+}
+
+fn internal(reason: &str, error: std::io::Error) -> Response {
+    eprintln!("conn-server: {reason}: {error}");
+    Json(json!({
+        "_tag": "EnvironmentInternalError",
+        "code": "internal_error",
+        "reason": reason,
+        "traceId": trace_id(),
+    }))
+    .with_status(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// `POST /api/auth/pairing-token`: a one-time link with the standard scopes or the ones named,
+/// each of which the caller must hold. Orbit's Gateway creates its device links here.
 async fn pairing_token(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Option<Json<PairingTokenRequest>>,
 ) -> Response {
-    let Some(principal) = bearer(&headers).and_then(|t| state.auth.authenticate_bearer(t)) else {
-        return auth_invalid("missing_credential");
+    let principal = match require_scope(&state, &headers, "access:write") {
+        Ok(principal) => principal,
+        Err(response) => return response,
     };
-    if !principal.has_scope("access:write") {
-        return Json(json!({
-            "_tag": "EnvironmentScopeRequiredError",
-            "code": "insufficient_scope",
-            "requiredScope": "access:write",
-            "traceId": trace_id(),
-        }))
-        .with_status(StatusCode::FORBIDDEN);
-    }
     let request = body.map(|Json(b)| b).unwrap_or_default();
-    // Agent approval codes and narrowed grants are not supported; refuse rather than widen.
-    if request.access.is_some() || request.scopes.is_some() {
+    // MCP approval codes (`access`) need the MCP OAuth flow, which this server lacks.
+    if request.access.is_some() {
         return error(
             StatusCode::BAD_REQUEST,
             "EnvironmentRequestInvalidError",
@@ -245,9 +307,38 @@ async fn pairing_token(
             "invalid_scope",
         );
     }
-    let issued = state
-        .auth
-        .issue_pairing_code(request.label, auth::PAIRING_CODE_TTL_MS);
+    let scopes: Vec<String> = request.scopes.unwrap_or_else(|| {
+        auth::STANDARD_SCOPES
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    });
+    let mut unique = scopes.clone();
+    unique.sort();
+    unique.dedup();
+    if scopes.is_empty()
+        || unique.len() != scopes.len()
+        || !scopes.iter().all(|s| auth::is_grant_scope(s))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "invalid_scope",
+        );
+    }
+    if let Some(missing) = scopes.iter().find(|s| !principal.has_scope(s)) {
+        return scope_required(missing);
+    }
+    let label = request.label.filter(|l| !l.trim().is_empty());
+    let issued = match state.auth.issue_pairing(PairingRequest {
+        scopes,
+        label,
+        ttl_ms: auth::PAIRING_CODE_TTL_MS,
+    }) {
+        Ok(issued) => issued,
+        Err(e) => return internal("pairing_credential_issuance_failed", e),
+    };
     let mut body = json!({
         "id": issued.id,
         "credential": issued.code,
@@ -257,6 +348,77 @@ async fn pairing_token(
         body["label"] = json!(label);
     }
     Json(body).into_response()
+}
+
+#[derive(Deserialize)]
+struct IdRequest {
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionIdRequest {
+    session_id: String,
+}
+
+async fn revoke_pairing_link(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<IdRequest>,
+) -> Response {
+    if let Err(response) = require_scope(&state, &headers, "access:write") {
+        return response;
+    }
+    match state.auth.revoke_pairing_link(&request.id) {
+        Ok(revoked) => Json(json!({ "revoked": revoked })).into_response(),
+        Err(e) => internal("pairing_link_revoke_failed", e),
+    }
+}
+
+/// `GET /api/auth/clients`: the Gateway checks a session's owner here before revoking it.
+async fn clients(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    match require_scope(&state, &headers, "access:read") {
+        Ok(principal) => {
+            Json(state.auth.client_sessions(Some(&principal.session_id))).into_response()
+        }
+        Err(response) => response,
+    }
+}
+
+async fn revoke_client(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SessionIdRequest>,
+) -> Response {
+    let principal = match require_scope(&state, &headers, "access:write") {
+        Ok(principal) => principal,
+        Err(response) => return response,
+    };
+    match state
+        .auth
+        .revoke_session(Some(&principal.session_id), &request.session_id)
+    {
+        Ok(Ok(revoked)) => Json(json!({ "revoked": revoked })).into_response(),
+        Ok(Err(auth::RevokeCurrentSession)) => Json(json!({
+            "_tag": "EnvironmentOperationForbiddenError",
+            "code": "operation_forbidden",
+            "reason": "current_session_revoke_not_allowed",
+            "traceId": trace_id(),
+        }))
+        .with_status(StatusCode::FORBIDDEN),
+        Err(e) => internal("client_session_revoke_failed", e),
+    }
+}
+
+async fn revoke_other_clients(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let principal = match require_scope(&state, &headers, "access:write") {
+        Ok(principal) => principal,
+        Err(response) => return response,
+    };
+    match state.auth.revoke_other_sessions(&principal.session_id) {
+        Ok(count) => Json(json!({ "revokedCount": count })).into_response(),
+        Err(e) => internal("client_session_revoke_failed", e),
+    }
 }
 
 /// Checks what every `/api/orchestration/*` route requires: the protocol header, a bearer
@@ -370,6 +532,7 @@ async fn ws(
             };
         return auth_invalid(reason);
     };
+    let session_id = principal.session_id.clone();
     let options = SessionOptions {
         frame_parts: query.contains_key(conn_wire::frame_parts::QUERY_PARAM),
         max_message_bytes: MAX_MESSAGE_BYTES,
@@ -380,10 +543,43 @@ async fn ws(
         },
     };
     let table = state.table.clone();
+    let auth = state.auth.clone();
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session::run(socket, table, options))
+        .on_upgrade(move |socket| async move {
+            let _connected = auth.connect(&session_id);
+            // A revoked session loses its open sockets at once, as with the T3 server.
+            tokio::select! {
+                _ = session::run(socket, table, options) => {}
+                _ = revoked(&auth, &session_id) => {}
+            }
+        })
+}
+
+/// Resolves once `session_id` is revoked or expires, here or by another process (the CLI).
+async fn revoked(auth: &AuthStore, session_id: &str) {
+    let mut changes = auth.subscribe();
+    let mut check = tokio::time::interval(Duration::from_secs(30));
+    loop {
+        tokio::select! {
+            change = changes.recv() => match change {
+                Ok(AccessChange::ClientRemoved(id)) if id == session_id => return,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    if !auth.session_active(session_id) {
+                        return;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => std::future::pending::<()>().await,
+                _ => {}
+            },
+            _ = check.tick() => {
+                if !auth.session_active(session_id) {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// `authenticateWebSocketUpgrade`: an RPC ticket in `wsTicket`, else a bearer header.
@@ -610,7 +806,7 @@ mod tests {
                     .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
                     .code,
                 None,
-                None,
+                ClientInfo::default(),
             )
             .unwrap()
             .token;

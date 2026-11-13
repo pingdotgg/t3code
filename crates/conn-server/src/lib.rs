@@ -1,12 +1,17 @@
 //! The Conn server: HTTP and WebSocket listener, pairing endpoints, method table.
 
 pub mod auth;
+pub mod cli;
+pub mod diagnostics;
 pub mod environment;
+pub mod home;
 pub mod http;
+pub mod keybindings;
 pub mod methods;
 pub mod routes;
 pub mod serve;
 pub mod session;
+pub mod settings;
 pub mod table;
 
 pub use http::{AppState, router};

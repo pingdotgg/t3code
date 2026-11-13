@@ -5,6 +5,7 @@ use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
 use conn_server::serve::{ServeOptions, serve};
 
 fn main() {
+    // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
     let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ClaudeProvider::new(
         "claudeAgent".into(),
@@ -12,9 +13,11 @@ fn main() {
     ))];
     // One thread: a container serves a handful of clients, and each worker thread costs
     // stack and allocator arenas.
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("tokio runtime")
-        .block_on(serve(options, providers));
+        .expect("tokio runtime");
+    runtime.block_on(serve(options, providers));
+    // Dropping the tasks drops provider children, which kills them (`kill_on_drop`).
+    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
 }

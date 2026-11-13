@@ -156,6 +156,7 @@ dependencies = [
  "conn-provider-claude",
  "conn-wire",
  "getrandom",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
