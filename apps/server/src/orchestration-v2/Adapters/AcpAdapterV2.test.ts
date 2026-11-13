@@ -2878,6 +2878,19 @@ describe("AcpAdapterV2", () => {
         ["reasoning", "Thinking more"],
       ],
     },
+    {
+      label: "opaque ids differ only in surrounding whitespace",
+      steps: [answer("answer", "A"), answer(" answer ", "B")],
+      expected: [
+        ["assistant_message", "A"],
+        ["assistant_message", "B"],
+      ],
+    },
+    {
+      label: "a chunk continues a full update with the same whitespace-padded id",
+      steps: [agentMessage(" answer ", "A"), answer(" answer ", "B")],
+      expected: [["assistant_message", "AB"]],
+    },
   ] satisfies ReadonlyArray<{
     readonly label: string;
     readonly steps: ReadonlyArray<ScriptedTextStep>;
