@@ -790,7 +790,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   );
 
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (
-    state: "ready" | "signed-out" | "usage-failed",
+    state: "ready" | "signed-out" | "token-missing" | "usage-failed",
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -798,6 +798,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     const recovered = path.join(fixtures.claudeHomePath, "recovered");
     const probeLog = path.join(fixtures.claudeHomePath, "probes.log");
     const instanceId = ProviderInstanceId.make("claude_cache");
+    // A host variable no machine sets, standing in for the token a desktop shell delivers late.
+    const hostToken = "T3_CLAUDE_TEST_HOST_TOKEN";
     const { registry } = yield* makeProviderInstanceRegistry({
       drivers: [ClaudeDriver],
       configMap: {
@@ -809,14 +811,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             ...(state === "ready"
               ? []
               : [
-                  {
-                    name:
-                      state === "signed-out"
-                        ? "T3_CLAUDE_LOGIN_MARKER"
-                        : "T3_CLAUDE_USAGE_FAILS_UNTIL",
-                    value: recovered,
-                    sensitive: false,
-                  },
+                  state === "token-missing"
+                    ? { name: "T3_CLAUDE_TOKEN_VARIABLE", value: hostToken, sensitive: false }
+                    : {
+                        name:
+                          state === "signed-out"
+                            ? "T3_CLAUDE_LOGIN_MARKER"
+                            : "T3_CLAUDE_USAGE_FAILS_UNTIL",
+                        value: recovered,
+                        sensitive: false,
+                      },
                 ]),
           ],
           config: makeClaudeConfig({
@@ -831,21 +835,26 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     expect(instance).toBeDefined();
     return {
       refresh: instance!.snapshot.refresh,
-      recover: fs.writeFileString(recovered, ""),
+      recover:
+        state === "token-missing"
+          ? instance!.applyHostVariable!(hostToken, "token")
+          : fs.writeFileString(recovered, ""),
       probeLog: fs.readFileString(probeLog),
     };
   });
 
-  for (const state of ["signed-out", "usage-failed"] as const) {
+  for (const state of ["signed-out", "token-missing", "usage-failed"] as const) {
     it.effect.skipIf(windowsHost)(
       state === "signed-out"
         ? "shows Claude usage on the first refresh after signing back in"
-        : "retries Claude usage on the first refresh after a failed usage read",
+        : state === "token-missing"
+          ? "signs Claude in when the host delivers its token after the instance was built"
+          : "retries Claude usage on the first refresh after a failed usage read",
       () =>
         Effect.gen(function* () {
           const fixture = yield* makeClaudeCacheFixture(state);
           const before = yield* fixture.refresh;
-          if (state === "signed-out") {
+          if (state !== "usage-failed") {
             expect(before.auth.status).toBe("unauthenticated");
             expect(before.usageLimits).toBeUndefined();
           } else {

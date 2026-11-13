@@ -11,19 +11,24 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   DEV_REPLAY_INSTANCE_ID,
   deriveProviderInstanceConfigMap,
+  layerClaudeTokenWatcher,
   layerSettingsWatcher,
   seedDevReplayInstance,
 } from "./ProviderInstanceRegistryHydration.ts";
+import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const projectId = ProjectId.make("project-a");
 const instanceId = ProviderInstanceId.make("codex_work");
@@ -210,5 +215,55 @@ describe("layerSettingsWatcher", () => {
 
         expect(reloads()).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
+  );
+});
+
+describe("layerClaudeTokenWatcher", () => {
+  effectIt.effect("hands instances the token a desktop shell snapshot changed", () =>
+    Effect.gen(function* () {
+      const applied = yield* Queue.unbounded<void>();
+      const registryChanges = yield* PubSub.unbounded<void>();
+      const handed = yield* Queue.unbounded<readonly [string | undefined, string | undefined]>();
+      // The snapshot landed while the registry was being built, so the first check must catch it.
+      const liveEnvironment: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: "profile" };
+      const driverEnvironment: NodeJS.ProcessEnv = {};
+      const instance = {
+        applyHostVariable: (name: string, value: string | undefined) => {
+          expect(name).toBe("CLAUDE_CODE_OAUTH_TOKEN");
+          return Queue.offer(handed, [value, driverEnvironment.CLAUDE_CODE_OAUTH_TOKEN]);
+        },
+      } as unknown as ProviderInstance;
+      yield* Layer.build(
+        layerClaudeTokenWatcher({
+          liveEnvironment,
+          driverEnvironment,
+          builtWithToken: undefined,
+        }).pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry)({
+              listInstances: Effect.succeed([instance, {} as ProviderInstance]),
+              subscribeChanges: PubSub.subscribe(registryChanges),
+            }),
+          ),
+          Layer.provide(
+            DesktopTelemetryReceiver.layerTest({
+              subscribeShellEnvironment: Effect.succeed(Stream.fromQueue(applied)),
+            }),
+          ),
+        ),
+      );
+      expect(yield* Queue.take(handed)).toEqual(["profile", "profile"]);
+
+      // An instance published after the handover may have been built before the token arrived.
+      yield* PubSub.publish(registryChanges, undefined);
+      expect(yield* Queue.take(handed)).toEqual(["profile", "profile"]);
+
+      liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN = "rotated";
+      yield* Queue.offer(applied, undefined);
+      expect(yield* Queue.take(handed)).toEqual(["rotated", "rotated"]);
+      delete liveEnvironment.CLAUDE_CODE_OAUTH_TOKEN;
+      yield* Queue.offer(applied, undefined);
+      expect(yield* Queue.take(handed)).toEqual([undefined, undefined]);
+    }).pipe(Effect.scoped),
   );
 });

@@ -20,6 +20,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import * as ManagedProviders from "../policy/managedProviders.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
@@ -49,6 +50,8 @@ type ProviderInstanceRegistryHydrationEnv =
   | SecureRandom.SecureRandom
   // The Claude runner counts its CLIs as running agents for port discovery.
   | PortScanner.PortDiscovery
+  // The desktop delivers its login shell's environment after the registry is built.
+  | DesktopTelemetryReceiver.DesktopTelemetryReceiver
   // Adapter ids read which subagent threads predate short ids.
   | SqlClient.SqlClient;
 
@@ -168,6 +171,60 @@ export const layerSettingsWatcher = (
     }),
   );
 
+const CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * Instances copy the host environment when they are built, and the desktop delivers the login
+ * shell's `claude setup-token` credential after that, so a changed token is handed to them.
+ * Nothing is rebuilt: a rebuild would end the turns an instance is running.
+ */
+export const layerClaudeTokenWatcher = (input: {
+  /** The environment the desktop's shell snapshots are applied to. */
+  readonly liveEnvironment: NodeJS.ProcessEnv;
+  /** The environment drivers are built from, which a managed policy makes a copy. */
+  readonly driverEnvironment: NodeJS.ProcessEnv;
+  /** The token the registry's instances were built with. */
+  readonly builtWithToken: string | undefined;
+}) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
+      // Subscribe before the first check so a snapshot applied in between is not missed.
+      const applied = yield* receiver.subscribeShellEnvironment;
+      const registryChanges = yield* registry.subscribeChanges;
+      let built = input.builtWithToken;
+      let changed = false;
+      const sync = Effect.gen(function* () {
+        const token = input.liveEnvironment[CLAUDE_TOKEN];
+        if (token !== built) {
+          built = token;
+          changed = true;
+          // Instances built from here on start with the token.
+          if (token === undefined) delete input.driverEnvironment[CLAUDE_TOKEN];
+          else input.driverEnvironment[CLAUDE_TOKEN] = token;
+        }
+        // An instance being built while the token changed can hold the old one, so every registry
+        // change hands the token over again. Instances that already have it do nothing.
+        if (!changed) return;
+        yield* Effect.forEach(
+          yield* registry.listInstances,
+          (instance) => instance.applyHostVariable?.(CLAUDE_TOKEN, token) ?? Effect.void,
+          { concurrency: "unbounded", discard: true },
+        );
+      });
+      yield* sync.pipe(
+        Effect.andThen(
+          Stream.runForEach(
+            Stream.merge(applied, Stream.fromSubscription(registryChanges)),
+            () => sync,
+          ),
+        ),
+        Effect.forkScoped,
+      );
+    }),
+  );
+
 export const layer: Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
@@ -190,9 +247,11 @@ export const layer: Layer.Layer<
         : deriveProviderInstanceConfigMap(initialSettings);
 
     // Drivers launch from the host environment, minus launch overrides a policy ignores.
+    const liveEnvironment = yield* HostProcess.Environment;
+    const builtWithToken = liveEnvironment[CLAUDE_TOKEN];
     const hostEnvironment = ManagedProviders.providerHostEnvironment(
       serverSettings.managedPolicy,
-      yield* HostProcess.Environment,
+      liveEnvironment,
     );
     // Instances of drivers the policy leaves out stay listed, as unavailable, so their threads
     // explain why instead of losing their provider.
@@ -209,9 +268,14 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges, initialSettings).pipe(
-      Layer.provideMerge(layerMutable),
-    );
+    return Layer.merge(
+      layerSettingsWatcher(settingsChanges, initialSettings),
+      layerClaudeTokenWatcher({
+        liveEnvironment,
+        driverEnvironment: hostEnvironment,
+        builtWithToken,
+      }),
+    ).pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
