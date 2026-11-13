@@ -1888,3 +1888,82 @@ async fn an_idle_session_closes_and_the_next_turn_resumes_it() {
         2
     );
 }
+
+struct ScriptedTitles;
+
+impl crate::TitleGenerator for ScriptedTitles {
+    fn generate(
+        &self,
+        request: crate::TitleRequest,
+    ) -> crate::BoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
+            match request.kind {
+                crate::TitleKind::Initial { message } => Ok(format!("\"About {message}\"")),
+                crate::TitleKind::Regenerate { transcript, .. } => {
+                    Err(format!("model busy\nsaw {} messages", transcript.len()))
+                }
+            }
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn titles_come_from_the_generator_and_failures_keep_the_seed() {
+    let db = TempDb::new("titles");
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.title_generator = Some(Arc::new(ScriptedTitles));
+    let engine = SqliteEngine::open(config).unwrap();
+    let mut shell = engine
+        .subscribe_shell(from_json(json!({"requestCompletionMarker": true})).unwrap())
+        .await
+        .unwrap();
+    next(&mut shell).await;
+    next(&mut shell).await;
+    engine
+        .launch_thread(json!({
+            "commandId": "l1", "threadId": "t1", "projectId": project_id(), "title": "Seed title",
+            "generateTitle": true, "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+            "runtimeMode": "full-access", "interactionMode": "default",
+            "workspaceStrategy": {"type": "root"},
+            "initialMessage": {"messageId": "m1", "text": "fonts", "attachments": []},
+        }))
+        .await
+        .unwrap();
+    // The shell shows the seed while the title is generated, then the generated title.
+    let mut titles = vec![];
+    while titles.last() != Some(&json!("About fonts")) {
+        let row = next(&mut shell).await;
+        if row["kind"] == "thread.updated" {
+            titles.push(row["thread"]["title"].clone());
+        }
+    }
+    assert_eq!(titles.first(), Some(&json!("Seed title")));
+    let thread = projection(&engine, "t1").await["thread"].clone();
+    assert_eq!(thread["titleRegeneration"], Value::Null);
+
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "r1", "threadId": "t1", "regenerateTitle": true}),
+    )
+    .await;
+    loop {
+        let row = next(&mut shell).await;
+        if row["thread"]["lastTitleRegeneration"].is_object() {
+            assert_eq!(row["thread"]["title"], "About fonts");
+            assert_eq!(row["thread"]["lastTitleRegeneration"]["status"], "failed");
+            assert!(
+                row["thread"]["lastTitleRegeneration"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("saw ")
+            );
+            assert_eq!(row["thread"]["titleRegeneration"], Value::Null);
+            break;
+        }
+    }
+}

@@ -32,6 +32,12 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// Asks the title generator; answers with `thread.title.regeneration.complete`.
+    GenerateTitle {
+        thread_id: String,
+        request_id: String,
+        regenerate: bool,
+    },
 }
 
 pub(crate) enum CommandError {
@@ -480,18 +486,24 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             ),
         ))?;
     }
-    if let Some(seed) = c
-        .title_seed
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        && tx.count(&c.thread_id, "messages")? == 1
-    {
+    let seed = match c.title_seed.as_deref().map(str::trim) {
+        Some(seed) if !seed.is_empty() && tx.count(&c.thread_id, "messages")? == 1 => Some(seed),
+        _ => None,
+    };
+    let mut effects = vec![];
+    if let Some(seed) = seed {
         let mut thread = thread.clone();
         thread["title"] = json!(seed);
+        if tx.generates_titles {
+            thread["titleRegeneration"] = json!({"requestId": c.command_id, "startedAt": now});
+            effects.push(Effect::GenerateTitle {
+                thread_id: c.thread_id.clone(),
+                request_id: c.command_id.clone(),
+                regenerate: false,
+            });
+        }
         tx.append(Draft::new(&c.thread_id, "thread.metadata-updated", thread).command(cid))?;
     }
-    let mut effects = vec![];
     if let Some(target) = interrupt {
         effects.push(Effect::Interrupt {
             thread_id: c.thread_id.clone(),
@@ -1056,18 +1068,45 @@ fn thread_visit(tx: &mut Tx<'_>, command: Value) -> Outcome {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadMetadataUpdate {
+    command_id: String,
     thread_id: String,
     title: Option<String>,
+    regenerate_title: Option<bool>,
 }
 
 fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadMetadataUpdate = decode(command)?;
-    patch_thread(tx, &c.thread_id, "thread.metadata-updated", true, |t, _| {
-        if let Some(title) = c.title.filter(|title| !title.trim().is_empty()) {
-            t["title"] = json!(title.trim());
-        }
-    })?;
-    Ok(vec![])
+    let regenerate = c.regenerate_title == Some(true);
+    if regenerate && !tx.generates_titles {
+        return reject("Conn Server has no title generator configured.");
+    }
+    let command_id = c.command_id.clone();
+    let titled = c.title.is_some();
+    patch_thread(
+        tx,
+        &c.thread_id,
+        "thread.metadata-updated",
+        true,
+        |t, now| {
+            if let Some(title) = c.title.filter(|title| !title.trim().is_empty()) {
+                t["title"] = json!(title.trim());
+            }
+            if regenerate {
+                t["titleRegeneration"] = json!({"requestId": command_id, "startedAt": now});
+            } else if titled || c.regenerate_title == Some(false) {
+                t["titleRegeneration"] = Value::Null;
+            }
+        },
+    )?;
+    Ok(if regenerate {
+        vec![Effect::GenerateTitle {
+            thread_id: c.thread_id,
+            request_id: c.command_id,
+            regenerate: true,
+        }]
+    } else {
+        vec![]
+    })
 }
 
 #[derive(Deserialize)]

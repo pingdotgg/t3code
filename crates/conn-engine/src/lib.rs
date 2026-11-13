@@ -35,8 +35,39 @@ mod shell;
 mod store;
 mod streams;
 mod time;
+mod titles;
 
 pub use engine::{EngineConfig, ProjectConfig, SqliteEngine};
+
+/// What a [`TitleGenerator`] titles: the first message of a new thread, or a whole thread whose
+/// title the user asked to regenerate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TitleRequest {
+    pub thread_id: String,
+    /// The folder the thread works in, for a generator that reads linked files.
+    pub cwd: Option<String>,
+    /// The project's title, which a good thread title does not repeat.
+    pub project_title: Option<String>,
+    pub kind: TitleKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TitleKind {
+    /// The first user message, at most 8,000 characters.
+    Initial { message: String },
+    /// The current title and the thread's user and assistant texts, newest last, at most
+    /// 8,000 characters in all.
+    Regenerate {
+        previous_title: String,
+        transcript: Vec<(String, String)>,
+    },
+}
+
+/// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
+/// keeps the seed title when this fails. Wire one with [`EngineConfig::title_generator`].
+pub trait TitleGenerator: Send + Sync {
+    fn generate(&self, request: TitleRequest) -> BoxFuture<'_, Result<String, String>>;
+}
 
 use conn_contract::{
     Command, DispatchCommandError, DispatchCommandResult, GetShellSnapshotError,

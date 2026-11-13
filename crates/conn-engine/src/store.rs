@@ -142,6 +142,8 @@ fn parse(text: String) -> Value {
 pub(crate) struct Store {
     conn: Connection,
     next_seq: u64,
+    /// A title generator is configured, so commands may ask for titles.
+    pub(crate) generates_titles: bool,
 }
 
 impl Store {
@@ -169,6 +171,7 @@ impl Store {
         Ok(Self {
             conn,
             next_seq: high as u64 + 1,
+            generates_titles: false,
         })
     }
 
@@ -179,7 +182,9 @@ impl Store {
 
     pub(crate) fn tx(&mut self) -> StoreResult<Tx<'_>> {
         let start = self.next_seq;
+        let generates_titles = self.generates_titles;
         Ok(Tx {
+            generates_titles,
             tx: self.conn.transaction().map_err(err)?,
             next_seq: &mut self.next_seq,
             start,
@@ -437,6 +442,7 @@ pub(crate) struct Tx<'a> {
     now: String,
     /// Threads whose shell row may have changed, with the last sequence that touched them.
     touched: Vec<(String, u64)>,
+    pub(crate) generates_titles: bool,
 }
 
 impl Tx<'_> {

@@ -41,6 +41,8 @@ pub struct EngineConfig {
     /// A provider session with no turn for this long is closed, ending its process (a
     /// `claude` child holds about 140 MiB). Default 10 minutes; `None` keeps sessions open.
     pub idle_session: Option<Duration>,
+    /// Generates thread titles. Without one, a new thread keeps the title the client sent.
+    pub title_generator: Option<Arc<dyn crate::TitleGenerator>>,
 }
 
 impl EngineConfig {
@@ -52,6 +54,7 @@ impl EngineConfig {
             providers: vec![],
             stream_flush: Duration::from_millis(100),
             idle_session: Some(Duration::from_secs(600)),
+            title_generator: None,
         }
     }
 }
@@ -69,6 +72,7 @@ pub(crate) struct Inner {
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
     pub(crate) stream_flush: Duration,
     pub(crate) home: PathBuf,
+    pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -93,6 +97,7 @@ impl SqliteEngine {
                 .unwrap_or_default()
         });
         let mut store = Store::open(&config.database)?;
+        store.generates_titles = config.title_generator.is_some();
         let unfinished = store.unfinished_runs()?;
         let mut tx = store.tx()?;
         for project in &config.projects {
@@ -119,6 +124,7 @@ impl SqliteEngine {
                 live: Mutex::new(HashMap::new()),
                 stream_flush: config.stream_flush,
                 home,
+                titles: config.title_generator.clone(),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -261,6 +267,11 @@ impl Inner {
             Effect::Interrupt { thread_id, run_id } => self.interrupt(thread_id, run_id).await,
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::GenerateTitle {
+                thread_id,
+                request_id,
+                regenerate,
+            } => self.generate_title(thread_id, request_id, regenerate).await,
         }
     }
 
@@ -337,6 +348,9 @@ impl Inner {
             });
             if message["context"].is_object() {
                 command["context"] = message["context"].clone();
+            }
+            if input["generateTitle"] == true {
+                command["titleSeed"] = input["title"].clone();
             }
             let (seq, replayed) = self.dispatch_value(command).await.map_err(to_err)?;
             sequence = Some(seq);
