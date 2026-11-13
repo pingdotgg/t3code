@@ -31,6 +31,12 @@ const resolved = await Effect.gen(function* () {
     appDir: path.resolve(scripts, env.T3_SCENARIO_APP_DIR ?? ".."),
     home,
     startApp: path.join(scripts, "scenarios/start-app.ts"),
+    // e2e gives the app only PATH, HOME and the temp directory. A scenario that needs more names
+    // it here: exact names or prefixes ending in `*`, separated by commas.
+    inheritEnv: (env.T3_SCENARIO_INHERIT_ENV ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== ""),
     mobile: {
       host: host || "127.0.0.1",
       // A mobile target has no `app.url`, so e2e cannot pick these ports.
@@ -46,6 +52,11 @@ export const T3_HOME = resolved.home;
 export const MOBILE_T3_HOME = `${T3_HOME}-mobile`;
 export const MOBILE = resolved.mobile;
 const startApp = resolved.startApp;
+/**
+ * The one address e2e opens the web app at and the app is told to bind. Never `localhost`: the
+ * runner and the app can resolve that name to different addresses.
+ */
+const LOOPBACK = "127.0.0.1";
 
 /**
  * Leases a device from the Simlock pool, whose gateway speaks agent-device's lease protocol.
@@ -131,13 +142,14 @@ export default {
       name: "web",
       engine: web({ viewport: { width: 1280, height: 800 } }),
       app: {
-        url: "http://127.0.0.1:0",
+        url: `http://${LOOPBACK}:0`,
         // Vite answers before the server does; this path is proxied to the server.
-        readyUrl: "http://127.0.0.1:{port}/.well-known/t3/environment",
+        readyUrl: `http://${LOOPBACK}:{port}/.well-known/t3/environment`,
         command: {
           executable: resolved.node,
-          args: [startApp, "web", T3_HOME, "{port}"],
+          args: [startApp, "web", T3_HOME, LOOPBACK, "{port}"],
           cwd: APP_DIR,
+          inheritEnv: resolved.inheritEnv,
           startupTimeout: 300_000,
           log: ".e2e/app.log",
         },
@@ -165,6 +177,7 @@ export default {
             MOBILE.host,
           ],
           cwd: APP_DIR,
+          inheritEnv: resolved.inheritEnv,
           startupTimeout: 300_000,
           log: ".e2e/mobile-app.log",
         },
