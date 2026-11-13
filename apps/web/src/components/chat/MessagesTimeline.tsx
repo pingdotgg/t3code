@@ -1468,6 +1468,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onScroll={handleScroll}
               onItemSizeChanged={scheduleMinimapRefresh}
               onMetricsChange={scheduleMinimapRefresh}
+              // Keyboard scrolling only moves the focused element; F6 and clicks land here.
+              tabIndex={-1}
+              data-workspace-focus-default
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",
