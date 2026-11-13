@@ -462,19 +462,19 @@ describe("GhosttyTerminalSurface visibility", () => {
       pasted: ["echo hi"],
     },
     {
-      name: "once when the clipboard changed between the read and the native paste",
-      steps: ["press", "read 0 You said it", "native you said it"],
-      pasted: ["You said it"],
+      name: "an application-menu paste of other text after a shortcut lost its native paste",
+      steps: ["press", "keyup", "read 0 old", "native menu"],
+      pasted: ["old", "menu"],
+    },
+    {
+      name: "two presses once each when both reads beat their native pastes",
+      steps: ["press", "read 0 a", "press", "read 1 a", "native a", "native a"],
+      pasted: ["a", "a"],
     },
     {
       name: "each press once when an older native paste arrives after a blur and a newer press",
       steps: ["press", "blur", "press", "read 1 new", "native old", "native new", "read 0 old"],
       pasted: ["new", "old"],
-    },
-    {
-      name: "each press once when a blur took the older press's native paste",
-      steps: ["press", "blur", "press", "read 1 new", "native new", "read 0 old", "native menu"],
-      pasted: ["new", "old", "menu"],
     },
     {
       name: "an application-menu paste after a blur took the shortcut's native paste",

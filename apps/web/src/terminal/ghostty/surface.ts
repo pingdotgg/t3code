@@ -38,16 +38,7 @@ const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_LINK_HOVER_DELAY_MS = 250;
 // Key-up cannot end the wait for Chromium's native paste: a synthetic Cmd+V releases V first.
-// A focused press whose native paste never comes drops the next native paste inside this window.
-const PASTE_GESTURE_WINDOW_MS = 2_000;
-type PasteGesture = {
-  readonly at: number;
-  /** Its read is dropped once another paste moves `pasteSupersedeCount` past this. */
-  readonly supersedeCount: number;
-  sentText: string | null;
-  /** Focus left while its read was pending: its native paste may be lost, so only equal text is its duplicate. */
-  blurred: boolean;
-};
+const PASTE_SHORTCUT_DUPLICATE_WINDOW_MS = 2_000;
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
@@ -632,11 +623,9 @@ export class GhosttyTerminalSurface {
   // App capture can hide keydowns, so only encoded presses qualify for Kitty releases.
   private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
-  // Each paste-shortcut press reads the clipboard and Chromium sends a native paste, in either
-  // order. A press stays here, oldest first, until its native paste arrives: one paste per press.
-  private readonly pasteGestures: PasteGesture[] = [];
-  // Native and menu pastes supersede pending shortcut reads; a later shortcut press does not.
-  private pasteSupersedeCount = 0;
+  // Chromium can deliver native paste after the clipboard read resolves. Each read that
+  // pasted drops one native paste of the same text; other text may be a menu paste.
+  private pasteShortcutReads: { at: number; text: string }[] = [];
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -990,7 +979,6 @@ export class GhosttyTerminalSurface {
     isCurrent: () => boolean = () => true,
   ): Promise<void> {
     const token = ++this.pasteShortcutToken;
-    this.pasteSupersedeCount += 1;
     const text = await readText();
     if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
     this.pasteShortcutToken += 1;
@@ -999,13 +987,10 @@ export class GhosttyTerminalSurface {
     if (encoded.length > 0) this.options.onData(encoded);
   }
 
-  private openPasteGestures(): PasteGesture[] {
-    const now = performance.now();
-    const firstOpen = this.pasteGestures.findIndex(
-      (gesture) => now - gesture.at <= PASTE_GESTURE_WINDOW_MS,
-    );
-    this.pasteGestures.splice(0, firstOpen === -1 ? this.pasteGestures.length : firstOpen);
-    return this.pasteGestures;
+  private recentPasteShortcutReads(): { at: number; text: string }[] {
+    const oldest = performance.now() - PASTE_SHORTCUT_DUPLICATE_WINDOW_MS;
+    this.pasteShortcutReads = this.pasteShortcutReads.filter((read) => read.at >= oldest);
+    return this.pasteShortcutReads;
   }
 
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
@@ -1195,23 +1180,17 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalPasteShortcut(event)) {
-      const gesture: PasteGesture = {
-        at: performance.now(),
-        supersedeCount: this.pasteSupersedeCount,
-        sentText: null,
-        blurred: false,
-      };
-      this.openPasteGestures().push(gesture);
-      // A later shortcut supersedes a pending menu paste read.
-      this.pasteShortcutToken += 1;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Keep native paste available if the read is denied or empty.
+        // Keep native paste available if the read is denied. The token drops
+        // a late read; the recorded text drops a native duplicate when the read wins.
+        const token = ++this.pasteShortcutToken;
         void clipboard.readText().then(
           (text) => {
-            if (this.disposed || this.pasteSupersedeCount !== gesture.supersedeCount) return;
+            if (this.disposed || this.pasteShortcutToken !== token) return;
+            this.pasteShortcutToken += 1;
             if (text.length === 0) return;
-            gesture.sentText = text;
+            this.recentPasteShortcutReads().push({ at: performance.now(), text });
             this.options.onData(this.core.encodePaste(text));
           },
           () => {},
@@ -1260,11 +1239,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
-    // Focus can leave before Chromium delivers a native paste. A press that already pasted
-    // stops waiting, so it cannot drop an application-menu Paste after refocus.
-    const pending = this.pasteGestures.filter((gesture) => gesture.sentText === null);
-    for (const gesture of pending) gesture.blurred = true;
-    this.pasteGestures.splice(0, this.pasteGestures.length, ...pending);
+    this.pasteShortcutReads = [];
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
@@ -1312,18 +1287,16 @@ export class GhosttyTerminalSurface {
     // Default textarea insertion would bypass bracketed-paste encoding through onInput.
     event.preventDefault();
     const data = event.clipboardData?.getData("text/plain") ?? "";
-    const gestures = this.openPasteGestures();
-    // A press whose read sent this text owns it even when an older press lost its native paste
-    // to a blur; otherwise native pastes arrive in press order.
-    const sent = data.length === 0 ? -1 : gestures.findIndex((g) => g.sentText === data);
-    const owner = sent === -1 ? gestures.findIndex((g) => !g.blurred || g.sentText === null) : sent;
-    const gesture = owner === -1 ? undefined : gestures.splice(owner, 1)[0];
-    // An empty native paste leaves the read as the only path.
     if (data.length === 0) return;
-    // Its press's read already pasted: a duplicate, even if the clipboard changed in between.
-    if (gesture && gesture.sentText !== null) return;
-    // The native paste won the race; no pending shortcut or menu read may double it.
-    this.pasteSupersedeCount += 1;
+    const reads = this.recentPasteShortcutReads();
+    const duplicate = reads.findIndex((read) => read.text === data);
+    if (duplicate !== -1) {
+      // A shortcut's clipboard read already sent this paste.
+      reads.splice(duplicate, 1);
+      return;
+    }
+    // The native paste won the race with actual text; a pending clipboard read
+    // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
     this.options.onData(this.core.encodePaste(data));
   };
