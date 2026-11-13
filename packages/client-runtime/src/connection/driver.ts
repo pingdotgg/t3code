@@ -262,28 +262,37 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("ConnectionDriver.preflight"),
     );
 
-  const sessionGrant = Effect.fn("ConnectionDriver.sessionGrant")(
-    function* (prepared: PreparedConnection) {
-      yield* Effect.annotateCurrentSpan("connection.target.kind", prepared.target._tag);
-      if (prepared.httpAuthorization === null) return Option.none<RouteGrant>();
-      const session = yield* executeAuthenticatedEnvironmentHttpRequest({
-        prepared,
-        signer,
-        remoteAuthorization: Option.some(remote),
-        group: "auth",
-        method: "GET",
-        url: (urls) => urls.session(),
-        timeoutMs: GRANT_CHECK_TIMEOUT_MS,
-        request: ({ client, headers }) => client.session({ headers }),
-        // This endpoint returns 200 with authenticated:false for expired credentials.
-        isUnauthorizedResponse: (response) => !response.authenticated,
-      });
-      return routeGrantFromSession(session);
-    },
-    Effect.orElseSucceed(() => Option.none<RouteGrant>()),
-    Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
-    Effect.provideService(HttpClient.HttpClient, httpClient),
-  );
+  // Callers first confirm the host answers as this environment.
+  const askGrant = (prepared: PreparedConnection) =>
+    prepared.httpAuthorization === null
+      ? Effect.succeedNone
+      : executeAuthenticatedEnvironmentHttpRequest({
+          prepared,
+          signer,
+          remoteAuthorization: Option.some(remote),
+          group: "auth",
+          method: "GET",
+          url: (urls) => urls.session(),
+          timeoutMs: GRANT_CHECK_TIMEOUT_MS,
+          request: ({ client, headers }) => client.session({ headers }),
+          // This endpoint returns 200 with authenticated:false for expired credentials.
+          isUnauthorizedResponse: (response) => !response.authenticated,
+        }).pipe(
+          Effect.map(routeGrantFromSession),
+          Effect.orElseSucceed(() => Option.none<RouteGrant>()),
+          Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
+
+  // After a network change the session's address may belong to another
+  // machine, so it must answer as this environment before it gets the credential.
+  const sessionGrant = Effect.fn("ConnectionDriver.sessionGrant")(function* (
+    prepared: PreparedConnection,
+  ) {
+    yield* Effect.annotateCurrentSpan("connection.target.kind", prepared.target._tag);
+    if ((yield* checkHost(prepared)) === "silent") return Option.none<RouteGrant>();
+    return yield* askGrant(prepared);
+  });
 
   // Like preflight, a saved address must answer as this environment before it
   // receives the route's credential.
@@ -300,7 +309,7 @@ export const make = Effect.gen(function* () {
       return Option.none<RouteGrant>();
     }
     return yield* resolver.prepare(routeEntry(entry, route)).pipe(
-      Effect.flatMap(sessionGrant),
+      Effect.flatMap(askGrant),
       Effect.orElseSucceed(() => Option.none<RouteGrant>()),
     );
   });
