@@ -41,6 +41,7 @@ import {
   parseGitHubRepositorySelector,
   parsePullRequestReference,
   resolveGitHubRepository,
+  selectGitHubHeadRepositoryName,
   type GitHubRepositoryLocator,
 } from "./gitHubRepositoryResolution.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -1070,6 +1071,15 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
+        const headOwner = /^([^:/\s]+):/u.exec(input.headSelector.trim())?.[1];
+        const headRepository =
+          headOwner === undefined
+            ? null
+            : selectGitHubHeadRepositoryName({
+                remotes: (yield* readRemotes(input.cwd)).remotes,
+                base: locator,
+                headOwner,
+              });
         yield* rest({
           host: locator.host,
           operation: "createPullRequest",
@@ -1080,6 +1090,7 @@ export const make = Effect.gen(function* () {
           body: {
             base: input.baseRefName,
             head: input.headSelector,
+            ...(headRepository === null ? {} : { head_repo: headRepository }),
             title: input.title,
             body,
             maintainer_can_modify: true,
