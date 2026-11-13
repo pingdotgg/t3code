@@ -8,10 +8,16 @@ import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
+const browse = vi.hoisted(() => ({ isPending: false }));
 const scopes = vi.hoisted(() => ({ denied: undefined as string | undefined }));
-const setup = (deniedScope?: string) => {
+
+function setup({
+  isBrowsePending = false,
+  deniedScope,
+}: { isBrowsePending?: boolean; deniedScope?: string | undefined } = {}) {
+  browse.isPending = isBrowsePending;
   scopes.denied = deniedScope;
-};
+}
 
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
@@ -101,7 +107,7 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: undefined, isLoading: false }),
+  useEnvironmentQuery: () => ({ data: undefined, isLoading: false, isPending: browse.isPending }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -144,6 +150,27 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
 });
 
 it.each([
+  { isBrowsePending: false, leavesInput: true },
+  { isBrowsePending: true, leavesInput: false },
+])(
+  "Tab with nothing to complete in the folder path: %j",
+  async ({ isBrowsePending, leavesInput }) => {
+    setup({ isBrowsePending });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText("Local folder", { exact: true }).click();
+    const input = page.getByRole("combobox");
+    await input.fill("/workspace/zzz");
+    await userEvent.keyboard("{Tab}");
+    if (leavesInput) {
+      await expect.element(input).not.toHaveFocus();
+      expect(page.getByRole("dialog").element().contains(document.activeElement)).toBe(true);
+    } else await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("/workspace/zzz");
+  },
+);
+
+it.each([
   { step: "folder", source: "Local folder", keys: "", description: /^(?!.*(Ctrl|⌘)).*Add.*Enter/ },
   {
     step: "highlighted folder",
@@ -170,7 +197,7 @@ it.each([
 ])(
   "tells screen readers how to submit the $step step",
   async ({ source, keys, deniedScope, description }) => {
-    setup(deniedScope);
+    setup({ deniedScope });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(source, { exact: true }).click();
