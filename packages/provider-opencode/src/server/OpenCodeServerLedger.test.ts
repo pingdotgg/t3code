@@ -288,4 +288,63 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       expect(groupExists(pgid)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  // Runs on the test clock, which never advances here: a teardown that sleeps
+  // out its grace instead of watching the group would never finish.
+  it.effect("stops a running server as soon as its group exits", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-stop-" });
+      const binaryPath = path.join(tempDir, "opencode");
+      // The background child shares the leader's group. The leader reaps it before exiting, so no
+      // zombie keeps the group alive under an init that does not reap. The trap is set after the
+      // fork: a child forked with the trap already set can swallow the signal before it execs.
+      yield* fs.writeFileString(
+        binaryPath,
+        [
+          "#!/bin/sh",
+          "sleep 600 &",
+          "trap 'wait; exit 0' TERM",
+          'echo "opencode server listening on http://127.0.0.1:4096"',
+          "wait",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.chmod(binaryPath, 0o755);
+
+      const tracked = yield* Deferred.make<number>();
+      const layerRuntime = OpenCodeRuntime.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            OpenCodeServerLedger.OpenCodeServerLedger,
+            OpenCodeServerLedger.OpenCodeServerLedger.of({
+              track: (server) => Deferred.succeed(tracked, server.pid).pipe(Effect.as(Effect.void)),
+            }),
+          ),
+        ),
+      );
+
+      const serverScope = yield* Scope.make();
+      const server = yield* OpenCodeRuntime.OpenCodeRuntime.pipe(
+        Effect.flatMap((runtime) =>
+          runtime.startOpenCodeServerProcess({
+            binaryPath,
+            directory: tempDir,
+            port: 4096,
+            verify: () => Effect.succeed("1.0.0"),
+          }),
+        ),
+        Effect.provideService(Scope.Scope, serverScope),
+        Effect.provide(layerRuntime),
+      );
+      const pgid = yield* Deferred.await(tracked);
+      yield* Effect.addFinalizer(() => killGroup(pgid));
+      expect(yield* server.isRunning).toBe(true);
+
+      yield* Scope.close(serverScope, Exit.void);
+
+      expect(groupExists(pgid)).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

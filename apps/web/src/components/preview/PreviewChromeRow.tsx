@@ -167,6 +167,11 @@ export function PreviewChromeRow({
                     setInputFocused(false);
                   }}
                   onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                      // A trusted Enter would still submit the form implicitly.
+                      if (event.key === "Enter") event.preventDefault();
+                      return;
+                    }
                     if (event.key === "Enter") submit(event);
                     if (event.key === "Escape") {
                       event.preventDefault();
@@ -175,6 +180,8 @@ export function PreviewChromeRow({
                     }
                   }}
                   placeholder="Search or enter URL"
+                  aria-label="Search or enter URL"
+                  data-workspace-focus-default
                   spellCheck={false}
                   disabled={inputDisabled}
                   data-preview-url-input

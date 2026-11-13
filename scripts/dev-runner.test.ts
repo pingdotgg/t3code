@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -189,6 +190,51 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.HOST, undefined);
       }),
     );
+
+    it.effect("drops an inherited T3CODE_HOST and T3CODE_LAN from a parent T3 server", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: { T3CODE_PORT: "3773", T3CODE_HOST: "0.0.0.0", T3CODE_LAN: "true" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_PORT, "13773");
+        assert.equal(env.T3CODE_HOST, undefined);
+        assert.equal(env.T3CODE_LAN, undefined);
+      }),
+    );
+  });
+
+  describe("cli", () => {
+    it("ignores the parent T3 server's T3CODE_PORT and T3CODE_HOST", () => {
+      const result = NodeChildProcess.spawnSync(
+        process.execPath,
+        ["scripts/dev-runner.ts", "dev:server", "--dry-run"],
+        {
+          cwd: NodePath.resolve(import.meta.dirname, ".."),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            T3CODE_PORT: "3773",
+            T3CODE_HOST: "0.0.0.0",
+          },
+        },
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(output, /serverPort=\d+ /);
+      assert.notMatch(output, /serverPort=3773 /);
+    });
   });
 
   describe("findFirstAvailableOffset", () => {
@@ -412,6 +458,37 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("expands a home-relative T3 home the way the server does", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const homeFor = (t3Home: string) =>
+          createDevRunnerEnv({
+            mode: "dev",
+            baseEnv: {},
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, "/home/dev"),
+            Effect.map((env) => env.T3CODE_HOME),
+          );
+
+        assert.equal(yield* homeFor("~/t3-dev"), path.join("/home/dev", "t3-dev"));
+        assert.equal(yield* homeFor("~"), "/home/dev");
+        assert.equal(yield* homeFor("~\\t3-dev"), path.join("/home/dev", "t3-dev"));
+        assert.equal(yield* homeFor("  ~/t3-dev  "), path.join("/home/dev", "t3-dev"));
+        assert.equal(yield* homeFor("~someone/t3-dev"), path.resolve("~someone/t3-dev"));
+        assert.equal(yield* homeFor("relative/t3-dev"), path.resolve("relative/t3-dev"));
+        assert.equal(yield* homeFor("/tmp/t3-dev"), path.resolve("/tmp/t3-dev"));
+      }),
+    );
+
     it.effect("rejects a specific non-loopback --host for browser dev modes", () => {
       const spawnerLayer = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -540,6 +617,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const { env, tailscaleCalls } = yield* shareSpawned({ built: true, host: "::1" });
           const serve = tailscaleCalls.find((args) => args.includes("--bg"));
           assert.equal(serve?.at(-1), `http://[::1]:${env?.T3CODE_PORT}`);
+        }),
+      );
+
+      // Node resolves localhost to ::1 first, so a 127.0.0.1 target can miss the backend.
+      it.effect("--built --host localhost keeps the backend's localhost name", () =>
+        Effect.gen(function* () {
+          const { env, tailscaleCalls } = yield* shareSpawned({ built: true, host: "localhost" });
+          const serve = tailscaleCalls.find((args) => args.includes("--bg"));
+          assert.equal(serve?.at(-1), `http://localhost:${env?.T3CODE_PORT}`);
         }),
       );
 

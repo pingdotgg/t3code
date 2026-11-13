@@ -1,8 +1,8 @@
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import {
   createEnvironmentShellAtoms,
   createEnvironmentShellSummaryAtom,
   createEnvironmentSnapshotAtom,
-  createShellEnvironmentAtoms,
   EMPTY_SHELL_STATE,
   type EnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
@@ -14,7 +14,6 @@ import { Atom } from "effect/reactivity";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 
-export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntime);
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
@@ -28,6 +27,25 @@ const shellStatus = (state: EnvironmentShellState) => state.status;
 const shellHasError = (state: EnvironmentShellState) => Option.isSome(state.error);
 // The empty placeholder stands until the environment has read its cached shell.
 const shellCacheRead = (state: EnvironmentShellState) => state !== EMPTY_SHELL_STATE;
+
+const shellCacheReadAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => shellCacheRead(get(environmentShell.stateValueAtom(environmentId)))),
+);
+
+/**
+ * True once every enabled environment has read its cached shell. A list that paints before
+ * then gets the cached rows of one environment at a time.
+ */
+export const shellCachesReadAtom = Atom.make((get) => {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  if (!catalog.isReady) return false;
+  // Reads every environment, so each one loads its cache now and not after the one before it.
+  let allRead = true;
+  for (const environmentId of enabledEnvironmentIds(catalog)) {
+    if (!get(shellCacheReadAtom(environmentId))) allRead = false;
+  }
+  return allRead;
+}).pipe(Atom.withLabel("mobile-shell-caches-read"));
 
 export function useEnvironmentShellReadiness(environmentId: EnvironmentId | null) {
   const atom =

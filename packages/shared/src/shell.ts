@@ -5,17 +5,22 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const WINDOWS_SHELL_PROBE_TIMEOUT_MS = 5000;
+// A shell stuck in the kernel survives the kill and holds stdout, so execFile's callback never fires.
+const WINDOWS_SHELL_PROBE_DEADLINE = Duration.millis(WINDOWS_SHELL_PROBE_TIMEOUT_MS + 1000);
 
 type ExecFileSyncLike = (
   file: string,
@@ -23,6 +28,7 @@ type ExecFileSyncLike = (
   options: {
     encoding: "utf8";
     timeout: number;
+    killSignal?: NodeJS.Signals | number;
     detached?: true;
     stdio?: ["ignore", "pipe", "ignore"];
   },
@@ -126,7 +132,7 @@ function trimNonEmpty(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-function readUserLoginShell(): string | undefined {
+export function readUserLoginShell(): string | undefined {
   try {
     return trimNonEmpty(NodeOS.userInfo().shell);
   } catch {
@@ -202,6 +208,8 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
+const DEBUG_TRAP_SHELLS = new Set(["bash", "zsh", "sh", "ksh", "ksh93"]);
+
 export function buildEnvironmentCaptureCommand(
   shell: string,
   names: ReadonlyArray<string>,
@@ -209,7 +217,7 @@ export function buildEnvironmentCaptureCommand(
   const executableName = NodePath.basename(shell).toLowerCase();
   const isNushell = executableName.startsWith("nu");
 
-  return names
+  const capture = names
     .map((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -243,6 +251,12 @@ export function buildEnvironmentCaptureCommand(
       ].join("; ");
     })
     .join("; ");
+
+  // A DEBUG trap that echoes each command (e.g. into the terminal title) would print the markers.
+  // OpenBSD ksh (also its /bin/sh) exits on `trap - DEBUG`, so try it in a subshell first.
+  return DEBUG_TRAP_SHELLS.has(executableName)
+    ? `(trap - DEBUG) 2>/dev/null && trap - DEBUG; ${capture}`
+    : capture;
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
@@ -281,6 +295,21 @@ function extractEnvironmentValue(output: string, name: string): string | undefin
   return value.length > 0 ? value : undefined;
 }
 
+/** Reads the values `buildEnvironmentCaptureCommand` printed; unset or empty names are omitted. */
+export function extractEnvironmentValues(
+  output: string,
+  names: ReadonlyArray<string>,
+): Partial<Record<string, string>> {
+  const environment: Partial<Record<string, string>> = {};
+  for (const name of names) {
+    const value = extractEnvironmentValue(output, name);
+    if (value !== undefined) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
 export type ShellEnvironmentReader = (
   shell: string,
   names: ReadonlyArray<string>,
@@ -301,19 +330,12 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(shell, names)], {
     encoding: "utf8",
     timeout: 5000,
+    killSignal: "SIGKILL",
     detached: true,
     stdio: ["ignore", "pipe", "ignore"],
   });
 
-  const environment: Partial<Record<string, string>> = {};
-  for (const name of names) {
-    const value = extractEnvironmentValue(output, name);
-    if (value !== undefined) {
-      environment[name] = value;
-    }
-  }
-
-  return environment;
+  return extractEnvironmentValues(output, names);
 };
 
 export type WindowsShellEnvironmentReader = (
@@ -357,6 +379,9 @@ const execWindowsEnvironmentProbe = (
     }
     return Effect.sync(() => {
       child.kill();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
     });
   });
 
@@ -377,7 +402,10 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
       command,
     ];
     for (const shell of WINDOWS_SHELL_CANDIDATES) {
-      const output = yield* execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = yield* execFile(shell, args, {
+        encoding: "utf8",
+        timeout: WINDOWS_SHELL_PROBE_TIMEOUT_MS,
+      }).pipe(Effect.timeoutOption(WINDOWS_SHELL_PROBE_DEADLINE), Effect.map(Option.flatten));
       if (Option.isNone(output)) continue;
 
       const environment: Partial<Record<string, string>> = {};
@@ -814,6 +842,46 @@ export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   readonly bypassNpmShim?: boolean;
 }
 
+// `*` is one argument that is not an option. These forms read refs or config
+// only, so git starts no hook, helper, pager, editor or lazy fetch for them.
+const CONSOLE_FREE_GIT_READS = [
+  "rev-parse --git-path index",
+  "rev-parse --git-common-dir",
+  "rev-parse --show-toplevel",
+  "rev-parse --symbolic-full-name HEAD",
+  "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
+  "symbolic-ref --quiet HEAD",
+  "symbolic-ref *",
+  "remote",
+  "remote get-url *",
+  "remote get-url -- *",
+  "config --get *",
+].map((form) => form.split(" "));
+
+export function runsGitWithoutConsole(
+  platform: NodeJS.Platform,
+  executable: string,
+  args: ReadonlyArray<string>,
+): boolean {
+  if (platform !== "win32") return false;
+  const { basename, dirname } = NodePath.win32;
+  const bin = dirname(executable);
+  const build = basename(dirname(bin)).toLowerCase();
+  if (basename(executable).toLowerCase() !== "git.exe" || basename(bin).toLowerCase() !== "bin") {
+    return false;
+  }
+  if (!GIT_FOR_WINDOWS_BUILDS.some((candidate) => candidate === build)) return false;
+  const rest =
+    args[0] === "--git-dir" && args[1] !== undefined && !args[1].startsWith("-")
+      ? args.slice(2)
+      : args;
+  return CONSOLE_FREE_GIT_READS.some(
+    (form) =>
+      form.length === rest.length &&
+      form.every((part, i) => part === rest[i] || (part === "*" && !rest[i]!.startsWith("-"))),
+  );
+}
+
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -908,13 +976,13 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
 }
 
 /** Keep one PATH spelling in copied Windows environment records. */
-export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
+export function setWindowsPath(env: NodeJS.ProcessEnv, value: string | null): void {
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === "PATH") {
       delete env[key];
     }
   }
-  env.PATH = value;
+  if (value !== null) env.PATH = value;
 }
 
 function mergeWindowsEnv(
@@ -965,3 +1033,77 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     ? { ...baselinePatch, ...profiledPatch }
     : baselinePatch;
 });
+
+export function applyShellEnvironment(
+  env: NodeJS.ProcessEnv,
+  patch: ShellEnvironmentPatch,
+  platform: NodeJS.Platform,
+): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "PATH" && platform === "win32") setWindowsPath(env, value);
+    else if (value === null) delete env[key];
+    else env[key] = value;
+  }
+}
+
+interface PathSetupInput {
+  readonly directory: string;
+  readonly home: string;
+  readonly shell: string | undefined;
+  readonly platform: NodeJS.Platform;
+  /** `XDG_CONFIG_HOME`, where fish reads its startup file when set. */
+  readonly configHome?: string | undefined;
+  /** `ZDOTDIR`, where zsh reads `.zshrc` when set. */
+  readonly zdotdir?: string | undefined;
+}
+
+/**
+ * The startup file (`~/...`, or absolute under `configHome`) and line that put `directory` last on
+ * PATH for new zsh, bash, or fish terminals, so it never shadows another `t3`. Undefined on Windows (writing PATH there would flatten the registry's
+ * `%VAR%` entries), for other shells, macOS bash, or unsafe paths.
+ */
+export function pathSetup(
+  input: PathSetupInput,
+): { readonly file: string; readonly line: string } | undefined {
+  // A relative folder on PATH would follow the working directory into any checkout.
+  if (input.platform === "win32" || !input.directory.startsWith("/")) return undefined;
+  const underHome = input.directory.startsWith(`${input.home}/`);
+  const rest = underHome ? input.directory.slice(input.home.length) : input.directory;
+  if (!/^[\w./-]+$/.test(rest)) return undefined;
+  const directory = underHome ? `$HOME${rest}` : rest;
+  const shell = input.shell?.split("/").pop();
+  // A set folder the shell reads from replaces the default; one unsafe to write means no setup,
+  // since the default file would never be read.
+  const readFrom = (value: string | undefined, fallback: string) =>
+    !value ? fallback : value.startsWith("/") && /^[\w./-]+$/.test(value) ? value : undefined;
+  if (shell === "fish") {
+    const configHome = readFrom(input.configHome, "~/.config");
+    if (configHome === undefined) return undefined;
+    // --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+    return {
+      file: `${configHome}/fish/config.fish`,
+      line: `fish_add_path --append --path ${directory}`,
+    };
+  }
+  // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
+  const zdotdir = readFrom(input.zdotdir, "~");
+  const file =
+    shell === "zsh"
+      ? zdotdir && `${zdotdir}/.zshrc`
+      : shell === "bash" && input.platform !== "darwin"
+        ? "~/.bashrc"
+        : undefined;
+  return file === undefined ? undefined : { file, line: `export PATH="$PATH:${directory}"` };
+}
+
+/** A command to paste that does what {@link pathSetup} describes. */
+export function pathSetupCommand(input: PathSetupInput): string | undefined {
+  const setup = pathSetup(input);
+  if (!setup) return undefined;
+  // The leading newline keeps the line out of a final comment with no newline after it.
+  const append = `printf '\\n%s\\n' '${setup.line}' >> ${setup.file}`;
+  // fish's config folder may not exist yet; `&&` works in fish 3 too.
+  return setup.file.endsWith(".fish")
+    ? `mkdir -p ${setup.file.slice(0, setup.file.lastIndexOf("/"))} && ${append}`
+    : append;
+}

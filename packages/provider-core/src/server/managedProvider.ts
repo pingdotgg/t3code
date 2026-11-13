@@ -16,12 +16,19 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderHost from "./ProviderHost.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  makeUsageLimits,
+  resolveUsageLimitsAfterProbe,
+} from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  // null preserves an explicitly cleared plan across probes and enrichment.
+  readonly usageAuthLabel: string | null | undefined;
+  readonly checked: boolean;
 }
 
 function withUsageLimits(
@@ -35,6 +42,8 @@ function withUsageLimits(
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
+const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
+
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
@@ -44,6 +53,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
+  readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
+  readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
@@ -60,6 +71,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 > {
   const host = yield* ProviderHost.ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
+  const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -69,8 +81,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    usageAuthLabel: undefined,
+    checked: false,
   });
   const settingsRef = yield* Ref.make(initialSettings);
+  const recheckPendingRef = yield* Ref.make(false);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
@@ -83,7 +98,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return [null, state] as const;
       }
       // Enrichment must not revert usage updates newer than its input snapshot.
-      const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
+      const merged = withUsageLimits(
+        state.usageAuthLabel === undefined
+          ? nextSnapshot
+          : {
+              ...nextSnapshot,
+              auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
+            },
+        state.snapshot.usageLimits,
+      );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }
@@ -123,11 +146,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: { readonly forceRefresh?: boolean; readonly deferFailure?: boolean },
   ) {
-    const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
-    if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
+    const settingsChanged =
+      options?.forceRefresh === true || input.haveSettingsChanged(previousSettings, nextSettings);
+    // Nothing watches credential files, so any settings apply rechecks a failed sign-in.
+    const { snapshot: currentSnapshot } = yield* Ref.get(snapshotStateRef);
+    const forceRefresh =
+      options?.forceRefresh === true ||
+      (currentSnapshot.enabled && currentSnapshot.auth.status === "unauthenticated");
+    if (!forceRefresh && !settingsChanged) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
@@ -147,7 +176,21 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
+    // A probe without usage must not erase a report published while its I/O was in flight.
+    const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider;
+    // One failed periodic check over a ready provider is often transient; recheck before showing it.
+    if (
+      options?.deferFailure === true &&
+      probedSnapshot.status === "error" &&
+      probedSnapshot.auth.status !== "unauthenticated"
+    ) {
+      const { snapshot } = yield* Ref.get(snapshotStateRef);
+      if (snapshot.enabled && snapshot.status === "ready") {
+        yield* Ref.set(recheckPendingRef, true);
+        return snapshot;
+      }
+    }
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -164,21 +207,35 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
-          : resolveUsageLimitsAfterProbe({
-              published: state.snapshot.usageLimits,
-              probed: probedSnapshot.usageLimits,
-            });
+          : probedSnapshot.usageLimits === undefined &&
+              state.snapshot.usageLimits !== usageBeforeProbe
+            ? state.snapshot.usageLimits
+            : resolveUsageLimitsAfterProbe({
+                published: state.snapshot.usageLimits,
+                probed: probedSnapshot.usageLimits,
+              });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
+        const usageAuthLabel =
+          !switchedAccount && usageLimits?.checkedAt === state.snapshot.usageLimits?.checkedAt
+            ? state.usageAuthLabel
+            : undefined;
+        const labeledProbe =
+          usageAuthLabel === undefined
+            ? probedSnapshot
+            : {
+                ...probedSnapshot,
+                auth: { ...probedSnapshot.auth, label: usageAuthLabel ?? undefined },
+              };
         const snapshot = withUsageLimits(
           workspaceId && !probedSnapshot.auth.workspaceId
-            ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
-            : probedSnapshot,
+            ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
+            : labeledProbe,
           usageLimits,
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
         ] as const;
       },
     );
@@ -194,16 +251,34 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
     function* (update) {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-        const usageLimits = applyUsageLimitsUpdate({
-          previous: state.snapshot.usageLimits,
-          update,
-          checkedAt: update.checkedAt,
-        });
-        if (usageLimits === state.snapshot.usageLimits) {
+        const complete = update.complete && update.windows.length > 0;
+        const usageLimits = complete
+          ? makeUsageLimits(update)
+          : applyUsageLimitsUpdate({
+              previous: state.snapshot.usageLimits,
+              update,
+              checkedAt: update.checkedAt,
+            });
+        const { auth } = state.snapshot;
+        const label = update.windows.length > 0 ? update.authLabel : undefined;
+        const relabel =
+          (label !== undefined || (complete && state.usageAuthLabel !== undefined)) &&
+          label !== auth.label;
+        if (usageLimits === state.snapshot.usageLimits && !relabel) {
           return [null, state] as const;
         }
-        const snapshot = withUsageLimits(state.snapshot, usageLimits);
-        return [snapshot, { ...state, snapshot }] as const;
+        const snapshot = withUsageLimits(
+          relabel ? { ...state.snapshot, auth: { ...auth, label } } : state.snapshot,
+          usageLimits,
+        );
+        return [
+          snapshot,
+          {
+            ...state,
+            snapshot,
+            usageAuthLabel: label ?? (complete ? null : state.usageAuthLabel),
+          },
+        ] as const;
       });
       if (snapshotToPublish !== null) {
         yield* PubSub.publish(changesPubSub, snapshotToPublish);
@@ -216,14 +291,79 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return yield* applySnapshot(nextSettings, { forceRefresh: true });
   });
 
+  const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
+    const { snapshot } = yield* Ref.get(snapshotStateRef);
+    if (
+      !snapshot.enabled ||
+      !snapshot.usageLimits ||
+      snapshot.usageLimits.unavailable?.reason === "unsupported"
+    )
+      return;
+    // An in-flight refresh may have read cached usage, so one refresh waits behind it.
+    const claim = Symbol();
+    const release = Ref.update(usageRefreshQueued, (queued) => (queued === claim ? null : queued));
+    yield* Effect.uninterruptibleMask((restore) =>
+      Ref.modify(usageRefreshQueued, (queued) => [queued !== null, queued ?? claim]).pipe(
+        Effect.flatMap((held) =>
+          held
+            ? Effect.void
+            : restore(
+                refreshSemaphore.withPermits(1)(
+                  release.pipe(
+                    Effect.andThen(input.invalidateUsageCache ?? Effect.void),
+                    Effect.andThen(input.getSettings),
+                    Effect.flatMap((settings) =>
+                      applySnapshotBase(settings, { forceRefresh: true }),
+                    ),
+                  ),
+                ),
+              ).pipe(Effect.onInterrupt(() => release)),
+        ),
+      ),
+    );
+  });
+
+  const needsUsageRecovery = (snapshot: ServerProvider) =>
+    input.checkUsageLimits !== undefined &&
+    snapshot.installed &&
+    snapshot.status === "ready" &&
+    snapshot.auth.status === "authenticated" &&
+    snapshot.usageLimits?.unavailable?.reason === "probeFailed";
+
+  const needsProviderRefresh = (snapshot: ServerProvider) =>
+    input.refreshOnInterval !== false &&
+    (typeof input.refreshOnInterval !== "function" || input.refreshOnInterval(snapshot));
+
+  const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* (
+    deferFailure: boolean,
+  ) {
+    const { snapshot } = yield* Ref.get(snapshotStateRef);
+    if (!snapshot.enabled) return;
+    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+      if (needsProviderRefresh(snapshot)) {
+        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
+      }
+      return;
+    }
+    const probed = yield* input.checkUsageLimits;
+    const next = yield* Ref.modify(snapshotStateRef, (state) => {
+      const usageLimits = resolveUsageLimitsAfterProbe({
+        published: state.snapshot.usageLimits,
+        probed,
+      });
+      const snapshot = withUsageLimits(state.snapshot, usageLimits);
+      return [snapshot, { ...state, snapshot }] as const;
+    });
+    yield* PubSub.publish(changesPubSub, next);
+  });
+
   const shouldRefreshOnInterval = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
     // A disabled instance has nothing to probe; a periodic check would only
     // republish a snapshot that differs in checkedAt.
     if (
       !state.snapshot.enabled ||
-      input.refreshOnInterval === false ||
-      (typeof input.refreshOnInterval === "function" && !input.refreshOnInterval(state.snapshot))
+      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
     ) {
       return false;
     }
@@ -261,15 +401,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   }
 
+  // A failed check must not end this subscription: the next settings change
+  // retries, like the periodic and initial checks below.
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
-    Effect.asVoid(applySnapshot(nextSettings)),
+    Effect.asVoid(applySnapshot(nextSettings)).pipe(Effect.ignoreCause({ log: true })),
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
-    getRefreshInterval.pipe(
-      Effect.flatMap((refreshInterval) =>
+    Effect.all([getRefreshInterval, Ref.getAndSet(recheckPendingRef, false)]).pipe(
+      Effect.flatMap(([configuredInterval, recheckPending]) => {
+        const refreshInterval = recheckPending ? FAILED_CHECK_RECHECK_DELAY : configuredInterval;
         // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
-        Effect.raceFirst(
+        return Effect.raceFirst(
           Effect.sleep(
             Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
               ? "60 seconds"
@@ -281,13 +424,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
               ? shouldRefreshOnInterval.pipe(
                   Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
+                    shouldRefresh
+                      ? refreshSemaphore.withPermits(1)(refreshOnInterval(!recheckPending))
+                      : Effect.void,
                   ),
                 )
               : Effect.void,
           ),
-        ),
-      ),
+        );
+      }),
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
@@ -300,10 +445,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+    isAwaitingFirstCheck: Ref.get(snapshotStateRef).pipe(Effect.map((state) => !state.checked)),
     refresh: input
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
+    refreshUsage: refreshUsage(),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

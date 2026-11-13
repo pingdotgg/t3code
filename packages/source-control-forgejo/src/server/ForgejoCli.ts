@@ -1,6 +1,8 @@
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
@@ -209,7 +211,14 @@ export function matchForgejoLogin(
       : undefined;
 }
 
+const ForgejoKeysConfig = Config.all({
+  dataHome: Config.String("XDG_DATA_HOME").pipe(Config.option),
+  appData: Config.String("APPDATA").pipe(Config.option),
+});
+
 export const make = Effect.gen(function* () {
+  // Optional strings cannot fail to decode.
+  const { dataHome, appData } = yield* Effect.suspend(() => ForgejoKeysConfig).pipe(Effect.orDie);
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
@@ -249,10 +258,8 @@ export const make = Effect.gen(function* () {
     for (const path of forgejoKeysPaths({
       platform: yield* HostProcess.Platform,
       home: yield* HostProcess.HomeDirectory,
-      ...(globalThis.process.env.XDG_DATA_HOME
-        ? { dataHome: globalThis.process.env.XDG_DATA_HOME }
-        : {}),
-      ...(globalThis.process.env.APPDATA ? { appData: globalThis.process.env.APPDATA } : {}),
+      ...(Option.isSome(dataHome) ? { dataHome: dataHome.value } : {}),
+      ...(Option.isSome(appData) ? { appData: appData.value } : {}),
     })) {
       const exists = yield* fileSystem.exists(path).pipe(
         Effect.mapError(
@@ -343,26 +350,47 @@ export const make = Effect.gen(function* () {
       readonly body?: string;
     }) {
       const base = new URL(`${input.baseUrl}/api/v1/`);
-      const url = new URL(input.path, base);
-      if (
-        url.origin !== base.origin ||
-        !url.pathname.startsWith(base.pathname) ||
-        url.username ||
-        url.password
-      )
+      const apiUrl = (path: string, from: string) => {
+        const url = URL.parse(path, from);
+        return url &&
+          url.origin === base.origin &&
+          url.pathname.startsWith(base.pathname) &&
+          !url.username &&
+          !url.password
+          ? url
+          : undefined;
+      };
+      const requested = apiUrl(input.path, base.href);
+      if (!requested)
         return yield* new ForgejoCliError({
           command: "fj",
           cwd: input.cwd,
           detail: "Invalid Forgejo API path.",
         });
-      let request = HttpClientRequest.make(input.method ?? "GET")(url.toString()).pipe(
-        HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
-      );
-      if (input.body !== undefined)
-        request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
-      const response = yield* httpClient
-        .execute(request)
-        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      let url = requested;
+      const send = (target: URL) => {
+        let request = HttpClientRequest.make(input.method ?? "GET")(target.toString()).pipe(
+          HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
+        );
+        if (input.body !== undefined)
+          request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+        return httpClient
+          .execute(request)
+          .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      };
+      let response = yield* send(url);
+      // Forgejo redirects a renamed repository's API paths before running the handler,
+      // so the same method and body are re-sent. The token never leaves the API base.
+      for (let hops = 0; hops < 5; hops++) {
+        const location = response.headers.location;
+        const next =
+          location && [301, 302, 307, 308].includes(response.status)
+            ? apiUrl(location, url.href)
+            : undefined;
+        if (!next) break;
+        url = next;
+        response = yield* send(url);
+      }
       const status = response.status;
       const body =
         status === 204 || status === 205
@@ -433,7 +461,12 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const cached = authenticated.get(login.url);
     if (token && cached?.token === token && now - cached.time < 30_000) return token;
-    yield* execute({ command: "fj", cwd, args: ["--host", login.url, "whoami"] });
+    // fj reads the cwd repository even with --host and fails on an unborn branch.
+    yield* execute({
+      command: "fj",
+      cwd: yield* HostProcess.HomeDirectory,
+      args: ["--host", login.url, "whoami"],
+    });
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
     if (!refreshed)
@@ -694,7 +727,8 @@ export const make = Effect.gen(function* () {
     });
     // tea reports HTTP failures with exit code zero; use its response status.
     const status = Number(/^HTTP\/\S+ (\d{3})/m.exec(result.stderr)?.[1]);
-    if (!status || status >= 400)
+    if (!status || status >= 400) {
+      const body = result.stdout.trim();
       return yield* new ForgejoCliError({
         command: "tea",
         cwd: input.cwd,
@@ -715,8 +749,13 @@ export const make = Effect.gen(function* () {
               ? "Forgejo repository or pull request was not found."
               : status === 429
                 ? "Forgejo API rate limit exceeded."
-                : `Forgejo API request failed${status ? ` (HTTP ${status})` : " without an HTTP status"}.`,
+                : !status
+                  ? "Forgejo API request failed without an HTTP status."
+                  : body
+                    ? `Forgejo API request failed (HTTP ${status}): ${body}`
+                    : `Forgejo API request failed (HTTP ${status}).`,
       });
+    }
     return result;
   });
   return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });

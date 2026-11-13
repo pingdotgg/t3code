@@ -1,48 +1,6 @@
 import { MessageId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { observeTimelineRun, getAnchoredTurnMetrics } from "./timelineScrollAnchoring";
-
-function buildState({
-  positions,
-  sizes,
-  scroll = 0,
-  scrollLength = 700,
-}: {
-  readonly positions: readonly number[];
-  readonly sizes: readonly number[];
-  readonly scroll?: number;
-  readonly scrollLength?: number;
-}) {
-  return {
-    data: positions.map((_, index) => index),
-    scroll,
-    scrollLength,
-    positionAtIndex: (index: number) => positions[index],
-    sizeAtIndex: (index: number) => sizes[index],
-  };
-}
-
-describe("timeline scroll anchoring", () => {
-  it("targets the real row end instead of any temporary reserved tail", () => {
-    const state = buildState({
-      positions: [0, 1720, 1880],
-      sizes: [1600, 80, 120],
-      scroll: 1900,
-      scrollLength: 760,
-    });
-
-    const metrics = getAnchoredTurnMetrics({
-      state,
-      anchorIndex: 1,
-      composerOverlayHeight: 180,
-      anchorOffset: 16,
-    });
-
-    expect(metrics?.lastBottom).toBe(2000);
-    expect(metrics?.targetScrollToRevealEnd).toBe(1436);
-    expect(metrics?.scrollDeltaToRevealEnd).toBe(0);
-  });
-});
+import { observeTimelineRun, resolveDisclosureRevealScrollDelta } from "./timelineScrollAnchoring";
 
 describe("observeTimelineRun", () => {
   const existing = {
@@ -106,6 +64,39 @@ describe("observeTimelineRun", () => {
     expect(opened.anchorMessageId).toBeNull();
     expect(observeTimelineRun(opened.observation, existing).anchorMessageId).toBe(
       existing.messageId,
+    );
+  });
+});
+
+describe("resolveDisclosureRevealScrollDelta", () => {
+  const viewport = {
+    viewportTop: 0,
+    viewportBottom: 800,
+    composerOverlayHeight: 150,
+    anchorOffset: 24,
+  };
+
+  it("does not scroll when the expanded row ends above the composer", () => {
+    expect(resolveDisclosureRevealScrollDelta({ ...viewport, rowTop: 300, rowBottom: 650 })).toBe(
+      0,
+    );
+  });
+
+  it("scrolls content hidden behind the composer into view", () => {
+    expect(resolveDisclosureRevealScrollDelta({ ...viewport, rowTop: 560, rowBottom: 900 })).toBe(
+      250,
+    );
+  });
+
+  it("keeps the header of a row taller than the usable viewport visible", () => {
+    expect(resolveDisclosureRevealScrollDelta({ ...viewport, rowTop: 600, rowBottom: 2000 })).toBe(
+      576,
+    );
+  });
+
+  it("never scrolls backwards when the row header is already above the anchor inset", () => {
+    expect(resolveDisclosureRevealScrollDelta({ ...viewport, rowTop: -40, rowBottom: 1200 })).toBe(
+      0,
     );
   });
 });
