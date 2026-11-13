@@ -143,22 +143,26 @@ describe("AcpRuntimeModel", () => {
     // Nothing live: the response is the session's configuration.
     const empty = mergeLateSessionLoadResponse({
       response,
-      provisional: {},
+      baseline: { configOptions: [], modeState: undefined },
       configOptions: [],
       modeState: undefined,
     });
     expect(empty.configOptions).toEqual(response.configOptions);
     expect(empty.modeState?.currentModeId).toBe("ask");
 
-    // Modes the placeholder took from `initialize` are older than the response.
+    // Initialize-time modes and a previous session's options are older than the response.
     const initializeModes = {
       currentModeId: "architect",
       availableModes: [{ id: "architect", name: "architect" }],
     };
+    const inherited = [
+      select("model", "model", "fast", ["fast"]),
+      select("effort", "model", "high", ["high"]),
+    ];
     const untouched = mergeLateSessionLoadResponse({
       response,
-      provisional: { modes: initializeModes },
-      configOptions: [],
+      baseline: { configOptions: inherited, modeState: initializeModes },
+      configOptions: inherited,
       modeState: initializeModes,
     });
     expect(untouched.configOptions).toEqual(response.configOptions);
@@ -168,8 +172,8 @@ describe("AcpRuntimeModel", () => {
     const liveModel = select("model", "model", "fast", ["default", "fast"]);
     const merged = mergeLateSessionLoadResponse({
       response,
-      provisional: {},
-      configOptions: [liveModel],
+      baseline: { configOptions: inherited, modeState: initializeModes },
+      configOptions: [liveModel, inherited[1]!],
       modeState: {
         currentModeId: "architect",
         availableModes: [{ id: "architect", name: "architect" }],

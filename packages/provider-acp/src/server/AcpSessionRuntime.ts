@@ -1225,6 +1225,11 @@ interface LateSessionLoad {
   readonly provisional: EffectAcpSchema.LoadSessionResponse;
 }
 
+interface LateSessionLoadBaseline {
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly modeState: AcpSessionModeState | undefined;
+}
+
 type AcpStartState =
   | { readonly _tag: "NotStarted" }
   | {
@@ -1929,6 +1934,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const adoptLateSessionLoad = Effect.fn("AcpSessionRuntime.adoptLateSessionLoad")(function* (
     late: LateSessionLoad,
+    baseline: LateSessionLoadBaseline,
     exit: Exit.Exit<EffectAcpSchema.LoadSessionResponse, EffectAcpErrors.AcpError>,
   ) {
     const pending = yield* Ref.get(lateSessionLoadRef);
@@ -1955,7 +1961,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
     const merged = mergeLateSessionLoadResponse({
       response: exit.value,
-      provisional: late.provisional,
+      baseline,
       configOptions: yield* SubscriptionRef.get(configOptionsRef),
       modeState: yield* Ref.get(modeStateRef),
     });
@@ -1990,9 +1996,13 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     if (Option.isNone(late) || late.value.provisional !== adopted) {
       return;
     }
+    const baseline = {
+      configOptions: yield* SubscriptionRef.get(configOptionsRef),
+      modeState: yield* Ref.get(modeStateRef),
+    };
     yield* Fiber.await(late.value.fiber).pipe(
       Effect.flatMap((exit) =>
-        notificationSemaphore.withPermit(adoptLateSessionLoad(late.value, exit)),
+        notificationSemaphore.withPermit(adoptLateSessionLoad(late.value, baseline, exit)),
       ),
       Effect.forkIn(runtimeScope),
     );
@@ -2446,11 +2456,12 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                         yield* processSessionUpdate(notification);
                       }
                     }
+                    // Under the permit: no update can land between the baseline and the watch.
+                    yield* watchLateSessionLoad(result.sessionSetupResult);
                     yield* Deferred.succeed(deferred, result);
                   }),
                 ),
               ),
-              Effect.tap((result) => watchLateSessionLoad(result.sessionSetupResult)),
               Effect.onError((cause) =>
                 Deferred.failCause(deferred, cause).pipe(
                   Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),

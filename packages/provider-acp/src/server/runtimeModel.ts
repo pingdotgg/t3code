@@ -1382,26 +1382,27 @@ export function syntheticLoadSessionResponseFromInitialize(
  */
 export function mergeLateSessionLoadResponse(input: {
   readonly response: EffectAcpSchema.LoadSessionResponse;
-  /** The placeholder setup replay idle stood in with. */
-  readonly provisional: EffectAcpSchema.LoadSessionResponse;
+  /** What the session held at readiness: initialize-time modes, or a previous session's state. */
+  readonly baseline: {
+    readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+    readonly modeState: AcpSessionModeState | undefined;
+  };
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly modeState: AcpSessionModeState | undefined;
 }): {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly modeState: AcpSessionModeState | undefined;
 } {
-  // Mode state the placeholder copied from `initialize` is older than the response.
-  const provisionalModeState = parseSessionModeState(input.provisional);
-  const modeChanged =
-    input.modeState?.currentModeId !== provisionalModeState?.currentModeId ||
-    input.modeState?.availableModes.map((mode) => mode.id).join("\n") !==
-      provisionalModeState?.availableModes.map((mode) => mode.id).join("\n");
-  const liveModeState = modeChanged ? input.modeState : undefined;
+  // Every write and update replaces these values, so one still identical is older than the response.
+  const liveModeState = input.modeState === input.baseline.modeState ? undefined : input.modeState;
   const liveModeId = liveModeState?.currentModeId;
+  const liveConfigOptions = input.configOptions.filter(
+    (option) => !input.baseline.configOptions.includes(option),
+  );
   const loaded = input.response.configOptions ?? [];
   const configOptions = [
     ...loaded.map((option) => {
-      const live = input.configOptions.find((candidate) => candidate.id === option.id);
+      const live = liveConfigOptions.find((candidate) => candidate.id === option.id);
       if (live !== undefined) return live;
       // A mode T3 selected through `session/set_mode` is newer than the loaded option's value.
       return liveModeId !== undefined &&
@@ -1411,11 +1412,11 @@ export function mergeLateSessionLoadResponse(input: {
         ? { ...option, currentValue: liveModeId }
         : option;
     }),
-    ...input.configOptions.filter((live) => !loaded.some((option) => option.id === live.id)),
+    ...liveConfigOptions.filter((live) => !loaded.some((option) => option.id === live.id)),
   ];
   const loadedModeState = parseSessionModeState({ ...input.response, configOptions });
   if (loadedModeState === undefined || liveModeId === undefined) {
-    return { configOptions, modeState: liveModeState ?? loadedModeState ?? input.modeState };
+    return { configOptions, modeState: liveModeState ?? loadedModeState };
   }
   return {
     configOptions,
