@@ -179,4 +179,18 @@ describe("normalizePreviewUrl", () => {
       );
     }
   });
+
+  it("reports explicit non-web schemes instead of reading them as a host", () => {
+    for (const [rawUrl, protocol] of [
+      ["about:blank", "about:"],
+      ["mailto:alice@example.com", "mailto:"],
+      ["javascript:alert(1)", "javascript:"],
+    ] as const) {
+      expect(() => normalizePreviewUrl(rawUrl)).toThrow(
+        expect.objectContaining({ reason: "unsupported-protocol", protocol }),
+      );
+    }
+    expect(normalizePreviewUrl("localhost:3000")).toBe("http://localhost:3000/");
+    expect(normalizePreviewUrl("devbox:8080")).toBe("https://devbox:8080/");
+  });
 });

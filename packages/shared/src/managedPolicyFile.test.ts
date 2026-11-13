@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -12,6 +13,7 @@ import {
   MACOS_MANAGED_PREFERENCES_PATH,
   managedPolicyPath,
   readManagedPolicy,
+  type RegistryKey,
   WINDOWS_POLICY_KEY,
   layerWindowsRegistry,
   WindowsRegistry,
@@ -23,8 +25,10 @@ const policy = JSON.stringify({ schemaVersion: 1, organization: "Example Corp" }
 /** What a command prints and exits with. */
 type Result = { readonly stdout: string; readonly exitCode: number };
 
-/** The registry's `Policy` value: its text, absent, or the Win32 error reading it fails with. */
-type RegistryAnswer = string | undefined | { readonly code?: number };
+/** Keys below the policy key ("" for the key itself), or the error every read fails with. */
+type RegistryAnswer = Readonly<Record<string, RegistryKey>> | WindowsRegistryError;
+const isRegistryError = Schema.is(WindowsRegistryError);
+const POLICY_SUBKEY = WINDOWS_POLICY_KEY.slice("HKLM\\".length);
 
 /** Files that exist, what a command prints and exits with by command name, and the registry. */
 const machine = (
@@ -36,10 +40,10 @@ const machine = (
     Layer.succeed(
       WindowsRegistry,
       WindowsRegistry.of({
-        readMachineString: () =>
-          typeof registry === "object"
-            ? Effect.fail(new WindowsRegistryError(registry))
-            : Effect.succeed(registry),
+        readMachineKey: (subkey) =>
+          isRegistryError(registry)
+            ? Effect.fail(registry)
+            : Effect.succeed(registry[subkey.slice(POLICY_SUBKEY.length + 1)]),
       }),
     ),
     FileSystem.layerNoop({
@@ -70,11 +74,34 @@ const machine = (
     ),
   );
 
+/** A policy key holding `values`, with checkbox subkeys of `name=0|1` entries. */
+const policyKey = (
+  values: RegistryKey["values"],
+  subkeys: Readonly<Record<string, Readonly<Record<string, number>>>> = {},
+): Readonly<Record<string, RegistryKey>> => ({
+  "": { values, subkeys: Object.keys(subkeys) },
+  ...Object.fromEntries(
+    Object.entries(subkeys).map(([name, boxes]) => [
+      name,
+      {
+        values: Object.entries(boxes).map(([box, data]) => ({
+          name: box,
+          type: "REG_DWORD" as const,
+          data,
+        })),
+        subkeys: [],
+      },
+    ]),
+  ),
+});
+const text = (name: string, data: string) => ({ name, type: "REG_SZ" as const, data });
+const dword = (name: string, data: number) => ({ name, type: "REG_DWORD" as const, data });
+
 const read = (
   platform: NodeJS.Platform,
   files: Readonly<Record<string, string>>,
   commands: Parameters<typeof machine>[1] = {},
-  registry: RegistryAnswer = undefined,
+  registry: RegistryAnswer = {},
 ) =>
   readManagedPolicy(platform).pipe(
     Effect.map((found) => found?.source),
@@ -139,52 +166,189 @@ describe("readManagedPolicy", () => {
   );
 
   it.effect(
-    "reads the Windows Policies registry value, and treats only an absent one as none",
+    "reads a Policy value of JSON from the registry, and treats only an absent key as none",
     () =>
       Effect.gen(function* () {
         const file = { [managedPolicyPath("win32")]: policy };
         const win32 = (files: Readonly<Record<string, string>>, registry: RegistryAnswer) =>
           read("win32", files, {}, registry);
+        const json = policyKey([text("Policy", policy)]);
 
-        assert.equal(yield* win32({}, policy), WINDOWS_POLICY_KEY);
-        assert.isUndefined(yield* win32({}, undefined));
-        assert.equal(yield* win32(file, undefined), managedPolicyPath("win32"));
-        assert.include(yield* win32(file, policy), "deploy the policy one way");
+        assert.equal(yield* win32({}, json), WINDOWS_POLICY_KEY);
+        assert.isUndefined(yield* win32({}, {}));
+        assert.equal(yield* win32(file, {}), managedPolicyPath("win32"));
+        assert.include(yield* win32(file, json), "deploy the policy one way");
         // A read that fails, here access denied, is not read as no policy, file or not.
         for (const files of [{}, file]) {
           assert.include(
-            yield* win32(files, { code: 5 }),
+            yield* win32(files, new WindowsRegistryError({ code: 5 })),
             "the registry cannot be read (Windows error 5)",
           );
         }
-        assert.include(yield* win32({}, {}), "cannot load its registry reader; reinstall T3 Code");
         assert.include(
-          yield* win32({}, { code: 1630 }),
+          yield* win32({}, new WindowsRegistryError({})),
+          "cannot load its registry reader; reinstall T3 Code",
+        );
+        assert.include(
+          yield* win32({}, policyKey([{ name: "Policy", type: "other" }])),
           "its Policy value is not a string (REG_SZ)",
         );
-        assert.include(yield* win32({}, "{ not json"), "does not match the policy schema");
+        assert.include(
+          yield* win32({}, policyKey([text("Policy", "{ not json")])),
+          "does not match the policy schema",
+        );
+        for (const both of [
+          policyKey([text("Policy", policy), text("Organization", "Example")]),
+          policyKey([text("Policy", policy)], { Clients: { desktop: 1 } }),
+        ]) {
+          assert.include(yield* win32({}, both), "both a Policy value and Group Policy settings");
+        }
+        // Not Configured clears a list policy's values but can leave its empty subkey behind.
+        assert.equal(
+          yield* win32({}, policyKey([text("Policy", policy)], { Clients: {} })),
+          WINDOWS_POLICY_KEY,
+        );
       }),
   );
 
+  it.effect("builds the policy from the values the Group Policy template writes", () =>
+    Effect.gen(function* () {
+      const organization = text("Organization", "Société 日本 ✓");
+      const document = (registry: RegistryAnswer) =>
+        readManagedPolicy("win32", ["codex", "claudeAgent"]).pipe(
+          Effect.map((found): unknown => found?.document),
+          Effect.catchTags({
+            ManagedPolicyFileError: (error) => Effect.succeed(`error: ${error.reason}`),
+          }),
+          Effect.provide(machine({}, {}, registry)),
+        );
+
+      assert.deepStrictEqual(
+        yield* document(
+          policyKey(
+            [
+              organization,
+              text("SupportUrl", ""),
+              // Registry names ignore case.
+              text("maxRuntimeMode", "auto-accept-edits"),
+              dword("Telemetry", 0),
+              text("Settings", '{"enableAgentBrowserAccess": {"value": false, "locked": true}}'),
+              text("UpdatesMode", "off"),
+              dword("AllowNightly", 1),
+              dword("Updates", 1),
+              dword("Clients", 1),
+              dword("AllowedDrivers", 1),
+            ],
+            // Registry names ignore case, so a subkey written in other case still counts.
+            {
+              clients: { Desktop: 1, "LOCAL-BROWSER": 1, REMOTE: 1 },
+              AllowedDrivers: { Codex: 1, CLAUDEAGENT: 1, UnknownDriver: 1 },
+            },
+          ),
+        ),
+        {
+          schemaVersion: 1,
+          organization: "Société 日本 ✓",
+          settings: { enableAgentBrowserAccess: { value: false, locked: true } },
+          limits: {
+            maxRuntimeMode: "auto-accept-edits",
+            telemetry: false,
+            updates: { mode: "off", allowNightly: true },
+            clients: ["desktop", "local-browser", "remote"],
+            providers: { allowedDrivers: ["codex", "claudeAgent", "UnknownDriver"] },
+          },
+        },
+      );
+
+      // Disabling a policy leaves each checkbox's falseValue behind; it restricts nothing.
+      const disabledGroups = {
+        Clients: { desktop: 0, "local-browser": 0, remote: 0 },
+        AllowedDrivers: { codex: 0, claudeAgent: 0 },
+      };
+      assert.deepStrictEqual(
+        yield* document(
+          policyKey(
+            [
+              organization,
+              dword("Clients", 0),
+              dword("AllowedDrivers", 0),
+              dword("Updates", 0),
+              dword("AllowNightly", 0),
+              dword("Telemetry", 0),
+            ],
+            disabledGroups,
+          ),
+        ),
+        { schemaVersion: 1, organization: "Société 日本 ✓", limits: { telemetry: false } },
+      );
+      // With nothing else configured, that is no policy rather than one missing Organization.
+      assert.isUndefined(
+        yield* document(
+          policyKey([dword("AllowedDrivers", 0)], {
+            AllowedDrivers: disabledGroups.AllowedDrivers,
+          }),
+        ),
+      );
+      assert.isUndefined(yield* document(policyKey([])));
+
+      // Anything the template does not write fails closed rather than being ignored.
+      for (const [registry, reason] of [
+        [policyKey([organization, dword("Telemetry", 2)]), "DWORD of 0 or 1"],
+        [policyKey([organization, text("MaxMode", "auto")]), "not a T3 Code policy value"],
+        [policyKey([organization], { Other: { x: 1 } }), "Other is not a T3 Code policy key"],
+        [
+          {
+            ...policyKey([organization, dword("Clients", 1)], { Clients: { desktop: 1 } }),
+            Clients: { values: [dword("desktop", 1)], subkeys: ["Nested"] },
+          },
+          "Clients\\Nested is not a T3 Code policy key",
+        ],
+        [policyKey([organization, text("Settings", "{")]), "not valid JSON"],
+        [policyKey([organization, dword("Clients", 2)]), "DWORD of 0 or 1"],
+        [
+          policyKey([organization, dword("Clients", 1)], { Clients: { UnknownClient: 1 } }),
+          "does not match the policy schema",
+        ],
+        [
+          policyKey([organization, dword("Clients", 1)], { Clients: { desktop: 0 } }),
+          "does not match the policy schema",
+        ],
+        [policyKey([dword("Organization", 1)]), "Organization must be a string"],
+        // REG_EXPAND_SZ would fill in the reading user's variables.
+        [policyKey([{ name: "Organization", type: "other" }]), "Organization must be a string"],
+        [
+          policyKey([text("MaxRuntimeMode", "auto-accept-edits")]),
+          "set the Organization policy whenever another T3 Code policy is set",
+        ],
+      ] as const) {
+        assert.include(yield* document(registry), reason);
+      }
+    }),
+  );
+
   it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
-    "reads REG_SZ values through the Win32 API, and refuses other types",
+    "lists registry values and subkeys through the Win32 API",
     () =>
       Effect.gen(function* () {
         const registry = yield* WindowsRegistry;
-        const version = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
-        assert.match((yield* registry.readMachineString(version, "ProductName")) ?? "", /Windows/);
-        assert.isUndefined(yield* registry.readMachineString(version, "T3CodeNoSuchValue"));
-        assert.isUndefined(
-          yield* registry.readMachineString("SOFTWARE\\T3CodeNoSuchKey", "Policy"),
+        const version = yield* registry.readMachineKey(
+          "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
         );
-        // REG_DWORD, and REG_EXPAND_SZ, which would otherwise expand the user's variables.
-        for (const [key, value] of [
-          [version, "CurrentMajorVersionNumber"],
-          ["SOFTWARE\\Microsoft\\Windows\\CurrentVersion", "ProgramFilesPath"],
-        ] as const) {
-          const error = yield* registry.readMachineString(key, value).pipe(Effect.flip);
-          assert.equal(error.code, 1630);
-        }
+        const value = (name: string) => version?.values.find((entry) => entry.name === name);
+        const product = value("ProductName");
+        assert.match(product?.type === "REG_SZ" ? product.data : "", /Windows/);
+        assert.equal(value("CurrentMajorVersionNumber")?.type, "REG_DWORD");
+        assert.isUndefined(yield* registry.readMachineKey("SOFTWARE\\T3CodeNoSuchKey"));
+        const windows = yield* registry.readMachineKey(
+          "SOFTWARE\\Microsoft\\Windows\\CurrentVersion",
+        );
+        // REG_EXPAND_SZ, which would otherwise expand the user's variables.
+        assert.equal(
+          windows?.values.find((entry) => entry.name === "ProgramFilesPath")?.type,
+          "other",
+        );
+        const parent = yield* registry.readMachineKey("SOFTWARE\\Microsoft\\Windows NT");
+        assert.isTrue(parent?.subkeys.includes("CurrentVersion"));
       }).pipe(Effect.provide(layerWindowsRegistry(() => import("ffi-rs")))),
   );
 });

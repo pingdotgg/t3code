@@ -9,23 +9,29 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
+  type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
+  canResumeThread,
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
+  deriveProviderExtensionStatuses,
   deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  formatModelSelectionEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
@@ -34,6 +40,23 @@ import {
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
+
+function request(
+  id: string,
+  status: OrchestrationV2RuntimeRequest["status"],
+): OrchestrationV2RuntimeRequest {
+  return {
+    id: RuntimeRequestId.make(id),
+    nodeId: NodeId.make(`node-${id}`),
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind: "command",
+    status,
+    responseCapability: { type: "not_resumable", reason: "Session ended." },
+    createdAt: now,
+    resolvedAt: status === "pending" ? null : now,
+  };
+}
 
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
   return {
@@ -56,6 +79,77 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("shows extension statuses only from the selected provider's current live session", () => {
+    const instanceId = v2Projection.thread.modelSelection.instanceId;
+    const providerThreadId = ProviderThreadId.make("native-status-thread");
+    const sessionId = ProviderSessionId.make("native-status-session");
+    const statuses = [{ key: "watch", text: "Watching" }];
+    const projection = {
+      thread: { ...v2Projection.thread, activeProviderThreadId: providerThreadId },
+      providerThreads: [
+        { id: providerThreadId, providerSessionId: sessionId, providerInstanceId: instanceId },
+      ],
+      providerSessions: [
+        {
+          id: sessionId,
+          providerInstanceId: instanceId,
+          status: "ready" as const,
+          extensionStatuses: statuses,
+        },
+      ],
+    };
+    expect(deriveProviderExtensionStatuses(projection)).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          ...projection.providerSessions,
+          {
+            ...projection.providerSessions[0]!,
+            id: ProviderSessionId.make("unrelated"),
+            extensionStatuses: [{ key: "wrong", text: "Wrong session" }],
+          },
+        ],
+      }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" }],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, status: "error" }],
+      }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          { ...projection.providerSessions[0]!, status: "error", extensionStatuses: [] },
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, extensionStatuses: undefined }],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          modelSelection: { instanceId: ProviderInstanceId.make("other"), model: "default" },
+        },
+      }),
+    ).toEqual([]);
+    expect(deriveProviderExtensionStatuses(null)).toEqual([]);
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {
@@ -227,6 +321,49 @@ describe("thread execution presentation", () => {
     });
   });
 
+  // The server marks a run running before the provider opens, which can take minutes.
+  it("labels an open run whose provider has not started a turn", () => {
+    const attemptId = RunAttemptId.make("attempt-starting");
+    const openRun = { ...run("run-starting", 1, "running"), activeAttemptId: attemptId };
+    const session = {
+      id: ProviderSessionId.make("session-starting"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: openRun.providerInstanceId,
+      status: "starting" as const,
+      cwd: "/repo",
+      model: null,
+      // The label reads only the driver.
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const starting = { ...v2Projection, runs: [openRun], providerSessions: [session] };
+
+    expect(deriveThreadActivityRun(starting)?.providerStartingLabel).toBe("Starting Claude");
+    expect(
+      deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
+    ).toBe("Starting");
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerTurns: [
+          {
+            id: ProviderTurnId.make("provider-turn-starting"),
+            providerThreadId: ProviderThreadId.make("provider-thread-starting"),
+            nodeId: NodeId.make("node-starting"),
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        ],
+      })?.providerStartingLabel,
+    ).toBeUndefined();
+  });
+
   it("presents a held queue as the stopped run instead of queued work", () => {
     const interrupted = { ...run("run-interrupted", 1, "interrupted"), completedAt: now };
     const held = { ...run("run-held", 2, "queued"), queueHeld: true };
@@ -250,6 +387,47 @@ describe("thread execution presentation", () => {
     };
     expect(deriveLatestThreadRun(onlyHeld)).toBeNull();
     expect(deriveThreadRuntime(onlyHeld)).toBeNull();
+  });
+
+  it.each([
+    { name: "no requests", requests: [], runId: "run-stopped", held: false, expected: true },
+    {
+      name: "a pending request",
+      requests: [request("approval", "pending")],
+      runId: "run-stopped",
+      held: false,
+      expected: false,
+    },
+    {
+      name: "only a resolved request",
+      requests: [request("approval", "resolved")],
+      runId: "run-stopped",
+      held: false,
+      expected: true,
+    },
+    {
+      name: "a held queue behind a blocked continuation",
+      requests: [request("approval", "pending")],
+      runId: "run-stopped",
+      held: true,
+      expected: false,
+    },
+    {
+      name: "a held queue with no run to continue",
+      requests: [request("approval", "pending")],
+      runId: null,
+      held: true,
+      expected: true,
+    },
+    { name: "nothing to resume", requests: [], runId: null, held: false, expected: false },
+  ])("decides whether Resume can start with $name", ({ requests, runId, held, expected }) => {
+    expect(
+      canResumeThread(
+        { runtimeRequests: requests },
+        runId === null ? null : RunId.make(runId),
+        held,
+      ),
+    ).toBe(expected);
   });
 
   it("does not expose a queued-only run as interruptible", () => {
@@ -470,6 +648,39 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("formatModelSelectionEffort", () => {
+  it("labels an old Ultracode effort by the effort it runs at", () => {
+    const models = [
+      {
+        slug: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "high", label: "High", isDefault: true },
+                { id: "xhigh", label: "Extra High" },
+              ],
+            },
+            { id: "ultracode", label: "Ultracode", type: "boolean" },
+          ],
+        }),
+      },
+    ];
+    const selection = createModelSelection(
+      ProviderInstanceId.make("claudeAgent"),
+      "claude-opus-5-5",
+      [{ id: "effort", value: "ultracode" }],
+    );
+
+    expect(formatModelSelectionEffort(selection, models)).toBe("Extra High");
   });
 });
 

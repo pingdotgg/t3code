@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 [TanStack Start](https://tanstack.com/start) is pure Vite —
 `tanstackStart()` and `viteReact()` are ordinary plugins in
@@ -63,20 +63,7 @@ export default defineConfig({
 
 Also drop the dependency:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun remove @cloudflare/vite-plugin" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm uninstall @cloudflare/vite-plugin" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm remove @cloudflare/vite-plugin" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn remove @cloudflare/vite-plugin" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers remove="@cloudflare/vite-plugin" />
 
 ## Declare the Website
 
@@ -86,7 +73,7 @@ Stack) and derive the typed shape of its bindings from it:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import Backend, { Bucket } from "./src/backend.ts";
 

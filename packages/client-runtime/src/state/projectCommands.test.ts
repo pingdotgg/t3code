@@ -21,7 +21,7 @@ import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -53,7 +53,11 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
     missing: false,
   };
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {
@@ -168,7 +172,7 @@ describe("writeFile metadata", () => {
         yield* AtomRegistry.getResult(h.registry, metadata, { suspendOnWaiting: true }),
       ).toBeNull();
       expect(h.metadataRequests).toEqual([["/repo/foo"]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not restore old metadata from a read completed after a write", () =>
@@ -211,7 +215,7 @@ describe("writeFile metadata", () => {
       h.registry.refresh(metadata);
       expect(yield* readMetadata()).toEqual({ kind: "file", byteLength: 10 });
       expect(h.metadataRequests).toHaveLength(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refreshes retained canonical and original paths after an aliased write", () =>
@@ -250,7 +254,7 @@ describe("writeFile metadata", () => {
         "/repo/foo",
         "/repo/./foo",
       ]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -263,6 +267,6 @@ describe("openScratch", () => {
       registry.set(storedProject, PROJECT);
       const result = yield* Fiber.join(opening);
       expect(result).toMatchObject({ _tag: "Success", value: PROJECT });
-    }).pipe(Effect.scoped),
+    }),
   );
 });
