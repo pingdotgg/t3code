@@ -60,6 +60,7 @@ pub fn router(state: AppState) -> Router {
             post(revoke_other_clients),
         )
         .route("/api/orchestration/shell", get(shell_snapshot))
+        .route("/api/projects/mutate", post(projects_mutate))
         .route(
             "/api/orchestration/threads/{thread_id}",
             get(thread_snapshot),
@@ -508,6 +509,44 @@ async fn thread_snapshot(
     }
 }
 
+/// `POST /api/projects/mutate`: `projects.mutate` over HTTP, so `conn-server project add`
+/// reaches a running server without a WebSocket (Orbit adds its project this way). The body
+/// is the method's payload; the answer its success or typed error.
+async fn projects_mutate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(token) = bearer(&headers) else {
+        return auth_invalid("missing_credential");
+    };
+    let Some(principal) = state.auth.authenticate_bearer(token) else {
+        return auth_invalid("invalid_credential");
+    };
+    if !principal.has_scope("orchestration:operate") {
+        return Json(json!({
+            "_tag": "EnvironmentScopeRequiredError",
+            "code": "insufficient_scope",
+            "requiredScope": "orchestration:operate",
+            "traceId": trace_id(),
+        }))
+        .with_status(StatusCode::FORBIDDEN);
+    }
+    let Some(engine) = &state.engine else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match engine.call("projects.mutate", body).await {
+        Ok(result) => Json(result).into_response(),
+        Err(EngineError::Rejected(error)) => Json(error).with_status(StatusCode::BAD_REQUEST),
+        Err(EngineError::Internal(message)) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "EnvironmentInternalError",
+            "internal_error",
+            &message,
+        ),
+    }
+}
+
 async fn ws(
     upgrade: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -840,6 +879,32 @@ mod tests {
         // An unknown thread is a plain 404, never the structured not-found error.
         let (status, body) = get("/api/orchestration/threads/nope", &[header, &bearer]).await;
         assert_eq!((status, body.as_str()), (404, ""));
+
+        // `project add` on a running server: an operate-scoped bearer adds the project now.
+        let root = dir.to_string_lossy().into_owned();
+        let add = json!({"type": "project.create", "commandId": "add-1",
+            "projectId": conn_engine::SqliteEngine::project_id_for(&root),
+            "title": "Added", "workspaceRoot": root})
+        .to_string();
+        let post = |auth_header: String| {
+            let head = format!(
+                "POST /api/projects/mutate HTTP/1.1\r\ncontent-type: application/json\r\n{auth_header}"
+            );
+            let add = add.clone();
+            async move { call(addr, &head, &add).await }
+        };
+        assert_eq!(post("x-none: 1".into()).await.0, 401);
+        let (status, body) = post(bearer.clone()).await;
+        assert_eq!(status, 200, "{body}");
+        let (_, body) = get(shell, &[header, &bearer]).await;
+        let snapshot: Value = serde_json::from_str(&body).unwrap();
+        let titles: Vec<&str> = snapshot["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["title"].as_str())
+            .collect();
+        assert!(titles.contains(&"Added"), "{titles:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -18,8 +18,9 @@ use std::{
 };
 
 use conn_contract::{
-    AttachmentCreateUploadUrlResult, ChatAttachment, ChatFileAttachment, ChatImageAttachment,
-    PersistChatAttachmentsError, PersistChatAttachmentsInput, lit, support::JsNumber,
+    AttachmentCreateUploadUrlInput, AttachmentCreateUploadUrlResult, ChatAttachment,
+    ChatFileAttachment, ChatImageAttachment, PersistChatAttachmentsError,
+    PersistChatAttachmentsInput, lit, support::JsNumber,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -199,16 +200,37 @@ fn image_type() -> String {
     "image".into()
 }
 
-/// `attachments.createUploadUrl` input. Decoded by hand: the generated union picks its member
-/// by `mimeType`, so a `file` upload of a PNG would not decode.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// `attachments.createUploadUrl` input in one shape for both members.
+#[derive(Clone, Debug)]
 pub struct UploadRequest {
-    #[serde(rename = "type", default)]
     pub kind: Option<String>,
     pub name: String,
     pub mime_type: String,
     pub size_bytes: u64,
+}
+
+impl From<AttachmentCreateUploadUrlInput> for UploadRequest {
+    fn from(input: AttachmentCreateUploadUrlInput) -> Self {
+        // A negative size becomes 0, which `validate` refuses.
+        let size = |bytes: i64| u64::try_from(bytes).unwrap_or(0);
+        match input {
+            AttachmentCreateUploadUrlInput::Image(image) => Self {
+                kind: Some("image".into()),
+                name: image.name,
+                mime_type: conn_contract::to_json(&image.mime_type)
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                size_bytes: size(image.size_bytes),
+            },
+            AttachmentCreateUploadUrlInput::File(file) => Self {
+                kind: Some("file".into()),
+                name: file.name,
+                mime_type: file.mime_type,
+                size_bytes: size(file.size_bytes),
+            },
+        }
+    }
 }
 
 impl UploadRequest {

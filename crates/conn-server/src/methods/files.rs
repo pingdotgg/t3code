@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use conn_contract::{
-    AssetCreateUrlInput, AssetResource, AttachmentDeleteInput,
+    AssetCreateUrlInput, AssetResource, AttachmentCreateUploadUrlInput, AttachmentDeleteInput,
     ExternalLauncherCommandNotFoundError, FilesystemBrowseInput, FilesystemGetMetadataInput,
     LaunchEditorInput, PersistChatAttachmentsInput, PersistChatAttachmentsResult,
     ProjectListEntriesInput, ProjectReadFileInput, ProjectSearchContentsInput,
@@ -367,9 +367,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let f = files.clone();
     table.unary(
         "attachments.createUploadUrl",
-        move |_, input: attachments::UploadRequest| {
+        move |_, input: AttachmentCreateUploadUrlInput| {
             let f = f.clone();
             async move {
+                let input = attachments::UploadRequest::from(input);
                 input.validate().map_err(Failure::die)?;
                 blocking(move || {
                     f.attachments

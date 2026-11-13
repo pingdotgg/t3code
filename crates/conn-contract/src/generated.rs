@@ -10269,7 +10269,7 @@ tagged_union! {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AttachmentCreateUploadUrlInputImageGifMimeType {
+pub enum AttachmentCreateUploadUrlInputImageMimeType {
     #[serde(rename = "image/gif")]
     ImageGif,
     #[serde(rename = "image/jpeg")]
@@ -10282,17 +10282,17 @@ pub enum AttachmentCreateUploadUrlInputImageGifMimeType {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AttachmentCreateUploadUrlInputImageGif {
+pub struct AttachmentCreateUploadUrlInputImage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#type: Option<lit::Image>,
     pub name: String,
-    pub mime_type: AttachmentCreateUploadUrlInputImageGifMimeType,
+    pub mime_type: AttachmentCreateUploadUrlInputImageMimeType,
     pub size_bytes: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AttachmentCreateUploadUrlInputUnknown {
+pub struct AttachmentCreateUploadUrlInputFile {
     pub r#type: lit::File,
     pub name: String,
     pub mime_type: String,
@@ -10300,12 +10300,13 @@ pub struct AttachmentCreateUploadUrlInputUnknown {
 }
 
 tagged_union! {
-    AttachmentCreateUploadUrlInput, "mimeType",
-    variants { ImageGif(AttachmentCreateUploadUrlInputImageGif), Unknown(AttachmentCreateUploadUrlInputUnknown) },
+    AttachmentCreateUploadUrlInput, "type",
+    variants { Image(AttachmentCreateUploadUrlInputImage), File(AttachmentCreateUploadUrlInputFile) },
     dispatch {
-        "image/gif" | "image/jpeg" | "image/png" | "image/webp" => [ImageGif(AttachmentCreateUploadUrlInputImageGif)],
+        "image" => [Image(AttachmentCreateUploadUrlInputImage)],
+        "file" => [File(AttachmentCreateUploadUrlInputFile)],
     },
-    fallback [Unknown(AttachmentCreateUploadUrlInputUnknown)]
+    fallback [Image(AttachmentCreateUploadUrlInputImage)]
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
