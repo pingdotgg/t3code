@@ -1113,11 +1113,17 @@ it.layer(
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribeOutput));
       yield* manager.open(openInput({ terminalId: "typed" }));
       yield* manager.open(openInput({ terminalId: "echoed" }));
-      const [typed, echoed] = ptyAdapter.processes;
+      yield* manager.open(openInput({ terminalId: "held" }));
+      const [typed, echoed, held] = ptyAdapter.processes;
       duringCheck = (pid) =>
-        pid === typed!.pid
+        pid === typed!.pid || pid === held!.pid
           ? manager
-              .write({ threadId: "thread-1", terminalId: "typed", data: "make build\r" })
+              .write({
+                threadId: "thread-1",
+                terminalId: pid === typed!.pid ? "typed" : "held",
+                data: "make build\r",
+                afterShellStartup: pid === held!.pid,
+              })
               .pipe(Effect.orDie)
           : Effect.gen(function* () {
               echoed!.emitData("make build\r\n");
@@ -1126,7 +1132,8 @@ it.layer(
 
       yield* manager.closeIdle({ threadId: "thread-1" });
 
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([false, false]);
+      expect(held!.writes).toEqual([]);
+      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([false, false, false]);
     }),
   );
 

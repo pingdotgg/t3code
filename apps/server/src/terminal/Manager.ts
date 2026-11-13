@@ -3514,11 +3514,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
       });
     }
+    session.inputCount += 1;
     if (input.afterShellStartup === true && session.heldWrites !== null) {
       session.heldWrites.push(input.data);
       return;
     }
-    session.inputCount += 1;
     yield* Effect.try({
       try: () => process.write(input.data),
       catch: (cause) =>
