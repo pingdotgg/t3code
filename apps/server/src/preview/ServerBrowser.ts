@@ -111,6 +111,8 @@ const SCREENCAST_MOTION_WINDOW_MS = 300;
 const SCREENCAST_MOTION_QUALITY = 50;
 const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
+// A viewer still is best-effort; a capture Chromium never answers must not hold the capture lock.
+const VIEWER_STILL_TIMEOUT_MS = 2_000;
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
@@ -158,6 +160,8 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
+// Status reads run in the renderer; a busy page must not hold a status past the broker's grace.
+const STATUS_READ_MS = 250;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
 const ACTION_TIMELINE_LIMIT = 50;
 
@@ -1821,6 +1825,14 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const withinStatusDeadline = <A>(read: Promise<A>, late: () => A): Promise<A> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<A>((resolve) => {
+      timer = setTimeout(() => resolve(late()), STATUS_READ_MS);
+    });
+    return Promise.race([read, deadline]).finally(() => clearTimeout(timer));
+  };
+
   const statusWithTitle = async (
     tab: ServerTab | undefined,
     agentSessionId?: string,
@@ -1837,14 +1849,26 @@ const make = Effect.gen(function* () {
       };
     }
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
-    const viewport = tab.desktop ? await desktopStatusViewport(tab) : tab.page.viewportSize();
     const loadError = loadErrorOf(tab);
-    const status = {
+    const statusUrl = loadError?.url ?? (url === "about:blank" ? null : url);
+    const [viewport, title] = await Promise.all([
+      // A late measurement still lands in desktopViewport for the next status.
+      tab.desktop
+        ? withinStatusDeadline(desktopStatusViewport(tab), () => tab.desktopViewport)
+        : tab.page.viewportSize(),
+      statusUrl === null || tab.dialog
+        ? null
+        : withinStatusDeadline(
+            tab.page.title().catch(() => ""),
+            () => "",
+          ).then((title) => title || null),
+    ]);
+    return {
       available: true,
       visible: isVisible(tab),
       tabId: tab.tabId,
-      url: loadError?.url ?? (url === "about:blank" ? null : url),
-      title: null,
+      url: statusUrl,
+      title,
       loading: tab.loading,
       ...(loadError ? { loadError } : {}),
       control: {
@@ -1882,8 +1906,6 @@ const make = Effect.gen(function* () {
         completedAt,
       })),
     };
-    if (status.url === null || tab.dialog) return status;
-    return { ...status, title: (await tab.page.title().catch(() => "")) || null };
   };
 
   const resolveNavigationUrl = (input: PreviewAutomationNavigateInput) => {
@@ -1901,20 +1923,22 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const navigation = tab.page.goto(url, {
-      timeout,
-      waitUntil:
-        readiness === "domContentLoaded"
-          ? "domcontentloaded"
-          : readiness === "none"
-            ? "commit"
-            : "load",
-    });
+    const startedAt = performance.now();
+    const navigation = tab.page.goto(url, { timeout, waitUntil: "commit" });
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
     }
-    await navigation.catch((cause: unknown) => {
+    // Once the target commits, a stalled subresource only delays readiness; report the loading tab.
+    const ready = () =>
+      tab.page
+        .waitForLoadState(readiness === "domContentLoaded" ? "domcontentloaded" : "load", {
+          timeout: Math.max(1, timeout - (performance.now() - startedAt)),
+        })
+        .catch((cause: unknown) => {
+          if (!(cause instanceof Error && cause.name === "TimeoutError")) throw cause;
+        });
+    await navigation.then(ready).catch((cause: unknown) => {
       const message = cause instanceof Error ? cause.message : String(cause);
       if (message.includes("Download is starting")) {
         throw new ServerBrowserPage.ServerBrowserOperationError({
@@ -2945,9 +2969,19 @@ const make = Effect.gen(function* () {
     broadcastControl(tab);
     pushFileChooser(tab);
     const pushStill = async () => {
-      const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
-      ).catch(() => null);
+      const data = await withCaptureLock(tab, async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(() => resolve(null), VIEWER_STILL_TIMEOUT_MS);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      }).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3005,7 +3039,7 @@ const make = Effect.gen(function* () {
     yield* Effect.promise(() => startScreencast(1));
     // An idle page does not repaint for a new screencast, so the viewer
     // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    if (!screencastStarted) yield* Effect.forkScoped(Effect.promise(pushStill));
     return {
       output,
       input: (raw: unknown) =>
