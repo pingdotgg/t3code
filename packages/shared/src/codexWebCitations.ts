@@ -7,7 +7,10 @@ import { unified } from "unified";
 export const CODEX_WEB_CITATION_START = "cite";
 const CITATION = /cite[^]*/gu;
 const ENDS_PHRASE = /[\s.,;:!?)\]}]/u;
-const EMPTIES_WITH_ITS_TEXT = new Set(["emphasis", "strong", "delete"]);
+const DELIMITED = new Set(["emphasis", "strong", "delete"]);
+const DELIMITER = /[*_~]/u;
+const PUNCTUATION = /[\p{P}\p{S}]/u;
+const WORD_JOINER = "\u2060";
 
 interface MarkdownNode {
   type: string;
@@ -21,6 +24,11 @@ interface SourceEdit {
   readonly start: number;
   readonly end: number;
   readonly text: string;
+}
+
+interface SourceRange {
+  readonly start: number;
+  readonly end: number;
 }
 
 interface SourceRewrite {
@@ -48,14 +56,52 @@ function withoutCitations(text: string, first: boolean, last: boolean): string {
   return kept + text.slice(cursor);
 }
 
+function isWordCharacter(character: string | undefined): boolean {
+  return character !== undefined && !/\s/u.test(character) && !PUNCTUATION.test(character);
+}
+
+/**
+ * A delimiter with punctuation inside it and a word character outside is literal text. A marker
+ * at that edge was what kept the delimiter working, so an invisible word joiner takes its place.
+ */
+function keepingDelimiters(
+  shown: string,
+  text: string,
+  range: SourceRange,
+  parent: SourceRange,
+  source: string,
+  first: boolean,
+  last: boolean,
+): string {
+  let kept = shown;
+  if (last && text.endsWith("\uE201")) {
+    let outside = parent.end;
+    while (DELIMITER.test(source[outside] ?? "")) outside += 1;
+    const inside = shown.at(-1) ?? source[range.start - 1] ?? "";
+    if (PUNCTUATION.test(inside) && isWordCharacter(source[outside])) kept += WORD_JOINER;
+  }
+  if (first && text.startsWith(CODEX_WEB_CITATION_START)) {
+    let outside = parent.start - 1;
+    while (DELIMITER.test(source[outside] ?? "")) outside -= 1;
+    const inside = shown[0] ?? source[range.end] ?? "";
+    if (PUNCTUATION.test(inside) && isWordCharacter(source[outside])) kept = WORD_JOINER + kept;
+  }
+  return kept;
+}
+
+function sourceRange(node: MarkdownNode): SourceRange | undefined {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  return start === undefined || end === undefined ? undefined : { start, end };
+}
+
 // Only text nodes are edited, so a marker written in code stays literal. With `rewrite`, text is
 // read from the source instead of the node, whose value has escapes and references resolved.
 function hideCitations(parent: MarkdownNode, rewrite?: SourceRewrite): void {
   const children = parent.children ?? [];
+  const parentRange = DELIMITED.has(parent.type) ? sourceRange(parent) : undefined;
   parent.children = children.filter((child, index) => {
-    const start = child.position?.start.offset;
-    const end = child.position?.end.offset;
-    const range = start === undefined || end === undefined ? undefined : { start, end };
+    const range = sourceRange(child);
 
     if (child.type === "text") {
       const text = rewrite
@@ -64,9 +110,18 @@ function hideCitations(parent: MarkdownNode, rewrite?: SourceRewrite): void {
           : ""
         : child.value;
       if (!text?.includes(CODEX_WEB_CITATION_START)) return true;
-      const shown = withoutCitations(text, index === 0, index === children.length - 1);
+      const first = index === 0;
+      const last = index === children.length - 1;
+      const shown = withoutCitations(text, first, last);
       child.value = shown;
-      if (range) rewrite?.edits.push({ ...range, text: shown });
+      if (rewrite && range) {
+        rewrite.edits.push({
+          ...range,
+          text: parentRange
+            ? keepingDelimiters(shown, text, range, parentRange, rewrite.source, first, last)
+            : shown,
+        });
+      }
       return shown !== "";
     }
 
@@ -78,7 +133,7 @@ function hideCitations(parent: MarkdownNode, rewrite?: SourceRewrite): void {
 
     const editsBefore = rewrite?.edits.length ?? 0;
     hideCitations(child, rewrite);
-    if (child.children.length > 0 || !EMPTIES_WITH_ITS_TEXT.has(child.type)) return true;
+    if (child.children.length > 0 || !DELIMITED.has(child.type)) return true;
     // Empty delimiters would show as literal asterisks.
     if (rewrite && range) {
       rewrite.edits.length = editsBefore;

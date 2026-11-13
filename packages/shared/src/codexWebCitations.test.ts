@@ -17,12 +17,13 @@ interface TestNode {
   readonly children?: ReadonlyArray<TestNode>;
 }
 
-// Positions and text node boundaries differ between a displayed tree and a reparsed copy;
-// structure and text must not.
+// Positions and text node boundaries differ between a displayed tree and a reparsed copy, and a
+// copy can carry an invisible word joiner; structure and visible text must not differ.
 function shape(node: TestNode): TestNode {
   const children: Array<TestNode> = [];
   for (const child of (node.children ?? []).map(shape)) {
     const previous = children.at(-1);
+    if (child.type === "text" && child.value === "") continue;
     if (child.type === "text" && previous?.type === "text") {
       children[children.length - 1] = { type: "text", value: `${previous.value}${child.value}` };
     } else {
@@ -31,7 +32,7 @@ function shape(node: TestNode): TestNode {
   }
   return {
     type: node.type,
-    ...(node.value === undefined ? {} : { value: node.value }),
+    ...(node.value === undefined ? {} : { value: node.value.replaceAll("\u2060", "") }),
     ...(node.url === undefined ? {} : { url: node.url }),
     ...(node.children === undefined ? {} : { children }),
   };
@@ -57,6 +58,22 @@ describe("Codex web-search citation markers", () => {
       "closing bold before a link",
       `**Result ${CITE}**[next](https://a.dev)`,
       "**Result**[next](https://a.dev)",
+    ],
+    ["closing bold after punctuation", `**Result. ${CITE}** next`, "**Result.** next"],
+    [
+      "closing bold between punctuation and a word",
+      `**Result. ${CITE}**next`,
+      "**Result.\u2060**next",
+    ],
+    [
+      "closing bold between a link and a word",
+      `**[docs](https://a.dev) ${CITE}**next`,
+      "**[docs](https://a.dev)\u2060**next",
+    ],
+    [
+      "opening bold between a word and punctuation",
+      `word**${CITE} (Result)** next`,
+      "word**\u2060(Result)** next",
     ],
     ["opening bold", `**${CITE} Result** next`, "**Result** next"],
     ["after inline code inside bold", `**Use \`npm\` ${CITE}** now`, "**Use `npm`** now"],
