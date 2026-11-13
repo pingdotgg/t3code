@@ -138,6 +138,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestUnavailableError,
   PullRequestWatchService.PullRequestNotOpenError,
   PullRequestWatchService.PullRequestWatchFromSubagentError,
+  PullRequestWatchService.PullRequestUnwatchableError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
 ]);
