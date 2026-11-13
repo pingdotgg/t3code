@@ -24,6 +24,7 @@ import * as Context from "effect/Context";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -38,6 +39,52 @@ import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
+
+const readSynthesisBody = Effect.fn("CloudSpeech.readSynthesisBody")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+  provider: SpeechSynthesisProvider,
+  limit: number,
+) {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const unavailable = () => new SpeechSynthesisError({ provider, reason: "unavailable" });
+  yield* response.stream.pipe(
+    Stream.runForEach((chunk) => {
+      size += chunk.byteLength;
+      if (size > limit) return Effect.fail(unavailable());
+      chunks.push(chunk);
+      return Effect.void;
+    }),
+    Effect.mapError(unavailable),
+  );
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+});
+
+const decodeXaiSynthesisCatalog = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ voices: Schema.Array(Schema.Struct({ voice_id: Schema.String })) }),
+  ),
+);
+
+const decodeOpenRouterSynthesisCatalog = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          name: Schema.optionalKey(Schema.String),
+          supported_voices: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+        }),
+      ),
+    }),
+  ),
+);
 
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
@@ -253,9 +300,9 @@ export const layer = Layer.effect(
             ),
           ).pipe(Effect.mapError(unavailable));
           if (response.status !== 200) return yield* unavailable();
-          const catalog = yield* HttpClientResponse.schemaBodyJson(
-            Schema.Struct({ voices: Schema.Array(Schema.Struct({ voice_id: Schema.String })) }),
-          )(response).pipe(Effect.mapError(unavailable));
+          const catalog = yield* decodeXaiSynthesisCatalog(
+            new TextDecoder().decode(yield* readSynthesisBody(response, provider, 1024 * 1024)),
+          ).pipe(Effect.mapError(unavailable));
           return {
             models: [
               {
@@ -271,17 +318,9 @@ export const layer = Layer.effect(
           HttpClientRequest.get("https://openrouter.ai/api/v1/models?output_modalities=speech"),
         ).pipe(Effect.mapError(unavailable));
         if (response.status !== 200) return yield* unavailable();
-        const catalog = yield* HttpClientResponse.schemaBodyJson(
-          Schema.Struct({
-            data: Schema.Array(
-              Schema.Struct({
-                id: Schema.String,
-                name: Schema.optionalKey(Schema.String),
-                supported_voices: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
-              }),
-            ),
-          }),
-        )(response).pipe(Effect.mapError(unavailable));
+        const catalog = yield* decodeOpenRouterSynthesisCatalog(
+          new TextDecoder().decode(yield* readSynthesisBody(response, provider, 1024 * 1024)),
+        ).pipe(Effect.mapError(unavailable));
         return {
           models: catalog.data.map((model) => ({
             id: model.id,
@@ -338,8 +377,11 @@ export const layer = Layer.effect(
             ? (yield* openRouterSpeechModels).models.find((model) => model.id === request.model)
                 ?.voices[0]
             : undefined);
-        // OpenRouter's MiniMax adapter only emits MP3; all other adapters accept PCM.
-        const format = request.model.startsWith("minimax/") ? "mp3" : "pcm";
+        // MiniMax and Voxtral reject PCM on OpenRouter.
+        const format =
+          request.model.startsWith("minimax/") || request.model.startsWith("mistralai/voxtral-")
+            ? "mp3"
+            : "pcm";
         const body =
           provider === "chatgpt"
             ? { text: request.text }
@@ -401,9 +443,7 @@ export const layer = Layer.effect(
                       ? "rate-limit"
                       : "unavailable",
           });
-        const bytes = new Uint8Array(
-          yield* response.arrayBuffer.pipe(Effect.mapError(unavailable)),
-        );
+        const bytes = yield* readSynthesisBody(response, provider, MAX_SYNTHESIS_BYTES);
         if (!bytes.length || bytes.length > MAX_SYNTHESIS_BYTES) return yield* unavailable();
         if (format === "pcm" && provider === "openrouter") {
           const contentType = response.headers["content-type"] ?? "";

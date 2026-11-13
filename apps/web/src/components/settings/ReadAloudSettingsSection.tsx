@@ -446,7 +446,7 @@ export function ReadAloudSettingsSection() {
                 size="sm"
                 variant="outline"
                 onClick={() =>
-                  state.id === "read-aloud-preview"
+                  state.id === "read-aloud-preview" && state.status !== "error"
                     ? readAloudController.stop()
                     : void readAloudController.start(
                         "read-aloud-preview",

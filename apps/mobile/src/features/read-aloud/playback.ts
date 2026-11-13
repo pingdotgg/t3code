@@ -74,6 +74,10 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   );
   return {
     play: async () => {
+      if (!settings.backgroundPlayback && AppState.currentState !== "active") {
+        readAloudController.pause();
+        return;
+      }
       await session.play();
       if (!session.requested) throw new Error("Finish recording before reading aloud.");
     },
@@ -143,6 +147,10 @@ export const readAloudController = createReadAloudController(async (text, settin
   });
   return {
     play: async () => {
+      if (!settings.backgroundPlayback && AppState.currentState !== "active") {
+        readAloudController.pause();
+        return;
+      }
       if (settings.backgroundPlayback)
         player.setActiveForLockScreen(true, { title: "T3 Code", artist: "Read aloud" });
       await session.play();

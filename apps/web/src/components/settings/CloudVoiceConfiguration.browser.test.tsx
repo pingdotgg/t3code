@@ -15,30 +15,34 @@ vi.mock("../../env", async (original) => ({
   ...(await original<typeof import("../../env")>()),
   isSecretsFeatureEnabled: true,
 }));
-vi.mock("../../state/environments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../state/environments")>()),
-  useEnvironments: () => ({
-    environments: [
-      {
-        environmentId: "voice-host",
-        label: "Laptop",
-        connection: { phase: "available" },
-        serverConfig: {
-          secretReferences: true,
-          settings: {
-            secretProviders: {
-              work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
+vi.mock("../../state/environments", async (importOriginal) => {
+  const presentationById = new Map();
+  return {
+    ...(await importOriginal<typeof import("../../state/environments")>()),
+    useEnvironments: () => ({
+      presentationById,
+      environments: [
+        {
+          environmentId: "voice-host",
+          label: "Laptop",
+          connection: { phase: "available" },
+          serverConfig: {
+            secretReferences: true,
+            settings: {
+              secretProviders: {
+                work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
+              },
+            },
+            environment: {
+              platform: { os: "linux", arch: "x64" },
+              capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
             },
           },
-          environment: {
-            platform: { os: "linux", arch: "x64" },
-            capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
-          },
         },
-      },
-    ],
-  }),
-}));
+      ],
+    }),
+  };
+});
 
 const id = EnvironmentId.make("voice-host");
 const grantKey = "t3code:voice-audio-grant:v1";
