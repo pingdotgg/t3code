@@ -807,6 +807,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       generation: current.generation + 1,
       entry: null,
     }));
+    // Account and endpoint changes also expire the GLM reading. The signed-out reader path must
+    // not: its own refresh would read again and loop.
+    const invalidateAccountCaches = invalidateEnrichmentCache.pipe(
+      Effect.andThen(glmUsageCache === null ? Effect.void : glmUsageCache.invalidate),
+    );
     const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       baseSnapshot: ServerProvider,
     ) {
@@ -1018,7 +1023,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .set(authenticated)
           .pipe(
             Effect.andThen(authenticated ? Effect.void : clearLiveState),
-            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateAccountCaches)),
             Effect.andThen(snapshot.refresh),
             Effect.asVoid,
           ),
@@ -1032,7 +1037,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       invalidate: (controller.invalidate ?? Effect.void).pipe(
         Effect.andThen(confirmedAuthentication.set(false)),
         Effect.andThen(clearLiveState),
-        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateAccountCaches)),
         Effect.andThen(snapshot.refresh),
         Effect.asVoid,
       ),
@@ -1101,7 +1106,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               baseUrl,
               ...(headers === undefined ? {} : { headers }),
             }),
-          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache))),
+          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateAccountCaches))),
         disableProvider: ({ cwd, providerId }) =>
           provideAcpManagementServices(
             disableAcpRegistryProvider({
@@ -1111,7 +1116,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               environment: processEnvironment,
               providerId,
             }),
-          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache))),
+          ).pipe(Effect.tap(() => liveSnapshotSemaphore.withPermit(invalidateAccountCaches))),
         logout: (cwd) => {
           const logout = logoutAcpRegistry({
             instanceId,
@@ -1125,7 +1130,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.tap(() => confirmedAuthentication.set(false)),
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
-                invalidateEnrichmentCache.pipe(
+                invalidateAccountCaches.pipe(
                   Effect.andThen(
                     Option.isSome(runtimeCoordinator)
                       ? Effect.all(
