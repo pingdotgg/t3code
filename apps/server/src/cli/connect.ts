@@ -141,44 +141,8 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-interface CloudCliStatus {
-  readonly desired: boolean;
-  readonly authenticated: boolean;
-  readonly linked: boolean;
-  readonly revoked: boolean;
-  readonly cloudUserId: string | null;
-  readonly relayUrl: string | null;
-  readonly publishAgentActivity: boolean;
-  readonly relayClient: RelayClient.RelayClientStatus;
-  readonly linkMode: CliState.CliDesiredLinkMode;
-  /** `null` when no server answered the live check, or none ran because no tunnel is wanted. */
-  readonly reachability: EnvironmentConnectReachability | null;
-}
-
-function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): ReadonlyArray<string> {
-  switch (executable.status) {
-    case "available": {
-      const source =
-        executable.source === "path"
-          ? "PATH"
-          : executable.source === "managed"
-            ? "managed install"
-            : "configured override";
-      return [
-        `  Relay client: available via ${source}`,
-        `    Path: ${executable.executablePath}`,
-        `    Version: ${executable.version}`,
-      ];
-    }
-    case "missing":
-      return ["  Relay client: not installed"];
-    case "unsupported":
-      return [
-        `  Relay client: unsupported on ${executable.platform}-${executable.arch}`,
-        `    Managed version: ${executable.version}`,
-      ];
-  }
-}
+import { formatRelayClientStatus } from "./connectFormat.ts";
+import type { CloudCliStatus } from "./connectFormat.ts";
 
 function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
   if (options?.json) {

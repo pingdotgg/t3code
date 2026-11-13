@@ -99,25 +99,7 @@ const anchoredToastManager = createBufferedToastManager();
 type ToastId = ReturnType<typeof toastManager.add>;
 const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 
-const TOAST_ICONS = {
-  error: CircleAlertIcon,
-  info: InfoIcon,
-  loading: Spinner,
-  success: CircleCheckIcon,
-  warning: TriangleAlertIcon,
-} as const;
-
-const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 180;
-function errorDescriptionClampClass(type: unknown, description: unknown): string | undefined {
-  if (type !== "error" || typeof description !== "string") {
-    return undefined;
-  }
-  if (description.length < ERROR_DESCRIPTION_CLAMP_MIN_CHARS) {
-    return undefined;
-  }
-  return "line-clamp-4";
-}
-
+import { TOAST_ICONS, errorDescriptionClampClass } from "./toastChrome.ts";
 const toastCornerDismissClass = "absolute z-20 -top-1.5 -right-1.5";
 const toastCornerOrbClass = cn(
   "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/60 bg-popover/92 text-muted-foreground shadow-sm outline-none backdrop-blur-sm",
