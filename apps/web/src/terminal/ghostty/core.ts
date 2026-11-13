@@ -162,7 +162,7 @@ export interface GhosttyMouseInput {
   readonly anyButtonPressed: boolean;
 }
 
-const decoder = new TextDecoder();
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 const encoder = new TextEncoder();
 
 function blend(foreground: GhosttyColor, background: GhosttyColor): GhosttyColor {

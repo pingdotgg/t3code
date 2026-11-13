@@ -355,6 +355,15 @@ export interface SourceControlDefinition {
    * host of the change request the media is shown in, for a host this definition cannot name.
    */
   readonly mediaUrl?: (url: URL, knownHost?: string) => SourceControlMediaUrl | null;
+  /**
+   * A URL `mediaUrl` claims for the bytes of `path` at full commit `sha` in the repository at
+   * `repositoryUrl`. Null or absent when the host cannot serve one.
+   */
+  readonly rawFileUrl?: (input: {
+    readonly repositoryUrl: string;
+    readonly sha: string;
+    readonly path: string;
+  }) => string | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
