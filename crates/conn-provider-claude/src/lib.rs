@@ -87,6 +87,10 @@ impl Provider for ClaudeProvider {
         })
     }
 
+    fn server_provider_entry(&self, checked_at: &str) -> Option<Value> {
+        Some(server_provider_entry(self.instance_id.as_str(), checked_at))
+    }
+
     fn open_session(
         &self,
         input: OpenSessionInput,
