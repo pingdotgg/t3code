@@ -43,6 +43,8 @@ export function resolveSessionCookieName(input: {
   return `${SESSION_COOKIE_NAME}_${input.port}_${instanceHash}`;
 }
 
+export const secureCookieName = (name: string) => `__Secure-${name}`;
+
 export function resolveLegacySessionCookieName(input: {
   readonly mode: "web" | "desktop";
   readonly host: string | undefined;

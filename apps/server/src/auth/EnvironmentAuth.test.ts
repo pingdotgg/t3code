@@ -100,10 +100,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         >[0];
 
         const authenticated = yield* serverAuth.authenticateHttpRequest(request);
+        // HTTPS can't expire a plain http:// session cookie, so the HTTPS dev session must outrank it.
+        const overHttps = yield* serverAuth.authenticateHttpRequest({
+          cookies: {
+            [sessions.cookieName]: scopedExchange.sessionToken,
+            [`__Secure-${devExchange.cookieName}`]: devExchange.sessionToken,
+          },
+          headers: {},
+        } as never);
         expect(devExchange.cookieName).toMatch(/^t3_dev_session_/);
         expect(devExchange.expireNormalCookie).toBe(true);
         expect(devExchange.response).toMatchObject(authScopeResponse(AuthStandardClientScopes));
         expect(authenticated.scopes).toEqual(["orchestration:read"]);
+        expect(overHttps.scopes).toEqual(AuthStandardClientScopes);
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({
@@ -283,6 +292,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         } as never);
 
         expect(verified.sessionId).toBe(bearer.sessionId);
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
+    it.effect("prefers the __Secure- session cookie and falls back to the plain one", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const tls = yield* serverAuth.issueSession();
+        const plaintext = yield* serverAuth.issueSession();
+        const both = yield* serverAuth.authenticateHttpRequest({
+          cookies: {
+            [sessions.cookieName]: plaintext.token,
+            [`__Secure-${sessions.cookieName}`]: tls.token,
+          },
+          headers: {},
+        } as never);
+        const plainOnly = yield* serverAuth.authenticateHttpRequest({
+          cookies: { [sessions.cookieName]: plaintext.token },
+          headers: {},
+        } as never);
+
+        expect(both.sessionId).toBe(tls.sessionId);
+        expect(plainOnly.sessionId).toBe(plaintext.sessionId);
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
