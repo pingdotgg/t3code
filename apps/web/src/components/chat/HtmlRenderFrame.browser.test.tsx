@@ -38,4 +38,20 @@ describe("HtmlRenderFrame", () => {
     await screen.unmount();
     expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
   });
+
+  it("keeps the inline page's document when it opens full screen", async () => {
+    await using screen = await render(
+      <HtmlRenderFrame
+        environmentId={EnvironmentId.make("environment")}
+        htmlRender={{ attachmentId: "attachment", title: "Report", height: 200 }}
+        threadRef={undefined}
+      />,
+    );
+    const inline = document.querySelector('iframe[title="Report"]');
+
+    await userEvent.click(screen.getByRole("button", { name: "Open full screen" }));
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+
+    expect(document.querySelectorAll('iframe[title="Report"]')).toEqual([inline]);
+  });
 });
