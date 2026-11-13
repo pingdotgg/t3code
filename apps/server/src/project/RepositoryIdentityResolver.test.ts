@@ -391,6 +391,16 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* git(cwd, ["remote", "add", "ghe-parent", "https://ghe.example.com:8443/acme/web.git"]);
       yield* git(cwd, ["config", "remote.ghe-fork.gh-resolved", "acme/web"]);
       expect((yield* resolveFresh())?.locator.remoteName).toBe("ghe-parent");
+
+      // An SSH alias and the server it leads to are one host.
+      yield* git(cwd, ["config", "--unset", "remote.ghe-fork.gh-resolved"]);
+      yield* git(cwd, ["remote", "add", "alias-fork", "git@work:me/tool.git"]);
+      yield* git(cwd, ["remote", "add", "alias-parent", "git@code.example.test:acme/tool.git"]);
+      yield* git(cwd, ["config", "remote.alias-fork.gh-resolved", "acme/tool"]);
+      const aliased = yield* RepositoryIdentityResolver.make({
+        canonicalRemoteUrl: (url) => Effect.succeed(url.replace("@work:", "@code.example.test:")),
+      }).pipe(Effect.provide(ProcessRunner.layer));
+      expect((yield* aliased.resolve(cwd))?.locator.remoteName).toBe("alias-parent");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

@@ -79,6 +79,7 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
 function pickMarkedRemote(
   remotes: ReadonlyMap<string, string>,
   resolved: string,
+  canonicalUrls: ReadonlyMap<string, string>,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
   const marks = resolved.split("\n").flatMap((line) => {
     const match = /^remote\.(.+)\.gh-resolved\s+(\S+)$/u.exec(line.trim());
@@ -92,12 +93,14 @@ function pickMarkedRemote(
   if (!mark || others.length > 0) return null;
   if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: mark.remoteUrl };
   // Compare hosts with HTTP ports kept: one hostname can serve separate forges on two ports.
-  const host = parseGitRemoteHost(mark.remoteUrl)?.host;
+  // Two SSH aliases for one server are the same host.
+  const hostOf = (url: string) => parseGitRemoteHost(canonicalUrls.get(url) ?? url)?.host;
+  const host = hostOf(mark.remoteUrl);
   const markedPath = mark.value.toLowerCase();
   const [remoteName, remoteUrl] =
     [...remotes.entries()].find(
       ([, url]) =>
-        parseGitRemoteHost(url)?.host === host &&
+        hostOf(url) === host &&
         normalizeGitRemoteUrl(url).split("/").slice(1).join("/") === markedPath,
     ) ?? [];
   return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
@@ -106,8 +109,9 @@ function pickMarkedRemote(
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
   resolved: string,
+  canonicalUrls: ReadonlyMap<string, string>,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  const marked = pickMarkedRemote(remotes, resolved);
+  const marked = pickMarkedRemote(remotes, resolved, canonicalUrls);
   if (marked) return marked;
 
   for (const preferredRemoteName of ["upstream", "origin"] as const) {
@@ -299,14 +303,19 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     resolvedResult._tag === "Some" && resolvedResult.value.code === 0
       ? resolvedResult.value.stdout
       : "";
-  const remote = pickPrimaryRemote(remotes, resolved);
+  const canonicalUrls = new Map(
+    yield* Effect.forEach(new Set(remotes.values()), (url) =>
+      canonicalRemoteUrl(url).pipe(Effect.map((canonical) => [url, canonical] as const)),
+    ),
+  );
+  const remote = pickPrimaryRemote(remotes, resolved, canonicalUrls);
   if (!remote) return null;
   const originUrl = remotes.get("origin");
   return buildRepositoryIdentity({
     ...remote,
-    canonicalRemoteUrl: yield* canonicalRemoteUrl(remote.remoteUrl),
+    canonicalRemoteUrl: canonicalUrls.get(remote.remoteUrl) ?? remote.remoteUrl,
     originUrl,
-    canonicalOriginUrl: originUrl === undefined ? undefined : yield* canonicalRemoteUrl(originUrl),
+    canonicalOriginUrl: originUrl === undefined ? undefined : canonicalUrls.get(originUrl),
     rootPath: cacheKey.rootPath,
   });
 });
