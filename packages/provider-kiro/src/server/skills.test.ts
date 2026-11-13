@@ -64,6 +64,21 @@ describe("discoverKiroSkills", () => {
       );
       assert.equal(skills[0]?.path, path.join(workspaceRoot, "shared", "SKILL.md"));
       assert.isTrue(skills.every((entry) => entry.enabled));
+
+      // With KIRO_HOME set, Kiro reads `$KIRO_HOME/skills` and not `~/.kiro/skills`.
+      const kiroHome = path.join(home, "other-account");
+      yield* write(path.join(kiroHome, "skills"), "relocated", skill("relocated", "in KIRO_HOME"));
+      const relocated = yield* discoverKiroSkills({
+        cwd: repo,
+        environment: { HOME: home, KIRO_HOME: kiroHome },
+      });
+      assert.deepEqual(
+        relocated.map(({ name, scope }) => ({ name, scope })),
+        [
+          { name: "relocated", scope: "user" },
+          { name: "parent", scope: "project" },
+        ],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

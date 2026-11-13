@@ -74,9 +74,10 @@ const readSkillsRoot = Effect.fn("KiroSkills.readSkillsRoot")(function* (
 });
 
 /**
- * The skills a Kiro session in `cwd` loads: `~/.kiro/skills`, then the
- * workspace's own `.kiro/skills` (Kiro reads no parent folder). A later
- * skill replaces a same-named earlier one in its place, as in Kiro's list.
+ * The skills a Kiro session in `cwd` loads: `~/.kiro/skills` (`KIRO_HOME`
+ * replaces `~/.kiro`), then the workspace's own `.kiro/skills` (Kiro reads no
+ * parent folder). A later skill replaces a same-named earlier one in its
+ * place, as in Kiro's list.
  */
 export const discoverKiroSkills = Effect.fn("discoverKiroSkills")(function* (input: {
   readonly cwd: string;
@@ -87,12 +88,13 @@ export const discoverKiroSkills = Effect.fn("discoverKiroSkills")(function* (inp
     input.environment.HOME?.trim() ||
     input.environment.USERPROFILE?.trim() ||
     (yield* HostProcess.HomeDirectory);
+  const kiroHome = input.environment.KIRO_HOME?.trim() || path.join(home, ".kiro");
   const skills = new Map<string, ServerProviderSkill>();
-  for (const [base, scope] of [
-    [home, "user"],
-    [input.cwd, "project"],
+  for (const [kiroFolder, scope] of [
+    [kiroHome, "user"],
+    [path.join(input.cwd, ".kiro"), "project"],
   ] as const) {
-    for (const skill of yield* readSkillsRoot(path.join(base, ".kiro", "skills"), scope)) {
+    for (const skill of yield* readSkillsRoot(path.join(kiroFolder, "skills"), scope)) {
       skills.set(skill.name, skill);
     }
   }
