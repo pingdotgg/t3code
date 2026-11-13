@@ -131,7 +131,10 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
             </span>
           </span>
           <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            <SubagentElapsed agent={subagentGroupTiming(agents)} />
+            <SubagentElapsed
+              agent={subagentGroupTiming(agents)}
+              environmentId={ctx.activeThreadEnvironmentId}
+            />
           </span>
           <ChevronDownIcon
             aria-hidden

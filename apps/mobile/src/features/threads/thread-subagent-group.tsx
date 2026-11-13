@@ -26,6 +26,7 @@ import { subagentCardElapsed } from "./subagent-card-presentation";
 import { useEnvironments } from "../../state/environments";
 import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { WorkLogBlock } from "./work-log-layout";
@@ -35,10 +36,16 @@ import { useOpenThreadInspector } from "./thread-inspector-navigation";
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
 type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">;
 
-function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTiming> }) {
+function SubagentElapsed({
+  agents,
+  environmentId,
+}: {
+  readonly agents: ReadonlyArray<AgentTiming>;
+  readonly environmentId: EnvironmentId;
+}) {
   const live = agents.some((agent) => isActiveSubagentStatus(agent.status));
   const nowMs = useVisibleSecondClock(live);
-  const elapsed = subagentCardElapsed(agents, nowMs);
+  const elapsed = subagentCardElapsed(agents, toServerClock(environmentId, nowMs));
   return elapsed ? (
     <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
   ) : null;
@@ -178,7 +185,7 @@ export function ThreadSubagentGroup(props: {
               {summary}
             </Text>
           </View>
-          <SubagentElapsed agents={agents} />
+          <SubagentElapsed agents={agents} environmentId={props.environmentId} />
           <SymbolView
             name={expanded ? "chevron.up" : "chevron.down"}
             size={11}
@@ -232,7 +239,7 @@ export function ThreadSubagentGroup(props: {
                   environmentId={props.environmentId}
                   subagent={agent}
                   canOpenRemote={target !== null}
-                  elapsed={<SubagentElapsed agents={[agent]} />}
+                  elapsed={<SubagentElapsed agents={[agent]} environmentId={props.environmentId} />}
                 />
               </Pressable>
             );

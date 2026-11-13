@@ -1,3 +1,4 @@
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import type {
   EnvironmentId,
   OrchestrationV2PendingBackgroundTask,
@@ -244,7 +245,10 @@ export function backgroundWorkNowItem(input: {
         {startedAtMs === null ? null : (
           <span
             ref={tickTextContent(
-              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs)),
+              (nowMs) =>
+                formatDuration(
+                  Math.max(1_000, toServerClock(input.environmentId, nowMs) - startedAtMs),
+                ),
               true,
             )}
             className="tabular-nums"

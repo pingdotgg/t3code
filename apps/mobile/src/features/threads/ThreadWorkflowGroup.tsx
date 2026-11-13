@@ -32,6 +32,7 @@ import {
   workflowRail,
   type WorkflowRailTone,
 } from "./threadAgentsPresentation";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 const RAIL_ICON = {
@@ -75,6 +76,7 @@ export function ThreadWorkflowGroup(props: {
               label={label}
               statusLabel={statusLabel}
               timing={group.workflow}
+              environmentId={props.environmentId}
               accessory={
                 rail.length > 0 ? (
                   <SymbolView
@@ -204,7 +206,7 @@ function WorkflowMemberRow(props: {
               {presentation.statusLabel}
             </Text>
           </View>
-          <WorkflowElapsed timing={member} />
+          <WorkflowElapsed timing={member} environmentId={props.environmentId} />
           {canOpen ? (
             <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
           ) : null}
@@ -256,9 +258,10 @@ function WorkflowHeaderLayout(props: {
   readonly label: string;
   readonly statusLabel: string;
   readonly timing: ElapsedTiming;
+  readonly environmentId: EnvironmentId;
   readonly accessory: ReactNode;
 }) {
-  const elapsed = useElapsedLabel(props.timing);
+  const elapsed = useElapsedLabel(props.timing, props.environmentId);
   return (
     <ListRowLayout
       icon="point.3.connected.trianglepath.dotted"
@@ -270,8 +273,11 @@ function WorkflowHeaderLayout(props: {
   );
 }
 
-function WorkflowElapsed(props: { readonly timing: ElapsedTiming }) {
-  const elapsed = useElapsedLabel(props.timing);
+function WorkflowElapsed(props: {
+  readonly timing: ElapsedTiming;
+  readonly environmentId: EnvironmentId;
+}) {
+  const elapsed = useElapsedLabel(props.timing, props.environmentId);
   return elapsed === null ? null : (
     <Text textRole="label" className="shrink-0 tabular-nums text-foreground-muted">
       {elapsed}
@@ -281,8 +287,8 @@ function WorkflowElapsed(props: { readonly timing: ElapsedTiming }) {
 
 type ElapsedTiming = Parameters<typeof deriveSubagentElapsedMs>[0];
 
-function useElapsedLabel(timing: ElapsedTiming): string | null {
+function useElapsedLabel(timing: ElapsedTiming, environmentId: EnvironmentId): string | null {
   const nowMs = useVisibleSecondClock(isActiveSubagentStatus(timing.status));
-  const elapsedMs = deriveSubagentElapsedMs(timing, nowMs);
+  const elapsedMs = deriveSubagentElapsedMs(timing, toServerClock(environmentId, nowMs));
   return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs);
 }

@@ -24,6 +24,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
 import { useEnvironments } from "../../state/environments";
 import { SubagentRow } from "./SubagentRow";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
@@ -151,7 +152,13 @@ function AgentRow(props: {
         environmentId={props.environmentId}
         subagent={subagent}
         canOpenRemote={target !== null}
-        elapsed={<AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />}
+        elapsed={
+          <AgentElapsed
+            subagent={subagent}
+            environmentId={props.environmentId}
+            tickSeconds={props.tickSeconds}
+          />
+        }
       />
     </View>
   );
@@ -190,9 +197,10 @@ function AgentRow(props: {
 
 function AgentElapsed(props: {
   readonly subagent: OrchestrationV2Subagent;
+  readonly environmentId: EnvironmentId;
   readonly tickSeconds: boolean;
 }) {
-  const elapsed = useSubagentElapsed(props.subagent, props.tickSeconds);
+  const elapsed = useSubagentElapsed(props.subagent, props.environmentId, props.tickSeconds);
   return elapsed === null ? null : (
     <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
   );
@@ -200,6 +208,7 @@ function AgentElapsed(props: {
 
 function useSubagentElapsed(
   subagent: Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">,
+  environmentId: EnvironmentId,
   tickSeconds: boolean,
 ): string | null {
   const running = isOrchestrationV2WorkActive(subagent.status);
@@ -210,7 +219,7 @@ function useSubagentElapsed(
       startedAt: subagent.startedAt === null ? null : DateTime.formatIso(subagent.startedAt),
       completedAt: subagent.completedAt === null ? null : DateTime.formatIso(subagent.completedAt),
     },
-    nowMs,
+    toServerClock(environmentId, nowMs),
   );
   return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs);
 }

@@ -3,7 +3,12 @@ import {
   type SubagentWorkflowGroup,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { ChevronDownIcon, SquareIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -51,6 +56,7 @@ function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
 
 function WorkflowMemberRow({
   member,
+  environmentId,
   providerInstanceId,
   provider,
   providers,
@@ -59,6 +65,7 @@ function WorkflowMemberRow({
   onOpen,
 }: {
   member: RuntimeSubagent;
+  environmentId: EnvironmentId;
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
   providers: ReadonlyArray<ServerProvider> | undefined;
@@ -92,7 +99,7 @@ function WorkflowMemberRow({
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (
             <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
-              <AgentElapsed agent={member} />
+              <AgentElapsed agent={member} environmentId={environmentId} />
             </span>
           ) : null}
         </TooltipTrigger>
@@ -106,7 +113,7 @@ function WorkflowMemberRow({
             provider={provider}
             providers={providers}
             driver={driver}
-            elapsed={<AgentElapsed agent={member} />}
+            elapsed={<AgentElapsed agent={member} environmentId={environmentId} />}
             status={member.status}
             result={member.result ?? member.error}
             progress={member.progress}
@@ -120,6 +127,7 @@ function WorkflowMemberRow({
 export function ThreadLineageWorkflowRow({
   group,
   header,
+  environmentId,
   providerInstanceId,
   provider,
   providers,
@@ -132,6 +140,7 @@ export function ThreadLineageWorkflowRow({
 }: {
   readonly group: SubagentWorkflowGroup;
   readonly header: ReactNode;
+  readonly environmentId: EnvironmentId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
   readonly providers: ReadonlyArray<ServerProvider> | undefined;
@@ -217,7 +226,7 @@ export function ThreadLineageWorkflowRow({
                         {phase.members.length === 1 ? "agent" : "agents"}
                       </span>
                       <span className="shrink-0 text-2xs font-normal tabular-nums empty:hidden">
-                        <AgentElapsed agent={phaseElapsed(phase)} />
+                        <AgentElapsed agent={phaseElapsed(phase)} environmentId={environmentId} />
                       </span>
                     </>
                   }
@@ -230,6 +239,7 @@ export function ThreadLineageWorkflowRow({
                       <WorkflowMemberRow
                         key={member.id}
                         member={member}
+                        environmentId={environmentId}
                         providerInstanceId={providerInstanceId}
                         provider={provider}
                         providers={providers}
@@ -247,6 +257,7 @@ export function ThreadLineageWorkflowRow({
             <WorkflowMemberRow
               key={member.id}
               member={member}
+              environmentId={environmentId}
               providerInstanceId={providerInstanceId}
               provider={provider}
               providers={providers}

@@ -168,7 +168,7 @@ function WorkflowMemberRow(props: {
           </span>
           {member.startedAt ? (
             <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              <AgentElapsed agent={member} />
+              <AgentElapsed agent={member} environmentId={props.environmentId} />
             </span>
           ) : null}
           {threadId !== null ? (
@@ -190,7 +190,7 @@ function WorkflowMemberRow(props: {
             )}
             providers={props.providers}
             driver={props.driver}
-            elapsed={<AgentElapsed agent={member} />}
+            elapsed={<AgentElapsed agent={member} environmentId={props.environmentId} />}
             status={member.status}
             result={member.result ?? member.error}
             progress={member.progress}
