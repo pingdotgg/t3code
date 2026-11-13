@@ -328,7 +328,9 @@ export function commitAutoSettleDaysField(field: AutoSettleDaysField): {
     return { field: { ...field, draft: String(current), dirty: false }, submit: null };
   }
   const settled = { ...field, draft: String(days), dirty: false };
-  if (days === current) return { field: settled, submit: null };
+  // An edit ending on the saved value is sent again: a save can land on the shown environment
+  // and fail on another, and retyping the number is how it is retried.
+  if (!field.dirty || days === field.pending) return { field: settled, submit: null };
   return { field: { ...settled, pending: days, revision: field.revision + 1 }, submit: days };
 }
 

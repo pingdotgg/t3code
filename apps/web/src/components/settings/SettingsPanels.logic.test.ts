@@ -127,6 +127,16 @@ describe("auto-settle days field", () => {
     expect(commitAutoSettleDaysField(type(rejectedWhileCleared, "30")).submit).toBe(30);
   });
 
+  it("retyping a value that saved on only some environments sends it again", () => {
+    const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
+    const partlySaved = failAutoSettleDaysField(
+      syncAutoSettleDaysField(submitted, 30),
+      submitted.revision,
+    );
+    expect(commitAutoSettleDaysField(partlySaved).submit).toBeNull();
+    expect(commitAutoSettleDaysField(type(partlySaved, "3", "30")).submit).toBe(30);
+  });
+
   it("returning to the saved value while another save is in flight saves it again", () => {
     const submitted = commitAutoSettleDaysField(type(autoSettleDaysField(14), "30")).field;
     const back = commitAutoSettleDaysField(type(submitted, "14"));
