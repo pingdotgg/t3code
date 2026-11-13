@@ -116,9 +116,19 @@ describe("ModelPreviews", () => {
         expect(large.geometry).toBeNull();
         expect((yield* fs.readFileString(runs)).trim().split("\n")).toHaveLength(2);
 
+        // A run that fails only to render still gives the 3D view its geometry.
+        const noRender = yield* fakeBlender("no-render", `printf 'ply' > "$1"; exit 1`);
+        yield* fs.writeFile(filePath, blendWithPixels([0, 0, 0, 255], [0, 0, 0, 255]));
+        const geometryOnly = yield* both(noRender);
+        expect(geometryOnly.png).toBeNull();
+        expect(yield* fs.readFileString(geometryOnly.geometry!)).toBe("ply");
+        expect((yield* fs.readFileString(runs)).trim().split("\n")).toHaveLength(3);
+
+        // A run that produces nothing is remembered, so the picture and the 3D view share one run.
         const failing = yield* fakeBlender("failing", "exit 1");
         yield* fs.writeFile(filePath, blendWithPixels([0, 0, 0, 255], [0, 0, 0, 255]));
         expect(yield* both(failing)).toEqual({ png: null, geometry: null });
+        expect((yield* fs.readFileString(runs)).trim().split("\n")).toHaveLength(4);
         expect(
           yield* Effect.gen(function* () {
             const previews = yield* ModelPreviews.ModelPreviews;

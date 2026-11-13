@@ -200,20 +200,26 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
 
   /**
    * Runs Blender once per file revision, keeping its render and geometry in `blenderDirectory`, and
-   * returns their paths, or `null` without Blender or when it drew nothing. Geometry is `null` past
-   * the 3D view's triangle limit. The render is written last, so it marks a finished run.
+   * returns their paths, or `null` when it produced neither. Geometry is `null` past the 3D view's
+   * triangle limit, and the render is `null` when only rendering failed, as it can on a host without
+   * a GPU context. A `.done` file written after both marks a finished run.
    */
-  const blenderOutputs = Effect.fn("ModelPreviews.blenderOutputs")(function* (key: CacheKey) {
-    const blender = yield* findBlender;
-    if (blender === null) return null;
+  const blenderOutputs = Effect.fn("ModelPreviews.blenderOutputs")(function* (
+    key: CacheKey,
+    blender: string,
+  ) {
     const name = NodeCrypto.createHash("sha256")
       .update(`${key.path}\0${key.revision}\0${blender}`)
       .digest("hex");
     const png = NodePath.join(blenderDirectory, `${name}.png`);
     const geometry = NodePath.join(blenderDirectory, `${name}.ply`);
+    const done = NodePath.join(blenderDirectory, `${name}.done`);
     const finished = Effect.gen(function* () {
-      if (!(yield* fileExists(png))) return null;
-      return { png, geometry: (yield* fileExists(geometry)) ? geometry : null };
+      if (!(yield* fileExists(done))) return null;
+      return {
+        png: (yield* fileExists(png)) ? png : null,
+        geometry: (yield* fileExists(geometry)) ? geometry : null,
+      };
     });
     const cached = yield* finished;
     if (cached) return cached;
@@ -227,7 +233,7 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
       // Another request may have run Blender while this one waited for it.
       const ready = yield* finished;
       if (ready) return ready;
-      const exitCode = yield* exportBlendWithBlender({
+      yield* exportBlendWithBlender({
         blender,
         source: key.path,
         geometry: `${temporary}.ply`,
@@ -235,7 +241,10 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
         maxTriangles: MODEL_VIEWER_MAX_TRIANGLES,
         size: BLENDER_RENDER_SIZE,
       }).pipe(Effect.mapError((cause) => new ModelPreviewReadError({ path: key.path, cause })));
-      if (exitCode !== 0 || !(yield* fileExists(`${temporary}.png`))) return null;
+      // Each output Blender wrote is complete, whatever its exit code.
+      const wrotePng = yield* fileExists(`${temporary}.png`);
+      const wroteGeometry = yield* fileExists(`${temporary}.ply`);
+      if (!wrotePng && !wroteGeometry) return null;
       const after = yield* Effect.tryPromise({
         try: () => NodeFSP.stat(key.path, { bigint: true }),
         catch: (cause) => new ModelPreviewReadError({ path: key.path, cause }),
@@ -245,8 +254,9 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
       }
       yield* Effect.tryPromise({
         try: async () => {
-          await NodeFSP.rename(`${temporary}.ply`, geometry).catch(() => undefined);
-          await NodeFSP.rename(`${temporary}.png`, png);
+          if (wroteGeometry) await NodeFSP.rename(`${temporary}.ply`, geometry);
+          if (wrotePng) await NodeFSP.rename(`${temporary}.png`, png);
+          await NodeFSP.writeFile(done, "");
         },
         catch: (cause) => new ModelPreviewReadError({ path: key.path, cause }),
       });
@@ -257,6 +267,7 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
         Effect.promise(() =>
           Promise.all([
             NodeFSP.rm(`${temporary}.ply`, { force: true }),
+            NodeFSP.rm(`${temporary}.ply.part`, { force: true }),
             NodeFSP.rm(`${temporary}.png`, { force: true }),
           ]),
         ),
@@ -265,17 +276,44 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
     );
   });
 
-  // Geometry requests run outside the cache, so they need the services captured here.
-  const blenderServices =
-    yield* Effect.context<Effect.Services<ReturnType<typeof blenderOutputs>>>();
+  // A run that produced nothing is remembered for this revision, so a file Blender cannot handle,
+  // or a Blender that fails on every file, does not start Blender again on every open. Only memory
+  // keeps it: fixing the Blender install and restarting tries again. Finished runs are on disk.
+  const blenderRuns = yield* Cache.makeWith(
+    (encoded: string) => {
+      const { key, blender } = JSON.parse(encoded) as { key: CacheKey; blender: string };
+      return blenderOutputs(key, blender);
+    },
+    {
+      capacity: CACHE_MAX_ENTRIES,
+      timeToLive: Exit.match({
+        onSuccess: (outputs) => (outputs === null ? CACHE_TTL : Duration.zero),
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+
+  /** Blender's outputs for this revision, or `null` without Blender or when it produced nothing. */
+  const blenderRun = (key: CacheKey) =>
+    findBlender.pipe(
+      Effect.flatMap((blender) =>
+        blender === null
+          ? Effect.succeed(null)
+          : Cache.get(blenderRuns, JSON.stringify({ key, blender })),
+      ),
+    );
+
+  // Geometry requests run outside the preview cache, so they need the services captured here.
+  const blenderServices = yield* Effect.context<Effect.Services<ReturnType<typeof blenderRun>>>();
 
   const renderWithBlender = (key: CacheKey) =>
-    blenderOutputs(key).pipe(
-      Effect.flatMap((outputs) =>
-        outputs === null
+    blenderRun(key).pipe(
+      Effect.map((outputs) => outputs?.png ?? null),
+      Effect.flatMap((png) =>
+        png === null
           ? Effect.succeed(null)
           : Effect.tryPromise({
-              try: () => NodeFSP.readFile(outputs.png),
+              try: () => NodeFSP.readFile(png),
               catch: (cause) => new ModelPreviewReadError({ path: key.path, cause }),
             }).pipe(Effect.map((bytes) => new Uint8Array(bytes))),
       ),
@@ -350,7 +388,7 @@ export const makeWith = Effect.fn("ModelPreviews.make")(function* (options: Mode
       if (modelPreviewFormat(path) !== "blend") return null;
       const key = yield* keyOf(path, "blend", identity);
       if (key === null) return null;
-      return (yield* blenderOutputs(key))?.geometry ?? null;
+      return (yield* blenderRun(key))?.geometry ?? null;
     },
     (effect, path) =>
       effect.pipe(

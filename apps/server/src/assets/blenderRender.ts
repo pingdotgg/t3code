@@ -5,8 +5,9 @@ const BLENDER_TIMEOUT = "60 seconds";
 
 // Exports the visible geometry for the 3D view, skipped past the triangle limit, then renders a
 // picture framed from the front right, 30 degrees up, like the mesh renderer. Exit 3: nothing to draw.
+// The geometry is renamed into place once complete, so it is kept even when the render fails.
 const SCRIPT = `
-import math, sys
+import math, os, sys
 import bpy
 import numpy as np
 from mathutils import Vector
@@ -48,7 +49,8 @@ if triangle_total == 0:
     sys.exit(3)
 if triangle_total <= limit:
     face = np.dtype([("count", "u1"), ("corners", "<u4", 3)])
-    with open(geometry_out, "wb") as file:
+    partial = geometry_out + ".part"
+    with open(partial, "wb") as file:
         file.write((
             "ply\\nformat binary_little_endian 1.0\\n"
             f"element vertex {vertex_total}\\n"
@@ -63,6 +65,7 @@ if triangle_total <= limit:
             rows["count"] = 3
             rows["corners"] = triangles
             file.write(rows.tobytes())
+    os.replace(partial, geometry_out)
 
 scene = bpy.context.scene
 if triangle_total <= limit:
@@ -132,12 +135,13 @@ const runBlenderScript = Effect.fn("ModelPreviews.runBlender")(function* (
         { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
       ),
     )
-    .pipe(Effect.timeout(BLENDER_TIMEOUT));
+    .pipe(Effect.timeoutOrElse({ duration: BLENDER_TIMEOUT, orElse: () => Effect.succeed(null) }));
 });
 
 /**
  * Writes the visible geometry of `source` to `geometry` as binary PLY for the 3D view, unless it has
- * over `maxTriangles`, and a PNG render to `png`; returns Blender's exit code.
+ * over `maxTriangles`, and a PNG render to `png`; returns Blender's exit code, or `null` when it ran
+ * out of time. Either output may exist after a failed run, and each one that exists is complete.
  */
 export const exportBlendWithBlender = (input: {
   readonly blender: string;
