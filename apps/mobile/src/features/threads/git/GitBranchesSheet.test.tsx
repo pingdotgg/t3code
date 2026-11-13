@@ -17,28 +17,20 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ goBack() {} }) }));
-vi.mock("react-native", () => ({
-  Platform: { OS: "android" },
-  useWindowDimensions: () => ({ height: 800 }),
-  View: ({ children }: { children: ReactNode }) => children,
-  ScrollView: ({ children }: { children: ReactNode }) => children,
-  Pressable: () => null,
-}));
-vi.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ bottom: 0 }),
-}));
 vi.mock("../../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
-vi.mock("../../../components/ui/ScreenContent", () => ({
-  ScreenContent: ({ children }: { children: ReactNode }) => children,
+vi.mock("../../../components/ui/FitSheet", () => ({
+  FitSheet: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("../../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../../components/ui/AppText", () => ({
-  AppText: ({ children }: { children: ReactNode }) => children,
-  AppTextInput: (props: InputProps) => {
+vi.mock("../../../components/ui/FormSection", () => ({
+  FormSection: ({ children }: { children: ReactNode }) => children,
+  FormField: (props: InputProps) => {
     state.inputs.set(props.accessibilityLabel, props);
     return null;
   },
 }));
+vi.mock("../../../components/ui/ListSection", () => ({ ListSection: () => null }));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("../../../state/query", () => ({
   useEnvironmentQuery: () => ({
     data: state.refName === null ? undefined : { refName: state.refName },
