@@ -348,6 +348,9 @@ function mergeClaudeStreamUsage(
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
+// One argv entry: Windows caps a whole command line at 32,767 characters and
+// Linux one argument at 128 KiB. Longer text stays in the SDK initialize request.
+const CLAUDE_APPEND_SYSTEM_PROMPT_ARG_MAX_LENGTH = 16_000;
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 const CLAUDE_BOOT_TIMEOUT = "5 minutes";
@@ -2006,8 +2009,6 @@ export function makeClaudeQueryOptions(input: {
     settings: _launchArgSettings,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
-  // Claude Code overwrites its CLI append text with the SDK's initialize
-  // appendSystemPrompt, so launch-argument text has to travel in that value.
   // The CLI puts file text before inline text and trims one trailing newline.
   const launchAppendSystemPrompt = [
     input.appendSystemPromptFileText?.replace(/\r?\n$/, ""),
@@ -2023,6 +2024,23 @@ export function makeClaudeQueryOptions(input: {
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
+  const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const appendSystemPrompt = [
+    buildRuntimeInstructions({ harness: "Claude Code" }) +
+      (input.mcpServers === undefined
+        ? ""
+        : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+          CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+          (deviceInstructions ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")),
+    ...launchAppendSystemPrompt,
+  ].join("\n\n");
+  // The SDK's initialize appendSystemPrompt replaces the CLI's append text, which
+  // drops what a launcher around the binary adds with --append-system-prompt-file.
+  // The CLI joins its file and inline flags, so T3's text goes in the inline one.
+  const appendAsLaunchArg =
+    appendSystemPrompt.length <= CLAUDE_APPEND_SYSTEM_PROMPT_ARG_MAX_LENGTH &&
+    !appendSystemPrompt.includes("\0");
+  if (appendAsLaunchArg) extraArgs["append-system-prompt"] = appendSystemPrompt;
   const selectionSettings =
     Object.keys(compiledSelection.settings).length === 0
       ? undefined
@@ -2073,7 +2091,6 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
-  const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2126,17 +2143,7 @@ export function makeClaudeQueryOptions(input: {
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
-      append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
-        ...launchAppendSystemPrompt,
-      ].join("\n\n"),
+      ...(appendAsLaunchArg ? {} : { append: appendSystemPrompt }),
     },
     ...(deviceInstructions
       ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }

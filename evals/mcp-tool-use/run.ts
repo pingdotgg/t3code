@@ -542,11 +542,13 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
 export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
-  if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
-    return systemPrompt.append;
-  }
-  throw new Error("makeClaudeQueryOptions no longer appends T3 text to a preset prompt.");
+  const { systemPrompt, extraArgs } = claudeQueryOptions(model, device, browser);
+  // Refs before the append moved to the CLI's inline flag carry it in the SDK preset.
+  const append =
+    extraArgs?.["append-system-prompt"] ??
+    (isRecord(systemPrompt) && systemPrompt.type === "preset" ? systemPrompt.append : undefined);
+  if (append) return append;
+  throw new Error("makeClaudeQueryOptions no longer appends T3 text to Claude's system prompt.");
 };
 
 /**

@@ -87,7 +87,7 @@ const toolHandlerServices = Layer.mergeAll(
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
 const claudeSystemAppend = () => {
-  const { systemPrompt } = makeClaudeQueryOptions({
+  const { extraArgs } = makeClaudeQueryOptions({
     modelSelection: {
       instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
       model: "claude-opus-5-5",
@@ -97,7 +97,7 @@ const claudeSystemAppend = () => {
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
   });
-  return typeof systemPrompt === "object" && "append" in systemPrompt ? systemPrompt.append : "";
+  return extraArgs?.["append-system-prompt"] ?? "";
 };
 
 const codexAdditionalContext = () =>
