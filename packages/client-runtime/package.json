@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./read-aloud": "./src/readAloud.ts",
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"

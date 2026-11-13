@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -23,6 +24,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(
@@ -106,6 +108,7 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
@@ -164,6 +167,7 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(
         CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
           Layer.provide(FetchHttpClient.layer),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),

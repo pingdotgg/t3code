@@ -1,3 +1,5 @@
+import { readAloudController } from "../read-aloud/playback";
+import { ReadAloudButton } from "../read-aloud/ReadAloudButton";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -2261,6 +2263,12 @@ function renderFeedEntry(
                 sourceTitle={props.threadTitle}
               />
             ) : null}
+            <ReadAloudButton
+              id={`${props.environmentId}:${props.threadId}:${message.id}`}
+              text={renderedText}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {timestampLabel}
             </Text>
@@ -2652,6 +2660,18 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 } as const;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Speech follows the thread rather than virtualized message rows and stops on navigation.
+  useEffect(
+    () => () => {
+      if (
+        readAloudController
+          .getSnapshot()
+          .id?.startsWith(`${props.environmentId}:${props.threadId}:`)
+      )
+        readAloudController.stop();
+    },
+    [props.environmentId, props.threadId],
+  );
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);

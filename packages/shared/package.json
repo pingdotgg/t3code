@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./read-aloud": "./src/readAloud.ts",
     "./pullRequestAnchor": {
       "types": "./src/pullRequestAnchor.ts",
       "import": "./src/pullRequestAnchor.ts"

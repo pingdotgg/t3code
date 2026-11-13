@@ -63,6 +63,7 @@ export function isAudioSessionOwner(token: AudioSessionToken): boolean {
 export function activateAudioSession(
   token: AudioSessionToken,
   nativePlayback = false,
+  backgroundPlayback = false,
 ): Promise<boolean> {
   return enqueue(async () => {
     if (!isAudioSessionOwner(token)) return false;
@@ -72,7 +73,7 @@ export function activateAudioSession(
       allowsRecording: token.kind === "recording",
       interruptionMode: "doNotMix",
       playsInSilentMode: true,
-      shouldPlayInBackground: false,
+      shouldPlayInBackground: backgroundPlayback,
     });
     if (!isAudioSessionOwner(token)) return false;
     await setIsAudioActiveAsync(true);
@@ -105,6 +106,7 @@ export function createAudioPlaybackSession(
   player: { play(): void; pause(deactivateSession?: boolean): void },
   nativePlayback = false,
   onRequestedChange?: (requested: boolean) => void,
+  backgroundPlayback = false,
 ) {
   let token: AudioSessionToken | null = null;
   const stopPlayer = () => {
@@ -141,7 +143,7 @@ export function createAudioPlaybackSession(
       if (!current) return;
       try {
         await prepare?.();
-        if (!(await activateAudioSession(current, nativePlayback))) return;
+        if (!(await activateAudioSession(current, nativePlayback, backgroundPlayback))) return;
         if (token !== current || !isAudioSessionOwner(current)) return;
         player.play();
       } catch (error) {

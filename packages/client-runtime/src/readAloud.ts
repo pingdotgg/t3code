@@ -1,0 +1,104 @@
+import type { ReadAloudSettings } from "@t3tools/contracts";
+import { readAloudText, splitReadAloudText } from "@t3tools/shared/read-aloud";
+
+export type SpeechPlayback = {
+  play: () => Promise<void>;
+  pause: () => void;
+  stop: () => void;
+  finished: Promise<void>;
+};
+
+export function createReadAloudController(
+  prepare: (
+    text: string,
+    settings: ReadAloudSettings,
+    signal: AbortSignal,
+  ) => Promise<SpeechPlayback>,
+) {
+  type State = {
+    id: string | null;
+    status: "idle" | "loading" | "playing" | "paused" | "error";
+    error?: string;
+  };
+  let state: State = { id: null, status: "idle" };
+  let active: AbortController | null = null;
+  let playback: SpeechPlayback | null = null;
+  const listeners = new Set<() => void>();
+  const publish = (next: State) => {
+    state = next;
+    for (const listener of listeners) listener();
+  };
+  const stop = () => {
+    active?.abort();
+    active = null;
+    playback?.stop();
+    playback = null;
+    publish({ id: null, status: "idle" });
+  };
+  return {
+    getSnapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    stop,
+    pause() {
+      if (state.status !== "playing") return;
+      publish({ ...state, status: "paused" });
+      playback?.pause();
+    },
+    async resume() {
+      if (state.status !== "paused" || !playback || !active) return;
+      const owner = active;
+      const id = state.id;
+      try {
+        await playback.play();
+        if (active === owner) publish({ ...state, status: "playing" });
+      } catch {
+        if (active === owner) {
+          stop();
+          publish({ id, status: "error", error: "Could not resume speech." });
+        }
+      }
+    },
+    async start(id: string, markdown: string, settings: ReadAloudSettings) {
+      stop();
+      if (settings.provider === "off") return;
+      const chunks = splitReadAloudText(readAloudText(markdown, settings.skipCodeBlocks));
+      if (!chunks.length) return;
+      const owner = new AbortController();
+      active = owner;
+      try {
+        for (const chunk of chunks) {
+          publish({ id, status: "loading" });
+          const next = await prepare(chunk, settings, owner.signal);
+          if (active !== owner) {
+            next.stop();
+            return;
+          }
+          playback = next;
+          // Playback can fail while the platform is still activating its audio session.
+          void next.finished.catch(() => {});
+          await next.play();
+          if (active !== owner) return;
+          publish({ id, status: "playing" });
+          await next.finished;
+          if (active !== owner) return;
+          next.stop();
+          playback = null;
+        }
+        if (active === owner) stop();
+      } catch (error) {
+        if (active !== owner) return;
+        stop();
+        publish({
+          id,
+          status: "error",
+          error: error instanceof Error ? error.message : "Could not read this response.",
+        });
+      }
+    },
+  };
+}
