@@ -166,8 +166,9 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
         text: "Use the smaller fix.",
         attachments: [],
         streaming: false,
-        createdBy: "user",
-        creationSource: "web",
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: ThreadId.make("thread:control-sender"),
         createdAt: now,
         updatedAt: now,
       },
@@ -278,6 +279,8 @@ it.effect.each(storageCases)(
       assert.instanceOf(missingThread, ProjectionStore.ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
+      const steered =
+        "[Sent by the agent in thread thread:control-sender, not by the user.]\n\nUse the smaller fix.";
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeedSome({
@@ -333,7 +336,7 @@ it.effect.each(storageCases)(
           messageId,
         });
         yield* reply.respond({ threadId, providerSessionId, requestId, decision: "accept" });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply"]);
+        assert.deepEqual(calls, ["interrupt", steered, "reply"]);
         const wrongSession = ProviderSessionId.make("session:wrong");
         assert.equal(
           (yield* Effect.exit(
@@ -383,13 +386,7 @@ it.effect.each(storageCases)(
         });
         yield* Fiber.join(confirmed);
         yield* interrupt;
-        assert.deepEqual(calls, [
-          "interrupt",
-          "Use the smaller fix.",
-          "reply",
-          "interrupt",
-          "interrupt",
-        ]);
+        assert.deepEqual(calls, ["interrupt", steered, "reply", "interrupt", "interrupt"]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
