@@ -302,7 +302,11 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
   readonly refreshProviders: AtomCommand<
     {
       readonly environmentId: EnvironmentId;
-      readonly input: { readonly instanceId: ProviderInstanceId; readonly cwd: string };
+      readonly input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly cwd: string;
+        readonly acceptPartialWorkspaceSnapshot: boolean;
+      };
     },
     { readonly providers: ReadonlyArray<ServerProvider> },
     unknown
@@ -357,7 +361,7 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
         void runAtomCommand(
           registry,
           input.refreshProviders,
-          { environmentId, input: { instanceId, cwd } },
+          { environmentId, input: { instanceId, cwd, acceptPartialWorkspaceSnapshot: true } },
           { reportFailure: false },
         ).then(
           (result) => {

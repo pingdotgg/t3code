@@ -205,7 +205,7 @@ describe("provider workspace snapshot refresh atom", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(expect.anything(), {
       environmentId,
-      input: { instanceId: provider.instanceId, cwd },
+      input: { instanceId: provider.instanceId, cwd, acceptPartialWorkspaceSnapshot: true },
     });
     responses.push(() => withSnapshot("2026-01-01T00:00:00.000Z"));
     await vi.advanceTimersByTimeAsync(0);

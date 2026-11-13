@@ -2447,8 +2447,7 @@ export const layerWsRpc = (
                   cwd: input.cwd,
                   scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
                   fresh: input.fresh === true,
-                  // On-demand clients see a cwd snapshot only in this reply, so send partial skills early.
-                  untilPartial: input.workspaceSnapshotsOnDemand === true,
+                  untilPartial: input.acceptPartialWorkspaceSnapshot === true,
                 })
               : input.reloadSecrets === true
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
