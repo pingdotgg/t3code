@@ -48,6 +48,8 @@ const CONTROL_ROW_GAP = 14;
 const CONTROL_SEPARATION = (CONTROL_ROW_GAP + CONTROL_HEIGHT) / 2;
 const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
 const LABEL_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
+// The combined pill's inline chevron: 13pt symbol plus its pr-3.5 padding.
+const SCROLL_CHEVRON_WIDTH = 27;
 
 // Expo reapplies glass after layout or reattachment, restoring material UIKit can lose behind visible labels.
 const UniwindGlassView = withUniwind(GlassView, {
@@ -109,8 +111,10 @@ export function FloatingWorkingControl(props: {
   // A passive status joins the scroll-to-end target so the whole capsule scrolls, not only the edge circle.
   const statusScrollsToEnd = props.showScrollToEnd && props.status !== null && !statusInteractive;
   const showScrollCircle = props.showScrollToEnd && !statusScrollsToEnd;
-  // Only reserve the scroll button's slot while it is visible.
-  const reservedWidth = props.showScrollToEnd ? CONTROL_HEIGHT + 32 : 16;
+  // Reserve the scroll circle's slot only while it is visible; the combined pill needs only its chevron.
+  const reservedWidth = showScrollCircle
+    ? CONTROL_HEIGHT + 32
+    : 16 + (statusScrollsToEnd ? SCROLL_CHEVRON_WIDTH : 0);
   const availableLabelWidth = Math.max(
     0,
     Math.min(overlayWidth, windowWidth) -
