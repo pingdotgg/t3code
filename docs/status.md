@@ -82,8 +82,14 @@ Not proven:
   finding); the process group kill reaches grandchildren; `--bootstrap-fd` reads a socket
   pair as Electron passes it; the musl binary is static, 14.5 MB, and starts; the SDK host
   builds as a Node 26.12.1 single executable (152 MB) and the provider's 42 tests pass
-  through it. One terminal test (`clears_and_reports_the_foreground_command`) failed once in
-  about 90 runs on Linux; the cause is not found. Partial memory figures on Linux (musl,
+  through it. **Two terminal tests fail now and then on Linux, and neither cause is found.**
+  `conn-terminal` `clears_and_reports_the_foreground_command` failed once in about 90 runs
+  on Beast (no idle event within 15 s after Ctrl-C). `conn-server`
+  `methods::terminal::tests::a_busy_terminal_stays_within_the_byte_window` failed in one of
+  two CI runs of the same code on 2026-11-13: one output chunk was 70,887 bytes, and the
+  test allows 64 KiB plus 4,096 (69,632). So a busy terminal can send a chunk slightly above
+  the byte window on Linux; whether that is a fault in the output feed or a test limit that
+  is too tight is not decided. CI on Linux is therefore not reliably green. Partial memory figures on Linux (musl,
   `smaps_rollup`, MiB): the server 1.3 `Pss_Anon` just started, 1.9 connected, 2.8 after 4
   turns on the fake provider; the SDK host with a stub CLI 32 `Pss_Anon` (76 Rss) in a
   session and after 10 turns, and gone after the last session closed. Not done on Linux:
@@ -208,5 +214,7 @@ The check is the one to trust; several review findings did not hold.
    Expect a large report: the pin is from 2026-11-13.
 5. Before more features, redo the comparison in "Why it is parked" with current numbers.
 
-CI: the nightly schedule is switched off while the project is parked. The job with the Conn
+CI: on the last code commit the test step passed on Linux in one run and failed in the next
+on the terminal test named above. `cargo-deny` and the musl release build pass. The nightly
+schedule is switched off while the project is parked. The job with the Conn
 checkout needs the repository secret `CONN_READ_TOKEN` (read access to `nckrtl/conn`).
