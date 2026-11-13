@@ -1707,6 +1707,54 @@ it.effect.each(["accept", "decline", "cancel"] as const)(
     }).pipe(Effect.scoped),
 );
 
+it.effect.each([1, 2] as const)(
+  "rejects a URL elicitation the client did not advertise on wire v%s",
+  (wireVersion) =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const init = yield* acp.agent
+        .initialize({ protocolVersion: 2, clientCapabilities: { elicitation: { form: {} } } })
+        .pipe(Effect.forkChild);
+      const initialize = yield* decodeWireResponse(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: (initialize as { id: number }).id,
+          result:
+            wireVersion === 2
+              ? { protocolVersion: 2, info: { name: "fixture", version: "1" }, capabilities: {} }
+              : { protocolVersion: 1, agentCapabilities: {} },
+        }),
+      );
+      yield* Fiber.join(init);
+      const calls = yield* Ref.make(0);
+      yield* acp.handleElicitation(() =>
+        Ref.update(calls, (n) => n + 1).pipe(Effect.as({ action: "accept" as const })),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("elicitation/create", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: 81,
+          headers: [],
+          method: "elicitation/create",
+          params: {
+            sessionId: "session-1",
+            mode: "url",
+            message: "Sign in",
+            url: "https://example.test/auth",
+            elicitationId: "auth-1",
+          },
+        }),
+      );
+      const response = yield* decodeWireError(yield* Queue.take(output));
+      assert.equal(response.error.code, -32602);
+      assert.equal(yield* Ref.get(calls), 0);
+    }).pipe(Effect.scoped),
+);
+
 it.effect.each(["elicitation/complete", "session/elicitation/complete"])(
   "delivers %s notifications to the completion handler",
   (method) =>
