@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
+import { Cause } from "effect";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -126,7 +127,7 @@ async function render(value = detail) {
 
 it("keeps an unsaved description when collapsed and reopened, and after a failed save", async () => {
   setup();
-  state.update.mockResolvedValue({ _tag: "Failure", cause: new Error("offline") });
+  state.update.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("offline")) });
   await using screen = await render();
   await act(async () =>
     screen.container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!.click(),

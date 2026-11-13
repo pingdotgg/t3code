@@ -62,24 +62,26 @@ function setup() {
   onCancel.mockReset();
 }
 
+const editor = (options?: { value?: string; allowEmpty?: boolean }) => (
+  <PullRequestMarkdownEditor
+    value={options?.value ?? "Original description"}
+    cwd="/repo"
+    environmentId={secondary}
+    completionScope={{
+      environmentId: secondary,
+      projectId: ProjectId.make("project"),
+      support: { mentions: true, referenceSigils: ["#", "!"] },
+    }}
+    label="Pull request description"
+    saving={false}
+    allowEmpty={options?.allowEmpty ?? false}
+    onSave={onSave}
+    onCancel={onCancel}
+  />
+);
+
 async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
-  return render(
-    <PullRequestMarkdownEditor
-      value={options?.value ?? "Original description"}
-      cwd="/repo"
-      environmentId={secondary}
-      completionScope={{
-        environmentId: secondary,
-        projectId: ProjectId.make("project"),
-        support: { mentions: true, referenceSigils: ["#", "!"] },
-      }}
-      label="Pull request description"
-      saving={false}
-      allowEmpty={options?.allowEmpty ?? false}
-      onSave={onSave}
-      onCancel={onCancel}
-    />,
-  );
+  return render(editor(options));
 }
 
 function button(screen: Screen, label: string) {
@@ -115,6 +117,20 @@ it("keeps an edited draft through revocation and saves it after access returns w
   await grant(true);
   await clickSave(screen);
   expect(onSave).toHaveBeenCalledExactlyOnceWith("Keep these unsaved edits");
+});
+
+it("keeps an edited draft when a refresh brings a new value, and follows it when unedited", async () => {
+  setup();
+  await using screen = await openEditor();
+  const textarea = screen.container.querySelector("textarea")!;
+
+  await screen.rerender(editor({ value: "Changed elsewhere" }));
+  expect(textarea.value).toBe("Changed elsewhere");
+
+  await userEvent.clear(textarea);
+  await userEvent.type(textarea, "My unsaved edit");
+  await screen.rerender(editor({ value: "Changed again elsewhere" }));
+  expect(textarea.value).toBe("My unsaved edit");
 });
 
 it("completes @mentions and !references on Enter, and Escape closes the list until the next keystroke", async () => {
