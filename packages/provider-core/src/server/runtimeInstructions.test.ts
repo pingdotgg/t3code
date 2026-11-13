@@ -48,7 +48,7 @@ describe("buildRuntimeInstructions", () => {
     );
     assert.include(
       instructions,
-      "For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. If T3 can't watch, use project CI tools.",
+      "For PR waits T3 can watch, no sleep, loops, gh --watch, Monitor or ScheduleWakeup; else use project CI tools.",
     );
     assert.include(instructions, "call unwatch_pull_request");
   });

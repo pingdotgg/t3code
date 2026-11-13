@@ -54,7 +54,7 @@ export class PullRequestUnwatchableError extends Schema.TaggedError<PullRequestU
   { detail: Schema.String },
 ) {
   override get message(): string {
-    return `T3 Code cannot watch this pull request: ${this.detail} Follow its checks with the project's own tools instead; polling them is fine here.`;
+    return `T3 Code cannot watch this pull request: ${this.detail} Wait for its checks with the project's own tools instead; sleeping, loops and background monitors are fine for this wait.`;
   }
 }
 
