@@ -774,7 +774,7 @@ describe("DesktopUpdates", () => {
       platform: "win32",
       diskSpace: {
         tempFreeBytes: 2000 * megabyte,
-        installFreeBytes: 5 * megabyte,
+        installFreeBytes: 200 * megabyte,
         installerBytes: 150 * megabyte,
         installDirectoryBytes: 400 * megabyte,
       },

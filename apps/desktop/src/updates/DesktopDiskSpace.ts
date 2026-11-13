@@ -43,12 +43,8 @@ async function sumDirectoryBytes(root: string): Promise<number> {
   let entries = 0;
   const pending = [root];
   for (let directory = pending.pop(); directory !== undefined; directory = pending.pop()) {
-    const children = await NodeFSP.readdir(directory, { withFileTypes: true }).catch(
-      (cause: unknown) => {
-        if (directory === root) throw cause;
-        return [];
-      },
-    );
+    // A partial total would understate the space the installer needs, so any failure fails the walk.
+    const children = await NodeFSP.readdir(directory, { withFileTypes: true });
     entries += children.length;
     if (entries > MAX_DIRECTORY_ENTRIES) {
       throw new Error(`More than ${MAX_DIRECTORY_ENTRIES} entries below the directory.`);
@@ -56,18 +52,13 @@ async function sumDirectoryBytes(root: string): Promise<number> {
     for (const child of children) {
       const childPath = NodePath.join(directory, child.name);
       if (child.isDirectory()) pending.push(childPath);
-      else if (child.isFile()) {
-        total += await NodeFSP.lstat(childPath).then(
-          (stats) => stats.size,
-          () => 0,
-        );
-      }
+      else if (child.isFile()) total += (await NodeFSP.lstat(childPath)).size;
     }
   }
   return total;
 }
 
-export const layer = Layer.succeed(DesktopDiskSpace, {
+export const layer = Layer.sync(DesktopDiskSpace, () => ({
   tempDirectory: NodeOS.tmpdir(),
   freeBytes: Effect.fn("DesktopDiskSpace.freeBytes")(function* (path: string) {
     const stats = yield* Effect.tryPromise({
@@ -82,4 +73,4 @@ export const layer = Layer.succeed(DesktopDiskSpace, {
       catch: (cause) => new DesktopDiskSpaceError({ operation: "directoryBytes", cause }),
     });
   }),
-});
+}));

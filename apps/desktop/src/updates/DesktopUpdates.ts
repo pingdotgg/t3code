@@ -804,7 +804,8 @@ export const make = Effect.gen(function* () {
   });
 
   // NSIS deletes the old install before staging its package in %TEMP% and copying it in, so the
-  // %TEMP% volume peaks near installer + install folder; a separate install volume needs the growth.
+  // %TEMP% volume peaks near installer + install folder. A separate install volume keeps the old
+  // files when the old uninstaller cannot run, so it needs room for a second install folder.
   const findInstallSpaceShortfall = Effect.fn("desktop.updates.findInstallSpaceShortfall")(
     function* () {
       if (environment.platform !== "win32") return Option.none<string>();
@@ -829,7 +830,7 @@ export const make = Effect.gen(function* () {
             const [freeBytes, requiredBytes] =
               tempFreeBytes < tempRequiredBytes
                 ? [tempFreeBytes, tempRequiredBytes]
-                : [installFreeBytes, INSTALL_SPACE_MARGIN_BYTES];
+                : [installFreeBytes, installDirectoryBytes + INSTALL_SPACE_MARGIN_BYTES];
             if (freeBytes >= requiredBytes) return Effect.succeed(Option.none<string>());
             return logUpdaterWarning("not enough disk space to install the update", {
               freeBytes,
