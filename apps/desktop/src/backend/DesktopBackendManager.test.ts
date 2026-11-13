@@ -995,6 +995,81 @@ describe("DesktopBackendManager", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect.each([
+    { answering: "only loopback", loopback: true, distroIp: false, expected: "127.0.0.1" },
+    { answering: "only the distro IP", loopback: false, distroIp: true, expected: "172.27.0.99" },
+    { answering: "both", loopback: true, distroIp: true, expected: "127.0.0.1" },
+  ])("publishes the WSL route that answers when $answering does", (route) =>
+    Effect.gen(function* () {
+      const ready = yield* Deferred.make<void>();
+      const instance = yield* makeTestInstance({
+        config: { ...pollingConfig, fallbackHttpBaseUrl: new URL("http://172.27.0.99:3773") },
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(makeProcess({ exitCode: Effect.never }))),
+        ),
+        httpClientLayer: layerHttpClient((request) => {
+          const isLoopback = new URL(request.url).hostname === "127.0.0.1";
+          if (!(isLoopback ? route.loopback : route.distroIp)) return Effect.never;
+          // Loopback answering after the distro IP must still win.
+          return Effect.succeed(responseForRequest(request, 200)).pipe(
+            Effect.delay(Duration.millis(isLoopback ? 500 : 0)),
+          );
+        }),
+        onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+      });
+      yield* instance.start;
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* Deferred.await(ready);
+      const config = Option.getOrThrow(yield* instance.currentConfig);
+      assert.equal(config.httpBaseUrl.href, `http://${route.expected}:3773/`);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps publishing the WSL route that answered while a restart becomes ready", () =>
+    Effect.gen(function* () {
+      const firstReady = yield* Deferred.make<void>();
+      const firstExit = yield* Deferred.make<void>();
+      const starts = yield* Queue.unbounded<number>();
+      let startCount = 0;
+      const instance = yield* makeTestInstance({
+        config: { ...pollingConfig, fallbackHttpBaseUrl: new URL("http://172.27.0.99:3773") },
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              return makeProcess({
+                exitCode:
+                  startCount === 1
+                    ? Deferred.await(firstExit).pipe(Effect.as(ChildProcessSpawner.ExitCode(1)))
+                    : Effect.never,
+              });
+            }),
+          ),
+        ),
+        httpClientLayer: layerHttpClient((request) =>
+          startCount === 1 && new URL(request.url).hostname !== "127.0.0.1"
+            ? Effect.succeed(responseForRequest(request, 200))
+            : Effect.never,
+        ),
+        onReady: Deferred.succeed(firstReady, undefined).pipe(Effect.asVoid),
+      });
+      yield* instance.start;
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* Deferred.await(firstReady);
+
+      yield* Deferred.succeed(firstExit, undefined);
+      assert.equal(yield* Queue.take(starts), 1);
+      yield* TestClock.adjust(Duration.seconds(5));
+      assert.equal(yield* Queue.take(starts), 2);
+      const restarting = Option.getOrThrow(yield* instance.currentConfig);
+      assert.isFalse((yield* instance.snapshot).ready);
+      assert.equal(restarting.httpBaseUrl.href, "http://172.27.0.99:3773/");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("the quit stop keeps waiting for a backend that outlasts its deadline", () =>
     Effect.gen(function* () {
       const spawned = yield* Deferred.make<void>();
