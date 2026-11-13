@@ -931,6 +931,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
+    const respondedAt = yield* Clock.currentTimeMillis;
     return Option.isSome(info) && info.value.type === "File"
       ? ({
           kind: "file",
@@ -940,9 +941,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
           ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
           // Shared bucketed URLs must not stay fresh in the browser after the token expires.
-          maxAgeSeconds: Math.min(
-            ASSET_TOKEN_TTL_MS / 1000,
-            Math.floor((claims.expiresAt - now) / 1000),
+          maxAgeSeconds: Math.max(
+            0,
+            Math.min(
+              ASSET_TOKEN_TTL_MS / 1000,
+              Math.floor((claims.expiresAt - respondedAt) / 1000),
+            ),
           ),
         } satisfies ResolvedAsset)
       : null;
