@@ -125,9 +125,14 @@ export class CodexShadowHomeSqliteConflictError extends Schema.TaggedError<Codex
   {
     ...CodexShadowHomeContext,
     entryName: Schema.String,
+    /** Set when the shadow's own databases cannot be combined with this shared one on Windows. */
+    sharedEntryName: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.sharedEntryName !== undefined) {
+      return `Codex shadow home '${this.effectiveHomePath}' has its own SQLite database '${this.entryName}', while '${this.sharedEntryName}' belongs to the shared home '${this.sharedHomePath}'. On Windows Codex cannot use both without splitting a database from its WAL. Stop every Codex process using either home and back up both. Then either move the shadow's .sqlite files, with their -wal and -shm files, into the shared home to keep them, or move them out of the shadow home, and retry. T3 did not change any SQLite files.`;
+    }
     return `Codex shadow home '${this.effectiveHomePath}' holds SQLite data in '${this.entryName}' that the shared home '${this.sharedHomePath}' may not have. Stop every Codex process using either home, back up both, then move that file out of the shadow home and retry. T3 did not change any SQLite files.`;
   }
 }
@@ -232,6 +237,7 @@ const readHomeEntries = (
  * Codex opens its SQLite databases from `CODEX_SQLITE_HOME`. Windows SQLite derives `-wal`/`-shm`
  * from the path it was given, so a database reached through a shadow-home link gets its own WAL.
  * Point every shadow at the shared home instead; legacy links left in the shadow become inert.
+ * POSIX SQLite opens a link by its target's path, so only there may a shadow link shared ones.
  */
 export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironment")(function* (
   layout: CodexHomeLayout,
@@ -245,6 +251,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const regularDatabases = new Set<string>();
+  const linkedDatabases: Array<string> = [];
   const sidecarsWithData: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
   for (const entryName of yield* readHomeEntries(
     fileSystem,
@@ -261,6 +268,9 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       entryName,
       linkPath,
     });
+    if (state._tag === "Symlink" && SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
+      linkedDatabases.push(entryName.toLowerCase());
+    }
     if (state._tag !== "NotSymlink") continue;
     if (SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
       regularDatabases.add(entryName.toLowerCase());
@@ -302,6 +312,18 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       sharedHomePath: layout.sharedHomePath,
       effectiveHomePath,
       entryName: conflict,
+    });
+  }
+  // A legacy link counts even when its shared database is gone, since Codex would recreate it.
+  const [sharedDatabase] = [...sharedDatabases, ...linkedDatabases].toSorted();
+  const [privateDatabase] = [...regularDatabases].toSorted();
+  // Linking the shared databases in would give each Windows connection its own WAL.
+  if (sharedDatabase && privateDatabase && (yield* HostProcess.isWindows)) {
+    return yield* new CodexShadowHomeSqliteConflictError({
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName: privateDatabase,
+      sharedEntryName: sharedDatabase,
     });
   }
   // Neither home holds every database, so the shadow keeps its own and links the shared ones.
@@ -575,10 +597,12 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
 ) {
   // Refuse a stranded SQLite layout before touching the shadow home.
   const launchEnvironment = yield* codexHomeEnvironment(layout, environment);
+  // Windows never links a database, even one the shared home gained after the check above.
   yield* materializeShadowHome(
     layout,
     !environment.CODEX_SQLITE_HOME?.trim() &&
-      launchEnvironment.CODEX_SQLITE_HOME === layout.effectiveHomePath,
+      launchEnvironment.CODEX_SQLITE_HOME === layout.effectiveHomePath &&
+      !(yield* HostProcess.isWindows),
   );
   return launchEnvironment;
 });

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as NodeSqlite from "node:sqlite";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
@@ -14,6 +15,7 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
 
@@ -447,7 +449,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "keeps a shadow's own databases and refuses only one the shared home also has",
+      "keeps a shadow's own databases on POSIX and refuses only one the shared home also has",
       () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -473,7 +475,140 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared db");
           const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
           expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
-        }),
+        }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses on Windows to link shared databases into a shadow that has its own",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite-wal"), "private wal");
+
+          // With no shared databases there is nothing to link, so the shadow keeps its own.
+          expect((yield* materializeCodexShadowHome(layout, {})).CODEX_SQLITE_HOME).toBe(
+            shadowHome,
+          );
+
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "shared db");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite-wal"), "shared wal");
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+          expect(error).toMatchObject({
+            sharedHomePath: sharedHome,
+            effectiveHomePath: shadowHome,
+            entryName: "state_5.sqlite",
+            sharedEntryName: "goals_1.sqlite",
+          });
+          expect(error.message).toContain(shadowHome);
+          expect(error.message).toContain(sharedHome);
+          expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite"))).toBe(false);
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite"))).toBe(
+            "private db",
+          );
+          expect(
+            yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite-wal")),
+          ).toBe("private wal");
+          expect(
+            yield* fileSystem.readFileString(path.join(sharedHome, "goals_1.sqlite-wal")),
+          ).toBe("shared wal");
+          expect(
+            yield* materializeCodexShadowHome(layout, { CODEX_SQLITE_HOME: sharedHome }),
+          ).toEqual({ CODEX_SQLITE_HOME: sharedHome });
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses on Windows a shadow that keeps its own database beside a dangling legacy link",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "goals_1.sqlite"),
+            path.join(shadowHome, "goals_1.sqlite"),
+          );
+
+          const error = yield* materializeCodexShadowHome(layout, {}).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "CodexShadowHomeSqliteConflictError",
+            entryName: "state_5.sqlite",
+            sharedEntryName: "goals_1.sqlite",
+          });
+          expect(yield* fileSystem.exists(path.join(sharedHome, "goals_1.sqlite"))).toBe(false);
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "does not link a database the shared home gains after the Windows check",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "private db");
+          let checked = false;
+          const environment = yield* materializeCodexShadowHome(layout, {}).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              readDirectory: (directory, options) =>
+                directory === sharedHome && !checked
+                  ? fileSystem.readDirectory(directory, options).pipe(
+                      Effect.tap(() => {
+                        checked = true;
+                        return fileSystem.writeFileString(
+                          path.join(sharedHome, "goals_1.sqlite"),
+                          "shared db",
+                        );
+                      }),
+                    )
+                  : fileSystem.readDirectory(directory, options),
+            }),
+          );
+
+          expect(checked).toBe(true);
+          expect(environment.CODEX_SQLITE_HOME).toBe(shadowHome);
+          expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite"))).toBe(false);
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+      "keeps one WAL for a shared database a POSIX shadow opens through its link",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "");
+          const sharedDb = new NodeSqlite.DatabaseSync(path.join(sharedHome, "goals_1.sqlite"));
+          sharedDb.exec(
+            "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE goals(id); INSERT INTO goals VALUES (1);",
+          );
+
+          const environment = yield* materializeCodexShadowHome(layout, {});
+          const sqliteHome = environment.CODEX_SQLITE_HOME ?? "";
+          expect(sqliteHome).toBe(shadowHome);
+          const shadowDb = new NodeSqlite.DatabaseSync(path.join(sqliteHome, "goals_1.sqlite"));
+          shadowDb.exec("INSERT INTO goals VALUES (2);");
+          const shadowCount = shadowDb.prepare("SELECT count(*) AS count FROM goals").get();
+          const sharedCount = sharedDb.prepare("SELECT count(*) AS count FROM goals").get();
+          const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
+          shadowDb.close();
+          sharedDb.close();
+
+          expect(shadowCount?.count).toBe(2);
+          expect(sharedCount?.count).toBe(2);
+          expect(shadowEntries.filter((entry) => entry.startsWith("goals_1.sqlite"))).toEqual([
+            "goals_1.sqlite",
+          ]);
+        }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
     );
   });
 });
