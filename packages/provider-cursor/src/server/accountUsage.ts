@@ -266,11 +266,11 @@ export const makeCursorAccountUsageReader = Effect.gen(function* () {
             if (typeof count === "number") total = count;
             return events as unknown[];
           },
-          pageSlots.withPermit,
           Effect.timeoutOrElse({
             duration: Duration.seconds(10),
             orElse: () => invalid("Account usage request timed out"),
           }),
+          pageSlots.withPermit,
         );
         // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
         // the first one's count implies are requested up to six ahead and consumed in page order.

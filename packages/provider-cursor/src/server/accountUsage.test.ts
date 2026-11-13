@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -510,37 +511,76 @@ describe("readCursorAccountUsage", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads the pages behind the first together and keeps them in page order", () =>
-    Effect.gen(function* () {
-      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-      let inFlight = 0;
-      let mostInFlight = 0;
-      const result = yield* readAccountUsage(
-        { kind: "apiKey", apiKey: accessToken },
-        0,
-        1781000000000,
-        async ({ page }) => {
-          inFlight++;
-          mostInFlight = Math.max(mostInFlight, inFlight);
-          for (let turn = page; turn < 9; turn++) await Promise.resolve();
-          inFlight--;
-          return Response.json({
-            totalUsageEventsCount: 8001,
-            usageEventsDisplay: Array.from({ length: page === 9 ? 1 : 1000 }, (_, index) => ({
-              timestamp: String(1780000000000 + (page - 1) * 1000 + index),
-              model: "gpt-5",
-              tokenUsage: { inputTokens: 1 },
-            })),
-          });
-        },
-      );
-      assert.isNull(result.error);
-      assert.strictEqual(mostInFlight, 6);
-      assert.deepStrictEqual(
-        result.records.map((record) => record.timestampMs),
-        Array.from({ length: 8001 }, (_, index) => 1780000000000 + index),
-      );
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  it.effect.each([{ queued: false }, { queued: true }])(
+    "reads concurrent pages in order with a full request deadline after queuing: $queued",
+    ({ queued }) =>
+      Effect.gen(function* () {
+        const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+        const started = yield* Queue.unbounded<void>();
+        const firstBatch = yield* Deferred.make<void>();
+        const secondBatch = yield* Deferred.make<void>();
+        let delayedRequests = 0;
+        let inFlight = 0;
+        let mostInFlight = 0;
+        const client = dashboard(
+          async ({ page }) => {
+            inFlight++;
+            mostInFlight = Math.max(mostInFlight, inFlight);
+            for (let turn = page; turn < 9; turn++) await Promise.resolve();
+            inFlight--;
+            return Response.json({
+              totalUsageEventsCount: 8001,
+              usageEventsDisplay: Array.from({ length: page === 9 ? 1 : 1000 }, (_, index) => ({
+                timestamp: String(1780000000000 + (page - 1) * 1000 + index),
+                model: "gpt-5",
+                tokenUsage: { inputTokens: 1 },
+              })),
+            });
+          },
+          { userId: 42, teamIds: queued ? [7] : [] },
+        ).pipe(
+          HttpClient.transform((response, request) => {
+            if (!queued || !request.url.endsWith("/GetFilteredUsageEvents")) return response;
+            const body =
+              request.body._tag === "Uint8Array"
+                ? JSON.parse(new TextDecoder().decode(request.body.body))
+                : {};
+            if (body.page === 1) return response;
+            return Effect.gen(function* () {
+              const batch = delayedRequests++ < 6 ? firstBatch : secondBatch;
+              yield* Queue.offer(started, undefined);
+              yield* Deferred.await(batch);
+              return yield* response;
+            });
+          }),
+        );
+        const read = yield* Effect.forkChild(
+          makeCursorAccountUsageReader.pipe(
+            Effect.flatMap((reader) =>
+              reader({ kind: "apiKey", apiKey: accessToken }, 0, 1781000000000),
+            ),
+            Effect.provideService(HttpClient.HttpClient, client),
+          ),
+        );
+        if (queued) {
+          yield* Effect.all(Array.from({ length: 6 }, () => Queue.take(started)));
+          yield* TestClock.adjust("6 seconds");
+          yield* Deferred.succeed(firstBatch, undefined);
+          yield* Effect.all(Array.from({ length: 6 }, () => Queue.take(started)));
+          yield* TestClock.adjust("6 seconds");
+          yield* Deferred.succeed(secondBatch, undefined);
+        }
+        const result = yield* Fiber.join(read);
+        assert.isNull(result.error);
+        assert.strictEqual(mostInFlight, 6);
+        assert.deepStrictEqual(
+          result.records.map((record) => record.timestampMs),
+          Array.from(
+            { length: queued ? 16002 : 8001 },
+            (_, index) => 1780000000000 + (index % 8001),
+          ),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("ends like a page-by-page read when a page fails, leaving no request open", () =>
