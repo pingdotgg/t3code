@@ -136,6 +136,19 @@ keep_layout() {
 }
 step "keybinding layout" keep_layout
 
+# More Opaque fallbacks means the contract generator met a shape it cannot type: the bump is
+# red until gen-contract.mjs learns it.
+opaque_fallbacks() {
+  node -e '
+    const fs = require("fs");
+    const read = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")).opaqueFallbacks; } catch { return undefined; } };
+    const [before, after] = process.argv.slice(1).map(read);
+    console.log(`opaque fallbacks: ${before} -> ${after}`);
+    process.exit(before !== undefined && after !== undefined && after > before ? 1 : 0);
+  ' "$scratch/before/crates/conn-contract/generated/report.json" crates/conn-contract/generated/report.json
+}
+step "opaque fallbacks" opaque_fallbacks
+
 # 3. Reference events from the TypeScript adapters. This is the one place to call the
 # provider crates' capture tools. Both replay recorded CLI transcripts (no model call), and
 # both put a temporary test file into CONN_MONOREPO/apps/server while they run, so never

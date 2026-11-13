@@ -266,7 +266,7 @@ line(
     (newReport ? `; opaque fallbacks ${oldReport?.opaqueFallbacks ?? "?"} → ${newReport.opaqueFallbacks}` : ""),
 );
 if (newReport && oldReport && newReport.opaqueFallbacks > oldReport.opaqueFallbacks) {
-  line("  WARNING: more Opaque fallbacks: the generator met a shape it cannot map (generated/report.json).");
+  line("  RED: more Opaque fallbacks: the generator met a shape it cannot map (generated/report.json); bump-conn.sh fails the `opaque fallbacks` step.");
 }
 
 // ---- /mcp --------------------------------------------------------------------------------

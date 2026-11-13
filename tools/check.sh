@@ -65,6 +65,7 @@ monorepo_checks=(
   "gen-tools --check"
   "gen-keybindings --check"
   "gen-upstream --check"
+  "check-copies"
   "effect-client (conn-server)"
   "effect-client (ack window)"
   "client-check"
@@ -82,6 +83,7 @@ else
   run "gen-tools --check" node crates/conn-mcp/tools/gen-tools.mjs --check
   run "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs --check
   run "gen-upstream --check" node tools/gen-upstream.mjs --check
+  run "check-copies" node tools/check-copies.mjs
   decoded="$scratch/decoded-tags"
   : >"$decoded"
   run "effect-client (conn-server)" \
