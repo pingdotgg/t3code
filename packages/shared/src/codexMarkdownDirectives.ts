@@ -22,6 +22,11 @@ const UNDERSCORE = 95;
 const CODEX_FILE_CITATION_NAME = "codex-file-citation";
 const CODEX_FOLLOW_UP_NAME = "codex-followup";
 const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
+const WEB_CITATION_OPEN = "\uE200";
+// OpenAI web-search citations: U+E200 "cite" (U+E202 id)+ U+E201. T3 has no sources for the ids.
+const WEB_CITATION_MARKER = /([ \t]?)\uE200cite\uE202[^\uE200\uE201]*\uE201/gu;
+// Past any closing emphasis or code delimiters, nothing the space separates follows.
+const DROPS_PRECEDING_SPACE = /[*_~`]*(?:\s|[.,;:!?)\]]|$)/uy;
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
   "dataCodexArtifactTemplate",
@@ -247,7 +252,54 @@ function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   delete node.url;
 }
 
+function webCitationReplacement(space: string, text: string, markerEnd: number): string {
+  DROPS_PRECEDING_SPACE.lastIndex = markerEnd;
+  return DROPS_PRECEDING_SPACE.test(text) ? "" : space;
+}
+
+// A marker that ends `text` is judged by the source past `textEnd`.
+function removeWebCitationMarkers(text: string, source = "", textEnd = 0): string {
+  return text.replace(WEB_CITATION_MARKER, (marker, space: string, offset: number) => {
+    const markerEnd = offset + marker.length;
+    return markerEnd < text.length
+      ? webCitationReplacement(space, text, markerEnd)
+      : webCitationReplacement(space, source, textEnd);
+  });
+}
+
+function collectWebCitationMarkers(
+  source: string,
+  start: number,
+  end: number,
+  matches: DirectiveMatch[],
+): void {
+  for (const marker of source.slice(start, end).matchAll(WEB_CITATION_MARKER)) {
+    const markerStart = start + marker.index;
+    const markerEnd = markerStart + marker[0].length;
+    matches.push({
+      start: markerStart,
+      end: markerEnd,
+      markdown: webCitationReplacement(marker[1] ?? "", source, markerEnd),
+    });
+  }
+}
+
 function transformCodexDirectives(node: MarkdownAstNode, source: string, insideLink = false): void {
+  if (node.type === "text" && node.value?.includes(WEB_CITATION_OPEN)) {
+    node.value = removeWebCitationMarkers(
+      node.value,
+      source,
+      node.position?.end.offset ?? source.length,
+    );
+    return;
+  }
+  // GFM autolinks take a marker that directly follows a bare URL into the href.
+  if (
+    (node.type === "link" || node.type === "definition") &&
+    node.url?.includes(WEB_CITATION_OPEN)
+  ) {
+    node.url = removeWebCitationMarkers(node.url);
+  }
   if (node.type === "textDirective" && node.name === CODEX_FILE_CITATION_NAME) {
     renderFileCitation(node, source, insideLink);
     return;
@@ -293,13 +345,20 @@ interface DirectiveMatch {
   readonly end: number;
   readonly markdown?: string;
   readonly template?: CodexArtifactTemplate;
-  readonly labelRange?: readonly [start: number, end: number];
 }
 
-function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[]): void {
+function collectDirectiveMatches(
+  node: MarkdownAstNode,
+  source: string,
+  matches: DirectiveMatch[],
+): void {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
   if (start !== undefined && end !== undefined) {
+    if (node.type === "text") {
+      collectWebCitationMarkers(source, start, end, matches);
+      return;
+    }
     if (node.data?.codexFileCitationMarkdown !== undefined) {
       matches.push({ start, end, markdown: node.data.codexFileCitationMarkdown });
       return;
@@ -308,14 +367,20 @@ function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[
       matches.push({ start, end, template: node.data.codexArtifactTemplate });
       return;
     }
+    if (node.type === "link" || node.type === "definition") {
+      const destinationStart = node.children?.at(-1)?.position?.end.offset ?? start;
+      collectWebCitationMarkers(source, destinationStart, end, matches);
+    }
     const labelStart = node.children?.[0]?.position?.start.offset;
     const labelEnd = node.children?.at(-1)?.position?.end.offset;
     if (node.data?.codexFollowUp && labelStart !== undefined && labelEnd !== undefined) {
-      matches.push({ start, end, labelRange: [labelStart, labelEnd] });
-      return;
+      matches.push(
+        { start, end: labelStart, markdown: "" },
+        { start: labelEnd, end, markdown: "" },
+      );
     }
   }
-  for (const child of node.children ?? []) collectDirectiveMatches(child, matches);
+  for (const child of node.children ?? []) collectDirectiveMatches(child, source, matches);
 }
 
 function renderDirectiveMatches(
@@ -323,12 +388,10 @@ function renderDirectiveMatches(
   replacementFor: (match: DirectiveMatch) => string | undefined,
 ): string {
   const matches: DirectiveMatch[] = [];
-  collectDirectiveMatches(parseCodexMarkdown(markdown), matches);
+  collectDirectiveMatches(parseCodexMarkdown(markdown), markdown, matches);
   let rendered = markdown;
   for (const match of matches.sort((left, right) => right.start - left.start)) {
-    const replacement = match.labelRange
-      ? markdown.slice(...match.labelRange)
-      : replacementFor(match);
+    const replacement = replacementFor(match);
     if (replacement !== undefined) {
       rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
     }
@@ -347,11 +410,19 @@ export function renderCodexInlineDirectivesAsMarkdown(markdown: string): string 
   return renderDirectiveMatches(markdown, (match) => match.markdown);
 }
 
+// Kept apart from the inline renderer: its href-only callers run on every streamed delta.
+export function renderCodexMarkdownForNativeDisplay(markdown: string): string {
+  return markdown.includes(WEB_CITATION_OPEN)
+    ? renderDirectiveMatches(markdown, (match) => match.markdown)
+    : renderCodexInlineDirectivesAsMarkdown(markdown);
+}
+
 export function renderCodexDirectivesForCopy(markdown: string): string {
   if (
     !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
     !markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`) &&
-    !markdown.includes(`::${CODEX_ARTIFACT_TEMPLATE_NAME}`)
+    !markdown.includes(`::${CODEX_ARTIFACT_TEMPLATE_NAME}`) &&
+    !markdown.includes(WEB_CITATION_OPEN)
   ) {
     return markdown;
   }
@@ -371,7 +442,7 @@ export function splitCodexArtifactTemplateMarkdown(
   }
 
   const matches: DirectiveMatch[] = [];
-  collectDirectiveMatches(parseCodexMarkdown(markdown), matches);
+  collectDirectiveMatches(parseCodexMarkdown(markdown), markdown, matches);
   const templates = matches
     .filter(
       (match): match is DirectiveMatch & { readonly template: CodexArtifactTemplate } =>
