@@ -33,6 +33,7 @@ describe("semver helpers", () => {
 
   it("compares prerelease versions before stable versions", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-Beta", "1.0.0-alpha")).toBeLessThan(0);
   });
 
   it("preserves hyphens within prerelease identifiers", () => {
