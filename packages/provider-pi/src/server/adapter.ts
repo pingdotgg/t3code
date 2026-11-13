@@ -1983,6 +1983,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const turn = state?.activeTurn ?? null;
         switch (event["type"]) {
           case "agent_start": {
+            // A held run starts but waits at its first model request, so it is not unsolicited.
+            if (turn === null && heldRunAdmission !== null) return;
             if (
               turn === null &&
               state?.providerThread.appThreadId != null &&
@@ -2261,6 +2263,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           case "agent_settled": {
+            // The held run ended on its own before any turn admitted it; nothing is left to admit.
+            if (turn === null && heldRunAdmission !== null) {
+              yield* answerRunAdmission(heldRunAdmission, true);
+              heldRunAdmission = null;
+              return;
+            }
             if (turn?.interrupted === true) {
               if (state !== null) yield* finalizeTurn(state);
               return;
@@ -3021,6 +3029,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   yield* answerRunAdmission(heldRunAdmission, true);
                   heldRunAdmission = null;
                   activeTurn.adoptedWake = true;
+                  activeTurn.sawAgentActivity = true;
                 }
                 if (compactCommand !== null) {
                   yield* connection.send(compactRpcRecord(compactCommand));

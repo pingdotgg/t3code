@@ -2243,6 +2243,8 @@ describe("PiAdapterV2", () => {
           message: "",
         });
       yield* askAdmission("restored-run");
+      // The held run starts and waits at its first model request; that is not unsolicited work.
+      yield* fake.emit({ type: "agent_start" });
       // The status update is an observable milestone after the admission request.
       yield* fake.emit({
         type: "extension_ui_request",

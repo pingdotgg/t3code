@@ -99,11 +99,12 @@ describe("Pi run admission", () => {
   it("holds a resumed session's first run until T3 answers", async () => {
     const hooks = await loadHooks();
     const sessionStart = hooks.first.get("session_start") as (event: unknown) => void;
-    const gate = hooks.first.get("before_agent_start") as (
+    const gate = hooks.first.get("before_agent_start") as (event: unknown, ctx: unknown) => void;
+    const compactGate = hooks.first.get("session_before_compact") as (
       event: unknown,
       ctx: unknown,
     ) => Promise<void>;
-    const compactGate = hooks.first.get("session_before_compact") as typeof gate;
+    const request = hooks.first.get("before_provider_request") as () => Promise<void> | undefined;
     const input = hooks.first.get("input") as (event: unknown) => unknown;
     const asked: Array<{ title: string; answer: (admitted: boolean) => void }> = [];
     let aborts = 0;
@@ -116,14 +117,17 @@ describe("Pi run admission", () => {
     };
 
     sessionStart({ type: "session_start", reason: "startup" });
-    await gate({}, ctx);
+    gate({}, ctx);
     assert.lengthOf(asked, 0);
+    assert.isUndefined(request());
 
-    // Pi 1.4 emits resume twice for one switch_session.
+    // Pi emits resume twice for one switch_session, and pi-goal-x drops work it dispatched that
+    // has not started by the second. So the run starts when asked and waits at its first request.
     sessionStart({ type: "session_start", reason: "resume" });
+    assert.isUndefined(gate({}, ctx));
     sessionStart({ type: "session_start", reason: "resume" });
     let started = false;
-    const run = gate({}, ctx).then(() => (started = true));
+    const run = request()!.then(() => (started = true));
     await Promise.resolve();
     // The held run keeps Pi busy: another extension's plain send is queued, not rejected.
     const send = { type: "input", text: "continue", source: "extension" };
@@ -139,18 +143,24 @@ describe("Pi run admission", () => {
     asked[0]!.answer(true);
     await run;
     assert.isUndefined(input(send));
-    await gate({}, ctx);
+    gate({}, ctx);
+    assert.isUndefined(request());
     assert.lengthOf(asked, 1);
     assert.equal(aborts, 0);
 
-    // Pre-run compaction comes first and is held too; a declined run is aborted, not asked again.
-    sessionStart({ type: "session_start", reason: "resume" });
-    const compacting = compactGate({}, ctx);
+    // In another restored session, pre-run compaction comes first and is held outright; a
+    // declined run is aborted, not asked again.
+    const next = await loadHooks();
+    (next.first.get("session_start") as typeof sessionStart)({
+      type: "session_start",
+      reason: "resume",
+    });
+    const compacting = (next.first.get("session_before_compact") as typeof compactGate)({}, ctx);
     await Promise.resolve();
     assert.lengthOf(asked, 2);
     asked[1]!.answer(false);
     await compacting;
-    await gate({}, ctx);
+    (next.first.get("before_agent_start") as typeof gate)({}, ctx);
     assert.lengthOf(asked, 2);
     assert.equal(aborts, 1);
   });
