@@ -551,9 +551,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "read-aloud",
     title: "Read aloud",
     to: "/settings/voice",
-    searchTerms: [
-      "tts text to speech speak read aloud ChatGPT subscription Codex Grok OpenRouter voice playback",
-    ],
+    searchTerms: ["tts text to speech speak read aloud OpenAI Grok OpenRouter voice playback"],
   },
   {
     id: "voice-microphone",

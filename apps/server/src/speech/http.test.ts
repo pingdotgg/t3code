@@ -11,6 +11,7 @@ import {
   type AuthEnvironmentScope,
   CloudSpeechError,
   SpeechSynthesisError,
+  EMPTY_SPEECH_SYNTHESIS_CATALOG,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
@@ -74,7 +75,7 @@ effectIt.effect.each([false, true])(
       const synthesize = vi.fn<CloudSpeech.CloudSpeech["Service"]["synthesize"]>(() =>
         Effect.succeed(Uint8Array.of(73, 68, 51, 1)),
       );
-      const synthesisModels = vi.fn(() => Effect.succeed({ models: [] }));
+      const synthesisModels = vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG));
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),

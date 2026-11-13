@@ -9,19 +9,15 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   AuthSettingsWriteScope,
   READ_ALOUD_LABELS,
+  EMPTY_SPEECH_SYNTHESIS_CATALOG,
   type CloudSpeechProvider,
   type ReadAloudSettings,
-  type EnvironmentId,
   type SpeechSynthesisCatalog,
   type SpeechSynthesisProvider,
 } from "@t3tools/contracts";
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironments } from "../../state/environments";
-import {
-  useEnvironmentScope,
-  usePreparedConnection,
-  readPreparedConnection,
-} from "../../state/session";
+import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { readAloudController } from "../../speech/readAloud";
 import { Button } from "../ui/button";
@@ -123,53 +119,24 @@ function ReadAloudKey({
 
 export function ReadAloudSettingsSection() {
   const settings = useClientSettings((value) => value.readAloud);
-  const { environments, presentationById } = useEnvironments();
-
-  const [subscriptionAvailability, setSubscriptionAvailability] = useState<{
-    presentations: typeof presentationById;
-    ids: ReadonlySet<EnvironmentId>;
-  } | null>(null);
-  const [sourceSubscriptions, setSourceSubscriptions] = useState<ReadonlySet<EnvironmentId>>(
-    () => new Set(),
-  );
-  const availableSubscriptions =
-    subscriptionAvailability?.presentations === presentationById
-      ? subscriptionAvailability.ids
-      : new Set<EnvironmentId>();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscription choices reflect native login availability on each paired environment.
-  useEffect(() => {
-    const abort = new AbortController();
-    void Promise.all(
-      [...presentationById.keys()].map((environmentId) => {
-        const connection = readPreparedConnection(environmentId);
-        if (!connection) return null;
-        return runEnvironmentSpeech(getSpeechSynthesisModels(connection, "chatgpt"), {
-          signal: abort.signal,
-        }).then(
-          (catalog) => (catalog.models.length > 0 ? environmentId : null),
-          () => null,
-        );
-      }),
-    ).then((ids) => {
-      if (!abort.signal.aborted)
-        setSubscriptionAvailability({
-          presentations: presentationById,
-          ids: new Set(ids.filter((id) => id !== null)),
-        });
-    });
-    return () => abort.abort();
-  }, [presentationById]);
+  const { environments } = useEnvironments();
 
   const prepared = Option.getOrNull(usePreparedConnection(settings.environmentId));
   const [catalogVersion, setCatalogVersion] = useState(0);
-  const catalogKey = JSON.stringify([settings.environmentId, settings.provider, catalogVersion]);
+  const catalogKey = JSON.stringify([settings.environmentId, settings.provider]);
   const [catalogState, setCatalogState] = useState<{
     key: string;
+    version: number;
     catalog: SpeechSynthesisCatalog;
     error: string;
-  }>({ key: "", catalog: { models: [] }, error: "" });
-  const catalog = catalogState.key === catalogKey ? catalogState.catalog : { models: [] };
-  const error = catalogState.key === catalogKey ? catalogState.error : "";
+  }>({ key: "", version: -1, catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG, error: "" });
+  const catalog =
+    catalogState.key === catalogKey ? catalogState.catalog : EMPTY_SPEECH_SYNTHESIS_CATALOG;
+  const error =
+    catalogState.key === catalogKey && catalogState.version === catalogVersion
+      ? catalogState.error || catalog.error || ""
+      : "";
+  const model = settings.model || catalog.defaultModel;
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const state = useSyncExternalStore(
     readAloudController.subscribe,
@@ -197,26 +164,29 @@ export function ReadAloudSettingsSection() {
       { signal: abort.signal },
     ).then(
       (result) => {
-        if (!abort.signal.aborted) setCatalogState({ key: catalogKey, catalog: result, error: "" });
+        if (!abort.signal.aborted)
+          setCatalogState({ key: catalogKey, version: catalogVersion, catalog: result, error: "" });
       },
       () => {
         if (!abort.signal.aborted)
           setCatalogState({
             key: catalogKey,
-            catalog: { models: [] },
+            version: catalogVersion,
+            catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG,
             error:
               "Could not load speech models. Check the selected environment and provider configuration.",
           });
       },
     );
     return () => abort.abort();
-  }, [prepared, remote, settings.provider, catalogKey]);
+  }, [prepared, remote, settings.provider, catalogKey, catalogVersion]);
   const voices =
     settings.provider === "system"
       ? systemVoices.map((voice) => ({ id: voice.voiceURI, name: voice.name }))
-      : (catalog.models.find((model) => model.id === settings.model)?.voices ?? []).map(
-          (voice) => ({ id: voice, name: voice }),
-        );
+      : (catalog.models.find((entry) => entry.id === model)?.voices ?? []).map((voice) => ({
+          id: voice,
+          name: voice,
+        }));
   const source = remote ? `${settings.provider}:${settings.environmentId}` : settings.provider;
   const selectedEnvironment = environments.find(
     (entry) => entry.environmentId === settings.environmentId,
@@ -230,9 +200,6 @@ export function ReadAloudSettingsSection() {
           control={
             <Select
               value={source}
-              onOpenChange={(open) => {
-                if (open) setSourceSubscriptions(availableSubscriptions);
-              }}
               onValueChange={(value) => {
                 if (!value) return;
                 if (value === "off" || value === "system")
@@ -246,12 +213,7 @@ export function ReadAloudSettingsSection() {
                   change({
                     provider: provider as SpeechSynthesisProvider,
                     environmentId: environment.environmentId,
-                    model:
-                      provider === "xai"
-                        ? "grok-tts"
-                        : provider === "chatgpt"
-                          ? "chatgpt-read-aloud"
-                          : "",
+                    model: "",
                     voice: "",
                   });
                 }
@@ -296,24 +258,18 @@ export function ReadAloudSettingsSection() {
                 {environments.map((environment) => (
                   <SelectGroup key={environment.environmentId}>
                     <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
-                    {(["chatgpt", "xai", "openrouter"] as const)
-                      .filter(
-                        (provider) =>
-                          provider !== "chatgpt" ||
-                          sourceSubscriptions.has(environment.environmentId),
-                      )
-                      .map((provider) => (
-                        <SelectItem
-                          key={provider}
-                          value={`${provider}:${environment.environmentId}`}
-                          aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
-                        >
-                          <span className="flex items-center gap-2">
-                            <SpeechProviderIcon provider={provider} />
-                            {READ_ALOUD_LABELS[provider]}
-                          </span>
-                        </SelectItem>
-                      ))}
+                    {(["openai", "xai", "openrouter"] as const).map((provider) => (
+                      <SelectItem
+                        key={provider}
+                        value={`${provider}:${environment.environmentId}`}
+                        aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <SpeechProviderIcon provider={provider} />
+                          {READ_ALOUD_LABELS[provider]}
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectGroup>
                 ))}
                 {remote && !selectedEnvironment && (
@@ -326,29 +282,29 @@ export function ReadAloudSettingsSection() {
       </SettingsSearchTarget>
       {settings.provider === "off" ? null : (
         <>
-          {remote && prepared && settings.provider !== "chatgpt" && (
+          {remote && prepared && catalog.apiKeyProvider && (
             <ReadAloudKey
               key={`${prepared.environmentId}:${settings.provider}`}
               prepared={prepared}
-              provider={settings.provider as CloudSpeechProvider}
+              provider={catalog.apiKeyProvider}
               onSaved={() => setCatalogVersion((value) => value + 1)}
             />
           )}
-          {remote && settings.provider !== "chatgpt" && (
+          {remote && catalog.supportsModelSelection && (
             <SettingsRow
               title="Speech model"
               description={error || "Choose a speech model from the provider catalog."}
               control={
                 <Select
-                  value={settings.model}
+                  value={model}
                   onValueChange={(value) => {
                     if (value) change({ model: value, voice: "" });
                   }}
                 >
                   <SelectTrigger size="sm" aria-label="Read-aloud model">
                     <SelectValue>
-                      {catalog.models.find((entry) => entry.id === settings.model)?.name ||
-                        settings.model ||
+                      {catalog.models.find((entry) => entry.id === model)?.name ||
+                        model ||
                         "Choose a model"}
                     </SelectValue>
                   </SelectTrigger>
@@ -363,7 +319,7 @@ export function ReadAloudSettingsSection() {
               }
             />
           )}
-          {settings.provider !== "chatgpt" && (
+          {(settings.provider === "system" || catalog.supportsVoiceSelection) && (
             <SettingsRow
               title="Voice"
               description="An empty value uses the first available OpenRouter voice or the provider's default."

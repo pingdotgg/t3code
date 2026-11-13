@@ -1,19 +1,29 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { EnvironmentId } from "./baseSchemas.ts";
+import { CloudSpeechProvider } from "./speech.ts";
 
-export const SpeechSynthesisProvider = Schema.Literals(["chatgpt", "xai", "openrouter"]);
+export const SpeechSynthesisProvider = CloudSpeechProvider;
 export type SpeechSynthesisProvider = typeof SpeechSynthesisProvider.Type;
 export const READ_ALOUD_LABELS = {
   off: "Off",
   system: "System voices",
-  chatgpt: "ChatGPT Subscription",
+  openai: "OpenAI",
   xai: "Grok TTS",
   openrouter: "OpenRouter",
 } as const;
 
 export const ReadAloudSettings = Schema.Struct({
-  provider: Schema.Literals(["off", "system", "chatgpt", "xai", "openrouter"]),
+  provider: Schema.Literals(["off", "system", "openai", "chatgpt", "xai", "openrouter"]).pipe(
+    Schema.decodeTo(
+      Schema.Literals(["off", "system", "openai", "xai", "openrouter"]),
+      SchemaTransformation.transform({
+        decode: (value) => (value === "chatgpt" ? ("off" as const) : value),
+        encode: (value) => value,
+      }),
+    ),
+  ),
   environmentId: Schema.NullOr(EnvironmentId),
   model: Schema.String.check(Schema.isMaxLength(160)),
   voice: Schema.String.check(Schema.isMaxLength(160)),
@@ -45,6 +55,12 @@ export const SpeechSynthesisRequest = Schema.Struct({
 });
 export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
 export const SpeechSynthesisCatalog = Schema.Struct({
+  defaultModel: Schema.String,
+  apiKeyProvider: Schema.NullOr(CloudSpeechProvider),
+  supportsModelSelection: Schema.Boolean,
+  supportsVoiceSelection: Schema.Boolean,
+  speedAppliedByProvider: Schema.Boolean,
+  error: Schema.optionalKey(Schema.String),
   models: Schema.Array(
     Schema.Struct({
       id: Schema.String,
@@ -54,6 +70,15 @@ export const SpeechSynthesisCatalog = Schema.Struct({
   ),
 });
 export type SpeechSynthesisCatalog = typeof SpeechSynthesisCatalog.Type;
+
+export const EMPTY_SPEECH_SYNTHESIS_CATALOG: SpeechSynthesisCatalog = {
+  defaultModel: "",
+  apiKeyProvider: null,
+  supportsModelSelection: false,
+  supportsVoiceSelection: false,
+  speedAppliedByProvider: false,
+  models: [],
+};
 
 export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisError>()(
   "SpeechSynthesisError",
@@ -68,9 +93,6 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
       "rate-limit",
       "unavailable",
       "model-unavailable",
-      "subscription-login-required",
-      "subscription-expired",
-      "subscription-unavailable",
     ]),
   },
   { httpApiStatus: 422 },
@@ -78,12 +100,6 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
   override get message() {
     const name = READ_ALOUD_LABELS[this.provider];
     switch (this.reason) {
-      case "subscription-login-required":
-        return "Sign in to the Codex CLI with ChatGPT on the selected environment. Read aloud uses its native login.";
-      case "subscription-expired":
-        return "The native Codex login expired. Sign in again on the selected environment.";
-      case "subscription-unavailable":
-        return "ChatGPT read aloud is unavailable for this account. Check its subscription and workspace permissions.";
       case "missing-key":
         return `Add your ${name} API key in Settings → Voice.`;
       case "unreadable-key":
