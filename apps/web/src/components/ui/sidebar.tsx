@@ -141,6 +141,15 @@ function moveFocusOutOfCollapsingSidebar() {
 
 const SIDEBAR_SLIDE_ID = "sidebar-slide";
 
+// A `data-sidebar-slide-track` element goes straight from where it was to where it lands, whatever
+// the pane around it does: `end` holds a right-anchored element still, `center` follows a centered lane.
+function sidebarSlideEdge(element: HTMLElement): number {
+  const rect = element.getBoundingClientRect();
+  const track = element.dataset.sidebarSlideTrack;
+  if (track === "end") return rect.right;
+  return track === "center" ? (rect.left + rect.right) / 2 : rect.left;
+}
+
 function sidebarSlideTargets() {
   const scope = '[data-panel-animations="true"]';
   const containers = document.querySelectorAll<HTMLElement>(
@@ -148,15 +157,54 @@ function sidebarSlideTargets() {
   );
   const insets = document.querySelectorAll<HTMLElement>(`${scope} [data-slot="sidebar-inset"]`);
   return [
-    ...Array.from(containers, (element) => ({ element, parent: null, inset: false })),
+    ...Array.from(containers, (element) => ({
+      element,
+      parent: null,
+      inset: false,
+      tracked: false,
+    })),
     ...Array.from(insets).flatMap((inset) => [
-      { element: inset, parent: null, inset: true },
+      { element: inset, parent: null, inset: true, tracked: false },
       ...Array.from(
         inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-children] > *"),
-        (element) => ({ element, parent: inset, inset: false }),
+        (element) => ({ element, parent: inset, inset: false, tracked: false }),
       ),
+      ...Array.from(inset.querySelectorAll<HTMLElement>("[data-sidebar-slide-track]"))
+        .filter((element) => spansSidebarInset(element, inset))
+        .map((element) => ({ element, parent: inset, inset: false, tracked: true })),
     ]),
-  ].map((target) => ({ ...target, start: target.element.getBoundingClientRect().left }));
+  ].map((target) => ({ ...target, start: sidebarSlideEdge(target.element) }));
+}
+
+// Split panes still slide whole with the inset: the edge between two panes moves on its own.
+function spansSidebarInset(element: HTMLElement, inset: HTMLElement) {
+  const pane = element.closest<HTMLElement>("[data-layout-pane-id]");
+  return !pane || Math.abs(pane.getBoundingClientRect().width - inset.clientWidth) < 1;
+}
+
+// Opening starts the pane left of its final box, so what stays put at its right edge sits past
+// that box (and its clipping ancestors) until the slide ends; the pane clips by its shape meanwhile.
+function liftSidebarSlideClips(inset: HTMLElement, offset: number, elements: HTMLElement[]) {
+  const insetStyle = getComputedStyle(inset);
+  if (inset.scrollLeft !== 0 || inset.scrollTop !== 0) return () => {};
+  const lifted = new Set<HTMLElement>([inset]);
+  const walked = new Set<HTMLElement>();
+  for (const element of elements) {
+    for (let node = element.parentElement; node && node !== inset; node = node.parentElement) {
+      if (walked.has(node)) break;
+      walked.add(node);
+      const { overflowX, overflowY } = getComputedStyle(node);
+      const clips = overflowX === "hidden" || overflowX === "clip";
+      const scrolls = overflowY === "auto" || overflowY === "scroll";
+      if (clips && !scrolls && node.scrollLeft === 0 && node.scrollTop === 0) lifted.add(node);
+    }
+  }
+  inset.style.clipPath = `inset(0 ${offset}px 0 0 round ${insetStyle.borderRadius})`;
+  for (const node of lifted) node.style.overflow = "visible";
+  return () => {
+    inset.style.removeProperty("clip-path");
+    for (const node of lifted) node.style.removeProperty("overflow");
+  };
 }
 
 function sidebarSlideAnchors(insets: HTMLElement[]) {
@@ -217,7 +265,7 @@ function fillSidebarInsetEdge(
     ...sidebarInsetEdgeRows(inset, rect, opening).flatMap(({ top, bottom }) => {
       if (opening) {
         const piece = document.createElement("div");
-        piece.className = "absolute inset-x-0 rounded-pane bg-background";
+        piece.className = "absolute inset-x-0 rounded-e-pane bg-background";
         Object.assign(piece.style, { top: `${top}px`, height: `${bottom - top}px` });
         return [piece];
       }
@@ -241,6 +289,21 @@ function cancelSidebarSlide(elements: Iterable<Element | null>) {
 }
 
 let sidebarSlidePending = false;
+let restoreSidebarSlideClips: (() => void) | null = null;
+
+// After the app's resize observers commit what the new width moves (the chat lanes), before paint.
+function afterResizeObservers(callback: () => void) {
+  if (typeof ResizeObserver === "undefined") {
+    window.requestAnimationFrame(callback);
+    return;
+  }
+  // oxlint-disable-next-line t3code/no-raw-resize-observer -- No React state here: a fresh observer is delivered after the shared one, so it sees what that one committed.
+  const observer = new ResizeObserver(() => {
+    observer.disconnect();
+    callback();
+  });
+  observer.observe(document.documentElement);
+}
 
 function slideSidebar(commit: () => void) {
   if (sidebarSlidePending) {
@@ -252,8 +315,9 @@ function slideSidebar(commit: () => void) {
   const first = targets[0];
   if (!first) return;
   sidebarSlidePending = true;
-  window.requestAnimationFrame(() => {
+  afterResizeObservers(() => {
     sidebarSlidePending = false;
+    restoreSidebarSlideClips?.();
     const insets = targets.filter(({ inset }) => inset).map(({ element }) => element);
     const anchors = sidebarSlideAnchors(insets);
     cancelSidebarSlide([
@@ -262,7 +326,7 @@ function slideSidebar(commit: () => void) {
       ...insets.flatMap((inset) => [inset.previousElementSibling, inset.nextElementSibling]),
     ]);
     const offsets = new Map(
-      targets.map(({ element, start }) => [element, start - element.getBoundingClientRect().left]),
+      targets.map(({ element, start }) => [element, start - sidebarSlideEdge(element)]),
     );
     const anchorStarts = anchors.map(({ element }) => element.getBoundingClientRect());
     const duration = Number.parseFloat(
@@ -274,14 +338,59 @@ function slideSidebar(commit: () => void) {
       id: SIDEBAR_SLIDE_ID,
     };
     const slides = new Map<HTMLElement, number>();
-    for (const { element, parent, inset } of targets) {
+    // How far each target starts from where it lands, so a tracked descendant can subtract it.
+    const shifts = new Map<HTMLElement, number>();
+    for (const { element, parent, inset, tracked, start } of targets) {
       const ownOffset = offsets.get(element) ?? 0;
-      if (parent && Math.abs(ownOffset) < 0.5) continue;
-      const offset = ownOffset - (parent ? (offsets.get(parent) ?? 0) : 0);
+      let carrier = parent;
+      if (tracked) {
+        carrier = element.parentElement;
+        while (carrier && !shifts.has(carrier)) carrier = carrier.parentElement;
+      }
+      const carried = carrier ? (shifts.get(carrier) ?? 0) : 0;
+      if (!tracked && parent && Math.abs(ownOffset) < 0.5) {
+        shifts.set(element, carried);
+        continue;
+      }
+      shifts.set(element, ownOffset);
+      if (tracked) {
+        if (!element.isConnected) continue;
+        // Measured under its ancestors' slides: a transformed ancestor can become its containing
+        // block until the slide ends, which moves where it lays out meanwhile.
+        const sliding = sidebarSlideEdge(element);
+        const from = start - sliding;
+        const to = start - ownOffset - sliding + carried;
+        if (Math.abs(from) < 0.5 && Math.abs(to) < 0.5) continue;
+        element.animate({ transform: [`translateX(${from}px)`, `translateX(${to}px)`] }, timing);
+        continue;
+      }
+      const offset = ownOffset - carried;
       if (!element.isConnected || Math.abs(offset) < 0.5) continue;
       if (inset) fillSidebarInsetEdge(element, offset, timing);
       element.animate({ transform: [`translateX(${offset}px)`, "translateX(0)"] }, timing);
       slides.set(element, offset);
+    }
+    const restores = insets.flatMap((inset) => {
+      const offset = slides.get(inset) ?? 0;
+      if (offset >= 0) return [];
+      const kept = [
+        ...targets.filter(({ tracked, parent }) => tracked && parent === inset),
+        ...anchors.filter((anchor) => anchor.inset === inset),
+      ].map(({ element }) => element);
+      return kept.length > 0 ? [liftSidebarSlideClips(inset, offset, kept)] : [];
+    });
+    if (restores.length > 0) {
+      const restore = () => {
+        if (restoreSidebarSlideClips !== restore) return;
+        restoreSidebarSlideClips = null;
+        for (const undo of restores) undo();
+      };
+      restoreSidebarSlideClips = restore;
+      const insetSlide = insets
+        .flatMap((inset) => inset.getAnimations())
+        .find((animation) => animation.id === SIDEBAR_SLIDE_ID);
+      if (insetSlide) void insetSlide.finished.then(restore, restore);
+      else restore();
     }
     anchors.forEach(({ element, inset, via }, index) => {
       const start = anchorStarts[index];

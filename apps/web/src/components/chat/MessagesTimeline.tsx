@@ -1364,7 +1364,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       )
     ) : (
       <div className="messages-timeline-row-frame">
-        <div className="chat-content-lane pt-1 sm:pt-2">
+        <div className="chat-content-lane pt-1 sm:pt-2" data-sidebar-slide-track="center">
           {parentThreadLink.sideChat ? (
             <SideChatContextLine
               environmentId={activeThreadEnvironmentId}
@@ -1596,6 +1596,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           <div
             ref={observeLaneWidth}
             className="chat-content-lane overflow-x-clip"
+            data-sidebar-slide-track="center"
             data-timeline-root="true"
           >
             <AudioPreviewUnmountContext value={onAudioUnmount}>
@@ -1622,7 +1623,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {unmatchedPendingApprovals.length > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
-            <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+            <div
+              className="chat-content-lane overflow-x-clip"
+              data-timeline-root="true"
+              data-sidebar-slide-track="center"
+            >
               <WorkLogBlock>
                 {unmatchedPendingApprovals.map((approval) => (
                   <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />
@@ -1689,6 +1694,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             ref={attachTimelineViewportElement}
             className="relative -mt-[var(--timeline-top-inset,0px)] h-[calc(100%+var(--timeline-top-inset,0px))] min-h-0"
             data-assistant-citation-viewport="true"
+            data-sidebar-slide-track="end"
           >
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar
