@@ -26,6 +26,8 @@ function sameMarks(left: readonly RichTextMark[], right: readonly RichTextMark[]
 // Brackets, quotes, commas, and Markdown delimiters end a URL or path token.
 const PATH_TOKEN = /[\p{L}\p{N}_/.:@%+=&?#-]+/gu;
 const FILE_EXTENSION = /^\.[a-z][a-z0-9]*(?::\d+){0,2}$/i;
+// `_yes_/_no_`: each side of a slash is its own emphasis span, so the word is not a path.
+const EMPHASIS_ALTERNATIVES = /^_[^/]+_(?:\/_[^/]+_)+$/;
 
 /**
  * Starts of underscore runs that belong to a URL, path, or filename, not to emphasis.
@@ -38,6 +40,7 @@ function literalUnderscoreRuns(text: string): Set<number> {
     const token = match[0];
     let bodyEnd = token.length;
     while (bodyEnd > 0 && ".:?".includes(token[bodyEnd - 1]!)) bodyEnd -= 1;
+    if (EMPHASIS_ALTERNATIVES.test(token.slice(0, bodyEnd))) continue;
     while (bodyEnd > 0 && token[bodyEnd - 1] === "_") bodyEnd -= 1;
     const body = token.slice(0, bodyEnd);
     if (!body.includes("/") && !FILE_EXTENSION.test(body.slice(body.lastIndexOf(".")))) continue;

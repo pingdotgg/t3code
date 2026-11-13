@@ -79,6 +79,17 @@ describe("composer rich text markdown", () => {
         { text: rest, marks: [] },
       ]);
     }
+    for (const [text, first, second, mark] of [
+      ["_yes_/_no_", "yes", "no", "italic"],
+      ["__yes__/__no__.", "yes", "no", "bold"],
+      ["_a_b_/_no_", "a_b", "no", "italic"],
+    ] as const) {
+      expect(parseInlineMarkdown(text).slice(0, 3)).toEqual([
+        { text: first, marks: [mark] },
+        { text: "/", marks: [] },
+        { text: second, marks: [mark] },
+      ]);
+    }
     expect(parseInlineMarkdown("_build_/file.ts and _x_, __init__.py and __y__")).toEqual([
       { text: "_build_/file.ts and ", marks: [] },
       { text: "x", marks: ["italic"] },
