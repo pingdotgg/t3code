@@ -21,6 +21,7 @@ const QUOTED_PATH = new RegExp(
 );
 // Where an unquoted path starts: `/a/b`, `~/`, `file://`, a drive, or a redacted known prefix
 // followed by a separator. URLs, `3/10`, `and/or` and one-segment `/compact` do not start one.
+// The first segment cannot hold a space, or `/mcp /compact` would read as a path.
 const PATH_START = [
   String.raw`\[redacted\](?=[\\/])`,
   String.raw`(?<![\w.:/~-])/[^\s/\\"'\x60<>(){},;:|]+/(?=\S)`,
@@ -28,9 +29,8 @@ const PATH_START = [
   String.raw`\bfile://`,
   String.raw`\b[A-Za-z]:[\\/]`,
 ].join("|");
-// Folder names can hold spaces and `. `, so a path runs to the last word on its line that holds a
-// separator.
-const PATH = new RegExp(String.raw`(?:${PATH_START})(?:[^\n]*[\\/])?\S*`, "gu");
+// Where a path ends is unknowable (names hold spaces and `. `), so the rest of its line goes too.
+const PATH = new RegExp(String.raw`(?:${PATH_START})[^\n]*`, "gu");
 const LONG_RUN = /[A-Za-z0-9_+=-]{32,}/gu;
 
 const entropy = (value: string) => {
