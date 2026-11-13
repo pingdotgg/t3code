@@ -1,4 +1,5 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
@@ -88,10 +89,15 @@ function pickMarkedRemote(
   const [mark, ...others] = marks;
   if (!mark || others.length > 0) return null;
   if (mark.value === "base") return { remoteName: mark.remoteName, remoteUrl: mark.remoteUrl };
-  const host = normalizeGitRemoteUrl(mark.remoteUrl).split("/")[0];
-  const markedKey = `${host}/${mark.value.toLowerCase()}`;
+  // Compare hosts with HTTP ports kept: one hostname can serve separate forges on two ports.
+  const host = parseGitRemoteHost(mark.remoteUrl)?.host;
+  const markedPath = mark.value.toLowerCase();
   const [remoteName, remoteUrl] =
-    [...remotes.entries()].find(([, url]) => normalizeGitRemoteUrl(url) === markedKey) ?? [];
+    [...remotes.entries()].find(
+      ([, url]) =>
+        parseGitRemoteHost(url)?.host === host &&
+        normalizeGitRemoteUrl(url).split("/").slice(1).join("/") === markedPath,
+    ) ?? [];
   return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
 }
 

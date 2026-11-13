@@ -372,6 +372,15 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* git(cwd, ["config", "remote.fork.gh-resolved", "base"]);
       yield* git(cwd, ["config", "remote.main.gh-resolved", "base"]);
       expect((yield* resolveFresh())?.locator.remoteName).toBe("upstream");
+
+      // The same path on another HTTPS port is a different server.
+      yield* git(cwd, ["config", "--unset", "remote.fork.gh-resolved"]);
+      yield* git(cwd, ["config", "--unset", "remote.main.gh-resolved"]);
+      yield* git(cwd, ["remote", "add", "backup", "https://ghe.example.com:9443/acme/web.git"]);
+      yield* git(cwd, ["remote", "add", "ghe-fork", "https://ghe.example.com:8443/me/web.git"]);
+      yield* git(cwd, ["remote", "add", "ghe-parent", "https://ghe.example.com:8443/acme/web.git"]);
+      yield* git(cwd, ["config", "remote.ghe-fork.gh-resolved", "acme/web"]);
+      expect((yield* resolveFresh())?.locator.remoteName).toBe("ghe-parent");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
