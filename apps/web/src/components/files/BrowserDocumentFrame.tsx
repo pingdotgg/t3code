@@ -188,7 +188,9 @@ export function HtmlRenderDocument(props: {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
-  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [expandedImage, setExpandedImage] = useState<
+    (ExpandedImagePreview & { readonly portalContainer: HTMLElement | undefined }) | null
+  >(null);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   };
@@ -301,7 +303,12 @@ export function HtmlRenderDocument(props: {
     }
     const imageRequest = readHtmlRenderImageRequest(event.data);
     if (imageRequest !== undefined) {
-      setExpandedImage({ images: [...imageRequest.images], index: imageRequest.index });
+      setExpandedImage({
+        images: [...imageRequest.images],
+        index: imageRequest.index,
+        // Body content sits under a page enlarged into the top layer.
+        portalContainer: frame.closest<HTMLElement>(":popover-open") ?? undefined,
+      });
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.
@@ -337,7 +344,11 @@ export function HtmlRenderDocument(props: {
         style={loaded ? { colorScheme: theme.appearance } : undefined}
       />
       {expandedImage !== null ? (
-        <ExpandedImageDialog preview={expandedImage} onClose={() => setExpandedImage(null)} />
+        <ExpandedImageDialog
+          preview={expandedImage}
+          portalContainer={expandedImage.portalContainer}
+          onClose={() => setExpandedImage(null)}
+        />
       ) : null}
     </>
   );
