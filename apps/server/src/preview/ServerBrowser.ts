@@ -1790,6 +1790,17 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const readTitle = async (tab: ServerTab) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<string>((resolve) => {
+      timer = setTimeout(() => resolve(""), TITLE_READ_MS);
+    });
+    const title = await Promise.race([tab.page.title().catch(() => ""), late]).finally(() =>
+      clearTimeout(timer),
+    );
+    return title || null;
+  };
+
   const statusWithTitle = async (
     tab: ServerTab | undefined,
     agentSessionId?: string,
@@ -1806,14 +1817,19 @@ const make = Effect.gen(function* () {
       };
     }
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
-    const viewport = tab.desktop ? await layoutSize(tab) : tab.page.viewportSize();
     const loadError = loadErrorOf(tab);
-    const status = {
+    const statusUrl = loadError?.url ?? (url === "about:blank" ? null : url);
+    // Both reads need the renderer; overlapping them keeps a busy page within the broker's grace.
+    const [viewport, title] = await Promise.all([
+      tab.desktop ? layoutSize(tab) : tab.page.viewportSize(),
+      statusUrl === null || tab.dialog ? null : readTitle(tab),
+    ]);
+    return {
       available: true,
       visible: isVisible(tab),
       tabId: tab.tabId,
-      url: loadError?.url ?? (url === "about:blank" ? null : url),
-      title: null,
+      url: statusUrl,
+      title,
       loading: tab.loading,
       ...(loadError ? { loadError } : {}),
       control: {
@@ -1851,15 +1867,6 @@ const make = Effect.gen(function* () {
         completedAt,
       })),
     };
-    if (status.url === null || tab.dialog) return status;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<string>((resolve) => {
-      timer = setTimeout(() => resolve(""), TITLE_READ_MS);
-    });
-    const title = await Promise.race([tab.page.title().catch(() => ""), late]).finally(() =>
-      clearTimeout(timer),
-    );
-    return { ...status, title: title || null };
   };
 
   const resolveNavigationUrl = (input: PreviewAutomationNavigateInput) => {
