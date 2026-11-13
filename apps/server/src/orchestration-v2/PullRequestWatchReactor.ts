@@ -770,9 +770,10 @@ export const make = Effect.gen(function* () {
             : { groupKey: group.key, target, next: report.next, wake },
         );
       }
+      // A busy pass may skip the activity, so only an idle read can find the held news gone.
       return (
         watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next)
-      ).pipe(Effect.tap(() => clearHeld(target)));
+      ).pipe(Effect.tap(() => (holds(target) ? Effect.void : clearHeld(target))));
     });
   });
 

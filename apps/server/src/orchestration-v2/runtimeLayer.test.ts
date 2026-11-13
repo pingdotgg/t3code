@@ -4491,6 +4491,123 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("keeps a held comment through a busy pass that reads only the checks", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-busy-remark");
+      const projectId = ProjectId.make("pr-watch-busy-remark-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch busy remark",
+        workspaceRoot: "/workspace/watch-busy-remark",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-busy-remark-create"),
+        threadId,
+        projectId,
+        title: "Watch busy remark",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const watch = (on: boolean, id: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-busy-remark-${id}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 16,
+          watching: on,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
+        });
+      yield* watch(true, "start");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-busy-remark-run"),
+        threadId,
+        messageId: MessageId.make("pr-watch-busy-remark-run"),
+        text: "Keep this run active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+
+      let comments: Array<PullRequestComment> = [];
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({
+                projectId,
+                number: 16,
+                at: "2026-10-02T12:00:00.000Z",
+              }),
+              headSha: "d00d1e0aaa",
+              checks: [
+                { name: "test", status: "pending", description: null, url: null, required: true },
+              ],
+            }),
+          activity: () =>
+            Effect.sync(() => ({
+              comments,
+              commentCount: comments.length,
+              commentsTruncated: false,
+              reviewThreadsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            })),
+          invalidate: () => Effect.void,
+          // The checks stay pending, so every pass reads the detail but rereads the activity only
+          // when the remarks fingerprint moves.
+          watchFingerprint: () =>
+            Effect.sync(() => ({ status: "pending", remarks: String(comments.length) })),
+        }),
+      );
+      const wakes = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+      );
+
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      comments = [
+        {
+          id: "remark-busy",
+          kind: "issue-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Please rename the flag.",
+          createdAt: "2999-01-01T00:00:00.000Z",
+          url: null,
+          path: null,
+          reviewState: null,
+        },
+      ];
+      yield* TestClock.adjust("2 minutes");
+      yield* reactor.sweep;
+      yield* TestClock.adjust("2 minutes");
+      yield* reactor.sweep;
+      assert.deepEqual(yield* wakes, []);
+
+      yield* finishRuns(threadId);
+      yield* TestClock.adjust("2 minutes");
+      yield* reactor.sweep;
+      assert.deepEqual(yield* wakes, ["#16: new comments"]);
+      yield* watch(false, "end");
+    }),
+  );
+
   it.effect.each([
     ["an idle", false],
     ["a busy", true],
