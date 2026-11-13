@@ -569,6 +569,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("ships every Chromium locale so web content follows the OS language", () =>
+    Effect.gen(function* () {
+      for (const platform of ["mac", "linux", "win"] as const) {
+        const config = yield* createBuildConfig(
+          platform,
+          "dir",
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+
+        assert.notProperty(config, "electronLanguages");
+      }
+    }),
+  );
+
   it.effect("declares Calendar access for hosted commands in macOS builds", () =>
     Effect.gen(function* () {
       for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
