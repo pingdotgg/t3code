@@ -2,6 +2,7 @@ import {
   latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
+  orchestrationV2WorktreePending,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -305,10 +306,19 @@ export function formatProviderSubagentStatus(
   return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
 }
 
-/** The stopped or failed run a manual continuation resumes. */
-export function deriveResumableRunId(projection: Pick<ThreadStructure, "runs">): RunId | null {
+/**
+ * The stopped or failed run a manual continuation resumes. A failed worktree setup has nothing to
+ * continue: new work waits for the worktree instead.
+ */
+export function deriveResumableRunId(
+  projection: Pick<ThreadStructure, "runs" | "thread">,
+): RunId | null {
   const run = latestExecutedRun(projection.runs);
-  return run?.status === "interrupted" || run?.status === "failed" ? run.id : null;
+  if (run?.status === "interrupted") return run.id;
+  return run?.status === "failed" &&
+    !orchestrationV2WorktreePending(projection.thread.worktreePath, projection.runs)
+    ? run.id
+    : null;
 }
 
 /**

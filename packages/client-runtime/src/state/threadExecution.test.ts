@@ -274,6 +274,23 @@ describe("thread execution presentation", () => {
     expect(deriveResumableRunId(providerError)).toBe(failed.id);
   });
 
+  it("offers no continuation for a failed worktree setup until the worktree exists", () => {
+    const failed = {
+      ...run("setup-failed", 1, "failed"),
+      completedAt: now,
+      workspacePreparation: { type: "worktree" as const, baseRef: "main" },
+    };
+    const projection = { ...v2Projection, runs: [failed] };
+
+    expect(deriveResumableRunId(projection)).toBeNull();
+    expect(
+      deriveResumableRunId({
+        ...projection,
+        thread: { ...projection.thread, worktreePath: "/tmp/worktree" },
+      }),
+    ).toBe(failed.id);
+  });
+
   it("keeps live activity attached to an executing run when a newer run is queued", () => {
     const runningRun = run("run-running", 1, "running");
     const queuedRun = run("run-queued", 2, "queued");

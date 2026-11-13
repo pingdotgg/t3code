@@ -10321,7 +10321,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
 });
 
 it.layer(layerTest)("usage-limit recovery", (it) => {
-  it.effect.each(["interrupted", "errored", "usage_limit"] as const)(
+  it.effect.each(["interrupted", "errored", "worktree_failed", "usage_limit"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>
       Effect.gen(function* () {
@@ -10397,6 +10397,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                 ...source,
                 status: reason === "interrupted" ? "interrupted" : "failed",
                 completedAt: now,
+                ...(reason === "worktree_failed"
+                  ? { workspacePreparation: { type: "worktree" as const, baseRef: "main" } }
+                  : {}),
               },
             },
           ],
@@ -10462,6 +10465,15 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           createdBy: "user" as const,
           creationSource: "web" as const,
         });
+        if (reason === "worktree_failed") {
+          // Work after a failed worktree setup waits for the worktree, so there is nothing to resume.
+          assert.equal(
+            (yield* orchestrator.dispatch(resume("first")).pipe(Effect.exit))._tag,
+            "Failure",
+          );
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+          return;
+        }
         yield* orchestrator.dispatch(resume("first"));
         const after = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(after.runs, 3);
