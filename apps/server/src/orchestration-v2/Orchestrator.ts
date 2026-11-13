@@ -15828,7 +15828,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? child.thread.forkedFrom?.type === "node" &&
               child.thread.forkedFrom.nodeId === input.taskId &&
               progressAfterTurn(child).state !== "result_available"
-            : delegatedTaskTerminalStatus(runOutcome(followUpRun)) === null;
+            : delegatedTaskTerminalStatus(runOutcome(followUpRun)) === null ||
+              delegatedTaskAwaitsWork(delegatedTaskRuns(child, input.taskId), child);
         yield* threadDispatch.withLock(
           command.threadId,
           Effect.gen(function* () {
