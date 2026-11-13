@@ -91,6 +91,24 @@ export function settingsNavigationState<State extends { readonly routes: readonl
   return { ...state, index: routes.length - 1, routes };
 }
 
+/**
+ * A Settings link opened while the app runs resets the root stack the way the Settings tab
+ * does. React Navigation's default action pushes the linked route over whatever is open.
+ */
+export function settingsLinkAction(
+  link: PartialState<NavigationState>,
+  current: NavigationState | undefined,
+) {
+  const top = link.routes.at(-1);
+  if (!current || !top || top.state || !isSettingsRoute(top.name)) return undefined;
+  const page = top.name === "Settings" ? undefined : (top.name as SettingsPageName);
+  return {
+    type: "RESET" as const,
+    payload: settingsNavigationState(current, page, top.params),
+    target: current.key,
+  };
+}
+
 /** Opens one Settings page in the Settings tab, from anywhere outside it. */
 export function openSettings<Name extends SettingsPageName>(
   navigation: RootStackNavigation,

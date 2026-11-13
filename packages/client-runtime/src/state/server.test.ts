@@ -393,7 +393,7 @@ describe("accepted server update recovery", () => {
       expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toEqual({
         status: "idle",
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -1597,96 +1597,84 @@ describe("launcher update resume", () => {
   };
 
   it.effect("fails promptly when a server the launcher did not start comes back", () =>
-    Effect.scoped(
+    Effect.gen(function* () {
+      const update = yield* launchUpdate({
+        accepting: Stream.make(ACCEPTING),
+        resumed: after("1 second", ACCEPTING).pipe(Stream.concat(after("1 minute", REPLACEMENT))),
+      });
+      yield* update.resumeSubscribed;
+
+      yield* TestClock.adjust("1 second");
+      expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
+      yield* TestClock.adjust("1 minute");
+      expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+    }),
+  );
+
+  it.effect(
+    "fails promptly when the accepting server's replay arrives after a quick acknowledgement",
+    () =>
       Effect.gen(function* () {
         const update = yield* launchUpdate({
+          accepting: after("3 seconds", ACCEPTING),
+          resumed: after("1 second", REPLACEMENT),
+        });
+        yield* update.started;
+        yield* TestClock.adjust("3 seconds");
+        yield* update.resumeSubscribed;
+
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+      }),
+  );
+
+  it.effect(
+    "waits for this update's outcome when a reconnect lands between the baseline and the request",
+    () =>
+      Effect.gen(function* () {
+        const update = yield* launchUpdate({
+          reconnectAfterBaseline: true,
           accepting: Stream.make(ACCEPTING),
-          resumed: after("1 second", ACCEPTING).pipe(Stream.concat(after("1 minute", REPLACEMENT))),
+          // The process that accepted the update over the new session replays its own ready first.
+          resumed: after("1 second", ready("2026-08-01T00:01:00.000Z", "0.0.30")).pipe(
+            Stream.concat(
+              after(
+                "1 minute",
+                ready(
+                  "2026-08-01T00:05:00.000Z",
+                  "0.0.31",
+                  committed("update-1", "0.0.30", "0.0.31"),
+                ),
+              ),
+            ),
+          ),
         });
         yield* update.resumeSubscribed;
 
         yield* TestClock.adjust("1 second");
         expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
         yield* TestClock.adjust("1 minute");
-        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+        expect(update.state()).toMatchObject({ status: "idle" });
       }),
-    ),
-  );
-
-  it.effect(
-    "fails promptly when the accepting server's replay arrives after a quick acknowledgement",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const update = yield* launchUpdate({
-            accepting: after("3 seconds", ACCEPTING),
-            resumed: after("1 second", REPLACEMENT),
-          });
-          yield* update.started;
-          yield* TestClock.adjust("3 seconds");
-          yield* update.resumeSubscribed;
-
-          yield* TestClock.adjust("1 minute");
-          expect(update.state()).toEqual(UNCOMMITTED_RESUME);
-        }),
-      ),
-  );
-
-  it.effect(
-    "waits for this update's outcome when a reconnect lands between the baseline and the request",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const update = yield* launchUpdate({
-            reconnectAfterBaseline: true,
-            accepting: Stream.make(ACCEPTING),
-            // The process that accepted the update over the new session replays its own ready first.
-            resumed: after("1 second", ready("2026-08-01T00:01:00.000Z", "0.0.30")).pipe(
-              Stream.concat(
-                after(
-                  "1 minute",
-                  ready(
-                    "2026-08-01T00:05:00.000Z",
-                    "0.0.31",
-                    committed("update-1", "0.0.30", "0.0.31"),
-                  ),
-                ),
-              ),
-            ),
-          });
-          yield* update.resumeSubscribed;
-
-          yield* TestClock.adjust("1 second");
-          expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
-          yield* TestClock.adjust("1 minute");
-          expect(update.state()).toMatchObject({ status: "idle" });
-        }),
-      ),
   );
 
   it.effect(
     "sends the update without a baseline when the accepting server never replays ready",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const update = yield* launchUpdate({
-            accepting: Stream.never,
-            resumed: after(
-              "1 second",
-              ready(
-                "2026-08-01T00:05:00.000Z",
-                "0.0.31",
-                committed("update-1", "0.0.30", "0.0.31"),
-              ),
-            ),
-          });
-          yield* update.started;
+      Effect.gen(function* () {
+        const update = yield* launchUpdate({
+          accepting: Stream.never,
+          resumed: after(
+            "1 second",
+            ready("2026-08-01T00:05:00.000Z", "0.0.31", committed("update-1", "0.0.30", "0.0.31")),
+          ),
+        });
+        yield* update.started;
 
-          yield* TestClock.adjust("5 seconds");
-          yield* TestClock.adjust("1 second");
-          expect(update.state()).toMatchObject({ status: "idle" });
-        }),
-      ),
+        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("1 second");
+        expect(update.state()).toMatchObject({ status: "idle" });
+      }),
   );
 });
 
@@ -1768,7 +1756,7 @@ describe("provider setup commands", () => {
         value: { driver: "antigravity" },
       });
       expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("toggles a provider while another provider's update is still running", () =>
@@ -1840,7 +1828,7 @@ describe("provider setup commands", () => {
       );
       yield* TestClock.adjust(Duration.seconds(1));
       expect(yield* Fiber.join(saved)).toBe(true);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
