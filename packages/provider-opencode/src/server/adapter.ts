@@ -1308,7 +1308,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           });
         });
 
-        // Each earlier child turn began at a distinct user message, so their count bounds its ordinals.
+        // Each earlier child turn began at a distinct user message OpenCode stored before publishing it,
+        // so their count bounds its ordinals; a stored resume prompt only leaves a gap.
         const nextResumedChildTurnOrdinal = Effect.fnUntraced(function* (childSessionId: string) {
           const response = yield* sdkCall("session.messages", { sessionID: childSessionId }, () =>
             client.session.messages({ sessionID: childSessionId }),
