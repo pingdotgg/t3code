@@ -125,6 +125,15 @@ export function AddEnvironmentDialog({
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
+  const [lastOpen, setLastOpen] = useState(open);
+  const [lastInitialHost, setLastInitialHost] = useState(initialHost);
+  if (open !== lastOpen || initialHost !== lastInitialHost) {
+    const opened = open && !lastOpen;
+    setLastOpen(open);
+    setLastInitialHost(initialHost);
+    if (open && initialHost !== null && (opened || initialHost !== lastInitialHost))
+      setSavedBackendHost(initialHost);
+  }
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
