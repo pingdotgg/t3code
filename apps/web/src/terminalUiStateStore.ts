@@ -10,7 +10,7 @@ import {
   type ThreadTerminalGroup,
 } from "./types";
 
-interface ThreadTerminalUiState {
+export interface ThreadTerminalUiState {
   terminalOpen: boolean;
   terminalHeight: number;
   terminalIds: string[];

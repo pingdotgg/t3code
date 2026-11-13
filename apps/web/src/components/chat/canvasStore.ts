@@ -23,7 +23,7 @@ export interface ChatCanvasMeasurements {
   readonly findBar: CanvasEdges | null;
 }
 
-interface ChatCanvasStoreState {
+export interface ChatCanvasStoreState {
   readonly measurements: ChatCanvasMeasurements;
   readonly detailsCardMeasurement: DetailsCardMeasurement | null;
   readonly setMeasurements: (next: ChatCanvasMeasurements) => void;
