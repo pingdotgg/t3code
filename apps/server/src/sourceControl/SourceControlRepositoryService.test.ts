@@ -334,6 +334,14 @@ it.effect.each<readonly [string, LfsCloneCase]>([
     { userConfig: {}, enclosingConfig: STOCK_LFS_CONFIG, defers: false },
   ],
   [
+    "runs hooks from core.hooksPath",
+    { userConfig: { ...STOCK_LFS_CONFIG, "core.hooksPath": "/hooks" }, defers: false },
+  ],
+  [
+    "copies hooks from a template directory",
+    { userConfig: { ...STOCK_LFS_CONFIG, "init.templateDir": "/templates" }, defers: false },
+  ],
+  [
     "tolerates LFS download errors only inside the checkout",
     {
       userConfig: STOCK_LFS_CONFIG,
@@ -419,24 +427,6 @@ it.effect.each<readonly [string, LfsCloneCase]>([
     }
     const clone = commands.find((command) => command.args.includes("clone"));
     assert.strictEqual(clone?.env?.GIT_LFS_SKIP_SMUDGE, testCase.defers ? "1" : undefined);
-    // post-checkout must see hydrated files, so it runs last instead of inside the clone.
-    assert.strictEqual(clone?.args.includes("core.hooksPath=/dev/null"), testCase.defers);
-    const hook = commands.at(-1);
-    if (testCase.defers) {
-      const head = yield* runIn(destinationPath, "rev-parse", "HEAD");
-      assert.deepStrictEqual(hook?.args, [
-        "hook",
-        "run",
-        "--ignore-missing",
-        "post-checkout",
-        "--",
-        "0".repeat(40),
-        head.stdout.trim(),
-        "1",
-      ]);
-    } else {
-      assert.notStrictEqual(hook?.args[0], "hook");
-    }
     const after = commands.find(
       (command) => command.args[0] === "lfs" || command.args[0] === "reset",
     );
@@ -482,10 +472,8 @@ it.effect("reports LFS download progress at git's pace and keeps its error text 
               Effect.succeed(key === "filter.lfs.process" ? "git-lfs filter-process" : null),
             execute: (input) =>
               Effect.gen(function* () {
-                const stdout = { version: "git version 2.43.0\n", "ls-files": "model.bin\n" }[
-                  input.args[0] ?? ""
-                ];
-                if (input.args[0] !== "lfs") return { ...processOutput(), stdout: stdout ?? "" };
+                const stdout = input.args[0] === "ls-files" ? "model.bin\n" : "";
+                if (input.args[0] !== "lfs") return { ...processOutput(), stdout };
                 pullEnv = input.env;
                 const report = input.progress?.onStdoutLine ?? (() => Effect.void);
                 yield* report("Downloading LFS objects:   0% (0/3), 1 MB | 1.0 MB/s     ");

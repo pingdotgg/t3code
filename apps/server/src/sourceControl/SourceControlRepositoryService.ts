@@ -88,7 +88,6 @@ const CLONE_ENV = {
 // What `git lfs install` writes. Other setups chose behavior that `git lfs pull` would not honor.
 const STOCK_LFS_FILTER = "git-lfs filter-process";
 const LFS_PROGRESS_INTERVAL_MS = 1_000;
-const NULL_OID = "0".repeat(40);
 const isStockLfs = (filter: string | null, toleratesErrors: string | null) =>
   filter === STOCK_LFS_FILTER && toleratesErrors === null;
 
@@ -413,15 +412,7 @@ export const make = Effect.gen(function* () {
       {
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(destinationPath),
-        args: [
-          // A deferred clone runs post-checkout itself once the files are real.
-          ...(deferLfs ? ["-c", "core.hooksPath=/dev/null"] : []),
-          "clone",
-          "--progress",
-          "--",
-          normalizedCloneUrl,
-          path.basename(destinationPath),
-        ],
+        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
         env: deferLfs ? { ...CLONE_ENV, GIT_LFS_SKIP_SMUDGE: "1" } : CLONE_ENV,
       },
       options,
@@ -436,25 +427,26 @@ export const make = Effect.gen(function* () {
         Config.orElse(() => Config.String("GIT_LFS_SKIP_DOWNLOAD_ERRORS")),
         Config.withDefault(""),
       );
-      if (lfsSkipEnv) return false;
+      const templateEnv = yield* Config.String("GIT_TEMPLATE_DIR").pipe(Config.withDefault(""));
+      if (lfsSkipEnv || templateEnv) return false;
       // The checkout's own git dir does not exist yet, so an enclosing repository's config is not read.
       const readUserConfig = (key: string) =>
         git.readConfigValue(path.dirname(destinationPath), key, {
           gitDir: path.join(destinationPath, ".git"),
         });
-      const stock = isStockLfs(
-        yield* readUserConfig("filter.lfs.process"),
-        yield* readUserConfig("lfs.skipdownloaderrors"),
+      if (
+        !isStockLfs(
+          yield* readUserConfig("filter.lfs.process"),
+          yield* readUserConfig("lfs.skipdownloaderrors"),
+        )
+      ) {
+        return false;
+      }
+      // Clone-time hooks would see pointer files, so only a clone that can run none defers.
+      return (
+        (yield* readUserConfig("core.hooksPath")) === null &&
+        (yield* readUserConfig("init.templateDir")) === null
       );
-      if (!stock) return false;
-      const version = yield* git.execute({
-        operation: "SourceControlRepositoryService.gitVersion",
-        cwd: path.dirname(destinationPath),
-        args: ["version"],
-      });
-      const [, major = "0", minor = "0"] = /(\d+)\.(\d+)/.exec(version.stdout) ?? [];
-      // `git hook run`, which replays the clone's post-checkout hook, is from 2.36.
-      return Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 36);
     },
     Effect.orElseSucceed(() => false),
   );
@@ -565,28 +557,7 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
-    if (deferLfs) {
-      yield* pullLfsObjects(input, prepared.destinationPath, options);
-      const head = yield* git.execute({
-        operation: "SourceControlRepositoryService.cloneRepository",
-        cwd: prepared.destinationPath,
-        args: ["rev-parse", "--verify", "--quiet", "HEAD"],
-        allowNonZeroExit: true,
-      });
-      const commit = head.stdout.trim();
-      if (commit.length > 0) {
-        yield* runCloneCommand(
-          input,
-          {
-            operation: "SourceControlRepositoryService.postCheckoutHook",
-            cwd: prepared.destinationPath,
-            args: ["hook", "run", "--ignore-missing", "post-checkout", "--", NULL_OID, commit, "1"],
-            env: CLONE_ENV,
-          },
-          options,
-        );
-      }
-    }
+    if (deferLfs) yield* pullLfsObjects(input, prepared.destinationPath, options);
 
     return {
       cwd: prepared.destinationPath,
