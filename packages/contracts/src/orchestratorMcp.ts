@@ -441,7 +441,8 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
     description: "Read backward from here.",
   }),
   latest: Schema.optional(Schema.Boolean).annotate({
-    description: "Without a cursor, read the newest items instead of the oldest.",
+    description:
+      "Without a cursor, read the newest items first. Defaults to true from a T3 thread.",
   }),
   limit: Schema.optional(clampedPositiveInt(100)).annotate({
     description: "Max items, 1 to 100.",

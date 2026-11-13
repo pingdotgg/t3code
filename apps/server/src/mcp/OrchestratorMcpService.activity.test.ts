@@ -470,9 +470,9 @@ it("readThread returns the newest items that fit the response budget", async () 
       limit: 100,
       maxCharsPerItem: 1_500,
     };
-    const result = yield* service.readThread(makeScope(), { ...read, latest: true });
-    // Older linked environments read without a cursor and follow only hasMore.
-    const first = yield* service.readThread(makeScope(), read);
+    const result = yield* service.readThread(makeScope(), read);
+    // Linked environments and the CLI read as clients without a cursor and follow only hasMore.
+    const first = yield* service.readThread({ ...makeScope(), thread: undefined }, read);
 
     expect(pageOptions).toEqual([
       { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
