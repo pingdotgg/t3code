@@ -1,3 +1,11 @@
+import {
+  formatFilePathPosition,
+  parseFileUrlHref,
+  resolvePathLinkTarget,
+  splitFilePathPosition,
+} from "@t3tools/shared/fileLinks";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
+import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -46,6 +54,9 @@ const REQUEST_ROUTE_PATTERN =
 // The tail of `redis://host/0` or `file:///a.mjs` is not a path. One-letter schemes stay drives,
 // a diff's `+` or `-` may lead, and the lookbehind keeps runs from being rescanned at every suffix.
 const SCHEME_URL_PATTERN = /(?<![A-Za-z\d+.-])[+-]?[A-Za-z][A-Za-z\d+.-]+:\/\/[^\s"'`<>]+/gu;
+// Nor is the tail of an SCP-style Git remote such as `git@github.com:acme/widgets.git`. Only a
+// path wholly inside the tail is dropped, so `src/contact@support.vue:12:3` keeps its link.
+const SCP_REMOTE_PATTERN = /(?<![\w.@-])[\w.-]+@[\w.-]+:[^\s"'`<>]+/gu;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
@@ -119,6 +130,10 @@ export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
     [...line.matchAll(REQUEST_ROUTE_PATTERN), ...line.matchAll(SCHEME_URL_PATTERN)],
     (match) => ({ start: match.index, end: match.index + match[0].length }),
   );
+  const remoteTails = Array.from(line.matchAll(SCP_REMOTE_PATTERN), (match) => ({
+    start: match.index + match[0].indexOf(":") + 1,
+    end: match.index + match[0].length,
+  }));
   const urlMatches = collectMatches(line, "url", URL_PATTERN, promptMatches);
   const quotedMatches = collectMatches(line, "path", QUOTED_FILE_PATH_PATTERN, [
     ...promptMatches,
@@ -131,13 +146,28 @@ export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
   ]);
   return [...promptMatches, ...urlMatches, ...quotedMatches, ...pathMatches]
     .filter(
-      (match) => match.kind === "url" || !nonPathRanges.some((range) => overlaps(match, range)),
+      (match) =>
+        match.kind === "url" ||
+        (!nonPathRanges.some((range) => overlaps(match, range)) &&
+          !remoteTails.some((tail) => match.start >= tail.start && match.end <= tail.end)),
     )
     .toSorted((a, b) => a.start - b.start);
 }
 
 export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
+}
+
+/** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */
+export function resolveTerminalLinkTarget(text: string, cwd: string): string {
+  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text) : null;
+  if (!fileUrl) return resolvePathLinkTarget(text, cwd);
+  return formatFilePathPosition(
+    splitFilePathPosition(
+      stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path)),
+      fileUrl.hash,
+    ),
+  );
 }
 
 export function collectWrappedTerminalLinkLine(
