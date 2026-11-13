@@ -5,6 +5,7 @@ import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
   isTerminalUrl,
+  resolveTerminalLinkTarget,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -295,6 +296,40 @@ describe("resolvePathLinkTarget", () => {
     const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
     expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
       "/Users/julius/project/main.c:10:5",
+    );
+  });
+
+  it.each([
+    ["src/main.ts", "/repo/src/main.ts"],
+    ["/repo/src/main.ts", "/repo/src/main.ts"],
+    [String.raw`C:\repo\src\main.ts`, String.raw`C:\repo\src\main.ts`],
+    ["app/(auth)/page.tsx", "/repo/app/(auth)/page.tsx"],
+  ])("preserves a TypeScript compiler location on %s", (path, target) => {
+    const text = `${path}(42,7)`;
+    const links = extractTerminalLinks(`${text}: error TS2322: Type mismatch`);
+    expect(links).toEqual([{ kind: "path", text: `${path}:42:7`, start: 0, end: text.length }]);
+    expect(resolveTerminalLinkTarget(links[0]?.text ?? "", "/repo")).toBe(`${target}:42:7`);
+  });
+
+  it.each([
+    [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
+    ["/tmp/report(42,7)", "/tmp/report(42,7)"],
+    ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
+  ])("preserves existing path targets in %s", (line, target) => {
+    const [link] = extractTerminalLinks(line);
+    expect(resolveTerminalLinkTarget(link?.text ?? "", "/repo")).toBe(target);
+  });
+
+  // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
+  it("does not resolve an OSC 8 file URI target against the cwd", () => {
+    expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
+      "/var/tmp/report.txt",
+    );
+    expect(
+      resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
+    ).not.toMatch(/^\/workspace\/project\//);
+    expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
+      "/workspace/project/file:notes.md",
     );
   });
 });
