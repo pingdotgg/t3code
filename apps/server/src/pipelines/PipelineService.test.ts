@@ -196,7 +196,7 @@ it.effect("getRun, subscribeRun and run actions fail for a missing run", () =>
 
 it.effect("seeds each starter once and never brings a deleted one back", () =>
   Effect.gen(function* () {
-    const starters = PIPELINE_STARTERS;
+    const starters = [FEATURE_DELIVERY_PIPELINE, PR_VISUAL_REVIEW_PIPELINE];
     // Each build is a server start over the same database.
     const start = <A, E>(
       starterList: ReadonlyArray<PipelineStarter>,
@@ -318,7 +318,8 @@ it.effect("an unedited copy of an older starter version is upgraded; an edited o
 
 it("every shipped starter's previous step lists are recorded before its steps change", () => {
   // Changing a starter's steps changes its fingerprint. Add the old value to the starter's
-  // previousFingerprints, so unedited copies upgrade, then update it here.
+  // previousFingerprints, so unedited copies upgrade, then update it here. A new starter adds its
+  // current fingerprint here.
   const pinned: Record<string, string> = {
     "feature-delivery": "yjcq182r3n",
     "pr-visual-review": "803581ncl2",

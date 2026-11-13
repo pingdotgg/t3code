@@ -18,7 +18,7 @@ from a template:
   number. It reads the change, captures before and after screenshots, and builds a visual review
   guide that ends with questions and concerns you can turn into review comments. It never comments
   on, approves, changes or merges the pull request. Because it checks out the pull request's head
-  commit, start it in a new worktree so your own branch isn't switched.
+  commit, choose **New worktree** when you start it so your own branch isn't switched.
 
 T3 Code adds each template once. If you delete one, it stays deleted, and you can recreate it from
 the template. While you have not edited a pipeline made from a template, it is updated to the
