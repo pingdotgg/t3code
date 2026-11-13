@@ -748,6 +748,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
+  // First-party account fields cannot verify custom endpoint credentials.
+  const baseUrl =
+    (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
+    resolvedEnvironment.ANTHROPIC_BASE_URL;
+  const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
+
   if (!capabilities) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
@@ -767,15 +773,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
             ? `Timed out after ${resolveProviderProbeTimeoutMs("claude", CAPABILITIES_PROBE_TIMEOUT_MS, resolvedEnvironment) / 1_000}s while checking Claude account status.`
             : "Claude Agent CLI failed while checking account status."
           : "Could not verify Claude authentication status from initialization result.",
+        ...(customApiEndpoint
+          ? { usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) }
+          : {}),
       },
     });
   }
 
-  // First-party account fields cannot verify custom endpoint credentials.
-  const baseUrl =
-    (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
-    resolvedEnvironment.ANTHROPIC_BASE_URL;
-  const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     const path = yield* Path.Path;
     const configDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
@@ -810,17 +814,20 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       authMethod: capabilities.tokenSource,
     });
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-    : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        })
-      : claudeUsageResponseToLimits({
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        }).limits;
+  // A custom endpoint answers usage for whichever account it routes to, not this login.
+  const usageLimits = customApiEndpoint
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+    : !capabilities.usage
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : scopedLimitNames
+        ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+            response: capabilities.usage,
+            checkedAt: usageCheckedAt,
+          })
+        : claudeUsageResponseToLimits({
+            response: capabilities.usage,
+            checkedAt: usageCheckedAt,
+          }).limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&
