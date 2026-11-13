@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
@@ -358,17 +359,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       yield* git(other, ["init"]);
       yield* git(other, ["config", "remote.upstream.gh-resolved", "base"]);
 
-      const previousGitDir = process.env.GIT_DIR;
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          process.env.GIT_DIR = path.join(other, ".git");
-        }),
-        () =>
-          Effect.sync(() => {
-            if (previousGitDir === undefined) delete process.env.GIT_DIR;
-            else process.env.GIT_DIR = previousGitDir;
-          }),
-      );
+      vi.stubEnv("GIT_DIR", path.join(other, ".git"));
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);

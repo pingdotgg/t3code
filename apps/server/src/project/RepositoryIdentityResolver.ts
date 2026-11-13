@@ -242,11 +242,12 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   cacheKey: RepositoryIdentityCacheKey,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const env = gitEnv(yield* HostProcess.Platform);
   const remoteResult = yield* processRunner
     .run({
       command: "git",
       args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), "remote", "-v"],
-      env: gitEnv(yield* HostProcess.Platform),
+      env,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -265,7 +266,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
         "--get-regexp",
         "^remote\\..*\\.gh-resolved$",
       ],
-      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      env,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
