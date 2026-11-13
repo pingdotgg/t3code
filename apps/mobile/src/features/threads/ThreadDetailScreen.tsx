@@ -829,7 +829,11 @@ function ThreadDetailBody(
       return { kind: "compacting" };
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
-      return { kind: "working", startedAt: props.activeWorkStartedAt };
+      return {
+        kind: "working",
+        environmentId: props.environmentId,
+        startedAt: props.activeWorkStartedAt,
+      };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
       return {
