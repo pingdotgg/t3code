@@ -936,6 +936,46 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("re-running checks reopens a watch that saw its checks finish", () =>
+    Effect.gen(function* () {
+      const watch = {
+        startedAt: "2026-08-20T00:00:00.000Z",
+        headSha: "abc123",
+        failedChecks: ["test"],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: "2026-08-20T00:00:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const rerun = (checksPending: boolean | undefined, reran: boolean) =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            thread: {
+              ...branchThread,
+              pullRequests: [
+                makeLink(42, {
+                  watch: checksPending === undefined ? watch : { ...watch, checksPending },
+                }),
+              ],
+            },
+            pullRequests: {
+              rerunChecks: () => Effect.succeed([{ name: "test", rerun: reran, detail: null }]),
+            },
+          });
+          yield* harness.call("ci_rerun", {});
+          return yield* Ref.get(harness.commands);
+        });
+      expect(yield* rerun(false, true)).toMatchObject([
+        { type: "thread.pull-request-watch.checks-reopen", threadId: THREAD_ID },
+      ]);
+      // Nothing re-ran, or the watch has no answer to clear.
+      expect(yield* rerun(false, false)).toEqual([]);
+      expect(yield* rerun(undefined, true)).toEqual([]);
+    }),
+  );
+
   it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
     Effect.gen(function* () {
       const opened: Array<{ readonly cwd: string; readonly draft: boolean | undefined }> = [];

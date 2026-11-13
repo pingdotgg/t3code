@@ -740,6 +740,9 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
+    getCheckLogs: (input) => cli.readCheckLogs(input).pipe(Effect.mapError(fail("getCheckLogs"))),
+    rerunChecks: (input) => cli.rerunChecks(input).pipe(Effect.mapError(fail("rerunChecks"))),
+
     updateChangeRequest: (input) =>
       cli
         .updatePullRequest({

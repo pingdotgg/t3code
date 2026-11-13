@@ -764,6 +764,72 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
+export const CheckLogsResult = Schema.Struct({
+  ...PullRequestIdentity,
+  checks: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      url: Schema.NullOr(Schema.String),
+      log: Schema.NullOr(Schema.String),
+      truncated: Schema.Boolean,
+      detail: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type CheckLogsResult = typeof CheckLogsResult.Type;
+
+export const RerunChecksResult = Schema.Struct({
+  ...PullRequestIdentity,
+  checks: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      rerun: Schema.Boolean,
+      detail: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type RerunChecksResult = typeof RerunChecksResult.Type;
+
+const CheckLogsTool = Tool.make("ci_logs", {
+  description:
+    "Read the tail of a PR's failing check logs, or one named check's. Use instead of gh run view.",
+  parameters: Schema.Struct({
+    ...ThreadPullRequestInput.fields,
+    check: Schema.optional(TrimmedNonEmptyString),
+    tailLines: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2000 })).annotate({
+        description: "Default: 200.",
+      }),
+    ),
+  }),
+  success: CheckLogsResult,
+  failure: PullRequestToolError,
+  dependencies: forgeDependencies,
+})
+  .annotate(Tool.Title, "Read CI logs")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
+
+const RerunChecksTool = Tool.make("ci_rerun", {
+  description: "Re-run a PR's failing checks, or one named check.",
+  parameters: Schema.Struct({
+    ...ThreadPullRequestInput.fields,
+    check: Schema.optional(TrimmedNonEmptyString),
+  }),
+  success: RerunChecksResult,
+  failure: PullRequestToolError,
+  dependencies: forgeDependencies,
+})
+  .annotate(Tool.Title, "Re-run CI")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
+
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
   LinkPullRequestsTool,
@@ -781,4 +847,6 @@ export const PullRequestsToolkit = Toolkit.make(
   RespondToPullRequestTool,
   ReviewPullRequestTool,
   MergePullRequestTool,
+  CheckLogsTool,
+  RerunChecksTool,
 );

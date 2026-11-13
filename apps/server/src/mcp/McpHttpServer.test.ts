@@ -1618,13 +1618,17 @@ it.effect(
             "pull_request_read",
             "pull_request_review",
             "pull_request_merge",
+            "ci_logs",
+            "ci_rerun",
           ]),
         );
         const noForgeTools = yield* listedTools("noForgeToken");
         expect(noForgeTools).toEqual(
           expect.arrayContaining(["link_pull_request", "watch_pull_request"]),
         );
-        expect(noForgeTools.filter((name) => name.startsWith("pull_request_"))).toEqual([]);
+        expect(
+          noForgeTools.filter((name) => name.startsWith("pull_request_") || name.startsWith("ci_")),
+        ).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

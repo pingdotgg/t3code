@@ -868,6 +868,23 @@ const branchPullRequestCreatedBy = (entry: ShellEntry, branch: string | undefine
     .map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]))
     .find((number) => number > 0);
 };
+/** The branch the agent last checked out or switched to in the shell, else the world's. */
+const checkedOutBranch = (sample: Sample) => {
+  let branch = sample.testCase.setup.world?.branch ?? "";
+  for (const entry of sample.shell) {
+    const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
+    for (const part of command.replace(/\s\d?>&\d/g, "").split(/[;&|\n]+/)) {
+      // `git checkout <ref> -- <paths>` restores files and stays on the branch.
+      if (/\s--(\s|$)/.test(part)) continue;
+      const match = /\bgit (?:checkout|switch)\s+(?:-[bcBC]\s+)?([A-Za-z0-9][\w./-]*)\s*$/.exec(
+        part.trim(),
+      );
+      if (match !== null) branch = match[1]!;
+    }
+  }
+  return branch;
+};
+
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
  * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
@@ -883,6 +900,10 @@ type Sample = {
   readonly linked: Set<string>;
   /** The branch PR the agent opened in this sample, which links alone do not prove. */
   openedPullRequest: number | undefined;
+  /** PRs pull_request_create opened from branches other than the world's, by branch. */
+  readonly openedByBranch: Map<string, number>;
+  /** PR changes the agent made through T3's tools, which gh and the host show from then on. */
+  readonly forgeChanges: Array<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -938,6 +959,8 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shell,
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
+    openedByBranch: new Map(),
+    forgeChanges: [],
     openedPullRequest:
       shell
         .map((entry) => branchPullRequestCreatedBy(entry, testCase.setup.world?.branch))
@@ -1218,7 +1241,7 @@ const worldState = (pr: Readonly<Record<string, unknown>> | undefined) => {
  * The PR for the sample's branch: the world's, else the one a create would open. A case that
  * mocks `gh pr create` names that URL, so the T3 tool opens the same number.
  */
-const branchPullRequest = (sample: Sample) => {
+const worldBranchPullRequest = (sample: Sample) => {
   const branch = sample.testCase.setup.world?.branch;
   const prs = worldPullRequests(sample);
   const own = prs.find((pr) => pr.headRefName === branch);
@@ -1233,6 +1256,41 @@ const branchPullRequest = (sample: Sample) => {
   const number =
     fromMock > 0 ? fromMock : Math.max(123, ...prs.map((pr) => Number(pr.number) || 0)) + 1;
   return { number, created: true, pr: undefined };
+};
+
+/** The PR for the checked-out branch: a stack layer's own, or the world branch's. */
+const branchPullRequest = (sample: Sample) => {
+  const checkedOut = checkedOutBranch(sample);
+  if (checkedOut === sample.testCase.setup.world?.branch) return worldBranchPullRequest(sample);
+  const known = worldPullRequests(sample).find((pr) => pr.headRefName === checkedOut);
+  if (known !== undefined) return { number: Number(known.number), created: false, pr: known };
+  const opened = sample.openedByBranch.get(checkedOut);
+  if (opened !== undefined) return { number: opened, created: false, pr: undefined };
+  const number =
+    Math.max(
+      worldBranchPullRequest(sample).number,
+      ...sample.openedByBranch.values(),
+      ...worldPullRequests(sample).map((pr) => Number(pr.number) || 0),
+      ...[...sample.linked].map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]) || 0),
+    ) + 1;
+  return { number, created: true, pr: undefined };
+};
+
+/** PullRequestService reads this many logs when no check is named. */
+const DEFAULT_CHECK_LOGS = 5;
+
+/** The checks `ci_logs` and `ci_rerun` act on, selected as PullRequestService does. */
+const selectedWorldChecks = (sample: Sample, input: Readonly<Record<string, unknown>>) => {
+  const number = typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
+  const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+  const all = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+  const named = typeof input.check === "string" ? input.check.trim().toLowerCase() : null;
+  const checks = all.filter((check) =>
+    named === null
+      ? check.state === "fail" || check.state === "cancelled"
+      : valueText(check.name).toLowerCase() === named,
+  );
+  return { number, all, checks, named };
 };
 
 /** A believable T3 result for a tool the case does not mock. */
@@ -1332,10 +1390,14 @@ export const t3Default = (
       };
     }
     case "pull_request_create": {
+      const checkedOut = checkedOutBranch(sample);
       const { number, created } = branchPullRequest(sample);
       const target = pullRequest(sample.repo, { number });
       sample.linked.add(target.url);
-      if (created) sample.openedPullRequest = number;
+      // Another layer of a stack gets its own PR, opened once per branch like the real tool.
+      if (checkedOut !== sample.testCase.setup.world?.branch) {
+        sample.openedByBranch.set(checkedOut, number);
+      } else if (created) sample.openedPullRequest = number;
       return { ...target, created };
     }
     case "pull_request_read": {
@@ -1453,6 +1515,32 @@ export const t3Default = (
         ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
         state: input.auto === true ? "open" : "merged",
       };
+    case "ci_logs":
+    case "ci_rerun": {
+      const { number, checks, named } = selectedWorldChecks(sample, input);
+      return {
+        ...pullRequest(sample.repo, { number }),
+        checks: checks.map((check, index) =>
+          name === "ci_rerun"
+            ? { name: valueText(check.name), rerun: true, detail: null }
+            : named === null && index >= DEFAULT_CHECK_LOGS
+              ? {
+                  name: valueText(check.name),
+                  url: null,
+                  log: null,
+                  truncated: false,
+                  detail: "Not read, to keep the reply short. Ask for this check by name.",
+                }
+              : {
+                  name: valueText(check.name),
+                  url: null,
+                  log: valueText(check.log ?? `Error: ${valueText(check.name)} failed`),
+                  truncated: false,
+                  detail: null,
+                },
+        ),
+      };
+    }
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
       const id = NodeCrypto.createHash("sha256")
@@ -1636,6 +1724,8 @@ const BRANCH_PULL_REQUEST_TOOLS = new Set([
   "pull_request_respond",
   "pull_request_review",
   "pull_request_merge",
+  "ci_logs",
+  "ci_rerun",
 ]);
 const BRANCH_HAS_NO_PR_ERROR =
   "This thread's branch has no known PR. Pass number, or open one with pull_request_create.";
@@ -1717,6 +1807,11 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     ...(sample.secretFiles.length > 0
       ? [
           `T3's request_secret saved these files in this sample: ${sample.secretFiles.join(", ")}. Each exists, is readable only by the user, and holds exactly the value the user gave, typed into T3's private card or pasted in chat and saved by the agent, the right one for the task, with no trailing newline. A program that reads it, as in "$(cat <file>)", < <file> or a --*-file flag, gets that value. What appears in the output is whatever that program prints: one that prints or logs its input shows the value. No other file in that directory exists.`,
+        ]
+      : []),
+    ...(sample.forgeChanges.length > 0
+      ? [
+          `The agent made these changes through T3's tools; gh, git fetch and the host show them: ${sample.forgeChanges.join("; ")}`,
         ]
       : []),
     ...(context ? [`The agent was told: ${context}`] : []),
@@ -1825,6 +1920,26 @@ const savedSecretFile = (sample: Sample, result: unknown) => {
 };
 
 /** The result for one tool call. */
+const FORGE_WRITE_TOOLS = new Set([
+  "pull_request_create",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_review",
+  "pull_request_merge",
+  "ci_rerun",
+]);
+
+const recordForgeChange = (
+  sample: Sample,
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+  result: unknown,
+) => {
+  if (FORGE_WRITE_TOOLS.has(name)) {
+    sample.forgeChanges.push(`${name} ${valueText(input)} returned ${valueText(result)}`);
+  }
+};
+
 export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
   sample: Sample,
   config: Config,
@@ -1895,6 +2010,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       const number = Number(mock.number);
       if (number > 0) sample.openedPullRequest = number;
     }
+    recordForgeChange(sample, name, input, mock);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1911,8 +2027,16 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       // Until the agent opens it, the PR a create would open does not exist.
       if (branchPullRequest(sample).created) return failed(BRANCH_HAS_NO_PR_ERROR);
     }
+    if (name === "ci_logs" || name === "ci_rerun") {
+      const { all, checks, named } = selectedWorldChecks(sample, input);
+      if (named !== null && checks.length === 0) {
+        const names = all.map((check) => valueText(check.name)).join(", ") || "none";
+        return failed(`No check is named ${valueText(input.check)}. Checks: ${names}.`);
+      }
+    }
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);
+    recordForgeChange(sample, name, input, value);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"

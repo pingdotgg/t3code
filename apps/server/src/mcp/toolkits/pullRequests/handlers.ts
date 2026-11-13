@@ -1105,6 +1105,46 @@ const make = Effect.gen(function* () {
         return { ...identityOf(target), state: after.state };
       }),
     ),
+    ci_logs: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { target, ref } = yield* locate(input);
+        const checks = yield* pullRequests
+          .checkLogs({
+            ...ref,
+            tailLines: input.tailLines ?? 200,
+            ...(input.check === undefined ? {} : { check: input.check }),
+          })
+          .pipe(Effect.mapError(forgeFailure));
+        return { ...identityOf(target), checks };
+      }),
+    ),
+    ci_rerun: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const { thread, target, ref } = yield* locate(input);
+        const checks = yield* pullRequests
+          .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
+          .pipe(Effect.mapError(forgeFailure));
+        // Like a push, a rerun makes a watch's finished checks stale, so the thread keeps working
+        // until a read sees them run. The rerun already happened, so a failed reopen only logs.
+        if (
+          checks.some((check) => check.rerun) &&
+          threadPullRequestsOf(thread).some((link) => link.watch?.checksPending !== undefined)
+        ) {
+          yield* engine
+            .dispatch({
+              type: "thread.pull-request-watch.checks-reopen",
+              commandId: yield* commandId("mcp-ci-rerun-checks", thread.id),
+              threadId: thread.id,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("reopening a watch's checks after a rerun failed", cause),
+              ),
+            );
+        }
+        return { ...identityOf(target), checks };
+      }),
+    ),
   } satisfies McpToolAccess.Handlers<typeof PullRequestsToolkit.tools>;
 });
 

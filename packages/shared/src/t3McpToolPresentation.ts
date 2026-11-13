@@ -71,6 +71,8 @@ export type T3McpToolSummaryAction =
   | "update-pr"
   | "respond-pr"
   | "merge-pr"
+  | "ci-logs"
+  | "ci-rerun"
   | "browser"
   | "device"
   | "html-preview"
@@ -173,6 +175,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "merge-pr",
     "pull-request",
   ),
+  ci_logs: tool(["Read", "Reading", "Read", "CI logs"], "ci-logs", "pull-request"),
+  ci_rerun: tool(["Re-run", "Re-running", "Re-ran", "CI"], "ci-rerun", "pull-request"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",

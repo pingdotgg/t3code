@@ -504,6 +504,35 @@ export function summarizeT3ToolCalls(
             );
       break;
     }
+    case "ci-logs":
+      label = phrase("Read", "read", `CI logs ${times}`);
+      break;
+    case "ci-rerun": {
+      // A host can refuse a check it cannot re-run, such as one outside its CI.
+      const outcomes = selected.flatMap((call) =>
+        Array.isArray(call.output?.checks)
+          ? call.output.checks.map((check) => asRecord(check)?.rerun === true)
+          : [],
+      );
+      const rerun = outcomes.filter(Boolean).length;
+      const refused = outcomes.length - rerun;
+      failedCount += refused;
+      if (outcomes.length === 0) {
+        // An empty list means no check had failed, so nothing was asked of the host.
+        label = selected.some((call) => Array.isArray(call.output?.checks))
+          ? phrase("Found", "re-run", "no failed checks to re-run")
+          : phrase("Re-ran", "re-run", `CI ${times}`);
+      } else if (rerun === 0) {
+        label = `Could not re-run ${quantity(refused, "check")}`;
+      } else {
+        label = phrase(
+          "Re-ran",
+          "re-run",
+          `${quantity(rerun, "check")}${refused > 0 ? `, ${refused} refused` : ""}`,
+        );
+      }
+      break;
+    }
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;
