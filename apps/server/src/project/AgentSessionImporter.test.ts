@@ -86,6 +86,7 @@ function candidate(
       model: modelSelection.model,
       createdAt: timestamp,
       updatedAt: timestamp,
+      omittedMessageCount: 0,
       messages: [
         { role: "user" as const, text: "Fix it", createdAt: timestamp },
         { role: "assistant" as const, text: "Fixed", createdAt: timestamp },
@@ -302,6 +303,7 @@ it.effect(
         "claudeAgent",
       );
       const unowned = candidate(CODEX_MODEL_SELECTION, "unowned");
+      unowned.thread.omittedMessageCount = 1;
       const unownedPi = candidate(PI_MODEL_SELECTION, "unowned-pi", "pi");
       const importer = yield* makeImporter([
         active,
@@ -336,9 +338,23 @@ it.effect(
         const threadId = importId(source);
         const records = yield* projections.getThreadRecords(threadId, [
           "messages",
+          "turnItems",
           "providerThreads",
         ]);
         expect(records.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
+        const notices = records.turnItems.filter((item) => item.type === "system_notice");
+        if (source === unowned) {
+          expect(records.turnItems[0]).toBe(notices[0]);
+          expect(notices).toMatchObject([
+            {
+              ordinal: 1,
+              runId: null,
+              message: expect.stringContaining("1 earlier message was not imported"),
+            },
+          ]);
+        } else {
+          expect(notices).toEqual([]);
+        }
         expect(records.thread.historyOrigin).toBe("v1_import");
         expect(records.thread.activeProviderThreadId).toBe(records.providerThreads[0]?.id);
         expect(records.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(nativeId(source));
@@ -428,6 +444,47 @@ it.effect(
         runtimePayload: { importedTranscripts: [source.source] },
       });
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("does not record a changed transcript as imported without its new messages", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "6f1c2a7e-3b4d-4e5f-9a8b-1c2d3e4f5a6b",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    expect(yield* (yield* makeImporter([first])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue", createdAt: timestamp },
+      { role: "assistant", text: "Continued", createdAt: timestamp },
+    );
+    yield* (yield* makeImporter([continued])).run;
+
+    const recorded = AgentSessionScanner.decodeImportedTranscriptPayload(
+      Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).runtimePayload,
+    ).pipe(Option.getOrThrow).importedTranscripts;
+    const texts = (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+      (message) => message.text,
+    );
+    expect({
+      recordsChangedTranscript: recorded?.some((source) => source.size === 200) ?? false,
+      showsNewMessages: texts.includes("Continued"),
+    }).not.toEqual({ recordsChangedTranscript: true, showsNewMessages: false });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
 it.effect(
