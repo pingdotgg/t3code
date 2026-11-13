@@ -751,26 +751,26 @@ describe("ssh tunnel scripts", () => {
         const ownerPid = Number(
           yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
         );
-        assert.sameMembers(
+        assert.include(
           launches.map((launch) => launch.remoteServerKind),
-          ["managed", "external"],
+          "managed",
         );
         assert.equal(launches[0]!.remotePort, launches[1]!.remotePort);
         assert.deepEqual((yield* fs.readFileString(serversFile)).trim().split("\n"), [
           String(ownerPid),
         ]);
-        for (const [index, launch] of launches.entries()) {
-          if (launch.remoteServerKind !== "managed") continue;
-          const stateKey = yield* remoteStateKey(targets[index]!);
-          const recordedPid = yield* fs.readFileString(
-            path.join(home, ".t3", "ssh-launch", stateKey, "pid"),
-          );
-          assert.equal(
-            Number(recordedPid.trim()),
-            ownerPid,
-            `${targets[index]!.alias} reported a managed server, but its recorded PID is not the server that owns the remote home`,
-          );
+        // Two stops must never both own the server, or both skip it.
+        const managedPids: Array<number> = [];
+        for (const target of targets) {
+          const stateDir = path.join(home, ".t3", "ssh-launch", yield* remoteStateKey(target));
+          if ((yield* fs.readFileString(path.join(stateDir, "managed"))) !== "managed\n") continue;
+          managedPids.push(Number(yield* fs.readFileString(path.join(stateDir, "pid"))));
         }
+        assert.deepEqual(
+          managedPids,
+          [ownerPid],
+          "exactly one launch record must manage the server that owns the remote home",
+        );
         assert.isFalse(yield* fs.exists(launchLock));
       }).pipe(Effect.scoped),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -907,11 +907,12 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
 
   it.live("an update replaces the managed server after its connection is renamed", () =>
     Effect.gen(function* () {
-      const { fs, home, fakeServer, sshAsLocalShell } = yield* prepare("an unrelated process");
+      const { fs, home, fakeServer, sshAsLocalShell, stateDir } =
+        yield* prepare("an unrelated process");
       const updatedServer = `${home}/fake-t3-next.cjs`;
       yield* fs.writeFileString(updatedServer, FAKE_SERVER);
       const renamed = { ...target, alias: "devbox-renamed" };
-      const launch = (launchTarget: typeof target, nodeScriptPath: string) =>
+      const launch = (launchTarget: typeof renamed, nodeScriptPath: string) =>
         SshTunnel.launchOrReuseRemoteServer(launchTarget, undefined, { nodeScriptPath }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
         );
@@ -934,6 +935,12 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       launchedPids.push(originalPid);
 
       const afterRename = yield* launch(renamed, fakeServer);
+      assert.equal(yield* runtimePid, originalPid, "renaming alone restarted the server");
+      assert.equal(
+        yield* fs.readFileString(`${stateDir}/managed`),
+        "external\n",
+        "the old alias still owns the server, so its disconnect would stop it",
+      );
       const afterUpdate = yield* launch(renamed, updatedServer);
       launchedPids.push(yield* runtimePid);
       assert.deepEqual(

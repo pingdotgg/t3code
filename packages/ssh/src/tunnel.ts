@@ -740,6 +740,25 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_PID=""
       REMOTE_MANAGED="external"
     fi
+    # Editing a connection's alias, host, user or port changes its key, so the
+    # server may be one this launcher started under another key. Ownership
+    # moves here, leaving one managed record, so updates keep replacing it;
+    # the previous owner's runner says whether this launch is such an update.
+    for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+      [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+      [ "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" = "$DEFAULT_RUNTIME_PID" ] && managed_server_running "$DEFAULT_RUNTIME_PID" || continue
+      REMOTE_PID="$DEFAULT_RUNTIME_PID"
+      REMOTE_MANAGED="managed"
+      printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+      printf 'managed\\n' >"$MANAGED_FILE"
+      printf 'external\\n' >"$SIBLING_DIR/managed"
+      rm -f "$SIBLING_DIR/pid"
+      RUNNER_CHANGED=1
+      if cmp -s "$RUNNER_FILE" "$SIBLING_DIR/run-t3.sh"; then
+        RUNNER_CHANGED=0
+      fi
+      break
+    done
   else
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
