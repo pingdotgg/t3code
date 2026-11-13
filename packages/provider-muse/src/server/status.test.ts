@@ -105,6 +105,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(snapshot.message).toBeUndefined();
         expect(snapshot.slashCommands).toEqual([COMPACT_SLASH_COMMAND]);
         expect(snapshot.auth).toEqual({ status: "unknown" });
+        expect(snapshot.supportsConversationRollback).toBe(false);
         expect(snapshot.version).toBe("1.0.3-R2198.1");
         expect(snapshot.models.map((model) => model.slug)).toEqual([
           "muse-wonder-1.0",
