@@ -23,7 +23,13 @@ vi.mock("../previewStateStore", () => ({
   setActivePreviewTab: () => {},
   beginPreviewSessionClose: () => {},
   cancelPreviewSessionClose: () => {},
+  finishPreviewSessionClose: () => {},
 }));
+vi.mock("../browser/previewRuntime", () => ({ rendersServerTabNatively: () => false }));
+vi.mock("../state/primaryEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(null) };
+});
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => fixture.allowed.has(id),
   readEnvironmentScope: (id: string) => fixture.allowed.has(id),
