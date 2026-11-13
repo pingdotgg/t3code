@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type PreviewAutomationLoadError,
+  type PreviewAutomationResizeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -113,6 +114,7 @@ function makeSession(
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
+        if ((input as { format: string }).format === "jpeg" && heldStill) await heldStill();
         // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
         return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
       }
@@ -202,12 +204,15 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     mainFrame: () => page,
     frames: () => [page],
     url: () => url,
+    commit: (next: string) => {
+      url = next;
+    },
     title: vi.fn(async () => "test page"),
     viewportSize: vi.fn(() => viewport),
     setViewportSize: vi.fn(async (size: typeof viewport) => {
       viewport = size;
     }),
-    goto: vi.fn(async (next: string) => {
+    goto: vi.fn(async (next: string, _options?: { timeout?: number; waitUntil?: string }) => {
       url = next;
       events.emit("load");
       const pending = initialNavigation;
@@ -218,7 +223,7 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     goForward: vi.fn(async () => {}),
     reload: vi.fn(async () => {}),
     emulateMedia: vi.fn(async () => {}),
-    waitForLoadState: vi.fn(async () => {}),
+    waitForLoadState: vi.fn(async (_state?: string, _options?: { timeout?: number }) => {}),
     evaluate: vi.fn(async () => ({
       url,
       title: "test page",
@@ -383,6 +388,7 @@ let encoderPageOverride: Page | undefined;
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let heldStill: (() => Promise<void>) | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -567,6 +573,7 @@ beforeEach(() => {
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  heldStill = null;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -693,6 +700,130 @@ it.effect(
         ).toBe("a,b");
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([
+  { renderer: "idle", title: "Heavy page" },
+  { renderer: "busy", title: null },
+])(
+  "navigate returns the committed page while its load event is still pending ($renderer renderer)",
+  ({ renderer, title }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const page = contexts[0]!.page;
+        const titleRequested = Promise.withResolvers<void>();
+        // A busy main thread never answers title(); drive its native deadline explicitly.
+        page.title.mockImplementation(() => {
+          titleRequested.resolve();
+          return renderer === "busy"
+            ? new Promise<string>(() => {})
+            : Promise.resolve("Heavy page");
+        });
+        const heavy = "http://localhost:5173/heavy";
+        const timedOut = (method: string, timeout: number | undefined) =>
+          Object.assign(new Error(`${method}: Timeout ${timeout}ms exceeded.`), {
+            name: "TimeoutError",
+          });
+        // The document commits and parses, but a stalled subresource holds back `load`.
+        page.goto.mockImplementation(async (next, options) => {
+          page.commit(next);
+          page.emit("request", {
+            url: () => next,
+            isNavigationRequest: () => true,
+            frame: () => page,
+          });
+          if (options?.waitUntil === "load") throw timedOut("page.goto", options.timeout);
+        });
+        page.waitForLoadState.mockImplementation(async (state, options) => {
+          if (state === undefined || state === "load") {
+            throw timedOut("page.waitForLoadState", options?.timeout);
+          }
+        });
+
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const result = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: heavy, timeoutMs: 4_000 },
+          })
+          .pipe(Effect.forkScoped);
+        const titleRead = yield* Effect.raceFirst(
+          Effect.promise(() => titleRequested.promise).pipe(Effect.as(true)),
+          Fiber.await(result).pipe(Effect.as(false)),
+        );
+        if (titleRead && renderer === "busy") {
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(250));
+        }
+        const status = yield* Fiber.join(result);
+
+        expect(status).toMatchObject({ url: heavy, title, loading: true });
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
+);
+
+it.effect("a desktop status answers with the last viewport while the renderer cannot measure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { url: "https://example.com/", reuseExistingTab: false, show: false },
+      });
+      const measuring = Promise.withResolvers<void>();
+      desktopSizeAnswer = () => {
+        measuring.resolve();
+        return new Promise(() => {});
+      };
+      // A resize makes the next status measure again.
+      yield* Effect.promise(() =>
+        desktopConnections[0]!.context.sessions[0]!.emitAsync("Page.frameResized"),
+      );
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const result = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: opened.tabId!,
+          operation: "status",
+          input: {},
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => measuring.promise);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(250));
+      const status = yield* Fiber.join(result);
+
+      expect(status.viewport).toEqual({ width: 1920, height: 1080 });
+    }),
+  ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
+);
+
+it.live("navigate fails when the page never commits within its timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      contexts[0]!.page.goto.mockImplementation(async () => {
+        throw Object.assign(new Error("page.goto: Timeout 4000ms exceeded."), {
+          name: "TimeoutError",
+        });
+      });
+
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "http://10.255.255.1/", timeoutMs: 4_000 },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "PreviewAutomationTimeoutError", timeoutMs: 4_000 });
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each(["desktop" as const, undefined])(
@@ -1135,6 +1266,38 @@ it.effect("enforces provider ownership and explicit targets when a session has m
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a first still that never returns does not stall the tab's later captures", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const capturing = Promise.withResolvers<void>();
+      const stuck = Promise.withResolvers<void>();
+      heldStill = () => {
+        heldStill = null;
+        capturing.resolve();
+        return stuck.promise;
+      };
+      yield* Effect.addFinalizer(() => Effect.sync(() => stuck.resolve()));
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* Effect.promise(() => capturing.promise);
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(2_000));
+      const snapshot = yield* Fiber.join(snapshotting);
+      expect(snapshot.accessibilityTree).toContain("delete");
+      const second = yield* browser.attachViewer(viewerInput(tabId, false));
+      const frame = yield* Stream.fromQueue(second.output).pipe(
+        Stream.filter((output) => output._tag === "frame"),
+        Stream.runHead,
+      );
+      expect(Option.isSome(frame)).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "streams to a read-only viewer without allowing takeover, input, or viewport changes",
   () =>
@@ -1155,7 +1318,10 @@ it.effect(
           yield* viewer.input(message);
         expect(page.setViewportSize).not.toHaveBeenCalled();
         expect(session.send.mock.calls.some(([method]) => method.startsWith("Input."))).toBe(false);
-        const outputs = yield* Queue.takeAll(viewer.output);
+        const outputs = yield* Stream.fromQueue(viewer.output).pipe(
+          Stream.takeUntil((output) => output._tag === "frame"),
+          Stream.runCollect,
+        );
         expect(outputs).toContainEqual(
           expect.objectContaining({ _tag: "frame", data: Buffer.from("frame") }),
         );
@@ -2411,6 +2577,134 @@ it.effect(
         ]);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a desktop tab reports the size the desktop draws after a resize", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const failReads = () => Promise.reject(new Error("Cannot find context with specified id"));
+      desktopSizeAnswer = failReads;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const { context } = desktopConnections.at(-1)!;
+      const cdp = context.sessions[0]!;
+      const events = yield* manager.subscribeEvents;
+      const status = broker
+        .invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} })
+        .pipe(Effect.map((result) => result.viewport));
+      // The desktop draws the new size once the session update reaches it.
+      const resize = (input: Record<string, unknown>, width: number, height: number) =>
+        Effect.gen(function* () {
+          const result = yield* broker
+            .invoke<PreviewAutomationResizeResult>({ scope, tabId, operation: "resize", input })
+            .pipe(Effect.forkScoped);
+          let event = yield* PubSub.take(events);
+          while (event.type !== "resized" || event.tabId !== tabId) {
+            event = yield* PubSub.take(events);
+          }
+          Object.assign(context.cssViewport, { width, height });
+          yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+          return (yield* Fiber.join(result)).viewport;
+        });
+
+      // A size no read measured after the resize is unknown, never a default or the last one.
+      expect(
+        yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
+      ).toBeUndefined();
+      desktopSizeAnswer = null;
+      expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
+        width: 1280,
+        height: 760,
+      });
+      desktopSizeAnswer = failReads;
+      expect(yield* status).toEqual({ width: 1280, height: 760 });
+      expect(
+        yield* resize({ mode: "freeform", width: 1000, height: 700 }, 1000, 700),
+      ).toBeUndefined();
+      desktopSizeAnswer = null;
+      // A page can keep another size than the fixed one asked for; both report the page's.
+      expect(yield* resize({ mode: "freeform", width: 844, height: 390 }, 560, 760)).toEqual({
+        width: 560,
+        height: 760,
+      });
+      expect(yield* status).toEqual({ width: 560, height: 760 });
+      expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
+      // No page resize or load since that read, so status answers without reading again.
+      let reads = 0;
+      desktopSizeAnswer = async () => {
+        reads += 1;
+        return { result: { value: { width: 1, height: 1 } } };
+      };
+      expect(yield* status).toEqual({ width: 1234, height: 700 });
+      expect(reads).toBe(0);
+      // A status during a read waits for it rather than answer the size before it.
+      const pending = yield* Queue.unbounded<PromiseWithResolvers<Record<string, unknown>>>();
+      const heldAnswer = () => {
+        const read = Promise.withResolvers<Record<string, unknown>>();
+        Queue.offerUnsafe(pending, read);
+        return read.promise;
+      };
+      desktopSizeAnswer = heldAnswer;
+      const answer = (width: number, height: number) => ({ result: { value: { width, height } } });
+      const refill = broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(
+          Effect.map((result) => result.viewport),
+          Effect.forkScoped,
+        );
+      // Status reads the URL just before it picks the size.
+      const url = context.page.url();
+      using urlRead = vi.spyOn(context.page, "url");
+      const startStatus = Effect.gen(function* () {
+        const started = Promise.withResolvers<void>();
+        urlRead.mockImplementationOnce(() => {
+          started.resolve();
+          return url;
+        });
+        const fiber = yield* Effect.forkScoped(status);
+        yield* Effect.promise(() => started.promise);
+        return fiber;
+      });
+      const filled = yield* refill;
+      const read = yield* Queue.take(pending);
+      const during = yield* startStatus;
+      read.resolve(answer(1100, 650));
+      expect(yield* Fiber.join(during)).toEqual({ width: 1100, height: 650 });
+      expect(yield* Fiber.join(filled)).toEqual({ width: 1100, height: 650 });
+      // A page resize during that read makes its answer old: status reads again, and the
+      // resize result has no size.
+      const outdated = yield* refill;
+      const oldRead = yield* Queue.take(pending);
+      const later = yield* startStatus;
+      yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+      desktopSizeAnswer = async () => answer(1000, 600);
+      oldRead.resolve(answer(1100, 650));
+      expect(yield* Fiber.join(later)).toEqual({ width: 1000, height: 600 });
+      expect(yield* Fiber.join(outdated)).toBeUndefined();
+      // So does a load during that read, which may have measured the page before it.
+      desktopSizeAnswer = heldAnswer;
+      const reloaded = yield* refill;
+      const pageRead = yield* Queue.take(pending);
+      const navigated = yield* startStatus;
+      yield* Effect.promise(() => cdp.emitAsync("Page.loadEventFired"));
+      desktopSizeAnswer = async () => answer(900, 560);
+      pageRead.resolve(answer(1000, 600));
+      expect(yield* Fiber.join(navigated)).toEqual({ width: 900, height: 560 });
+      expect(yield* Fiber.join(reloaded)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect("a stalled desktop viewer still gets its size, control and reconnect", () =>
