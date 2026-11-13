@@ -156,8 +156,8 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
-// page.title() runs in the renderer; a busy page must not hold a status past the broker's grace.
-const TITLE_READ_MS = 250;
+// Status reads run in the renderer; a busy page must not hold a status past the broker's grace.
+const STATUS_READ_MS = 250;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
 const ACTION_TIMELINE_LIMIT = 50;
 
@@ -1790,15 +1790,12 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const readTitle = async (tab: ServerTab) => {
+  const withinStatusDeadline = <A>(read: Promise<A>, late: () => A): Promise<A> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<string>((resolve) => {
-      timer = setTimeout(() => resolve(""), TITLE_READ_MS);
+    const deadline = new Promise<A>((resolve) => {
+      timer = setTimeout(() => resolve(late()), STATUS_READ_MS);
     });
-    const title = await Promise.race([tab.page.title().catch(() => ""), late]).finally(() =>
-      clearTimeout(timer),
-    );
-    return title || null;
+    return Promise.race([read, deadline]).finally(() => clearTimeout(timer));
   };
 
   const statusWithTitle = async (
@@ -1819,10 +1816,17 @@ const make = Effect.gen(function* () {
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
     const loadError = loadErrorOf(tab);
     const statusUrl = loadError?.url ?? (url === "about:blank" ? null : url);
-    // Both reads need the renderer; overlapping them keeps a busy page within the broker's grace.
     const [viewport, title] = await Promise.all([
-      tab.desktop ? layoutSize(tab) : tab.page.viewportSize(),
-      statusUrl === null || tab.dialog ? null : readTitle(tab),
+      // A late measurement still lands in desktopViewport for the next status.
+      tab.desktop
+        ? withinStatusDeadline(layoutSize(tab), () => tab.desktopViewport)
+        : tab.page.viewportSize(),
+      statusUrl === null || tab.dialog
+        ? null
+        : withinStatusDeadline(
+            tab.page.title().catch(() => ""),
+            () => "",
+          ).then((title) => title || null),
     ]);
     return {
       available: true,
