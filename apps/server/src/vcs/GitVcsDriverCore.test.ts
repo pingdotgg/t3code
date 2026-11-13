@@ -1744,6 +1744,42 @@ it.effect("does not fetch for status when the branch tracks a local branch", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #13912 a credential helper that opens a system dialog was re-run forever
+it.effect("stops background status fetches of a remote that keeps failing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let backgroundFetches = 0;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command) && command.args.includes("fetch")) {
+          backgroundFetches++;
+          return Effect.succeed(
+            makeFailedHandle("fatal: could not read Username for 'https://github.com'"),
+          );
+        }
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+      // Two hours of status polls, each after the longest failure backoff has passed.
+      for (let poll = 0; poll < 8; poll++) {
+        yield* driver.statusDetailsRemote(cwd);
+        yield* TestClock.adjust("16 minutes");
+      }
+
+      assert.isAtMost(backgroundFetches, 3);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("lets a worktree checkout that is still working run past five minutes", () =>
   Effect.gen(function* () {
     const checkoutStarted = yield* Deferred.make<void>();
