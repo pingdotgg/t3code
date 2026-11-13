@@ -1018,6 +1018,7 @@ const boundTaskLayer = (
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           sendToThread,
           getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
+          getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
         }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
