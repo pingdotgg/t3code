@@ -788,7 +788,9 @@ const threadStartCommand = Command.make("start", {
     Flag.optional,
   ),
   model: Flag.String("model").pipe(
-    Flag.withDescription("Model slug. Defaults to the project's default model."),
+    Flag.withDescription(
+      "Model slug. Required with --provider when the environment requires explicit agent models; otherwise uses the project default.",
+    ),
     Flag.optional,
   ),
   worktree: Flag.String("worktree").pipe(

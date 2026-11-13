@@ -60,7 +60,13 @@ const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(funct
     yield* fs.writeFileString(filePath, contents);
   }
   yield* runGit(cwd, ["add", "README.md", ...Object.keys(files)]);
-  yield* runGit(cwd, ["commit", "-m", "initial"]);
+  yield* runGit(cwd, [
+    "commit",
+    "-m",
+    "initial",
+    "-m",
+    "Found-by: self during replay fixture setup",
+  ]);
   return cwd;
 });
 

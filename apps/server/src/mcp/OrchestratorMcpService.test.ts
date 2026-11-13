@@ -5,6 +5,7 @@ import {
   CommandId,
   ContextTransferId,
   EnvironmentId,
+  EventId,
   GitCommandError,
   MessageId,
   NodeId,
@@ -45,6 +46,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -69,6 +71,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
+import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -2296,6 +2302,84 @@ describe("OrchestratorMcpService provider resolution", () => {
             attachments: [],
             dispatchMode: { type: "start_immediately" },
           });
+          const inheritedRequest = {
+            threads: [{ target: { driverKind: driver } }],
+            clientRequestId: "inherited-create-retry",
+          };
+          const inherited = yield* service.createThreads(scope, inheritedRequest);
+          assert.equal(inherited.threads[0]?.model, model);
+          const inheritedTaskRequest = {
+            task: "Summarize the diff.",
+            target: { driverKind: driver },
+            mode: "async" as const,
+            clientRequestId: "inherited-delegate-retry",
+          };
+          const inheritedTask = yield* service.delegateTask(scope, inheritedTaskRequest);
+          assert.isNotNull(inheritedTask.childThreadId);
+          const acceptedChild = yield* orchestrator.getThreadProjection(
+            inheritedTask.childThreadId!,
+          );
+          assert.equal(acceptedChild.thread.modelSelection.model, model);
+          yield* settings.updateSettings({ requireExplicitAgentModel: true });
+          const beforePolicyRefusals = yield* orchestrator.getShellSnapshot();
+          const parentBeforeRefusals = yield* orchestrator.getThreadProjection(parentThreadId);
+          for (const refusedModel of [undefined, "", " ", "auto", "inherit", "inherit-parent"]) {
+            const target = {
+              driverKind: driver,
+              ...(refusedModel === undefined ? {} : { model: refusedModel }),
+            };
+            const delegateError = yield* service
+              .delegateTask(scope, {
+                task: "Do not create a child.",
+                target,
+                mode: "async",
+                isolation: "worktree",
+                clientRequestId: `unaccepted-delegate-${refusedModel}`,
+              })
+              .pipe(Effect.flip);
+            assert.equal(delegateError.code, "invalid_request");
+            const batchError = yield* service
+              .createThreads(scope, {
+                threads: [
+                  { target: { driverKind: driver, model }, prompt: "Must not start." },
+                  { target },
+                ],
+                clientRequestId: `unaccepted-batch-${refusedModel}`,
+              })
+              .pipe(Effect.flip);
+            assert.equal(batchError.code, "invalid_request");
+            assert.include(batchError.message, "threads[1].target.model");
+          }
+          const untargetedError = yield* service
+            .delegateTask(scope, {
+              task: "Do not inherit a model.",
+              mode: "async",
+              clientRequestId: "unaccepted-untargeted",
+            })
+            .pipe(Effect.flip);
+          assert.equal(untargetedError.code, "invalid_request");
+          assert.deepEqual(yield* orchestrator.getShellSnapshot(), beforePolicyRefusals);
+          assert.deepEqual(
+            yield* orchestrator.getThreadProjection(parentThreadId),
+            parentBeforeRefusals,
+          );
+          assert.deepEqual(yield* service.createThreads(scope, inheritedRequest), inherited);
+          const retriedTask = yield* service.delegateTask(scope, inheritedTaskRequest);
+          assert.equal(retriedTask.childThreadId, inheritedTask.childThreadId);
+          assert.deepEqual(
+            yield* orchestrator.getThreadProjection(inheritedTask.childThreadId!),
+            acceptedChild,
+          );
+          const explicitTask = yield* service.delegateTask(scope, {
+            ...inheritedTaskRequest,
+            target: { driverKind: driver, model },
+            clientRequestId: "explicit-strict-delegate",
+          });
+          const explicitChild = yield* orchestrator.getThreadProjection(
+            explicitTask.childThreadId!,
+          );
+          assert.equal(explicitChild.thread.modelSelection.model, model);
+          assert.equal(explicitChild.runs[0]?.modelSelection.model, model);
           const request = {
             threads: [{ target: { driverKind: driver, model } }],
             clientRequestId: "create-retry",
@@ -2330,6 +2414,67 @@ describe("OrchestratorMcpService provider resolution", () => {
           });
           const titled = yield* orchestrator.getThreadProjection(emojiAtLimit.threads[0]!.threadId);
           assert.equal(titled.thread.title, `${"a".repeat(76)}...`);
+          const forkRun = titled.runs[0]!;
+          const sink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("event:fork-source-completed"),
+                type: "run.updated",
+                threadId: titled.thread.id,
+                runId: forkRun.id,
+                occurredAt: now,
+                payload: { ...forkRun, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          const threadToolkit = yield* ThreadToolkit.pipe(
+            Effect.provide(McpToolAccess.HandlersLayer.layer(ThreadHandlers.layer)),
+          );
+          const fork = (modelSelection?: typeof selection) =>
+            threadToolkit
+              .handle("t3_thread_transfer", {
+                action: "fork",
+                threadId: titled.thread.id,
+                sourcePoint: { type: "run", runId: forkRun.id },
+                ...(modelSelection === undefined ? {} : { modelSelection }),
+              })
+              .pipe(
+                Stream.unwrap,
+                Stream.runCollect,
+                Effect.provideService(McpInvocationContext.McpInvocationContext, {
+                  environmentId: scope.environmentId,
+                  requestNamespace: "client:fork-test",
+                  thread: undefined,
+                  client: { sessionId: "fork-test", label: "Test", access: "full-access" },
+                  capabilities: new Set<"orchestration">(["orchestration"]),
+                  issuedAt: 0,
+                }),
+              );
+          const beforeForkRefusals = yield* orchestrator.getShellSnapshot();
+          for (const requested of [
+            undefined,
+            { ...selection, model: "auto" },
+            { ...selection, model: "different-model" },
+            { ...selection, instanceId: ProviderInstanceId.make("different-provider") },
+          ]) {
+            const refused = (yield* fork(requested)).at(-1)?.result;
+            assert.match(JSON.stringify(refused), /invalid_request/);
+          }
+          assert.deepEqual(yield* orchestrator.getShellSnapshot(), beforeForkRefusals);
+          const successfulFork = (yield* fork(selection)).at(-1)?.result;
+          assert.isDefined(successfulFork);
+          assert.isTrue(
+            successfulFork !== undefined && "targetThreadId" in successfulFork,
+            JSON.stringify(successfulFork),
+          );
+          if (successfulFork !== undefined && "targetThreadId" in successfulFork) {
+            const storedFork = yield* orchestrator.getThreadProjection(
+              successfulFork.targetThreadId,
+            );
+            assert.deepEqual(storedFork.thread.modelSelection, selection);
+          }
 
           yield* settings.updateSettings({
             projectSettingsOverrides: {

@@ -28,6 +28,7 @@ import { Switch } from "../ui/switch";
 import { resolveDefaultModelSettingsPresentation } from "./ProjectDefaultsSettings.logic";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -333,6 +334,29 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         <>
           {modelRow}
           {fallbackRow}
+          {!isProjectScope &&
+          connectedEnvironments.length > 0 &&
+          connectedEnvironments.every(
+            (environment) =>
+              environment.serverConfig?.environment.capabilities.explicitAgentModels === true,
+          ) ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["requireExplicitAgentModel"]}
+              {...searchableSetting("require-explicit-agent-model")}
+              description="Require a model on T3 tool and CLI launches. Requests without one are rejected."
+              control={
+                <ScopedSwitch
+                  settingKeys={["requireExplicitAgentModel"]}
+                  checked={settings.requireExplicitAgentModel}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ requireExplicitAgentModel: checked })
+                  }
+                  aria-label="Require explicit model for agent-created runs"
+                />
+              }
+            />
+          ) : null}
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}

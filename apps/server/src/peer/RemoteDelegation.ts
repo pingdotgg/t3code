@@ -350,6 +350,7 @@ const make = Effect.gen(function* () {
           clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
           // The thread there shows it is this thread's subagent, with a way back.
           delegatedFrom: {
+            modelOrigin: target.model === undefined ? "inherited" : "explicit",
             environmentId: hereId,
             threadId: parent.thread.id,
             title: parent.thread.title,

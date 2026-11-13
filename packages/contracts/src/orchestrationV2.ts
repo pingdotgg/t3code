@@ -134,6 +134,7 @@ export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
  * this thread is that parent's subagent, run here instead of there.
  */
 export const OrchestrationV2DelegatedFrom = Schema.Struct({
+  modelOrigin: Schema.optionalKey(Schema.Literals(["explicit", "inherited"])),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: Schema.String,

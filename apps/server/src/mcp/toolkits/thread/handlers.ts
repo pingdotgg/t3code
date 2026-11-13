@@ -23,6 +23,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+import { assertExplicitAgentModel } from "../../explicitAgentModel.ts";
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -179,6 +180,18 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               })
               .pipe(Effect.mapError(dispatchFailure));
             return { sequence: result.sequence, targetThreadId };
+          }
+          yield* assertExplicitAgentModel(input.modelSelection?.model, "modelSelection.model");
+          if (
+            input.modelSelection !== undefined &&
+            (input.modelSelection.model !== projection.thread.modelSelection.model ||
+              input.modelSelection.instanceId !== projection.thread.modelSelection.instanceId)
+          ) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                "A context fork keeps its source setup. Specify the source thread's provider and model.",
+            });
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
           const result = yield* threads
