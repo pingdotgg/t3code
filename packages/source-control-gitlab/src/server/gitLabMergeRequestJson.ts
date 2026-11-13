@@ -40,6 +40,7 @@ const RawPipelineSchema = Schema.Struct({
   status: Schema.optional(Schema.NullOr(Schema.String)),
   web_url: Schema.optional(Schema.NullOr(Schema.String)),
   source: Schema.optional(Schema.NullOr(Schema.String)),
+  finished_at: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawTriggerJobSchema = Schema.Struct({
@@ -306,12 +307,18 @@ function toChecks(
 ): ReadonlyArray<PullRequestCheck> {
   const pipeline = raw.head_pipeline;
   if (!pipeline) return [];
+  // Retrying jobs reruns them inside the same pipeline, so its URL stays the same. Each time it
+  // finishes again, its finish time moves, and that tells a retry that failed again apart.
+  const finishedAt = trimmed(pipeline.finished_at);
   return [
     {
       name: "Pipeline",
       status: toPipelineStatus(pipeline.status),
       description: trimmed(pipeline.source),
       url: trimmed(pipeline.web_url),
+      ...(pipeline.id == null || finishedAt === null
+        ? {}
+        : { runId: `${pipeline.id}@${finishedAt}` }),
     },
   ];
 }

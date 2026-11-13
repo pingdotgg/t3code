@@ -114,6 +114,11 @@ export const PullRequestCheck = Schema.Struct({
    * approval when that read fails, so nothing waits on it or counts it as passing.
    */
   placeholder: Schema.optional(Schema.Boolean),
+  /**
+   * Tells this run of the check apart from earlier ones where its URL does not change on a
+   * rerun, such as a GitLab pipeline whose failed jobs were retried in place.
+   */
+  runId: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 

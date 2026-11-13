@@ -154,6 +154,32 @@ describe("decodeMergeRequestDetailJson", () => {
     ]);
   });
 
+  it("tells each finish of a pipeline apart, since a job retry keeps its URL", () => {
+    const pipelineCheck = (pipeline: Record<string, unknown>) =>
+      expectSuccess(decodeMergeRequestDetailJson(detailJson({ head_pipeline: pipeline })))
+        .checks[0];
+    const failed = (finishedAt: string) =>
+      pipelineCheck({
+        id: 3047545127,
+        status: "failed",
+        web_url: "https://gitlab.com/acme/web/-/pipelines/3047545127",
+        finished_at: finishedAt,
+      });
+
+    const first = failed("2026-11-10T00:28:57.753Z");
+    const retried = failed("2026-11-10T00:39:53.753Z");
+    expect(first?.url).toBe(retried?.url);
+    expect(first?.runId).toBe("3047545127@2026-11-10T00:28:57.753Z");
+    expect(retried?.runId).toBe("3047545127@2026-11-10T00:39:53.753Z");
+    // A running pipeline has no finish time yet, and one without an ID has nothing to key on.
+    expect(pipelineCheck({ id: 3047545127, status: "running", finished_at: null })?.runId).toBe(
+      undefined,
+    );
+    expect(
+      pipelineCheck({ status: "failed", finished_at: "2026-11-10T00:39:53.753Z" })?.runId,
+    ).toBe(undefined);
+  });
+
   it.each(["canceled", "canceling"])("maps a %s pipeline to cancelled", (status) => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status } })),
