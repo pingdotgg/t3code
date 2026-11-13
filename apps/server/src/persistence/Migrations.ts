@@ -95,7 +95,8 @@ import Migration0084 from "./Migrations/084_LastExecutedRunIndex.ts";
 import Migration0085 from "./Migrations/085_TurnItemCounts.ts";
 import Migration0086 from "./Migrations/086_QueuedTurnInputIndex.ts";
 import Migration0087 from "./Migrations/087_ProjectionProjectsCustomTitle.ts";
-import Migration0088 from "./Migrations/088_ScheduledTaskSendMode.ts";
+import Migration0088 from "./Migrations/088_TurnItemTypeStatusIndex.ts";
+import Migration0089 from "./Migrations/089_ScheduledTaskSendMode.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -186,7 +187,8 @@ const migrationEntries = [
   [85, "TurnItemCounts", Migration0085],
   [86, "QueuedTurnInputIndex", Migration0086],
   [87, "ProjectionProjectsCustomTitle", Migration0087],
-  [88, "ScheduledTaskSendMode", Migration0088],
+  [88, "TurnItemTypeStatusIndex", Migration0088],
+  [89, "ScheduledTaskSendMode", Migration0089],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
