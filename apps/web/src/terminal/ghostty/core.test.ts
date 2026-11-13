@@ -122,6 +122,13 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(terminalNavigationShortcutData(event, "Win32") ?? core.encodeKey(event)).toBe(expected);
   });
 
+  it("keeps a leading U+FEFF in an unbracketed paste", async () => {
+    const core = await createCore();
+    core.write("\x1b[?2004l");
+
+    expect(core.encodePaste("\ufeffsample")).toBe("\ufeffsample");
+  });
+
   it.each([
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },
