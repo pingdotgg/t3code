@@ -227,7 +227,7 @@ const bootstrap = Effect.gen(function* () {
   // A backend started while another server holds this home's lock can only exit with code 78.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&
-    (yield* DesktopHomeOwner.isHomeOwnershipLocked())
+    !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
   ) {
     const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
     yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
