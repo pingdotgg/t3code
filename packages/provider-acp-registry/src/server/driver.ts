@@ -15,7 +15,10 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -24,6 +27,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import { readKimiUsageLimits } from "./kimiUsageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -497,7 +501,9 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
 export type AcpRegistryDriverEnv =
   | AcpRegistryAdapterV2DriverEnv
   | Digest.Digest
-  | ProviderHost.ProviderHost;
+  | ProviderHost.ProviderHost
+  | HttpClient.HttpClient
+  | FileSystem.FileSystem;
 
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -533,6 +539,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
+    const httpClient = yield* HttpClient.HttpClient;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const digestService = yield* Digest.Digest;
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -632,6 +642,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
     );
+    // Kimi Code reports subscription limits outside ACP; attach them to the
+    // periodic probe like the CLI's own `.user-menu-usage` display.
+    const isKimiRegistryAgent =
+      effectiveConfig.source === "registry" &&
+      (effectiveConfig.agentId === "kimi" || effectiveConfig.agentId === "kimi-code");
+    const withKimiUsageLimits = Effect.fn("AcpRegistryDriver.withKimiUsageLimits")(function* (
+      provider: ServerProvider,
+    ) {
+      if (
+        !isKimiRegistryAgent ||
+        !provider.enabled ||
+        !provider.installed ||
+        provider.status !== "ready"
+      ) {
+        return provider;
+      }
+      const usageLimits = yield* Effect.option(
+        readKimiUsageLimits({ environment: processEnvironment }).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+          Effect.provideService(Digest.Digest, digestService),
+        ),
+      );
+      if (Option.isNone(usageLimits) || usageLimits.value === undefined) return provider;
+      return { ...provider, usageLimits: usageLimits.value };
+    });
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
@@ -642,6 +679,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
+      Effect.flatMap(withKimiUsageLimits),
     );
     const enrichmentCache = yield* Ref.make<{
       readonly generation: number;

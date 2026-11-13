@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -543,6 +544,7 @@ const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(FetchHttpClient.layer),
 );
 
 it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) => {
