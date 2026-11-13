@@ -4,15 +4,17 @@
 use std::{path::PathBuf, time::Instant};
 
 use conn_contract::{ProjectSearchContentsInput, ProjectSearchEntriesInput};
-use conn_files::{entries, search};
+use conn_files::{entries, paths::InternalPaths, search};
 
 fn main() {
     let Some(root) = std::env::args().nth(1).map(PathBuf::from) else {
         eprintln!("usage: search_memory <dir>");
         std::process::exit(2);
     };
+    // No server state to hide here.
+    let internal = InternalPaths::new(std::path::Path::new("/nonexistent/conn-state"));
     let started = Instant::now();
-    let listed = entries::list_all(&root);
+    let listed = entries::list_all(&root, &internal);
     println!(
         "listEntries: {} entries, truncated {}, {:?}",
         listed.entries.len(),
@@ -30,6 +32,7 @@ fn main() {
             kind: None,
             image_only: None,
         },
+        &internal,
     );
     println!(
         "searchEntries: {} entries, {:?}",
@@ -47,6 +50,7 @@ fn main() {
             whole_word: false,
             use_regex: false,
         },
+        &internal,
     );
     println!(
         "searchContents: {} matches, truncated {}, {:?}",

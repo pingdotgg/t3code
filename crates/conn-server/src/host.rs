@@ -32,14 +32,20 @@ pub struct Host {
     pub environment: Arc<Environment>,
 }
 
+/// Where new managed worktrees go: `worktreesDirectory` from the settings, else
+/// `<state-dir>/worktrees`. Read on each use, so a settings change applies to the next
+/// worktree. Thread launch and `vcs.createWorktree` both use this one function.
+pub fn worktrees_dir(environment: &Environment) -> PathBuf {
+    let setting = environment.settings.raw();
+    match setting.get("worktreesDirectory").and_then(Value::as_str) {
+        Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir.trim()),
+        _ => environment.state_dir.join("worktrees"),
+    }
+}
+
 impl Host {
-    /// `worktreesDirectory` from the settings, else `<state-dir>/worktrees`.
     fn worktrees_dir(&self) -> PathBuf {
-        let setting = self.environment.settings.raw();
-        match setting.get("worktreesDirectory").and_then(Value::as_str) {
-            Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir.trim()),
-            _ => self.environment.state_dir.join("worktrees"),
-        }
+        worktrees_dir(&self.environment)
     }
 }
 

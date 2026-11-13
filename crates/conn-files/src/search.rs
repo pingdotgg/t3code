@@ -24,6 +24,7 @@ use nucleo_matcher::{
 use crate::{
     entries::{WalkEnd, walk_files},
     mime,
+    paths::InternalPaths,
 };
 
 /// `CONTENT_SEARCH_MAX_MATCHES_PER_FILE`.
@@ -142,6 +143,7 @@ impl TopK {
 pub fn search_entries(
     root: &Path,
     input: &ProjectSearchEntriesInput,
+    internal: &InternalPaths,
 ) -> ProjectSearchEntriesResult {
     let limit = input.limit.clamp(1, 200) as usize;
     let image_only = input.image_only == Some(true);
@@ -156,7 +158,7 @@ pub fn search_entries(
             matched: 0,
         };
         let mut seen_dirs: HashSet<String> = HashSet::new();
-        let end = walk_files(root, None, &mut |path| {
+        let end = walk_files(root, internal, None, &mut |path| {
             if want_dirs {
                 let mut rest = path;
                 while let Some(i) = rest.rfind('/') {
@@ -256,6 +258,7 @@ fn utf16_index(line: &str, byte: usize) -> i64 {
 pub fn search_contents(
     root: &Path,
     input: &ProjectSearchContentsInput,
+    internal: &InternalPaths,
 ) -> ProjectSearchContentsResult {
     let limit = input.limit.clamp(1, 500) as usize;
     let Some((matcher, regex_fallback_error)) = content_matcher(input) else {
@@ -273,7 +276,7 @@ pub fn search_contents(
         .line_number(true)
         .heap_limit(Some(CONTENT_MAX_FILE_BYTES as usize))
         .build();
-    let end = walk_files(root, Some(deadline), &mut |path| {
+    let end = walk_files(root, internal, Some(deadline), &mut |path| {
         let full = root.join(path);
         if !std::fs::metadata(&full).is_ok_and(|m| m.is_file() && m.len() <= CONTENT_MAX_FILE_BYTES)
         {

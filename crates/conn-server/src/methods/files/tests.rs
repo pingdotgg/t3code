@@ -280,3 +280,309 @@ async fn uploads_and_serves_attachments_over_http() {
     let (status, _, _) = http(addr, &format!("GET {asset_url} HTTP/1.1"), b"").await;
     assert_eq!(status, 404);
 }
+
+/// A worktree under `<state>/worktrees` reads like any workspace; the server's internal files
+/// (T3's set plus `auth.json` and `terminals/`) stay out of reads, listings and searches,
+/// even when the search root holds the state folder.
+#[tokio::test(flavor = "current_thread")]
+async fn worktrees_in_the_state_folder_read_and_internal_files_stay_hidden() {
+    let s = setup("internal");
+    let state = s.dir.join("state");
+    let worktree = state.join("worktrees/project/t3-1");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(worktree.join("main.rs"), "fn main() {}").unwrap();
+    std::fs::write(worktree.join("pic.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    for (path, body) in [
+        ("auth.json", "needle-auth"),
+        ("engine.sqlite", "needle-db"),
+        ("terminals/t1.log", "needle-terminal"),
+        ("settings.json", "{}"),
+    ] {
+        let path = state.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    let ctx = || with_scopes(&["filesystem:read"]);
+    let text = |p: &std::path::Path| p.to_string_lossy().into_owned();
+
+    let read = call(
+        &s.table,
+        ctx(),
+        "projects.readFile",
+        json!({"cwd": text(&worktree), "relativePath": "main.rs"}),
+    )
+    .await;
+    assert_eq!(read.unwrap()["contents"], "fn main() {}");
+    let meta = call(
+        &s.table,
+        ctx(),
+        "filesystem.getMetadata",
+        json!({"paths": [text(&worktree.join("main.rs"))]}),
+    )
+    .await
+    .unwrap();
+    assert!(meta["entries"][0]["kind"] == "file", "{meta}");
+    let url = call(
+        &s.table,
+        ctx(),
+        "assets.createUrl",
+        json!({"resource": {
+        "_tag": "draft-workspace-file", "cwd": text(&worktree), "path": "pic.png"}}),
+    )
+    .await;
+    assert!(url.is_ok(), "{url:?}");
+
+    for internal in [
+        "secrets/asset-signing-key",
+        "auth.json",
+        "engine.sqlite",
+        "terminals/t1.log",
+    ] {
+        let read = call(
+            &s.table,
+            ctx(),
+            "projects.readFile",
+            json!({"cwd": text(&state), "relativePath": internal}),
+        )
+        .await;
+        assert!(read.is_err(), "{internal}");
+        let meta = call(
+            &s.table,
+            ctx(),
+            "filesystem.getMetadata",
+            json!({"paths": [text(&state.join(internal))]}),
+        )
+        .await
+        .unwrap();
+        assert!(meta["entries"][0].is_null(), "{internal}: {meta}");
+    }
+    // As in T3, other state files are not internal.
+    let settings = call(
+        &s.table,
+        ctx(),
+        "projects.readFile",
+        json!({"cwd": text(&state), "relativePath": "settings.json"}),
+    )
+    .await;
+    assert!(settings.is_ok(), "{settings:?}");
+
+    // A root inside the internal set is refused.
+    for root in [state.join("secrets"), state.join("terminals")] {
+        let search = call(
+            &s.table,
+            ctx(),
+            "projects.searchContents",
+            json!({"cwd": text(&root),
+            "query": "needle", "limit": 50, "caseSensitive": false, "wholeWord": false,
+            "useRegex": false}),
+        )
+        .await;
+        assert!(search.is_err(), "{root:?}: {search:?}");
+        let listed = call(
+            &s.table,
+            ctx(),
+            "projects.listEntries",
+            json!({"cwd": text(&root)}),
+        )
+        .await;
+        assert!(listed.is_err(), "{root:?}");
+        let found = call(
+            &s.table,
+            ctx(),
+            "projects.searchEntries",
+            json!({"cwd": text(&root), "query": "", "limit": 50}),
+        )
+        .await;
+        assert!(found.is_err(), "{root:?}");
+        let ignored = call(
+            &s.table,
+            ctx(),
+            "projects.listIgnoredFiles",
+            json!({"cwd": text(&root)}),
+        )
+        .await;
+        assert!(ignored.is_err(), "{root:?}");
+    }
+    // A root that holds the state folder skips the internal files during the walk.
+    for root in [state.clone(), s.dir.clone()] {
+        let search = call(
+            &s.table,
+            ctx(),
+            "projects.searchContents",
+            json!({"cwd": text(&root),
+            "query": "needle", "limit": 50, "caseSensitive": false, "wholeWord": false,
+            "useRegex": false}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(search["matches"], json!([]), "{root:?}");
+        let key = call(
+            &s.table,
+            ctx(),
+            "projects.searchContents",
+            json!({"cwd": text(&root),
+            "query": ".", "limit": 500, "caseSensitive": false, "wholeWord": false,
+            "useRegex": true}),
+        )
+        .await
+        .unwrap();
+        assert!(!key.to_string().contains("asset-signing-key"), "{root:?}");
+        for listing in [
+            call(
+                &s.table,
+                ctx(),
+                "projects.listEntries",
+                json!({"cwd": text(&root)}),
+            )
+            .await
+            .unwrap(),
+            call(
+                &s.table,
+                ctx(),
+                "projects.searchEntries",
+                json!({"cwd": text(&root), "query": "", "limit": 500}),
+            )
+            .await
+            .unwrap(),
+        ] {
+            let listing = listing.to_string();
+            for hidden in ["asset-signing-key", "auth.json", "engine.sqlite", "t1.log"] {
+                assert!(
+                    !listing.contains(hidden),
+                    "{root:?} lists {hidden}: {listing}"
+                );
+            }
+            assert!(
+                listing.contains("main.rs") && listing.contains("settings.json"),
+                "{listing}"
+            );
+        }
+    }
+    let dir = call(
+        &s.table,
+        ctx(),
+        "projects.listEntries",
+        json!({"cwd": text(&state), "directoryPath": ""}),
+    )
+    .await
+    .unwrap()
+    .to_string();
+    assert!(
+        !dir.contains("secrets")
+            && !dir.contains("auth.json")
+            && !dir.contains("terminals")
+            && dir.contains("worktrees"),
+        "{dir}"
+    );
+}
+
+/// `UploadChatImageAttachment` (`chatAttachment.ts`): an image type, at most 10 MiB, a data URL
+/// of at most 14,000,000 characters, checked before anything is decoded or stored.
+#[tokio::test(flavor = "current_thread")]
+async fn persisted_attachments_keep_the_contract_limits() {
+    let s = setup("persist-limits");
+    let persist = |mime: &str, size: u64, data_url: String| {
+        json!({"threadId": "thread-1", "messageId": "m1", "attachments": [{
+            "type": "image", "name": "a", "mimeType": mime, "sizeBytes": size, "dataUrl": data_url}]})
+    };
+    let ok = call(
+        &s.table,
+        CallContext::default(),
+        "assets.persistChatAttachments",
+        persist("image/png", 2, "data:image/png;base64,aGk=".into()),
+    )
+    .await;
+    assert!(ok.is_ok(), "{ok:?}");
+    for (case, input) in [
+        (
+            "not an image",
+            persist("text/html", 2, "data:text/html;base64,aGk=".into()),
+        ),
+        (
+            "over 10 MiB",
+            persist(
+                "image/png",
+                10 * 1024 * 1024 + 1,
+                "data:image/png;base64,aGk=".into(),
+            ),
+        ),
+        (
+            "data URL too long",
+            persist(
+                "image/png",
+                2,
+                format!("data:image/png;base64,{}", "A".repeat(14_000_000)),
+            ),
+        ),
+        (
+            "mimeType too long",
+            persist(
+                &format!("image/{}", "x".repeat(100)),
+                2,
+                "data:image/png;base64,aGk=".into(),
+            ),
+        ),
+        (
+            "empty name",
+            json!({"threadId": "thread-1", "messageId": "m1", "attachments": [{
+            "type": "image", "name": "  ", "mimeType": "image/png", "sizeBytes": 2,
+            "dataUrl": "data:image/png;base64,aGk="}]}),
+        ),
+    ] {
+        let result = call(
+            &s.table,
+            CallContext::default(),
+            "assets.persistChatAttachments",
+            input,
+        )
+        .await;
+        assert!(matches!(result, Err(Failure::Die(_))), "{case}: {result:?}");
+    }
+    let stored = std::fs::read_dir(s.dir.join("state/attachments"))
+        .unwrap()
+        .count();
+    assert_eq!(stored, 1, "only the valid image is stored");
+}
+
+/// Path limits of `ProjectReadFileInput`, `ProjectWriteFileInput`, `FilesystemGetMetadataInput`
+/// and `FilesystemBrowseInput`: non-empty, at most 512 UTF-16 units.
+#[tokio::test(flavor = "current_thread")]
+async fn file_paths_keep_the_contract_limits() {
+    let s = setup("path-limits");
+    let cwd = s.dir.join("project").to_string_lossy().into_owned();
+    let long = "a".repeat(513);
+    let ctx = CallContext::default;
+    for (tag, input) in [
+        (
+            "projects.readFile",
+            json!({"cwd": cwd, "relativePath": long}),
+        ),
+        ("projects.readFile", json!({"cwd": cwd, "relativePath": ""})),
+        (
+            "projects.writeFile",
+            json!({"cwd": cwd, "relativePath": long, "contents": "x"}),
+        ),
+        (
+            "filesystem.getMetadata",
+            json!({"paths": [format!("/{long}")]}),
+        ),
+        ("filesystem.getMetadata", json!({"paths": ["  "]})),
+        (
+            "filesystem.browse",
+            json!({"partialPath": format!("/{long}")}),
+        ),
+        (
+            "filesystem.browse",
+            json!({"partialPath": "/", "cwd": format!("/{long}")}),
+        ),
+    ] {
+        let result = call(&s.table, ctx(), tag, input.clone()).await;
+        assert!(
+            matches!(result, Err(Failure::Die(_))),
+            "{tag} {input}: {result:?}"
+        );
+    }
+    let ok = call(&s.table, ctx(), "projects.readFile",
+        json!({"cwd": cwd, "relativePath": format!("{}xy", "d/".repeat(255)), "allowMissing": true})).await;
+    assert!(ok.is_ok(), "{ok:?}");
+}

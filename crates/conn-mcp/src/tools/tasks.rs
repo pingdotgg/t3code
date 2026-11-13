@@ -55,6 +55,8 @@ fn options_array(options: Option<&Value>) -> Option<Value> {
 
 pub async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let caller = cx.require_thread("delegate_task")?;
+    // TS `actsAsCaller`: the calling thread, then `writingCaller`.
+    cx.writing_caller().await?;
     let parent = cx.projection(&caller.thread_id).await?;
     let parent_thread = &parent["thread"];
     let target = args.get("target").cloned().unwrap_or(Value::Null);
@@ -203,6 +205,8 @@ pub async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
 
 pub async fn status(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let caller = cx.require_thread("task_status")?;
+    // TS `actsAsCaller`: the calling thread, then `writingCaller`.
+    cx.writing_caller().await?;
     read_task(
         cx,
         &caller.thread_id,
@@ -214,6 +218,8 @@ pub async fn status(cx: &Cx<'_>, args: &Args) -> ToolResult {
 
 pub async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let caller = cx.require_thread("task_cancel")?;
+    // TS `actsAsCaller`: the calling thread, then `writingCaller`.
+    cx.writing_caller().await?;
     let task_id = str_arg(args, "taskId").unwrap_or_default();
     let current = read_task(cx, &caller.thread_id, task_id, false).await?;
     if TERMINAL.contains(&current["status"].as_str().unwrap_or_default()) {

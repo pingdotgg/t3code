@@ -224,6 +224,21 @@ const steps = [
   ["orchestrator_capabilities", () => ({})],
   ["t3_thread_list", () => ({ allProjects: true })],
   ["t3_thread_list", () => ({})],
+  // A worktree thread without a message starts no turn, so it runs without --model too.
+  [
+    "t3_thread_launch",
+    (c) => ({
+      projectId: c.projectId,
+      title: "Parity worktree",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "worktree", baseRef: "HEAD", branch: "parity/worktree" },
+      clientRequestId: "parity-worktree",
+    }),
+    undefined,
+    { noTurn: true },
+  ],
   [
     "t3_thread_launch",
     (c) => ({
@@ -268,10 +283,12 @@ const steps = [
   ["task_cancel", () => ({ taskId: "task:none" })],
 ];
 // The steps that launch a thread (a model turn on the T3 server) or act on it.
-const onLaunchedThread = (tool, input) =>
-  tool === "t3_thread_launch" ||
-  input({ threadId: "<t>" }).threadId === "<t>";
-const run = noModel ? steps.filter(([tool, input]) => !onLaunchedThread(tool, input)) : steps;
+const onLaunchedThread = (tool, input, options) =>
+  options?.noTurn !== true &&
+  (tool === "t3_thread_launch" || input({ threadId: "<t>" }).threadId === "<t>");
+const run = noModel
+  ? steps.filter(([tool, input, , options]) => !onLaunchedThread(tool, input, options))
+  : steps;
 if (noModel) console.log(`no model: skipped ${steps.length - run.length} steps on a launched thread`);
 for (const [tool, input, after] of run) {
   const results = await Promise.all(

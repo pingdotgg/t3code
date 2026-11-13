@@ -45,8 +45,9 @@ the pages afterwards. The T3 server in the same run: 524 MiB idle, 1059 MiB peak
 
 `examples/hold_shell.rs` shows the last row: kill its process with SIGTERM or SIGKILL and its
 shell and the shell's job are gone a second later. `TerminalManager::shutdown()` stops shells
-in order (SIGHUP, then SIGKILL) and flushes scrollback; `main.rs` does not call it yet, so
-scrollback written in the last 250 ms before a stop is lost.
+in order (SIGHUP, then SIGKILL) and flushes scrollback. The server calls it on a clean stop
+(SIGTERM, SIGINT; `conn-server/src/serve.rs`), before the engine shuts down. Only a kill or a
+crash skips it, and then scrollback written in the last 250 ms is lost.
 
 Scrollback is kept in `<state-dir>/terminals/`, one file per terminal, at most twice the cap.
 History drops terminal queries (cursor position, device attributes, colour queries), so a

@@ -146,12 +146,12 @@ async fn local_status_inner(cwd: &Path) -> VcsResult<VcsStatusLocalResult> {
     )
     .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
     .run();
-    let (status, numstat, root, default_branch, remotes) = tokio::join!(
+    // The remotes are read once and shared by the default branch and the Changes base.
+    let (status, numstat, root, remotes) = tokio::join!(
         status,
         numstat,
         repo::toplevel(cwd),
-        repo::default_branch(cwd),
-        repo::remote_names(cwd)
+        repo::Remotes::load(cwd)
     );
     let status = match status {
         Ok(out) => parse_porcelain(&out.stdout_text()),
@@ -210,7 +210,12 @@ async fn local_status_inner(cwd: &Path) -> VcsResult<VcsStatusLocalResult> {
         .collect();
     files.sort_by_key(|f| f.path.to_lowercase());
 
-    let default_branch = default_branch.unwrap_or(None);
+    let default_branch = match &remotes {
+        Ok(remotes) => repo::default_branch_with(cwd, remotes)
+            .await
+            .unwrap_or(None),
+        Err(_) => None,
+    };
     let is_default_ref = match (&status.ref_name, &default_branch) {
         (Some(name), Some(default)) => name == default,
         (Some(name), None) => name == "main" || name == "master",
@@ -220,13 +225,14 @@ async fn local_status_inner(cwd: &Path) -> VcsResult<VcsStatusLocalResult> {
     let branch_changes = Box::pin(branch_changes(
         root.as_deref().unwrap_or(cwd),
         status.ref_name.as_deref(),
+        remotes.as_ref().ok(),
     ))
     .await
     .ok();
     Ok(VcsStatusLocalResult {
         is_repo: true,
         source_control_provider: None,
-        has_primary_remote: !remotes.unwrap_or_default().is_empty(),
+        has_primary_remote: remotes.is_ok_and(|r| !r.names.is_empty()),
         is_default_ref,
         ref_name: status.ref_name,
         has_working_tree_changes: status.changed,
@@ -244,8 +250,9 @@ async fn local_status_inner(cwd: &Path) -> VcsResult<VcsStatusLocalResult> {
 async fn branch_changes(
     cwd: &Path,
     branch: Option<&str>,
+    remotes: Option<&repo::Remotes>,
 ) -> VcsResult<VcsStatusResultBranchChanges> {
-    let mut review = repo::merge_base(cwd, branch, None).await?;
+    let mut review = repo::merge_base_with(cwd, branch, None, remotes).await?;
     if let Some(branch) = branch
         && !repo::ref_exists(cwd, &format!("refs/heads/{branch}")).await?
     {
@@ -321,8 +328,8 @@ async fn count(cwd: &Path, range: String) -> u64 {
     .unwrap_or(0)
 }
 
-async fn ahead_of_base(cwd: &Path, branch: &str) -> u64 {
-    match repo::resolve_base(cwd, Some(branch), None).await {
+async fn ahead_of_base(cwd: &Path, branch: &str, remotes: Option<&repo::Remotes>) -> u64 {
+    match repo::resolve_base_with(cwd, Some(branch), None, remotes).await {
         Ok(Some(base)) => count(cwd, format!("{}..HEAD", base.comparison_ref)).await,
         _ => 0,
     }
@@ -387,6 +394,8 @@ async fn remote_status_inner(cwd: &Path) -> VcsResult<Option<VcsStatusRemoteResu
     }
     let branch = repo::current_branch(cwd).await?;
     let upstream = upstream_ref(cwd).await?;
+    // Read once; shared by the default branch and both base lookups below.
+    let remotes = repo::Remotes::load(cwd).await;
     let (ahead, behind) = match &upstream {
         Some(_) => {
             let counts = repo::optional_text(git(
@@ -402,11 +411,16 @@ async fn remote_status_inner(cwd: &Path) -> VcsResult<Option<VcsStatusRemoteResu
             (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
         }
         None => match &branch {
-            Some(branch) => (ahead_of_base(cwd, branch).await, 0),
+            Some(branch) => (ahead_of_base(cwd, branch, remotes.as_ref().ok()).await, 0),
             None => (0, 0),
         },
     };
-    let default_branch = repo::default_branch(cwd).await.unwrap_or(None);
+    let default_branch = match &remotes {
+        Ok(remotes) => repo::default_branch_with(cwd, remotes)
+            .await
+            .unwrap_or(None),
+        Err(_) => None,
+    };
     let is_default = match (&branch, &default_branch) {
         (Some(b), Some(d)) => b == d,
         (Some(b), None) => b == "main" || b == "master",
@@ -416,7 +430,7 @@ async fn remote_status_inner(cwd: &Path) -> VcsResult<Option<VcsStatusRemoteResu
         None => 0,
         Some(_) if is_default => 0,
         Some(_) if upstream.is_none() => ahead,
-        Some(branch) => ahead_of_base(cwd, branch).await,
+        Some(branch) => ahead_of_base(cwd, branch, remotes.as_ref().ok()).await,
     };
     Ok(Some(VcsStatusRemoteResult {
         has_upstream: upstream.is_some(),

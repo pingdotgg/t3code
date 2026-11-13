@@ -41,8 +41,8 @@ impl Files {
         let attachments_dir = state_dir.join("attachments");
         std::fs::create_dir_all(&attachments_dir)?;
         Ok(Self {
-            signer: Signer::open(&state_dir.join("secrets"))?,
-            internal: InternalPaths::new(state_dir, &attachments_dir),
+            signer: Signer::open(&state_dir.join(paths::SECRETS_DIR))?,
+            internal: InternalPaths::new(state_dir),
             attachments: AttachmentStore::new(attachments_dir),
             home: std::env::var_os("HOME")
                 .map(PathBuf::from)

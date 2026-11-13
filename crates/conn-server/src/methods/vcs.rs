@@ -116,17 +116,19 @@ impl Workspaces {
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     let shared = deps.vcs.clone();
-    let worktrees_dir = deps
-        .environment
-        .as_ref()
-        .map(|e| e.state_dir.join("worktrees"))
-        .unwrap_or_else(|| std::env::temp_dir().join("conn-server-worktrees"));
+    let environment = deps.environment.clone();
+    let worktrees_dir = move || {
+        environment
+            .as_deref()
+            .map(crate::host::worktrees_dir)
+            .unwrap_or_else(|| std::env::temp_dir().join("conn-server-worktrees"))
+    };
     let server_cwd = deps.environment.as_ref().map(|e| e.cwd.clone());
     let workspaces = Workspaces {
         roots: server_cwd
             .iter()
             .cloned()
-            .chain([worktrees_dir.clone()])
+            .chain([worktrees_dir()])
             .collect(),
         deps: deps.clone(),
     };
@@ -247,11 +249,10 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
 
     // Worktrees, always at the managed path (`path` is null in the contract).
     let hub = shared.hub.clone();
-    let dir = worktrees_dir.clone();
     table.unary(
         "vcs.createWorktree",
         move |_, input: VcsCreateWorktreePayload| {
-            let (hub, dir) = (hub.clone(), dir.clone());
+            let (hub, dir) = (hub.clone(), worktrees_dir());
             async move {
                 let created = worktree::create_worktree(&worktree::CreateWorktree {
                     cwd: PathBuf::from(&input.cwd),
@@ -312,10 +313,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         },
     );
     let guard = workspaces.clone();
+    let files = deps.files.clone();
     table.unary(
         "review.getDiffFileContents",
         move |_, input: ReviewDiffFileContentsInput| {
-            let guard = guard.clone();
+            let (guard, files) = (guard.clone(), files.clone());
             async move {
                 guard
                     .check(
@@ -324,7 +326,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                         "ReviewService.getDiffFileContents",
                     )
                     .await?;
-                review::diff_file_contents(input)
+                let is_internal =
+                    move |path: &Path| files.as_ref().is_some_and(|f| f.internal.contains(path));
+                review::diff_file_contents(input, is_internal)
                     .await
                     .map_err(|e| review_failure(&e))
             }
@@ -542,6 +546,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(preview["sources"].as_array().unwrap().len(), 2);
+        unary(
+            &table,
+            "vcs.removeWorktree",
+            json!({ "cwd": cwd, "path": path, "force": true }),
+        )
+        .await
+        .unwrap();
+        // The `worktreesDirectory` setting moves new worktrees, as for a thread launch.
+        let custom = root.join("custom-worktrees");
+        deps.environment
+            .as_ref()
+            .unwrap()
+            .settings
+            .update(json!({ "worktreesDirectory": custom }), None)
+            .unwrap();
+        let created = unary(
+            &table,
+            "vcs.createWorktree",
+            json!({ "cwd": cwd, "refName": "main", "newRefName": "wt/two", "path": null }),
+        )
+        .await
+        .unwrap();
+        let path = created["worktree"]["path"].as_str().unwrap().to_owned();
+        assert!(
+            path.starts_with(&custom.join("repo").to_string_lossy().into_owned()),
+            "{path}"
+        );
         unary(
             &table,
             "vcs.removeWorktree",

@@ -476,54 +476,65 @@ async fn file_contents_and_branch_commits() {
             old_path: "src/lib.rs".into(),
             new_path: "src/lib.rs".into(),
         };
-    let working = review::diff_file_contents(contents(
-        Kind::WorkingTree,
-        ChangeType::Change,
-        Some("HEAD"),
-        None,
-    ))
+    let working = review::diff_file_contents(
+        contents(Kind::WorkingTree, ChangeType::Change, Some("HEAD"), None),
+        |_| false,
+    )
     .await
     .unwrap();
     assert!(working.old_contents.contains("    2"));
     assert!(working.new_contents.contains("    3"));
-    let range = review::diff_file_contents(contents(
-        Kind::BranchRange,
-        ChangeType::Change,
-        Some("origin/main"),
-        Some("feature"),
-    ))
+    let range = review::diff_file_contents(
+        contents(
+            Kind::BranchRange,
+            ChangeType::Change,
+            Some("origin/main"),
+            Some("feature"),
+        ),
+        |_| false,
+    )
     .await
     .unwrap();
     assert!(range.old_contents.contains("    1"));
     let parent = git(&fx.work, &["rev-parse", &format!("{sha}^")])
         .trim()
         .to_owned();
-    let commit = review::diff_file_contents(contents(
-        Kind::Commit,
-        ChangeType::Change,
-        Some(&parent),
-        Some(&sha),
-    ))
+    let commit = review::diff_file_contents(
+        contents(Kind::Commit, ChangeType::Change, Some(&parent), Some(&sha)),
+        |_| false,
+    )
     .await
     .unwrap();
     assert!(commit.old_contents.contains("    1") && commit.new_contents.contains("    2"));
-    let stale = review::diff_file_contents(contents(
-        Kind::Commit,
-        ChangeType::Change,
-        Some(&sha),
-        Some(&sha),
-    ))
+    let stale = review::diff_file_contents(
+        contents(Kind::Commit, ChangeType::Change, Some(&sha), Some(&sha)),
+        |_| false,
+    )
     .await
     .unwrap_err();
     assert!(stale.to_string().contains("Selected commit changed"));
     let mut escape = contents(Kind::WorkingTree, ChangeType::Change, None, None);
     escape.new_path = "../outside.txt".into();
     assert!(
-        review::diff_file_contents(escape)
+        review::diff_file_contents(escape, |_| false)
             .await
             .unwrap_err()
             .to_string()
             .contains("outside")
+    );
+
+    // A working file in the server's own state is not served (T3 `isServerInternalPath`).
+    let internal = review::diff_file_contents(
+        contents(Kind::WorkingTree, ChangeType::Change, Some("HEAD"), None),
+        |path: &std::path::Path| path.ends_with("src/lib.rs"),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        internal
+            .to_string()
+            .contains("Diff file 'src/lib.rs' is not available."),
+        "{internal}"
     );
 
     let commits = review::branch_commits(ReviewBranchCommitsInput {
@@ -620,4 +631,137 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     assert!(!path.exists());
     let branch = snapshot.branch.unwrap();
     assert!(!git(&fx.work, &["branch", "--list", &branch]).contains(&branch));
+}
+
+/// Reads a PID the script wrote, waiting up to 10 s for the file.
+async fn read_pid(path: &std::path::Path) -> u32 {
+    for _ in 0..200 {
+        if let Some(pid) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+        {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no pid in {}", path.display())
+}
+
+fn alive(pid: u32) -> bool {
+    // `ps -o stat=` prints nothing for a missing process and `Z` for a zombie.
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout);
+    !stat.trim().is_empty() && !stat.trim().starts_with('Z')
+}
+
+/// Waits up to 3 s for `pids` to end; kills the survivors either way, and returns them.
+async fn survivors(pids: &[u32]) -> Vec<u32> {
+    for _ in 0..60 {
+        if pids.iter().all(|p| !alive(*p)) {
+            return Vec::new();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let left: Vec<u32> = pids.iter().copied().filter(|p| alive(*p)).collect();
+    for pid in &left {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status();
+    }
+    left
+}
+
+/// The setup script's whole process tree ends when the setup is cancelled, when the launch is
+/// dropped, and when the script exits leaving a background job; no entry stays running.
+#[tokio::test]
+async fn setup_scripts_leave_no_processes_behind() {
+    use conn_contract::ProjectClonePhase as Phase;
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
+
+    let fx = Fixture::new("setup-tree");
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str, command: &str| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: None,
+        start_from_origin: false,
+        setup_script: Some(SetupScript {
+            id: "s1".into(),
+            name: "Setup".into(),
+            command: command.into(),
+        }),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let pids_dir = fx.root.path().join("pids");
+    std::fs::create_dir_all(&pids_dir).unwrap();
+    let script = |name: &str, tail: &str| {
+        let d = pids_dir.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        let d = d.display();
+        format!("sleep 30 & echo $! > {d}/bg; sleep 31 & echo $! > {d}/fg; {tail}")
+    };
+
+    // Cancelled while it runs.
+    let run = {
+        let (setups, request) = (setups.clone(), request("cancel", &script("cancel", "wait")));
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    let pids = [
+        read_pid(&pids_dir.join("cancel/bg")).await,
+        read_pid(&pids_dir.join("cancel/fg")).await,
+    ];
+    assert!(setups.cancel("cancel"));
+    let result = run.await.unwrap();
+    let left = survivors(&pids).await;
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(left, Vec::<u32>::new(), "cancel left processes running");
+
+    // The launch future dropped while the script runs.
+    let run = {
+        let (setups, request) = (setups.clone(), request("drop", &script("drop", "wait")));
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    let pids = [
+        read_pid(&pids_dir.join("drop/bg")).await,
+        read_pid(&pids_dir.join("drop/fg")).await,
+    ];
+    run.abort();
+    let _ = run.await;
+    let left = survivors(&pids).await;
+    assert_eq!(
+        left,
+        Vec::<u32>::new(),
+        "a dropped launch left processes running"
+    );
+    assert_ne!(setups.get("drop").unwrap().phase, Phase::Running);
+
+    // The script exits at once, but its background jobs hold its output pipes.
+    let started = std::time::Instant::now();
+    let done = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        setup::provision(&setups, request("exit", &script("exit", "exit 0"))),
+    )
+    .await;
+    let pids = [
+        read_pid(&pids_dir.join("exit/bg")).await,
+        read_pid(&pids_dir.join("exit/fg")).await,
+    ];
+    let left = survivors(&pids).await;
+    assert!(
+        matches!(done, Ok(Ok(_))),
+        "{done:?} after {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        left,
+        Vec::<u32>::new(),
+        "background jobs outlived the script"
+    );
 }
