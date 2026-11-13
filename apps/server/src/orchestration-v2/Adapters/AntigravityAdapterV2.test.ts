@@ -614,6 +614,11 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       const report = { html: `<table>${rows.join("")}</table>`, title: "Revenue", height: 240 };
       const failed = { ...report, html: "<p>Revenue</p>" };
       const errored = { ...report, html: "<p>Revenue error</p>" };
+      const telemetry = {
+        html: `<ul>${rows.join("").replaceAll("tr", "li")}</ul>`,
+        title: "Telemetry",
+        height: 411,
+      };
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -729,6 +734,21 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "published",
                     status: "completed",
                     rawOutput: "Summary of published",
+                  });
+                  // agy 1.5.8 titles the call with its MCP name and completes without any output.
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "agy-1.5.8",
+                    title: "Run mcp_t3-code_html_render",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { ...telemetry, toolSummary: "Render telemetry" },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, telemetry, page("agy-1.5.8"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "agy-1.5.8",
+                    status: "completed",
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -855,7 +875,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         ),
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      for (const name of ["failed-retry", "error-retry"]) {
+      for (const name of ["failed-retry", "error-retry", "agy-1.5.8"]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",
@@ -866,6 +886,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
     }).pipe(Effect.provide(layerSession)),
   );
 });
