@@ -89,6 +89,8 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly extraEnv?: Record<string, string>;
     readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
+    /** The server types this once the shell reads input; see `initialInputHandled` on the result. */
+    readonly initialInput?: string;
   }) => {
     if (!threadRef || !canWrite() || !project) return null;
     const location = input.location ?? defaultLaunchLocation();
@@ -109,6 +111,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }),
         ...input.size,
         ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
+        ...(input.initialInput !== undefined ? { initialInput: input.initialInput } : {}),
       },
     });
     return { terminalId, result };

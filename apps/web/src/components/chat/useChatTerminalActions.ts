@@ -244,6 +244,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
+    const scriptInput =
+      options?.shellHistory === "preserve"
+        ? `${script.command}\r`
+        : projectScriptTerminalInput(script.command);
     const launched = terminalActions.launchTerminal({
       // The drawer opens with the target already placed: opening it empty would claim
       // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
@@ -257,6 +261,8 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       stopOnSettle: script.stopOnSettle ?? false,
       ...(options?.env ? { extraEnv: options.env } : {}),
+      // The open schema caps input; a longer command takes the write path below, as before.
+      ...(scriptInput.length <= 65_536 ? { initialInput: scriptInput } : {}),
     });
     if (!launched) return;
     const targetTerminalId = launched.terminalId;
@@ -273,22 +279,20 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
-    const writeResult = await terminalActions.writeToTerminal(
-      targetTerminalId,
-      options?.shellHistory === "preserve"
-        ? `${script.command}\r`
-        : projectScriptTerminalInput(script.command),
-    );
-    if (!writeResult) return;
-    if (writeResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
+    // A server that predates initialInput leaves it to the client.
+    if (openResult.value.initialInputHandled !== true) {
+      const writeResult = await terminalActions.writeToTerminal(targetTerminalId, scriptInput);
+      if (!writeResult) return;
+      if (writeResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(writeResult)) {
+          const error = squashAtomCommandFailure(writeResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
       }
-      return;
     }
     if (
       script.autoOpenPreview &&

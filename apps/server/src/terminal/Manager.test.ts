@@ -73,6 +73,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   killed = false;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
   onKill: ((signal?: string) => void) | undefined;
+  onWrite: ((data: string) => void) | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -83,6 +84,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
       throw this.writeFailure;
     }
     this.writes.push(data);
+    this.onWrite?.(data);
   }
 
   resize(cols: number, rows: number): void {
@@ -2356,6 +2358,65 @@ it.layer(
         }),
       ),
     ),
+  );
+
+  it.effect("types initial input in order once a fresh shell reads input", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const first = yield* manager.open(openInput({ initialInput: "FIRST\r" }));
+      const second = yield* manager.open(openInput({ initialInput: "SECOND\r" }));
+      const shell = ptyAdapter.processes[0]!;
+      const secondWritten = yield* Deferred.make<void>();
+      shell.onWrite = (data) => {
+        if (data === "SECOND\r") Deferred.doneUnsafe(secondWritten, Effect.void);
+      };
+
+      expect([first.initialInputHandled, second.initialInputHandled]).toEqual([true, true]);
+      expect(shell.writes).toEqual([]);
+
+      shell.emitData("\x1b[?2004h$ ");
+      yield* Deferred.await(secondWritten);
+      expect(shell.writes).toEqual(["FIRST\r", "SECOND\r"]);
+
+      const third = yield* manager.open(openInput({ initialInput: "THIRD\r" }));
+      expect(third.initialInputHandled).toBe(true);
+      expect(shell.writes).toEqual(["FIRST\r", "SECOND\r", "THIRD\r"]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("drops initial input waiting for a shell that open replaced", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, { processKillGraceMs: 0 });
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const replacementCwd = path.join(baseDir, "replacement");
+      yield* fs.makeDirectory(replacementCwd, { recursive: true });
+
+      yield* manager.open(openInput({ initialInput: "OLD\r" }));
+      yield* manager.open(openInput({ cwd: replacementCwd, initialInput: "NEW\r" }));
+      const replacement = ptyAdapter.processes[1]!;
+      const written = yield* Deferred.make<void>();
+      replacement.onWrite = () => Deferred.doneUnsafe(written, Effect.void);
+      replacement.emitData("\x1b[?2004h$ ");
+      yield* Deferred.await(written);
+
+      expect(ptyAdapter.processes.map((process) => process.writes)).toEqual([[], ["NEW\r"]]);
+    }),
+  );
+
+  it.effect("types initial input into PowerShell without waiting for a line editor", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+
+      const opened = yield* manager.open(openInput({ initialInput: "npm run dev\r" }));
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("pwsh.exe");
+      expect(opened.initialInputHandled).toBe(true);
+      expect(ptyAdapter.processes[0]?.writes).toEqual(["npm run dev\r"]);
+    }),
   );
 
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>

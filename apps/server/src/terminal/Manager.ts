@@ -76,6 +76,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
+import { watchShellReadiness } from "./shellReadiness.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export {
@@ -111,6 +112,12 @@ const CLOSE_IDLE_QUERY_TIMEOUT = { posix: "1 second", win32: "1500 millis" } as 
 const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
+// PowerShell and cmd have no line-editor signal, so their input is written right away.
+function shellSignalsLineEditor(shell: string): boolean {
+  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  return name !== "cmd" && name !== "pwsh" && name !== "powershell";
+}
+
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 // The tmux/screen/Zellij keys name the multiplexer pane that launched the server,
@@ -313,6 +320,8 @@ interface TerminalSessionState {
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
   stopOnSettle: boolean;
+  /** Input waiting for the current shell to read; null once that shell takes writes directly. */
+  pendingInitialInputs: Array<string> | null;
 }
 
 interface TerminalGrid {
@@ -2437,6 +2446,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
       session.status = "exited";
+      session.pendingInitialInputs = null;
       session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
@@ -2534,6 +2544,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* modifyManagerState((state) => {
       session.status = "starting";
       session.shell = null;
+      session.pendingInitialInputs = null;
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.cols = input.cols;
@@ -2942,6 +2953,57 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }).pipe(Effect.ignoreCause({ log: true })),
   );
 
+  // Input typed while a shell starts can be read by an rc-file prompt (fnm, nvm) instead of the
+  // shell, so it waits for the line editor. The queue keeps later opens behind it, in order.
+  const startOpenedSession = Effect.fn("terminal.startOpenedSession")(function* (
+    session: TerminalSessionState,
+    startInput: TerminalStartInput,
+    initialInput: string | undefined,
+  ) {
+    if (initialInput === undefined) {
+      yield* startSession(session, startInput, "started");
+      return snapshot(session);
+    }
+    const target = { threadId: session.threadId, terminalId: session.terminalId };
+    // Subscribed before the spawn so no startup output is missed.
+    const readiness = yield* watchShellReadiness({
+      ...target,
+      subscribe,
+      onStartupPrompt: Effect.void,
+    });
+    yield* startSession(session, startInput, "started").pipe(
+      Effect.onError(() => Effect.sync(readiness.unsubscribe)),
+    );
+    const spawned = session.process;
+    if (session.status !== "running" || spawned === null || session.shell === null) {
+      readiness.unsubscribe();
+      return snapshot(session);
+    }
+    if (!shellSignalsLineEditor(session.shell)) {
+      readiness.unsubscribe();
+      yield* write({ ...target, data: initialInput });
+      return { ...snapshot(session), initialInputHandled: true };
+    }
+    const queued = [initialInput];
+    session.pendingInitialInputs = queued;
+    yield* readiness.wait.pipe(
+      Effect.flatMap((outcome) => {
+        // A restart or exit already dropped the queue: the input belonged to the shell it was opened for.
+        if (session.pendingInitialInputs !== queued) return Effect.void;
+        session.pendingInitialInputs = null;
+        return outcome === "exited" || session.process !== spawned
+          ? Effect.void
+          : Effect.forEach(queued, (data) => write({ ...target, data }), { discard: true });
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("terminal initial input was not written", { ...target, cause }),
+      ),
+      Effect.ensuring(Effect.sync(readiness.unsubscribe)),
+      Effect.forkIn(workerScope),
+    );
+    return { ...snapshot(session), initialInputHandled: true };
+  });
+
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
     requestedInput: TerminalOpenInput,
   ) {
@@ -2992,6 +3054,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
         stopOnSettle: input.stopOnSettle ?? false,
+        pendingInitialInputs: null,
       };
 
       const createdSession = session;
@@ -3003,7 +3066,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       yield* evictInactiveSessionsIfNeeded();
-      yield* startSession(
+      return yield* startOpenedSession(
         session,
         {
           cwd: input.cwd,
@@ -3011,9 +3074,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols,
           rows,
         },
-        "started",
+        input.initialInput,
       );
-      return snapshot(session);
     }
 
     const liveSession = existing.value;
@@ -3053,7 +3115,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     if (!liveSession.process) {
-      yield* startSession(
+      return yield* startOpenedSession(
         liveSession,
         {
           cwd: input.cwd,
@@ -3061,16 +3123,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols: targetCols,
           rows: targetRows,
         },
-        "started",
+        input.initialInput,
       );
-      return snapshot(liveSession);
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
       yield* resizeSession(liveSession, liveSession.process, targetCols, targetRows);
     }
 
-    return snapshot(liveSession);
+    if (input.initialInput === undefined) return snapshot(liveSession);
+    // Behind input still waiting for this shell, so a second action cannot overtake the first.
+    if (liveSession.pendingInitialInputs !== null) {
+      liveSession.pendingInitialInputs.push(input.initialInput);
+    } else {
+      yield* write({
+        threadId: liveSession.threadId,
+        terminalId: liveSession.terminalId,
+        data: input.initialInput,
+      });
+    }
+    return { ...snapshot(liveSession), initialInputHandled: true };
   });
 
   const openLocked = (input: TerminalOpenInput) =>
