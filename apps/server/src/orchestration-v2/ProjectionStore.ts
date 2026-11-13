@@ -422,8 +422,13 @@ export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
   "thread" | K
 >;
 
+/**
+ * A page holds the oldest matches after `afterPosition`, or with `beforePosition`,
+ * the newest matches before it. `itemId` ignores both bounds.
+ */
 export interface ProjectionTimelinePageOptions {
   readonly afterPosition?: number;
+  readonly beforePosition?: number;
   readonly itemId?: TurnItemId;
   readonly attachmentId?: string;
   readonly view?: "messages" | "activity";
@@ -432,7 +437,10 @@ export interface ProjectionTimelinePageOptions {
 export interface ProjectionTimelinePage {
   readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly totalItems: number;
+  /** Matches exist after the page. */
   readonly hasMore: boolean;
+  /** Matches exist before the page. */
+  readonly hasEarlier: boolean;
 }
 
 export interface ShellSnapshotOptions {
@@ -1142,15 +1150,6 @@ const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema
 // Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
 const matchesNothing = (...filters: ReadonlyArray<ReadonlyArray<unknown> | undefined>) =>
   filters.some((values) => values?.length === 0);
-
-// A typed item read that names no tool type fits in migration 082's conversation index. A run or
-// node filter is left alone: it already reads through a narrower index.
-const readsConversationItemsOnly = (filter: ProjectionRecordFilter | undefined) =>
-  filter?.turnItemTypes !== undefined &&
-  filter.turnItemRunId === undefined &&
-  filter.turnItemRunIds === undefined &&
-  filter.turnItemNodeIds === undefined &&
-  filter.turnItemTypes.every((type) => DEFERRED_WORK_ITEM_TYPES.every((tool) => tool !== type));
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -3482,6 +3481,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
     });
 
+    const turnItemMatch = (threadId: ThreadId, filter: ProjectionRecordFilter | undefined) => sql`
+      thread_id = ${threadId}
+        ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
+        ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+        ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
+        ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
+        ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
+        ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+    `;
+
     // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks
     // every row of the thread to find the few ids.
     const threadColumn = (ids: ReadonlyArray<unknown> | undefined, column = "thread_id") =>
@@ -3582,19 +3591,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
-                  // A type list of conversation items reads them from the conversation index.
-                  // Any other plan fetches every tool call of the thread to check its type.
-                  readsConversationItemsOnly(filter)
-                    ? sql`INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
-                WHERE thread_id = ${threadId} AND type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}`
-                    : sql`WHERE thread_id = ${threadId}`
+                  filter?.turnItemTypes === undefined
+                    ? sql`WHERE ${turnItemMatch(threadId, filter)}`
+                    : // Seeks the type index. Sorted, SQLite would walk the thread by ordinal instead.
+                      sql`WHERE rowid IN (
+                    SELECT rowid FROM orchestration_v2_projection_turn_items
+                    WHERE ${turnItemMatch(threadId, filter)}
+                  )`
                 }
-                  ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
-                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
-                  ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
-                  ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
-                  ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
-                  ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
               : yield* sql<PayloadRow>`
@@ -4283,7 +4287,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (filter.messageRoles.includes("user") && filter.messageRoles.includes("assistant")))
               ? undefined
               : messages.map((message) => message.id);
-          // Migration 88 indexes exactly this expression, type list and json_valid term: changing
+          // Migration 89 indexes exactly this expression, type list and json_valid term: changing
           // any, even the IN order, silently drops the index. ProjectionStore.test.ts asserts the plan.
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
@@ -7185,12 +7189,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const matchLocalTimelineRows = Effect.fn("ProjectionStore.matchLocalTimelineRows")(function* (
       local: LocalTimeline,
       options: ProjectionTimelinePageOptions,
+      totalItems: number,
     ) {
       const threadId = local.records.thread.id;
-      const totals = yield* sql<{ count: number }>`
-        SELECT COUNT(*) AS count FROM orchestration_v2_projection_turn_items
-        WHERE thread_id = ${threadId}`;
-      const totalItems = (totals[0]?.count ?? 0) - local.hidden.length;
       if (options.itemId !== undefined) {
         const found = (yield* local.read(sql`AND item.turn_item_id = ${options.itemId}`)).filter(
           local.isVisible,
@@ -7200,7 +7201,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             .visibleBefore(item.ordinal, item.id)
             .pipe(Effect.map((position) => ({ ...localTimelineRow(item), position }))),
         );
-        return { matching, totalItems };
+        return { matching, totalItems, hasEarlier: false };
       }
       const afterPosition = options.afterPosition ?? -1;
       const firstPosition = Math.max(afterPosition + 1, 0);
@@ -7211,7 +7212,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         WHERE thread_id = ${threadId}
         ORDER BY ordinal ASC, turn_item_id ASC LIMIT 1 OFFSET ${firstPosition}`;
       const start = starts[0]?.ordinal;
-      if (start === undefined) return { matching: [], totalItems };
+      if (start === undefined) return { matching: [], totalItems, hasEarlier: false };
       const base = yield* local.visibleBefore(start);
       const hiddenAfter = local.hidden.filter((row) => row.ordinal >= start).length;
       const messagesOnly = options.view !== "activity";
@@ -7235,13 +7236,69 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             positions.set(row.turn_item_id, base + positions.size);
         }
       }
-      const matching = candidates
-        .map((item, offset) => ({
-          ...localTimelineRow(item),
-          position: messagesOnly ? (positions.get(item.id) ?? -1) : base + offset,
-        }))
-        .filter((row) => row.position > afterPosition);
-      return { matching, totalItems };
+      const rows = candidates.map((item, offset) => ({
+        ...localTimelineRow(item),
+        position: messagesOnly ? (positions.get(item.id) ?? -1) : base + offset,
+      }));
+      const matching = rows.filter((row) => row.position > afterPosition);
+      // At most `hidden.length` of the first matches before the start are hidden.
+      const hasEarlier =
+        matching.length < rows.length ||
+        (base > 0 &&
+          (!messagesOnly ||
+            (yield* local.read(
+              sql`AND item.ordinal < ${start}
+                AND item.type IN ('user_message', 'assistant_message', 'proposed_plan')`,
+              sql`LIMIT ${local.hidden.length + 1}`,
+            )).some(local.isVisible)));
+      return { matching, totalItems, hasEarlier };
+    });
+
+    /**
+     * A `getTimelinePage` page from `matchLocalTimelineRows`. A backward page reads forward from
+     * ever earlier starts until it holds `limit` matches or reaches `afterPosition`.
+     */
+    const readLocalTimelinePage = Effect.fn("ProjectionStore.readLocalTimelinePage")(function* (
+      local: LocalTimeline,
+      options: ProjectionTimelinePageOptions,
+    ) {
+      const totals = yield* sql<{ count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${local.records.thread.id}`;
+      const totalItems = (totals[0]?.count ?? 0) - local.hidden.length;
+      if (options.beforePosition === undefined || options.itemId !== undefined) {
+        const { matching, hasEarlier } = yield* matchLocalTimelineRows(local, options, totalItems);
+        return {
+          page: matching.slice(0, options.limit),
+          totalItems,
+          hasMore: matching.length > options.limit,
+          hasEarlier,
+        };
+      }
+      const afterPosition = options.afterPosition ?? -1;
+      const end = Math.min(options.beforePosition, totalItems);
+      let span = Math.max(options.limit, 1);
+      while (true) {
+        // The `span` positions before `end` hold at most `span` matches, so a forward read of
+        // `span + 1` from the start holds all of them and shows whether any follow.
+        const from = Math.max(afterPosition, end - span - 1);
+        const read = yield* matchLocalTimelineRows(
+          local,
+          { ...options, afterPosition: from, limit: span },
+          totalItems,
+        );
+        const before = read.matching.filter((row) => row.position < end);
+        if (before.length >= options.limit || from === afterPosition) {
+          const page = before.slice(Math.max(0, before.length - options.limit));
+          return {
+            page,
+            totalItems,
+            hasMore: read.matching.length > before.length,
+            hasEarlier: read.hasEarlier || before.length > page.length,
+          };
+        }
+        span *= 2;
+      }
     });
 
     const getTimelinePage: ProjectionStoreV2Shape["getTimelinePage"] = (threadId, options) =>
@@ -7252,7 +7309,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               options.attachmentId === undefined &&
               Number.isSafeInteger(options.limit) &&
               options.limit >= 0 &&
-              Number.isSafeInteger(options.afterPosition ?? -1)
+              Number.isSafeInteger(options.afterPosition ?? -1) &&
+              (options.beforePosition === undefined ||
+                options.beforePosition === Number.POSITIVE_INFINITY ||
+                Number.isSafeInteger(options.beforePosition))
                 ? yield* openLocalTimeline(threadId)
                 : null;
             const whole = Effect.gen(function* () {
@@ -7271,26 +7331,43 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         (row) => `${row.thread_id}:${row.turn_item_id}`,
                       ),
                     );
-              const matching = index.visible
+              const inView = index.visible
                 .map((row, position) => ({ ...row, position }))
                 .filter((row) =>
                   options.itemId === undefined
-                    ? row.position > (options.afterPosition ?? -1) &&
-                      (options.view === "activity" ||
-                        ["user_message", "assistant_message", "proposed_plan"].includes(
-                          row.item.type,
-                        ))
+                    ? options.view === "activity" ||
+                      ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type)
                     : row.sourceItemId === options.itemId,
                 )
                 .filter(
                   (row) =>
                     attachmentOwners?.has(`${row.sourceThreadId}:${row.sourceItemId}`) ?? true,
                 );
-              return { matching, totalItems: index.visible.length };
+              const before = options.beforePosition ?? Number.POSITIVE_INFINITY;
+              const matching =
+                options.itemId === undefined
+                  ? inView.filter(
+                      (row) =>
+                        row.position > (options.afterPosition ?? -1) && row.position < before,
+                    )
+                  : inView;
+              const page =
+                options.beforePosition === undefined
+                  ? matching.slice(0, options.limit)
+                  : matching.slice(Math.max(0, matching.length - options.limit));
+              const pageStart = page[0]?.position ?? (options.afterPosition ?? -1) + 1;
+              return {
+                page,
+                totalItems: index.visible.length,
+                hasMore:
+                  options.beforePosition === undefined
+                    ? matching.length > page.length
+                    : (inView.at(-1)?.position ?? -1) >= before,
+                hasEarlier: (inView[0]?.position ?? Number.POSITIVE_INFINITY) < pageStart,
+              };
             });
-            const { matching, totalItems } =
-              local === null ? yield* whole : yield* matchLocalTimelineRows(local, options);
-            const page = matching.slice(0, options.limit);
+            const { page, totalItems, hasMore, hasEarlier } =
+              local === null ? yield* whole : yield* readLocalTimelinePage(local, options);
             const sources = yield* encodeTimelineSources(
               page
                 .filter((row) => row.synthetic === undefined)
@@ -7339,7 +7416,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 };
               }),
             );
-            return { items, totalItems, hasMore: matching.length > page.length };
+            return { items, totalItems, hasMore, hasEarlier };
           }),
         )
         .pipe(

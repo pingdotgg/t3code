@@ -35,6 +35,7 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
   SERVICE_UNIT_ENV,
+  systemdUnitDirectoryOf,
 } from "./cloud/serviceProtocol.ts";
 import {
   legacyOwnerStartedBeforeRecord,
@@ -123,7 +124,34 @@ export async function registerServiceTask(
   }
 }
 
-function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): ServiceUnit | undefined {
+// The manager's environment can differ from the one it gives services (environment.d).
+async function readSystemdUnitDirectory(): Promise<string | undefined> {
+  try {
+    const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(
+      "busctl",
+      [
+        "--user",
+        "--json=short",
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "UnitPath",
+      ],
+      { timeout: 5_000 },
+    );
+    const { data } = JSON.parse(stdout) as { readonly data?: unknown };
+    return Array.isArray(data) && data.every((entry) => typeof entry === "string")
+      ? systemdUnitDirectoryOf(data)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function serviceUnitFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ServiceUnit | undefined> {
   const unitName = env[SERVICE_UNIT_ENV]?.trim();
   if (!unitName) return undefined;
   if (unitName.endsWith(".xml")) {
@@ -141,14 +169,18 @@ function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): Servi
       reload: () => Promise.resolve(),
     };
   }
-  // The manager's own environment, which decides where it reads user units.
   const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
-  const configHome =
-    xdgConfigHome && NodePath.isAbsolute(xdgConfigHome)
-      ? xdgConfigHome
-      : NodePath.join(home, ".config");
+  const unitDir =
+    (await readSystemdUnitDirectory()) ??
+    NodePath.join(
+      xdgConfigHome && NodePath.isAbsolute(xdgConfigHome)
+        ? xdgConfigHome
+        : NodePath.join(home, ".config"),
+      "systemd",
+      "user",
+    );
   return {
-    path: NodePath.join(configHome, "systemd", "user", unitName),
+    path: NodePath.join(unitDir, unitName),
     reload: () =>
       new Promise((resolve, reject) => {
         NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
@@ -1375,8 +1407,8 @@ export interface LauncherOptions {
 }
 
 export async function main(options: LauncherOptions = {}): Promise<void> {
-  const baseDir = (options.baseDir ?? process.env.T3CODE_HOME)?.trim();
-  if (baseDir === undefined || baseDir === "") {
+  const baseDir = options.baseDir ?? process.env.T3CODE_HOME;
+  if (baseDir === undefined || baseDir.trim() === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
   const output =
@@ -1403,7 +1435,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
         throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
       }
     }
-    const serviceUnit = serviceUnitFromEnvironment(managerEnvironment);
+    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
     const logPath = await serviceLogPath(options, serviceUnit);
     if (logPath !== undefined) {
       await boundServiceLog(logPath);
