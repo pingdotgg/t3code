@@ -145,6 +145,43 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  // Codex 0.167 answers `account/read` with `{ type: "gcp" }` when `model_provider = "gcp"`.
+  Account: {
+    oneOf: [
+      {
+        properties: { type: { enum: ["apiKey"], title: "ApiKeyAccountType", type: "string" } },
+        required: ["type"],
+        title: "ApiKeyAccount",
+        type: "object",
+      },
+      {
+        properties: {
+          email: { type: ["string", "null"] },
+          planType: { $ref: "#/definitions/PlanType" },
+          type: { enum: ["chatgpt"], title: "ChatgptAccountType", type: "string" },
+        },
+        required: ["email", "planType", "type"],
+        title: "ChatgptAccount",
+        type: "object",
+      },
+      {
+        properties: {
+          type: { enum: ["amazonBedrock"], title: "AmazonBedrockAccountType", type: "string" },
+          usesCodexManagedCredentials: { default: false, type: "boolean" },
+        },
+        required: ["type"],
+        title: "AmazonBedrockAccount",
+        type: "object",
+      },
+      {
+        description: "Google Cloud Vertex AI with externally managed credentials.",
+        properties: { type: { enum: ["gcp"], title: "GcpAccountType", type: "string" } },
+        required: ["type"],
+        title: "GcpAccount",
+        type: "object",
+      },
+    ],
+  },
   // Newer custom Codex binaries emit partial answers before additional tools or text.
   MessagePhase: {
     description:
