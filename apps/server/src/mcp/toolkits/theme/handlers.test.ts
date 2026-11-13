@@ -21,13 +21,13 @@ import { ThemeToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment:theme");
 const threadId = ThreadId.make("thread:theme");
-const AGENT_THEME: EnvironmentThemeFile = {
+const AGENT_THEME = {
   name: "Agent Look",
   appearance: "dark",
   canvas: "#101010",
   accent: "#7aa2f7",
   css: "[data-chat-header] { border-bottom: 1px solid red; }",
-};
+} satisfies EnvironmentThemeFile;
 
 it.effect("applies the theme through the service and reports a refusal as an invalid request", () =>
   Effect.gen(function* () {
