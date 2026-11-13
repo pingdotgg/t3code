@@ -177,6 +177,14 @@ interface PublishedAwareness {
   readonly identity: string;
   readonly state: RelayAgentActivityState | null;
   readonly childDriven: boolean;
+  /** The run and own request behind the state; queued updates can coalesce a whole new run. */
+  readonly occurrence: string | null;
+}
+
+function awarenessOccurrence(thread: Option.Option<AgentAwarenessThread>): string | null {
+  return Option.isSome(thread)
+    ? JSON.stringify([thread.value.latestRunId, thread.value.pendingRuntimeRequest?.id ?? null])
+    : null;
 }
 
 // The relay treats a new time as a new alert, so same-phase changes like renames keep the old one.
@@ -184,8 +192,11 @@ interface PublishedAwareness {
 function withPublishedPhaseTime(
   state: RelayAgentActivityState,
   published: PublishedAwareness | undefined,
+  occurrence: string | null,
 ): RelayAgentActivityState {
-  return published?.state?.phase === state.phase && !published.childDriven
+  return published?.state?.phase === state.phase &&
+    !published.childDriven &&
+    published.occurrence === occurrence
     ? { ...state, updatedAt: published.state.updatedAt }
     : state;
 }
@@ -594,6 +605,7 @@ export const make = Effect.gen(function* () {
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     const published = publishedStateByThread.get(threadId);
+    const occurrence = awarenessOccurrence(thread);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !hasLivePublishedState(publishedStateByThread, threadId)
@@ -661,7 +673,7 @@ export const make = Effect.gen(function* () {
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
-        const completion = withPublishedPhaseTime(unsettled.state, published);
+        const completion = withPublishedPhaseTime(unsettled.state, published, occurrence);
         yield* publishState({
           projectId: unsettled.projectId,
           state: completion,
@@ -674,6 +686,7 @@ export const make = Effect.gen(function* () {
             identity: agentAwarenessPublishIdentity(completion),
             state: completion,
             childDriven: false,
+            occurrence,
           }),
         );
         yield* schedulePublishConfirm(threadId);
@@ -703,7 +716,7 @@ export const make = Effect.gen(function* () {
       snapshot.state === null
         ? null
         : childRequestId === undefined
-          ? withPublishedPhaseTime(snapshot.state, published)
+          ? withPublishedPhaseTime(snapshot.state, published, occurrence)
           : childAlert?.requestId === childRequestId
             ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
             : snapshot.state;
@@ -722,6 +735,7 @@ export const make = Effect.gen(function* () {
         identity: publishIdentity,
         state,
         childDriven: childRequestId !== undefined,
+        occurrence,
       }),
     );
   });

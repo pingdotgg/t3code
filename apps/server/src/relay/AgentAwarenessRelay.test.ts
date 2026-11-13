@@ -546,6 +546,21 @@ describe("AgentAwarenessRelay", () => {
           ["completed", "Renamed thread", "2026-09-04T12:01:00.000Z"],
         ],
       );
+
+      // A new run that completed before the worker caught up is a new completion, not a rename.
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          title: "Renamed again",
+          latestRunId: RunId.make("run:next"),
+          updatedAt: DateTime.makeUnsafe("2026-09-04T13:05:00.000Z"),
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications[3]?.state?.updatedAt, "2026-09-04T13:05:00.000Z");
     }),
   );
 
