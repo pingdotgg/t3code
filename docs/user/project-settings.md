@@ -232,6 +232,9 @@ archived. Set settled retention to 0 days to remove a worktree at the next clean
 settlement. In repositories without remotes,
 unchanged-worktree cleanup compares against the branch checked out in the project workspace;
 if that checkout has a detached HEAD, the worktree is kept. Only T3-managed worktrees are eligible.
+A worktree left on a detached HEAD is removed only when its commits are all on a local or
+remote-tracking branch and no rebase, cherry-pick, revert, merge, or bisect is in progress; the
+next turn checks out the thread's branch again. A worktree switched to another branch is kept.
 Active sessions and shared worktrees prevent removal. **Keep worktrees with local changes** defaults
 to **Uncommitted changes**, which protects tracked edits and untracked files but deletes ignored
 files such as `.env` and build output. **Any local files** also protects ignored files other than

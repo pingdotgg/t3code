@@ -98,6 +98,16 @@ const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
+// The per-worktree files `git status` reads to report an operation in progress.
+const PAUSED_OPERATION_STATE = [
+  "rebase-merge",
+  "rebase-apply",
+  "sequencer",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "MERGE_HEAD",
+  "BISECT_LOG",
+];
 const isGitCommandError = Schema.is(GitCommandError);
 const errorCode = (error: PlatformError) =>
   error.cause instanceof Error && "code" in error.cause ? error.cause.code : undefined;
@@ -693,9 +703,27 @@ const make = Effect.gen(function* () {
     // Detached HEAD exits 1; full refs avoid shortening when a tag shares the branch name.
     const head = yield* read(["symbolic-ref", "--quiet", "HEAD"], 1);
     if (head === null) return true;
-    const ref = head.exitCode === 0 ? head.stdout.trim() : "";
-    const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
-    return name !== branch;
+    if (head.exitCode === 0) {
+      const ref = head.stdout.trim();
+      const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
+      return name !== branch;
+    }
+    // Removal keeps branches but drops a detached HEAD and any operation paused on it.
+    const admin = yield* read(["rev-parse", "--absolute-git-dir"]);
+    if (admin === null) return true;
+    const directory = admin.stdout.replace(/\r?\n$/, "");
+    for (const state of PAUSED_OPERATION_STATE) {
+      if (yield* fs.exists(path.join(directory, state))) return true;
+    }
+    const unreachable = yield* read([
+      "rev-list",
+      "--max-count=1",
+      "HEAD",
+      "--not",
+      "--branches",
+      "--remotes",
+    ]);
+    return unreachable === null || unreachable.stdout.trim() !== "";
   });
 
   // Git status and non-forced worktree removal both skip assume-unchanged and skip-worktree files.
