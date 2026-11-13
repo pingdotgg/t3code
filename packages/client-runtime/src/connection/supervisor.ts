@@ -1120,11 +1120,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;
+    // Approval waits count as attempts but not toward backoff, so a later outage starts low.
+    let backoffFailures = 0;
     let generation = 0;
     let latestFailure: ConnectionAttemptError | null = null;
     let pendingRetry = Option.none<PendingRetryTrace>();
     const resetRetryLadder = () => {
       failureCount = 0;
+      backoffFailures = 0;
       pendingRetry = Option.none();
     };
     let replacing = false;
@@ -1132,6 +1135,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     for (;;) {
       if (yield* Ref.getAndSet(resetRetryState, false)) {
         failureCount = 0;
+        backoffFailures = 0;
         latestFailure = null;
         pendingRetry = Option.none();
       }
@@ -1214,12 +1218,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // still counts it, so a host that keeps dropping sessions backs off.
       const firstLoss = outcome.established && failureCount === 0;
       failureCount += 1;
-      const delayMs =
-        error.reason === "approval-pending"
-          ? APPROVAL_PENDING_RETRY_DELAY_MS
-          : firstLoss
-            ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
-            : retryDelayMs(failureCount - 1, yield* Random.next);
+      const awaitingApproval = error.reason === "approval-pending";
+      if (!awaitingApproval) backoffFailures += 1;
+      const delayMs = awaitingApproval
+        ? APPROVAL_PENDING_RETRY_DELAY_MS
+        : firstLoss
+          ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
+          : retryDelayMs(backoffFailures - 1, yield* Random.next);
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,

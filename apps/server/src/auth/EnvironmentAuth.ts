@@ -541,6 +541,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly approveConnectDeviceByCode: (
       verificationCode: string,
     ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    /** Revokes the one trusted device that shows this code; two that share it are ambiguous. */
+    readonly revokeConnectDeviceByCode: (
+      verificationCode: string,
+    ) => Effect.Effect<"revoked" | "not-found" | "ambiguous", ServerAuthInternalError>;
     readonly listConnectDevices: () => Effect.Effect<
       ReadonlyArray<AuthConnectDevice>,
       ServerAuthInternalError
@@ -1217,17 +1221,14 @@ export const make = Effect.gen(function* () {
 
   const approveConnectDeviceByCode: EnvironmentAuth["Service"]["approveConnectDeviceByCode"] =
     Effect.fn("EnvironmentAuth.approveConnectDeviceByCode")(function* (verificationCode) {
-      const wanted = verificationCode
-        .trim()
-        .toUpperCase()
-        .replace(/[^0-9A-Z]/g, "");
+      const wanted = normalizeVerificationCode(verificationCode);
       const links = yield* bootstrapCredentials
         .listActive()
         .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause })));
       const matches = links.filter(
         (link) =>
           link.connectDeviceRequest !== undefined &&
-          link.connectDeviceRequest.verificationCode.replace("-", "") === wanted,
+          normalizeVerificationCode(link.connectDeviceRequest.verificationCode) === wanted,
       );
       // Two waiting devices that share a code are ambiguous; approve neither.
       if (matches.length !== 1) return false;
@@ -1251,6 +1252,18 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
     return removed || revokedSessions > 0;
   });
+
+  const revokeConnectDeviceByCode: EnvironmentAuth["Service"]["revokeConnectDeviceByCode"] =
+    Effect.fn("EnvironmentAuth.revokeConnectDeviceByCode")(function* (verificationCode) {
+      const wanted = normalizeVerificationCode(verificationCode);
+      const matches = (yield* listConnectDevices()).filter(
+        (device) => normalizeVerificationCode(device.verificationCode) === wanted,
+      );
+      if (matches.length === 0) return "not-found" as const;
+      if (matches.length > 1) return "ambiguous" as const;
+      yield* revokeConnectDevice(matches[0]!.proofKeyThumbprint);
+      return "revoked" as const;
+    });
 
   const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
     sessions
@@ -1575,6 +1588,7 @@ export const make = Effect.gen(function* () {
     approveConnectDeviceByCode,
     listConnectDevices,
     revokeConnectDevice,
+    revokeConnectDeviceByCode,
     issuePairingCredential,
     issueStartupPairingCredential,
     listPairingLinks,
@@ -1596,6 +1610,8 @@ export const make = Effect.gen(function* () {
 });
 
 const isMcpClientAccess = Schema.is(AuthMcpClientAccess);
+
+const normalizeVerificationCode = (code: string) => code.toUpperCase().replace(/[^0-9A-Z]/g, "");
 
 /** The level an approval code's subject names, or undefined for any other code. */
 const mcpApprovalLevel = (subject: string): AuthMcpClientAccess | undefined => {

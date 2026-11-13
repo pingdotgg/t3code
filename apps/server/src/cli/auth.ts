@@ -167,8 +167,6 @@ const pairingCommand = Command.make("pairing").pipe(
   Command.withSubcommands([pairingCreateCommand, pairingListCommand, pairingRevokeCommand]),
 );
 
-const normalizeVerificationCode = (code: string) => code.toUpperCase().replace(/[^0-9A-Z]/g, "");
-
 const connectDeviceListCommand = Command.make("list", {
   ...authLocationFlags,
   json: jsonFlag,
@@ -223,20 +221,14 @@ const connectDeviceRevokeCommand = Command.make("revoke", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const wanted = normalizeVerificationCode(flags.code);
-        const matches = (yield* environmentAuth.listConnectDevices()).filter(
-          (device) => normalizeVerificationCode(device.verificationCode) === wanted,
+        const outcome = yield* environmentAuth.revokeConnectDeviceByCode(flags.code);
+        yield* Console.log(
+          outcome === "revoked"
+            ? `Revoked ${flags.code}.\n`
+            : outcome === "ambiguous"
+              ? `More than one trusted device shows ${flags.code}; revoke it from a client.\n`
+              : `No trusted device shows ${flags.code}.\n`,
         );
-        if (matches.length !== 1) {
-          yield* Console.log(
-            matches.length === 0
-              ? `No trusted device shows ${flags.code}.\n`
-              : `More than one trusted device shows ${flags.code}; revoke it from a client.\n`,
-          );
-          return;
-        }
-        yield* environmentAuth.revokeConnectDevice(matches[0]!.proofKeyThumbprint);
-        yield* Console.log(`Revoked ${flags.code}.\n`);
       }),
     ),
   ),

@@ -5,7 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AuthAccessWriteScope, type EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { authEnvironment } from "../state/auth";
 import { useEnvironments } from "../state/environments";
@@ -39,12 +39,14 @@ function EnvironmentConnectDeviceRequests(props: {
   return canApprove ? <ConnectDeviceRequestToasts {...props} /> : null;
 }
 
+/** Reports a failed command and says whether it failed, so its request can be offered again. */
 async function reportFailure(
   title: string,
   action: () => Promise<AtomCommandResult<unknown, unknown>>,
-) {
+): Promise<boolean> {
   const result = await action();
-  if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+  if (result._tag !== "Failure") return false;
+  if (!isAtomCommandInterrupted(result)) {
     const error = squashAtomCommandFailure(result);
     toastManager.add(
       stackedThreadToast({
@@ -54,6 +56,7 @@ async function reportFailure(
       }),
     );
   }
+  return true;
 }
 
 function ConnectDeviceRequestToasts({
@@ -68,6 +71,13 @@ function ConnectDeviceRequestToasts({
   const approve = useAtomCommand(authEnvironment.approveConnectDevice, { reportFailure: false });
   const deny = useAtomCommand(authEnvironment.revokePairingLink, { reportFailure: false });
   const toasts = useRef(new Map<string, { toastId: string; renderedKey: string }>());
+  const [, setRetryGeneration] = useState(0);
+  // A failed approve or deny forgets its toast and re-renders, so the request is offered again.
+  const settle = async (id: string, failed: Promise<boolean>) => {
+    if (!(await failed)) return;
+    toasts.current.delete(id);
+    setRetryGeneration((generation) => generation + 1);
+  };
 
   const requests =
     access.data?.type === "snapshot"
@@ -103,8 +113,11 @@ function ConnectDeviceRequestToasts({
           children: "Approve",
           onClick: () => {
             close();
-            void reportFailure("Could not approve the device", () =>
-              approve({ environmentId, input: { pairingLinkId: id } }),
+            void settle(
+              id,
+              reportFailure("Could not approve the device", () =>
+                approve({ environmentId, input: { pairingLinkId: id } }),
+              ),
             );
           },
         },
@@ -114,8 +127,11 @@ function ConnectDeviceRequestToasts({
             children: "Deny",
             onClick: () => {
               close();
-              void reportFailure("Could not deny the device", () =>
-                deny({ environmentId, input: { id } }),
+              void settle(
+                id,
+                reportFailure("Could not deny the device", () =>
+                  deny({ environmentId, input: { id } }),
+                ),
               );
             },
           },
@@ -124,7 +140,8 @@ function ConnectDeviceRequestToasts({
               id: "review",
               props: {
                 children: "Review",
-                onClick: () => void navigate({ to: "/settings/access" }),
+                onClick: () =>
+                  void navigate({ to: "/settings/access", search: { machine: environmentId } }),
               },
             },
           ],

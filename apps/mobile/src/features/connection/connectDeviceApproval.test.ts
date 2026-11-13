@@ -2,7 +2,7 @@ import type { AuthPairingLink } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { connectDeviceApprovalPrompts } from "./connectDeviceApproval";
+import { connectDeviceApprovalPrompts, createApprovalPromptQueue } from "./connectDeviceApproval";
 
 const link = (id: string, createdAtMs: number, request?: AuthPairingLink["connectDeviceRequest"]) =>
   ({
@@ -34,5 +34,25 @@ describe("connectDeviceApprovalPrompts", () => {
     expect(prompts.map((prompt) => prompt.pairingLinkId)).toEqual(["older"]);
     expect(prompts[0]?.message).toContain("Chrome on macOS wants to connect to Mac mini");
     expect(prompts[0]?.message).toContain("ABCD-EFGH");
+  });
+});
+
+describe("createApprovalPromptQueue", () => {
+  it("shows one prompt at a time and offers a failed one again before the rest", () => {
+    const shown: string[] = [];
+    const answers: Array<(outcome: "done" | "retry") => void> = [];
+    const queue = createApprovalPromptQueue<{ pairingLinkId: string }>((prompt, answer) => {
+      shown.push(prompt.pairingLinkId);
+      answers.push(answer);
+    });
+
+    queue.offer([{ pairingLinkId: "a" }, { pairingLinkId: "b" }]);
+    queue.offer([{ pairingLinkId: "a" }]);
+    expect(shown).toEqual(["a"]);
+
+    answers.at(-1)!("retry");
+    expect(shown).toEqual(["a", "a"]);
+    answers.at(-1)!("done");
+    expect(shown).toEqual(["a", "a", "b"]);
   });
 });

@@ -73,9 +73,10 @@ that key, so a forged mint yields a request that waits for approval, never a
 session. The waiting device retries the whole mint, and the environment hands
 back the same open request, so approvers see one entry with a stable code
 derived from the thumbprint. Approval is per key and does not expire. It ends
-only when the key is revoked, and revoking any session bound to the key revokes
-the key and all its sessions; otherwise the device would mint itself a new
-session within seconds. While approval is off, every key that completes an
+only when the key is revoked. Revoking a session bound to a key revokes the key,
+all its sessions, and its unspent credentials, unless the caller's own session
+holds the same key; otherwise the device would mint itself a new session within
+seconds. While approval is off, every key that completes an
 exchange is recorded as trusted. Turning approval on therefore keeps current
 devices working and lists them for review, including any that got in before.
 See `issueConnectCredential` in the

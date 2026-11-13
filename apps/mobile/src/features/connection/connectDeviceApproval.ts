@@ -35,3 +35,37 @@ export function connectDeviceApprovalPrompts(input: {
       message: `${describeConnectDevice(device)} wants to connect to ${input.environmentLabel} through T3 Connect. It shows code ${verificationCode}. Approve it only if that code matches.`,
     }));
 }
+
+/**
+ * Shows approval prompts one at a time: an Android alert replaces the one on screen, which
+ * would drop an unanswered request. A prompt answered with "retry" goes back to the front.
+ */
+export function createApprovalPromptQueue<P extends { readonly pairingLinkId: string }>(
+  present: (prompt: P, answer: (outcome: "done" | "retry") => void) => void,
+) {
+  const known = new Set<string>();
+  const waiting: P[] = [];
+  let showing = false;
+  const next = () => {
+    if (showing) return;
+    const prompt = waiting.shift();
+    if (prompt === undefined) return;
+    showing = true;
+    present(prompt, (outcome) => {
+      showing = false;
+      if (outcome === "retry") waiting.unshift(prompt);
+      next();
+    });
+  };
+  return {
+    known: known as ReadonlySet<string>,
+    offer(prompts: ReadonlyArray<P>) {
+      for (const prompt of prompts) {
+        if (known.has(prompt.pairingLinkId)) continue;
+        known.add(prompt.pairingLinkId);
+        waiting.push(prompt);
+      }
+      next();
+    },
+  };
+}

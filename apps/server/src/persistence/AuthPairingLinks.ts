@@ -97,6 +97,14 @@ export const FindPendingConnectPairingLinkInput = Schema.Struct({
 });
 export type FindPendingConnectPairingLinkInput = typeof FindPendingConnectPairingLinkInput.Type;
 
+/** Unspent links bound to `proofKeyThumbprint`, or with `keepProofKeyThumbprint` every other bound one. */
+export const RevokeUnspentByProofKeyInput = Schema.Struct({
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
+  keepProofKeyThumbprint: Schema.NullOr(Schema.String),
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeUnspentByProofKeyInput = typeof RevokeUnspentByProofKeyInput.Type;
+
 export const RecordConnectRequestClientInput = Schema.Struct({
   id: Schema.String,
   client: Schema.fromJsonString(AuthClientMetadata),
@@ -151,6 +159,9 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly recordConnectRequestClient: (
       input: RecordConnectRequestClientInput,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
+    readonly revokeUnspentByProofKey: (
+      input: RevokeUnspentByProofKeyInput,
+    ) => Effect.Effect<ReadonlyArray<string>, AuthPairingLinkRepositoryError>;
   }
 >()("t3/persistence/AuthPairingLinks/AuthPairingLinkRepository") {}
 
@@ -463,6 +474,35 @@ export const make = Effect.gen(function* () {
         Effect.map((rows) => rows.length > 0),
       );
 
+  const revokeUnspentByProofKeyRows = SqlSchema.findAll({
+    Request: RevokeUnspentByProofKeyInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ proofKeyThumbprint, keepProofKeyThumbprint, revokedAt }) =>
+      sql`
+        UPDATE auth_pairing_links
+        SET revoked_at = ${revokedAt}
+        WHERE proof_key_thumbprint IS NOT NULL
+          AND revoked_at IS NULL
+          AND consumed_at IS NULL
+          AND (${proofKeyThumbprint} IS NULL OR proof_key_thumbprint = ${proofKeyThumbprint})
+          AND proof_key_thumbprint IS NOT ${keepProofKeyThumbprint}
+        RETURNING id AS "id"
+      `,
+  });
+
+  const revokeUnspentByProofKey: AuthPairingLinkRepository["Service"]["revokeUnspentByProofKey"] = (
+    input,
+  ) =>
+    revokeUnspentByProofKeyRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthPairingLinkRepository.revokeUnspentByProofKey:query",
+          "AuthPairingLinkRepository.revokeUnspentByProofKey:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.id)),
+    );
+
   const create: AuthPairingLinkRepository["Service"]["create"] = (input) =>
     createPairingLinkRow(input).pipe(
       Effect.mapError(
@@ -572,6 +612,7 @@ export const make = Effect.gen(function* () {
     getActiveById,
     findPendingConnect,
     recordConnectRequestClient,
+    revokeUnspentByProofKey,
   } satisfies AuthPairingLinkRepository["Service"];
 });
 

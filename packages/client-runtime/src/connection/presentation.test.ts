@@ -13,7 +13,12 @@ import {
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { connectionStatusText, environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import {
+  connectionStatusText,
+  connectionStatusTitle,
+  environmentMcpUrl,
+  presentConnectionState,
+} from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -176,6 +181,7 @@ describe("connection presentation", () => {
     expect(connectionStatusText(awaitingApproval)).toBe(
       "Approve this device on Mac mini. It shows code K7QM-2XFD.",
     );
+    expect(connectionStatusTitle(awaitingApproval)).toBe("Waiting for approval");
   });
 
   it("preserves an explicitly available environment while offline", () => {

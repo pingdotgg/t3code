@@ -173,9 +173,18 @@ function ConfiguredConnectOnboardingDialog() {
 
   const applyPublishSelection = async () => {
     if (isApplying) return;
-    // Onboarding only turns approval on; turning it off stays in Settings.
+    // Onboarding only turns approval on; turning it off stays in Settings. Publishing waits
+    // for the save, so a failed save cannot leave the machine reachable without approval.
     if (requireDeviceApproval && !deviceApprovalRequired) {
-      updatePrimarySettings({ requireConnectDeviceApproval: true });
+      setIsApplying(true);
+      const saved = await new Promise<boolean>((resolve) =>
+        updatePrimarySettings(
+          { requireConnectDeviceApproval: true },
+          { onSaved: () => resolve(true), onFailed: () => resolve(false) },
+        ),
+      );
+      setIsApplying(false);
+      if (!saved) return;
     }
     if (
       primaryEnvironmentId === null ||

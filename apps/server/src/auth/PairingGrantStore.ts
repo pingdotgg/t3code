@@ -815,9 +815,22 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new ConnectDevicesError({ operation: "list", cause })),
     );
 
+  // A credential minted before revocation is still spendable; it must die with the trust,
+  // or exchanging it would trust the key again without approval.
+  const revokeUnspentLinks = Effect.fn("PairingGrantStore.revokeUnspentLinks")(function* (
+    input: Omit<AuthPairingLinks.RevokeUnspentByProofKeyInput, "revokedAt">,
+  ) {
+    const revokedAt = yield* DateTime.now;
+    const ids = yield* pairingLinks
+      .revokeUnspentByProofKey({ ...input, revokedAt })
+      .pipe(Effect.mapError((cause) => new ConnectDevicesError({ operation: "revoke", cause })));
+    yield* Effect.forEach(ids, emitRemoved, { discard: true });
+  });
+
   const revokeConnectDevice: PairingGrantStore["Service"]["revokeConnectDevice"] = Effect.fn(
     "PairingGrantStore.revokeConnectDevice",
   )(function* (proofKeyThumbprint) {
+    yield* revokeUnspentLinks({ proofKeyThumbprint, keepProofKeyThumbprint: null });
     const removed = yield* connectDevices
       .remove(proofKeyThumbprint)
       .pipe(Effect.mapError((cause) => new ConnectDevicesError({ operation: "revoke", cause })));
@@ -827,6 +840,7 @@ const make = Effect.gen(function* () {
 
   const revokeConnectDevicesExcept: PairingGrantStore["Service"]["revokeConnectDevicesExcept"] =
     Effect.fn("PairingGrantStore.revokeConnectDevicesExcept")(function* (keepProofKeyThumbprint) {
+      yield* revokeUnspentLinks({ proofKeyThumbprint: null, keepProofKeyThumbprint });
       const removed = yield* connectDevices
         .removeAllExcept(keepProofKeyThumbprint)
         .pipe(Effect.mapError((cause) => new ConnectDevicesError({ operation: "revoke", cause })));

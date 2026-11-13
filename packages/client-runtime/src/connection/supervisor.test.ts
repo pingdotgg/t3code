@@ -449,12 +449,15 @@ describe("EnvironmentSupervisor", () => {
         reason: "approval-pending",
         detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
       });
-      const harness = yield* makeHarness({ prepare: () => Effect.fail(pending) });
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.fail(attempt <= 8 ? pending : transient("Relay connection timed out.")),
+      });
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
-      for (const attempt of [1, 2, 3]) {
+      for (let attempt = 1; attempt <= 8; attempt++) {
         const waiting = yield* awaitState(
           supervisor.state,
           (state) => state.phase === "backoff" && state.attempt === attempt,
@@ -462,6 +465,12 @@ describe("EnvironmentSupervisor", () => {
         expect((waiting.retryAt ?? 0) - (yield* Clock.currentTimeMillis)).toBe(4_000);
         yield* TestClock.adjust("4 seconds");
       }
+      // The waits do not count toward backoff, so an outage right after starts at the bottom.
+      const failed = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 9,
+      );
+      expect((failed.retryAt ?? 0) - (yield* Clock.currentTimeMillis)).toBeLessThanOrEqual(2_000);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

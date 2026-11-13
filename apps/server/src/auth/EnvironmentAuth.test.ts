@@ -365,6 +365,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                   ),
                 ),
               );
+          // A credential minted before revocation must not let the device back in afterwards.
+          const unspent = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
           const [oldestDeviceSession, newestDeviceSession] = yield* deviceSessions();
           expect(newestDeviceSession).toBeDefined();
           // Revoking any one of the device's sessions ends all of them and its trust.
@@ -372,6 +377,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             yield* serverAuth.revokeClientSession(admin.sessionId, oldestDeviceSession!.sessionId),
           ).toBe(true);
           expect(yield* deviceSessions()).toEqual([]);
+          expect(yield* serverAuth.listConnectDevices()).toEqual([]);
+          expect((yield* exchange(unspent.credential).pipe(Effect.flip))._tag).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
           expect(yield* serverAuth.listConnectDevices()).toEqual([]);
           const afterRevoke = yield* serverAuth.issueConnectCredential({
             proofKeyThumbprint: deviceKey,
