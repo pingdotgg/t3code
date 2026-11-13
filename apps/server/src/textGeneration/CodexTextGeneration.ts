@@ -55,6 +55,11 @@ const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
   names.length === 0
     ? null
     : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
+// Codex splits -c keys on every dot, so only bare-key names can be addressed by a dotted flag.
+const codexMcpServerOffFlags = (names: ReadonlyArray<string>) =>
+  names
+    .filter((name) => /^[A-Za-z0-9_-]+$/.test(name))
+    .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]);
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
@@ -291,12 +296,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             }
           : {}),
       };
-      const mcpServersOff = yield* listEnabledMcpServers({
+      const enabledMcpServers = yield* listEnabledMcpServers({
         binary,
         cwd,
         env,
         launchArgs: codexMcpListLaunchArgs(launchArgs),
-      }).pipe(Effect.map(codexMcpServersOff));
+      });
+      const mcpServersOff = codexMcpServersOff(enabledMcpServers);
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
@@ -306,6 +312,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...codexExecLaunchArgs(launchArgs),
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
+          // After launch args, so a launch arg's enabled=true cannot turn a server back on.
+          ...codexMcpServerOffFlags(enabledMcpServers),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",

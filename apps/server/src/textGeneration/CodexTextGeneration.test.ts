@@ -146,8 +146,10 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "    }",
         '  } else if (value.startsWith("mcp_servers.")) {',
         '    const [name, key] = value.slice("mcp_servers.".length).split(/[.=]/);',
-        '    servers.set(name, servers.get(name) === true || key === "url" || key === "command");',
         "    if (value === `mcp_servers.${name}.enabled=false`) offServers.add(name);",
+        "    // An enabled flag alone toggles a server another layer (config.toml) defines.",
+        '    if (key === "enabled" && !servers.has(name)) continue;',
+        '    servers.set(name, servers.get(name) === true || key === "url" || key === "command");',
         "  }",
         "}",
         "for (const [name, hasTransport] of servers) {",
@@ -415,9 +417,11 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes" }),
-        launchArgs: `-c 'mcp_servers.t3-code.url="http://127.0.0.1:1/mcp"' -c 'mcp_servers.t3-code.enabled_tools=["t3_thread_list"]'`,
+        launchArgs: `-c 'mcp_servers.t3-code.url="http://127.0.0.1:1/mcp"' -c 'mcp_servers.t3-code.enabled=true'`,
         mcpServers: [{ name: "t3-code", enabled: true }],
         requireMcpServersOff: ["t3-code"],
+        requireArg:
+          "--config features.apps=false --config mcp_servers.t3-code.enabled=false --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {
