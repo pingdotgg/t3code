@@ -8891,6 +8891,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         retry: providerRetry.retry,
                         retryStartedAt: providerRetry.startedAt,
                       }),
+                  ...(input.reportedFailure === undefined ? {} : { childTurnsContinue: true }),
                   threadDisposition,
                 }
               : {

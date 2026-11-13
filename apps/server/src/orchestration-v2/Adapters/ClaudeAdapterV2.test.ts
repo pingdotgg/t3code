@@ -7405,7 +7405,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.notEqual(terminal.status, "completed");
       assert.equal(terminal.failure?.class, "permission_error");
       assert.include(terminal.failure?.message, "Bash: printf T3_DENIAL_PROBE_ok");
-      // The process still runs its background shell, so the turn keeps tracking it.
+      // The process still runs its background shell, so the run and the turn keep tracking it.
+      assert.isTrue(terminal.status === "failed" && terminal.childTurnsContinue);
       assert.isTrue(yield* harness.hasPendingBackgroundWork);
     }).pipe(
       Effect.provide(
