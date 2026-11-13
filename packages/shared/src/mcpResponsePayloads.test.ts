@@ -69,3 +69,13 @@ it.effect("reads SSE line endings across byte-chunk boundaries without splitting
     }
   }),
 );
+
+it.effect("reads SSE whatever the case of the media type", () =>
+  Effect.gen(function* () {
+    const response = new Response('data: {"id":1}\n\n', {
+      headers: { "content-type": "Text/Event-Stream; charset=utf-8" },
+    });
+    const payloads = yield* Stream.runCollect(responsePayloads(response, (cause) => cause));
+    expect(Array.from(payloads)).toEqual([{ id: 1 }]);
+  }),
+);
