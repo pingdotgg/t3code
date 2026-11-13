@@ -245,7 +245,7 @@ const ThreadListTool = Tool.make("t3_thread_list", {
 
 const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
-    "Read a thread ID. messages (default): user/assistant messages and plans; activity: all items. Keep limit/maxCharsPerItem small. Page: afterPosition=nextPosition; truncated text: itemId and textOffset=nextTextOffset. Reading a child's final result marks it delivered. Cite its link verbatim.",
+    "Read a thread by ID. messages (default) or activity (all items). Newest first; older: beforePosition=earlierPosition; from start: afterPosition=-1, then nextPosition. Cut-off text: itemId, textOffset=nextTextOffset. Reading a child's final result marks it delivered. Cite its link verbatim.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,

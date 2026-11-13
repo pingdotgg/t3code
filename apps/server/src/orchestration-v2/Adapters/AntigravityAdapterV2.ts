@@ -214,7 +214,7 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    buildPrompt: ({
+    buildAttachmentPrompt: ({
       text,
       attachments,
       resolveAttachmentPath,
@@ -230,6 +230,7 @@ export function makeAntigravityAcpAdapterFlavor(
         agentVersion,
         currentModel,
       }).pipe(
+        Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),
