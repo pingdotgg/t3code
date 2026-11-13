@@ -2073,6 +2073,13 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
+  // Claude Code 2.1.323 sends no prompt_suggestion for the SDK option alone; this env var turns it on.
+  const environment =
+    input.promptSuggestions === true &&
+    input.environment !== undefined &&
+    input.environment.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION === undefined
+      ? { ...input.environment, CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "1" }
+      : input.environment;
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -2121,7 +2128,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    ...(environment === undefined ? {} : { env: environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,

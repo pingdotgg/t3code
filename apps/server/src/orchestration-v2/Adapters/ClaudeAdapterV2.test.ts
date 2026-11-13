@@ -409,6 +409,28 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
+  it("turns on Claude's prompt suggestion env var unless the user set it", () => {
+    const suggestionEnv = (promptSuggestions: boolean, environment: NodeJS.ProcessEnv) =>
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "native-prompt-suggestion-env",
+        resume: false,
+        cwd: "/workspace",
+        promptSuggestions,
+        environment,
+      }).env;
+    assert.deepEqual(suggestionEnv(true, { PATH: "/bin" }), {
+      PATH: "/bin",
+      CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "1",
+    });
+    assert.deepEqual(suggestionEnv(false, { PATH: "/bin" }), { PATH: "/bin" });
+    assert.equal(
+      suggestionEnv(true, { CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "0" })
+        ?.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION,
+      "0",
+    );
+  });
+
   it("sends a custom model named like a Claude Code alias to the API unchanged", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: { instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId, model: "opus" },
