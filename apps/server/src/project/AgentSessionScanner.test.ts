@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -31,6 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
@@ -59,8 +61,32 @@ interface ScannerTestInput {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  readonly importedTranscripts?: {
+    readonly cwd: string;
+    readonly sources: ReadonlyArray<AgentSessionImportSource>;
+  };
   readonly processRunner?: Layer.Layer<ProcessRunner.ProcessRunner>;
 }
+
+const layerRuntimeRepository = (imported: ScannerTestInput["importedTranscripts"]) =>
+  Layer.mock(ProviderSessionRuntime.ProviderSessionRuntimeRepository)({
+    list: () =>
+      Effect.sync(() =>
+        (imported?.sources ?? []).map((source): ProviderSessionRuntime.ProviderSessionRuntime => ({
+          threadId: ThreadId.make(
+            `import:${source.providerInstanceId}:${source.providerSessionId}`,
+          ),
+          providerName: source.provider,
+          providerInstanceId: source.providerInstanceId,
+          adapterKey: source.provider,
+          runtimeMode: "full-access",
+          status: "stopped",
+          lastSeenAt: "2026-01-01T00:00:00.000Z",
+          resumeCursor: null,
+          runtimePayload: { cwd: imported?.cwd, importedTranscripts: [source] },
+        })),
+      ),
+  });
 
 const layerScannerTest = (input: ScannerTestInput) =>
   (input.processRunner === undefined
@@ -103,6 +129,7 @@ const layerScannerTest = (input: ScannerTestInput) =>
           input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
         ),
         layerProjectStore(input.importedWorkspaceRoots ?? []),
+        layerRuntimeRepository(input.importedTranscripts),
       ),
     ),
   );
@@ -633,6 +660,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const codexWorkspace = yield* makeTempDir("t3code-workspace-codex-");
         const piWorkspace = yield* makeTempDir("t3code-workspace-pi-");
         const piFlatWorkspace = yield* makeTempDir("t3code-workspace-pi-flat-");
+        const piInstanceHome = yield* makeTempDir("t3code-pi-instance-home-");
+        const piHomeWorkspace = yield* makeTempDir("t3code-workspace-pi-home-");
 
         // Pi nests sessions per cwd by default and keeps a custom session directory flat.
         for (const [filePath, cwd, mtime] of [
@@ -645,6 +674,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             path.join(piSessionDir, "2026-01-04_pi-flat.jsonl"),
             piFlatWorkspace,
             "2026-01-04T00:00:00.000Z",
+          ],
+          [
+            path.join(piInstanceHome, "custom-pi", "sessions", "--slug--", "2026-01-05_pi.jsonl"),
+            piHomeWorkspace,
+            "2026-01-05T00:00:00.000Z",
           ],
         ] as const) {
           yield* writeTranscript({
@@ -704,10 +738,22 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               ],
               config: {},
             },
+            [ProviderInstanceId.make("pi-home")]: {
+              driver: ProviderDriverKind.make("pi"),
+              enabled: true,
+              environment: [
+                { name: "HOME", value: piInstanceHome, sensitive: false },
+                { name: "USERPROFILE", value: piInstanceHome, sensitive: false },
+                { name: "PI_CODING_AGENT_DIR", value: "~/custom-pi", sensitive: false },
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
+              ],
+              config: {},
+            },
           },
         });
 
         expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [piHomeWorkspace, ["pi"]],
           [piFlatWorkspace, ["pi"]],
           [piWorkspace, ["pi"]],
           [codexWorkspace, ["codex"]],
@@ -823,7 +869,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("skips linked git worktrees and reports the origin of real checkouts", () =>
+    it.effect("folds linked git worktrees into their checkout and reports real origins", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -859,8 +905,56 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           path.join(submodule, ".git"),
           `gitdir: ${submoduleGitDir}\n`,
         );
+        // A repository whose sessions all ran in a linked worktree is still offered.
+        const worktreeOnly = yield* makeTempDir("t3code-workspace-worktree-only-");
+        const worktreeOnlyCheckout = yield* makeTempDir("t3code-workspace-worktree-only-wt-");
+        const worktreeOnlyGitDir = path.join(worktreeOnly, ".git", "worktrees", "wt");
+        yield* fileSystem.makeDirectory(worktreeOnlyGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(worktreeOnly, ".git", "config"),
+          '[remote "origin"]\n\turl = git@github.com:pingdotgg/other.git\n',
+        );
+        yield* fileSystem.writeFileString(path.join(worktreeOnlyGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktreeOnlyCheckout, ".git"),
+          `gitdir: ${worktreeOnlyGitDir}\n`,
+        );
 
-        for (const [index, cwd] of [repo, worktree, plain, noRemote, submodule].entries()) {
+        // Not offered: the config is unreadable, so the repository could be bare; and
+        // the main checkout is reached through a symlink into T3's own state.
+        const configBaseDir = yield* fileSystem.realPath(
+          yield* makeTempDir("t3code-scanner-base-"),
+        );
+        const links = yield* makeTempDir("t3code-workspace-links-");
+        const unknown = yield* makeTempDir("t3code-workspace-unknown-");
+        yield* fileSystem.makeDirectory(path.join(configBaseDir, "state-repo"));
+        yield* fileSystem.symlink(path.join(configBaseDir, "state-repo"), path.join(links, "repo"));
+        const hiddenCheckouts: Array<string> = [];
+        for (const [main, config] of [
+          [unknown, null],
+          [path.join(links, "repo"), "[core]\n"],
+        ] as const) {
+          const gitDir = path.join(main, ".git", "worktrees", "wt");
+          yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+          if (config !== null) {
+            yield* fileSystem.writeFileString(path.join(main, ".git", "config"), config);
+          }
+          yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+          const checkout = yield* makeTempDir("t3code-workspace-hidden-wt-");
+          yield* fileSystem.writeFileString(path.join(checkout, ".git"), `gitdir: ${gitDir}\n`);
+          hiddenCheckouts.push(checkout);
+        }
+
+        const sessionDirectories = [
+          repo,
+          worktree,
+          plain,
+          noRemote,
+          submodule,
+          worktreeOnlyCheckout,
+          ...hiddenCheckouts,
+        ];
+        for (const [index, cwd] of sessionDirectories.entries()) {
           yield* writeTranscript({
             filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
             contents: claudeSessionLine(cwd),
@@ -868,23 +962,34 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           });
         }
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath });
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
         expect(
-          result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+          result.candidates.map((candidate) => ({
+            path: candidate.path,
+            git: candidate.git,
+            threadCount: candidate.threadCount,
+          })),
         ).toEqual([
+          {
+            path: worktreeOnly,
+            git: { remoteKey: "github.com/pingdotgg/other", repository: "pingdotgg/other" },
+            threadCount: 1,
+          },
           {
             path: submodule,
             git: {
               remoteKey: "gitlab.com/pingdotgg/libs/vendor",
               repository: "pingdotgg/libs/vendor",
             },
+            threadCount: 1,
           },
-          { path: noRemote, git: { remoteKey: null, repository: null } },
-          { path: plain, git: null },
+          { path: noRemote, git: { remoteKey: null, repository: null }, threadCount: 1 },
+          { path: plain, git: null, threadCount: 1 },
           {
             path: repo,
             git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+            threadCount: 2,
           },
         ]);
       }),
@@ -1619,16 +1724,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           null,
           { custom: "launcher" },
         ];
+        const fileSystem = yield* FileSystem.FileSystem;
+        // Rollouts imported before subagents were excluded still have import records.
+        const legacyImports: Array<AgentSessionImportSource> = [];
         for (const [index, source] of sources.entries()) {
+          const filePath = path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            `rollout-${index}.jsonl`,
+          );
           yield* writeTranscript({
-            filePath: path.join(
-              codexHomePath,
-              "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${index}.jsonl`,
-            ),
+            filePath,
             contents: [
               { type: "session_meta", payload: { id: `session-${index}`, cwd: workspace, source } },
               // A later cwd must not make an excluded rollout eligible again.
@@ -1642,6 +1751,21 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               .join("\n"),
             mtimeMs: nowMs - index * 60_000,
           });
+          if (index >= 100) continue;
+          const stats = yield* fileSystem.stat(filePath);
+          legacyImports.push(
+            decodeImportSource({
+              provider: "codex",
+              providerInstanceId: "codex",
+              providerSessionId: `session-${index}`,
+              filePath,
+              size: Number(stats.size),
+              mtimeMs: Option.getOrNull(Option.map(stats.mtime, (date) => date.getTime())),
+              device: Number(stats.dev),
+              inode: Option.getOrNull(Option.map(stats.ino, String)),
+              birthtimeMs: Option.getOrNull(Option.map(stats.birthtime, (date) => date.getTime())),
+            }),
+          );
         }
 
         yield* Effect.gen(function* () {
@@ -1654,7 +1778,15 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
             ),
           ).toEqual(["session-100", "session-101", "session-102", "session-103"]);
-        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              importedTranscripts: { cwd: workspace, sources: legacyImports },
+            }),
+          ),
+        );
       }),
     );
 
@@ -1787,6 +1919,123 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
           ),
         ).toEqual(["session-0", "session-1", "session-2", "session-3"]);
+      }),
+    );
+
+    it.effect("repeated imports reach older transcripts behind already-imported ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-repeat-import-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-repeat-import-codex-");
+        const workspace = yield* makeTempDir("t3code-repeat-import-workspace-");
+        const sessionIds = Array.from(
+          { length: 102 },
+          (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        );
+        for (const [index, sessionId] of sessionIds.entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "p", `${sessionId}.jsonl`),
+            // 999 cwd-less records cost 1,000 metadata records, so 100 newer transcripts
+            // exhaust MAX_METADATA_RECORDS_PER_SOURCE.
+            contents:
+              "{}\n".repeat(999) +
+              `${encodeTranscriptRecord({
+                type: "user",
+                cwd: workspace,
+                sessionId,
+                timestamp: "2026-08-23T12:00:00.000Z",
+                message: { role: "user", content: `Prompt ${index}` },
+              })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const completed: Array<AgentSessionImportSource> = [];
+        const imported = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          while (true) {
+            const outcomes = yield* scanner
+              .recentThreads(workspace, completed)
+              .pipe(Stream.runCollect);
+            const added = Array.from(outcomes).flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.source] : [],
+            );
+            if (added.length === 0) return completed;
+            completed.push(...added);
+          }
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              importedTranscripts: { cwd: workspace, sources: completed },
+            }),
+          ),
+        );
+
+        expect(imported.map((source) => source.providerSessionId).toSorted()).toEqual(sessionIds);
+      }),
+    );
+
+    it.effect("lists projects whose transcripts sit behind already-imported ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-hidden-project-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-hidden-project-codex-");
+        const imported = yield* makeTempDir("t3code-hidden-project-imported-");
+        const hidden = yield* makeTempDir("t3code-hidden-project-hidden-");
+        const hiddenSessionId = "00000000-0000-4000-8000-000000000100";
+        for (const index of Array.from({ length: 101 }, (_, value) => value)) {
+          const sessionId = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "p", `${sessionId}.jsonl`),
+            contents:
+              "{}\n".repeat(999) +
+              `${encodeTranscriptRecord({
+                type: "user",
+                cwd: index === 100 ? hidden : imported,
+                sessionId,
+                message: { role: "user", content: `Prompt ${index}` },
+              })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const completed: Array<AgentSessionImportSource> = [];
+        const scans = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const before = yield* scanner.scan;
+          const outcomes = yield* scanner.recentThreads(imported).pipe(Stream.runCollect);
+          const sources = Array.from(outcomes).flatMap((outcome) =>
+            outcome._tag === "Importable" ? [outcome.source] : [],
+          );
+          // A record whose file identity no longer matches must not lend its cwd.
+          const newest = sources[0]!;
+          completed.push(...sources, {
+            ...newest,
+            providerSessionId: hiddenSessionId,
+            filePath: path.join(claudeHomePath, "projects", "p", `${hiddenSessionId}.jsonl`),
+          });
+          return { before, after: yield* scanner.scan };
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              importedTranscripts: { cwd: imported, sources: completed },
+            }),
+          ),
+        );
+
+        expect(scans.before.candidates.map((candidate) => candidate.path)).toEqual([imported]);
+        expect(scans.after.candidates.map((candidate) => candidate.path)).toEqual([
+          imported,
+          hidden,
+        ]);
       }),
     );
 
