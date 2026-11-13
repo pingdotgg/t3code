@@ -47,6 +47,9 @@ new="$(git -C "$mono" rev-parse --verify --quiet "${target:-HEAD}^{commit}")" ||
   die "CONN_MONOREPO is at ${head:0:10}, not ${new:0:10}: run tools/conn-checkout --commit $new --dest $mono"
 git -C "$mono" diff --quiet HEAD -- ||
   printf 'bump-conn: warning: %s has changes to tracked files; the generated files follow them\n' "$mono" >&2
+untracked="$(git -C "$mono" ls-files --others --exclude-standard -- apps packages | head -n 5)"
+[ -z "$untracked" ] ||
+  printf 'bump-conn: warning: %s has untracked files the generators may read, for example:\n%s\n' "$mono" "$untracked" >&2
 
 old="$(head -n 1 conn.pin 2>/dev/null | tr -d '[:space:]')"
 [ -n "$old" ] || die "no commit in conn.pin"
@@ -71,6 +74,10 @@ generated=(
   crates/conn-mcp/src/claude-background-wait.txt
   crates/conn-server/keybindings.defaults.json
   crates/conn-server/keybindings.resolved.json
+  crates/conn-server/src/scopes/generated.rs
+  tools/upkeep/http-routes.json
+  crates/conn-contract/src/upstream.rs
+  crates/conn-server/src/settings/generated.rs
   tools/upkeep/mcp-tools.json
 )
 for rel in "${generated[@]}"; do
@@ -117,6 +124,7 @@ mcp_digests() {
 }
 step "mcp tool list" mcp_digests
 step "gen-keybindings" node crates/conn-server/tools/gen-keybindings.mjs
+step "gen-upstream" node tools/gen-upstream.mjs
 # The keybinding files are formatted by hand; gen-keybindings --check compares values. Keep
 # the committed layout when the value did not change, so an empty bump leaves no diff.
 keep_layout() {
@@ -130,6 +138,19 @@ keep_layout() {
   done
 }
 step "keybinding layout" keep_layout
+
+# More Opaque fallbacks means the contract generator met a shape it cannot type: the bump is
+# red until gen-contract.mjs learns it.
+opaque_fallbacks() {
+  node -e '
+    const fs = require("fs");
+    const read = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")).opaqueFallbacks; } catch { return undefined; } };
+    const [before, after] = process.argv.slice(1).map(read);
+    console.log(`opaque fallbacks: ${before} -> ${after}`);
+    process.exit(before !== undefined && after !== undefined && after > before ? 1 : 0);
+  ' "$scratch/before/crates/conn-contract/generated/report.json" crates/conn-contract/generated/report.json
+}
+step "opaque fallbacks" opaque_fallbacks
 
 # 3. Reference events from the TypeScript adapters. This is the one place to call the
 # provider crates' capture tools. Both replay recorded CLI transcripts (no model call), and

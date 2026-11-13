@@ -16,8 +16,8 @@ conn-contract.workspace = true
 conn-engine.workspace = true
 conn-provider.workspace = true
 conn-provider-claude.workspace = true
-conn-provider-codex = { path = "../conn-provider-codex" }
-conn-mcp = { path = "../conn-mcp" }
+conn-provider-codex.workspace = true
+conn-mcp.workspace = true
 conn-vcs.workspace = true
 conn-files.workspace = true
 conn-terminal.workspace = true

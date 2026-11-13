@@ -24,7 +24,7 @@ pub const LAUNCH_ARGS_ENV: &str = "T3CODE_CODEX_LAUNCH_ARGS";
 pub const AGENT_THREAD_ENV: &str = "T3CODE_THREAD_ID";
 /// The `version` sent in `initialize`: the T3 server sends its own package version, so this is
 /// the pinned `apps/server` version, the one Conn Server reports as its server version.
-pub const CLIENT_VERSION: &str = conn_contract::SERVER_VERSION;
+pub const CLIENT_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
 /// The Codex instance's settings that shape a launch (`CodexSettings` in contracts).
 #[derive(Clone, Debug)]

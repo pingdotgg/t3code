@@ -224,9 +224,12 @@ table.coverage()      // "15 of 235 methods (9 of 32 streams)", plus the missing
 
 - Registration panics at startup on a tag not in the contract, a duplicate, or a unary handler
   for a stream method (or the reverse).
-- Registration also panics on a tag with no entry in `scopes.rs`. That table holds the auth
-  scope T3 requires per method (T3 leaves none unguarded); the table checks it before the
-  handler runs and fails with `EnvironmentAuthorizationError`. Handlers do not check scopes.
+- Registration also panics on a tag with no entry in the scope table. That table holds the
+  auth scope T3 requires per method (T3 leaves none unguarded). It is generated from the T3
+  server's `RPC_REQUIRED_SCOPES` into `src/scopes/generated.rs` by `tools/gen-upstream.mjs`;
+  the payload-dependent rules stay by hand in `scopes.rs`, and a test holds their list to the
+  T3 server's. The table checks the scope before the handler runs and fails with
+  `EnvironmentAuthorizationError`. Handlers do not check scopes.
 - A payload that does not decode into `I` ends the call with a defect, as Effect does.
 - `Failure::Fail(value)` is a typed contract error; `Failure::Die(value)` is a defect.
 - An unsupported method answers at once with
@@ -367,13 +370,15 @@ to the socket.
   server too. The engine ignores them: full bodies, plain ids, never an `idTable`.
 - **Shell stream:** `omitIdleSubagents` and `omitOlderSettled` are sent only when the descriptor
   advertises `shellThreadFamilies` / `shellOlderSettled` (`state/shell.ts`). This server
-  advertises neither, so the client does not send them. If a client sent them anyway, the full
-  snapshot it gets is still valid.
+  advertises both (`environment::capabilities`, the one place for capabilities), and the
+  engine serves the matching methods.
 
 ## Status
 
 **Coverage:** 81 of 235 methods (20 of 32 streams), from the method table at startup. Every
-registered method checks the scope the T3 server requires (`src/scopes.rs`). The engine's
+registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
+generated). Every registered method but two has a run that decodes its answer with the real
+client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
 `dispatchCommand` coverage is in `crates/conn-engine/README.md`; each other area's crate README
 lists what it serves.
 

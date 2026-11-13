@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use conn_contract::{ServerConfig, ServerProcessSignal, ServerSignalProcessInput};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
@@ -59,16 +60,25 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         Ok(open_stream(vec![json!({ "tasks": [] })]))
     });
 
+    // File reads, and on macOS two subprocesses: off the event loop.
     table.unary("server.getHostResources", |_, _: Value| async move {
-        Ok(diagnostics::host_resources())
+        blocking(diagnostics::host_resources).await
     });
     table.unary("server.getProcessDiagnostics", |_, _: Value| async move {
         blocking(diagnostics::process_diagnostics).await
     });
-    table.unary("server.signalProcess", |_, input: SignalInput| async move {
-        blocking(move || diagnostics::signal_process(input.pid, input.start_time_ms, &input.signal))
-            .await
-    });
+    // The contract's signal type: an unknown signal fails at decode, as in the T3 server.
+    table.unary(
+        "server.signalProcess",
+        |_, input: ServerSignalProcessInput| async move {
+            let signal = match input.signal {
+                ServerProcessSignal::SIGINT => "SIGINT",
+                ServerProcessSignal::SIGKILL => "SIGKILL",
+            };
+            blocking(move || diagnostics::signal_process(input.pid, input.start_time_ms, signal))
+                .await
+        },
+    );
 
     let Some(environment) = deps.environment.clone() else {
         return;
@@ -77,7 +87,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     let (env, providers) = (environment.clone(), deps.clone());
     table.unary("server.getConfig", move |_, _: Value| {
         let config = server_config(&env, current_providers(&providers));
-        async move { Ok(config) }
+        async move { config }
     });
     let providers = deps.clone();
     table.unary("server.refreshProviders", move |_, _: Value| {
@@ -128,7 +138,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("subscribeServerConfig", move |_, _: Value| {
         let config = server_config(&env, current_providers(&providers));
         let env = env.clone();
-        async move { Ok(config_stream(env, config)) }
+        async move { Ok(config_stream(env, config?)) }
     });
     let env = environment.clone();
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
@@ -152,14 +162,6 @@ struct UpdateSettings {
     provider_instance_mutation: Option<Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SignalInput {
-    pid: i64,
-    start_time_ms: i64,
-    signal: String,
-}
-
 /// Runs file or process work off the event loop.
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
@@ -173,12 +175,14 @@ fn current_providers(deps: &Deps) -> Vec<Value> {
     super::provider::server_providers(deps, &iso8601(auth::now_ms()))
 }
 
-/// `ServerConfig` with the optional fields left out. `providers` comes from
-/// `provider::server_providers`.
-pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Value {
+/// `ServerConfig`, decoded into the contract type: a required field this server does not
+/// fill fails here (and in the test below), not in a client. The optional flags come from
+/// [`environment::config_flags`], next to the descriptor's capabilities. `providers` comes
+/// from `provider::server_providers`.
+pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result<Value, Failure> {
     let state_dir = environment.state_dir.display();
     let keybindings = environment.keybindings.snapshot();
-    json!({
+    let mut config: ServerConfig = conn_contract::from_json(json!({
         "environment": environment.descriptor,
         "auth": environment.auth.descriptor(),
         "cwd": environment.cwd,
@@ -194,16 +198,14 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Value 
             "otlpMetricsEnabled": false,
         },
         "settings": environment.settings.for_client(),
-        // The engine's managed folders (`EngineConfig::home` is the state folder).
-        "newProjectsRoot": environment.state_dir.join("projects"),
-        "scratchWorkspaceRoot": environment.state_dir.join("scratch"),
-        // The engine serves getThreadFamily, getOlderSettledThreads,
-        // getThreadLinkMetadata and searchThread.
-        "shellThreadFamilies": true,
-        "shellOlderSettled": true,
-        "threadLinkMetadata": true,
-        "threadFind": true,
-    })
+    }))
+    .map_err(|e| Failure::die(format!("ServerConfig does not decode: {e}")))?;
+    // The engine's managed folders (`EngineConfig::home` is the state folder).
+    config.new_projects_root = Some(environment.state_dir.join("projects").display().to_string());
+    config.scratch_workspace_root =
+        Some(environment.state_dir.join("scratch").display().to_string());
+    crate::environment::config_flags(&mut config);
+    Ok(conn_contract::to_json(&config))
 }
 
 /// The config snapshot, then `settingsUpdated` after each settings write and
@@ -352,18 +354,18 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn the_config_stream_follows_settings_and_keybinding_writes() {
         let (env, dir) = environment();
-        let config = server_config(&env, Vec::new());
+        let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
         assert_eq!(config["auth"]["policy"], "remote-reachable");
         let mut stream = config_stream(env.clone(), config);
         assert_eq!(stream.recv().await.unwrap().unwrap()["type"], "snapshot");
         env.settings
-            .update(json!({ "enableAssistantStreaming": false }), None)
+            .update(json!({ "enableAgentBrowserAccess": false }), None)
             .unwrap();
         let event = stream.recv().await.unwrap().unwrap();
         assert_eq!(event["type"], "settingsUpdated");
         assert_eq!(
-            event["payload"]["settings"]["enableAssistantStreaming"],
+            event["payload"]["settings"]["enableAgentBrowserAccess"],
             false
         );
         env.keybindings

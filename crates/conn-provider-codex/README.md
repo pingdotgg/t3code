@@ -41,7 +41,7 @@ dies, open turns end as failed, and the next call starts a new process and resum
   or instance value wins, as in TS), the instance's own entries, and `CODEX_HOME` when a home
   path is set.
 - **`initialize`:** `clientInfo.version` is the pinned `apps/server` version
-  (`conn_contract::SERVER_VERSION`, generated; the server descriptor reports the same).
+  (`conn_contract::T3_SERVER_VERSION`, generated; the server descriptor reports the same).
 - **Orbit MCP wait:** before the first spawn, up to `T3CODE_CODEX_MCP_WAIT_SECONDS` (120 s)
   for enabled `*.orbit` MCP hosts in `$CODEX_HOME/config.toml` to accept TCP. Nothing is removed, so in
   an Orbit container the variables and `config.toml` that point Codex at the AI router pass

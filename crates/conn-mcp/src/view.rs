@@ -80,8 +80,8 @@ pub fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now: &str) 
         "runtimeMode": shell["runtimeMode"],
         "interactionMode": shell["interactionMode"],
         "linkedPullRequest": shell.get("linkedPullRequest").cloned().unwrap_or(Value::Null),
-        "pullRequests": [],
-        "pullRequestCount": 0,
+        "pullRequests": open_pull_requests(&shell["pullRequests"]),
+        "pullRequestCount": visible_pull_requests(&shell["pullRequests"]).count(),
         "settled": settled,
         "settledAt": settled_at,
         "snoozed": snoozed,
@@ -145,9 +145,13 @@ pub fn thread_detail(
         "runtimeMode": thread["runtimeMode"],
         "interactionMode": thread["interactionMode"],
         "linkedPullRequest": thread.get("linkedPullRequest").cloned().unwrap_or(Value::Null),
-        "pullRequestCount": 0,
-        "titleRegeneration": null,
-        "lastTitleRegeneration": null,
+        "pullRequestCount": visible_pull_requests(&thread["pullRequests"]).count(),
+        "titleRegeneration": title_regeneration(&thread["titleRegeneration"]),
+        "lastTitleRegeneration": if thread["lastTitleRegeneration"].is_object() {
+            thread["lastTitleRegeneration"].clone()
+        } else {
+            Value::Null
+        },
         "branch": thread["branch"],
         "worktreePath": thread["worktreePath"],
         "parentThreadId": thread["lineage"]["parentThreadId"],
@@ -166,9 +170,60 @@ pub fn thread_detail(
         "updatedAt": projection["updatedAt"],
     });
     if page == Page::First {
-        detail["pullRequests"] = json!([]);
+        detail["pullRequests"] = open_pull_requests(&thread["pullRequests"]);
     }
     detail
+}
+
+/// `visibleThreadPullRequests`: every link but one the user dismissed from a stack.
+fn visible_pull_requests(links: &Value) -> impl Iterator<Item = &Value> {
+    links
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|link| link["source"] != "stack-dismissed")
+}
+
+/// `threadPullRequests` (`OrchestratorMcpService.ts`): the visible links that are not merged
+/// or closed. The host is the link's authority or host, trimmed and lower case; the T3
+/// server also maps host aliases through the source control registry, which this does not.
+fn open_pull_requests(links: &Value) -> Value {
+    visible_pull_requests(links)
+        .filter(|link| {
+            !matches!(
+                link["snapshot"]["state"].as_str(),
+                Some("merged" | "closed")
+            )
+        })
+        .map(|link| {
+            let host = link["authority"]
+                .as_str()
+                .or_else(|| link["host"].as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase();
+            let watch = &link["watch"];
+            json!({
+                "host": host,
+                "repository": link["repository"],
+                "number": link["number"],
+                "url": link["url"],
+                "source": link["source"],
+                "state": link["snapshot"]["state"].as_str().map_or(Value::Null, |s| json!(s)),
+                "watching": watch.is_object(),
+                "watchStartedAt": watch["startedAt"].as_str().map_or(Value::Null, |s| json!(s)),
+            })
+        })
+        .collect()
+}
+
+/// The title regeneration in flight, as `{ requestId, startedAt }`.
+fn title_regeneration(running: &Value) -> Value {
+    if running.is_object() {
+        json!({ "requestId": running["requestId"], "startedAt": running["startedAt"] })
+    } else {
+        Value::Null
+    }
 }
 
 /// The model the provider reported for the run's attempt, if any.
@@ -343,4 +398,34 @@ pub fn run_result_text(projection: &Value, run_id: &str) -> Option<String> {
             Some("error") => text(&item["failure"]["message"]),
             _ => None,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pull_requests_follow_the_t3_list_rules() {
+        let links = json!([
+            { "host": "GitHub.com ", "repository": "a/b", "number": 1, "url": "u1", "source": "agent",
+              "snapshot": { "state": "open" }, "watch": { "startedAt": "2026-01-01T00:00:00.000Z" } },
+            { "host": "github.com", "repository": "a/b", "number": 2, "url": "u2", "source": "agent",
+              "snapshot": { "state": "merged" } },
+            { "host": "github.com", "repository": "a/b", "number": 3, "url": "u3", "source": "stack-dismissed" },
+        ]);
+        // The dismissed link is hidden; the merged one counts but is not listed.
+        assert_eq!(visible_pull_requests(&links).count(), 2);
+        assert_eq!(
+            open_pull_requests(&links),
+            json!([{ "host": "github.com", "repository": "a/b", "number": 1, "url": "u1",
+                     "source": "agent", "state": "open", "watching": true,
+                     "watchStartedAt": "2026-01-01T00:00:00.000Z" }])
+        );
+        assert_eq!(open_pull_requests(&Value::Null), json!([]));
+        assert_eq!(title_regeneration(&Value::Null), Value::Null);
+        assert_eq!(
+            title_regeneration(&json!({ "requestId": "r", "startedAt": "t", "x": 1 })),
+            json!({ "requestId": "r", "startedAt": "t" })
+        );
+    }
 }

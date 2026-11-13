@@ -11,6 +11,11 @@ use std::{
     sync::Arc,
 };
 
+use conn_contract::{
+    ExecutionEnvironmentCapabilities, ExecutionEnvironmentCapabilitiesFileAttachments,
+    ExecutionEnvironmentDescriptor, ExecutionEnvironmentPlatform, ExecutionEnvironmentPlatformArch,
+    ExecutionEnvironmentPlatformOs, ServerConfig,
+};
 use serde_json::{Value, json};
 
 use crate::{
@@ -20,10 +25,10 @@ use crate::{
     settings::SettingsStore,
 };
 
-/// The `apps/server` version at the pinned commit (generated into `conn-contract`). Clients
-/// compare it with their own version; a lower one shows a "server is behind" hint. The Codex
-/// provider sends the same value in `initialize`, as the T3 server does.
-pub const CONTRACT_SERVER_VERSION: &str = conn_contract::SERVER_VERSION;
+/// The `apps/server` version at the pinned Conn commit (generated into `conn-contract`).
+/// Clients compare it with their own version; a lower one shows a "server is behind" hint. The
+/// Codex provider sends the same value in `initialize`, as the T3 server does.
+pub const CONTRACT_SERVER_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
 pub struct Environment {
     /// `ExecutionEnvironmentDescriptor`, served at `/.well-known/t3/environment` and inside
@@ -112,40 +117,69 @@ fn hostname() -> Option<String> {
         .map(|h| h.trim().to_owned())
 }
 
-/// Advertises no optional capability: each one promises a behavior clients then rely on.
+/// `ExecutionEnvironmentDescriptor`, built from the contract type, so a new required field
+/// upstream is a compile error here.
 pub fn descriptor(environment_id: &str, label: &str) -> Value {
-    json!({
-        "environmentId": environment_id,
-        "label": label,
-        "platform": { "os": os(), "arch": arch() },
-        "serverVersion": CONTRACT_SERVER_VERSION,
-        "orchestrationProtocolVersion": ORCHESTRATION_PROTOCOL_VERSION,
-        "capabilities": {
-            "repositoryIdentity": false,
-            // Uploads are claimed by the message that sends them (`host.rs`).
-            "attachmentUploads": true,
-            "fileAttachments": { "maxUploadBytes": conn_files::attachments::MAX_FILE_BYTES },
-            "threadForceStop": true,
-            "shellThreadFamilies": true,
-            "shellOlderSettled": true,
+    conn_contract::to_json(&ExecutionEnvironmentDescriptor {
+        environment_id: environment_id.into(),
+        label: label.into(),
+        platform: ExecutionEnvironmentPlatform {
+            os: os(),
+            arch: arch(),
+            machine: None,
         },
+        server_version: CONTRACT_SERVER_VERSION.into(),
+        orchestration_protocol_version: Some(i64::from(ORCHESTRATION_PROTOCOL_VERSION)),
+        database_migration: None,
+        capabilities: capabilities(),
+        orbit_instance: None,
     })
 }
 
-fn os() -> &'static str {
+/// The one place for what this server advertises. A capability promises a behaviour that
+/// clients then rely on, so each one here is served; every other one stays unset (off). This
+/// covers the descriptor's `capabilities` and the flags `ServerConfig` carries
+/// ([`config_flags`]).
+pub fn capabilities() -> ExecutionEnvironmentCapabilities {
+    // Every capability is optional; the test below proves this decode holds.
+    let mut capabilities: ExecutionEnvironmentCapabilities =
+        conn_contract::from_json(json!({})).expect("every capability is optional");
+    capabilities.repository_identity = Some(false);
+    // Uploads are claimed by the message that sends them (`host.rs`).
+    capabilities.attachment_uploads = Some(true);
+    capabilities.file_attachments = Some(ExecutionEnvironmentCapabilitiesFileAttachments {
+        max_upload_bytes: i64::try_from(conn_files::attachments::MAX_FILE_BYTES)
+            .unwrap_or(i64::MAX),
+    });
+    capabilities.thread_force_stop = Some(true);
+    capabilities.shell_thread_families = Some(true);
+    capabilities.shell_older_settled = Some(true);
+    capabilities
+}
+
+/// The `ServerConfig` flags this server serves: the engine answers getThreadFamily,
+/// getOlderSettledThreads, getThreadLinkMetadata and searchThread.
+pub fn config_flags(config: &mut ServerConfig) {
+    config.shell_thread_families = Some(true);
+    config.shell_older_settled = Some(true);
+    config.thread_link_metadata = Some(true);
+    config.thread_find = Some(true);
+}
+
+fn os() -> ExecutionEnvironmentPlatformOs {
     match std::env::consts::OS {
-        "macos" => "darwin",
-        "linux" => "linux",
-        "windows" => "windows",
-        _ => "unknown",
+        "macos" => ExecutionEnvironmentPlatformOs::Darwin,
+        "linux" => ExecutionEnvironmentPlatformOs::Linux,
+        "windows" => ExecutionEnvironmentPlatformOs::Windows,
+        _ => ExecutionEnvironmentPlatformOs::Unknown,
     }
 }
 
-fn arch() -> &'static str {
+fn arch() -> ExecutionEnvironmentPlatformArch {
     match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "x64",
-        _ => "other",
+        "aarch64" => ExecutionEnvironmentPlatformArch::Arm64,
+        "x86_64" => ExecutionEnvironmentPlatformArch::X64,
+        _ => ExecutionEnvironmentPlatformArch::Other,
     }
 }
 
@@ -172,5 +206,30 @@ mod tests {
             format!("{}\n", made.environment_id())
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_descriptor_decodes_and_advertises_only_what_is_served() {
+        let descriptor = descriptor("0b6f1a52-3c1e-4d7a-9a55-2a1f8b0c9d10", "Box");
+        let typed: ExecutionEnvironmentDescriptor =
+            conn_contract::from_json(descriptor.clone()).unwrap();
+        assert_eq!(typed.server_version, conn_contract::T3_SERVER_VERSION);
+        let advertised: Vec<&String> = descriptor["capabilities"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(_, v)| *v != &Value::Bool(false))
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(
+            advertised,
+            [
+                "attachmentUploads",
+                "fileAttachments",
+                "shellOlderSettled",
+                "shellThreadFamilies",
+                "threadForceStop"
+            ]
+        );
     }
 }

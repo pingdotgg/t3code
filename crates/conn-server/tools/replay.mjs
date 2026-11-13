@@ -2,6 +2,8 @@
 // RpcClient and checks every answer decodes or is the explicit not-supported defect.
 // With CONN_MONOREPO set: node <this file> target/debug/examples/replay_server [scenario...].
 // `replay_server` runs the engine's fake provider, so no model is called.
+// With DECODE_COVERAGE=<file>, appends each tag whose answer decoded (a value, a first stream
+// item, a stream that ended, or a typed error) for decode-coverage.mjs.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -214,6 +216,7 @@ async function replay(scenario) {
 
 let bad = 0;
 const implemented = new Set();
+const decodedTags = new Set();
 const missing = new Set();
 for (const scenario of scenarios) {
   const results = await replay(scenario);
@@ -224,6 +227,9 @@ for (const scenario of scenarios) {
     entry.kinds.set(key, (entry.kinds.get(key) ?? 0) + 1);
     byTag.set(r.tag, entry);
     if (r.kind === "BAD") bad += 1;
+    if (r.kind === "typed-error" || (r.kind === "ok" && r.detail !== "open, no item yet")) {
+      decodedTags.add(r.tag);
+    }
     if (r.kind === "not-supported") missing.add(r.tag);
     else if (r.kind !== "BAD") implemented.add(r.tag);
   }
@@ -236,6 +242,7 @@ for (const scenario of scenarios) {
   }
 }
 for (const tag of implemented) missing.delete(tag);
+if (process.env.DECODE_COVERAGE) NodeFS.appendFileSync(process.env.DECODE_COVERAGE, [...decodedTags].map((t) => `${t}\n`).join(""));
 console.log(`\nimplemented (${implemented.size}): ${[...implemented].sort().join(", ")}`);
 console.log(`not supported (${missing.size}): ${[...missing].sort().join(", ")}`);
 console.log(bad === 0 ? "\nevery answer is well formed" : `\n${bad} malformed answers`);

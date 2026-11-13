@@ -11,11 +11,11 @@ use std::{
 };
 
 use conn_contract::{
-    OrchestrationV2GetThreadFamilyInput, ReviewBranchCommitsInput, ReviewDiffFileContentsInput,
-    ReviewDiffPreviewInput, ReviewGetDiffPreviewError, VcsBranchStatus, VcsCreateRefInput,
-    VcsCreateWorktreePayload, VcsCreateWorktreeResult, VcsCreateWorktreeResultWorktree,
-    VcsInitInput, VcsListRefsInput, VcsPullError, VcsPullInput, VcsRefreshBranchError,
-    VcsRefreshStatusPayload, VcsRemoveWorktreeInput, VcsStatusStreamEvent,
+    OrchestrationV2GetThreadFamilyInput, OrchestrationV2ShellSnapshot, ReviewBranchCommitsInput,
+    ReviewDiffFileContentsInput, ReviewDiffPreviewInput, ReviewGetDiffPreviewError,
+    VcsBranchStatus, VcsCreateRefInput, VcsCreateWorktreePayload, VcsCreateWorktreeResult,
+    VcsCreateWorktreeResultWorktree, VcsInitInput, VcsListRefsInput, VcsPullError, VcsPullInput,
+    VcsRefreshBranchError, VcsRefreshStatusPayload, VcsRemoveWorktreeInput, VcsStatusStreamEvent,
     VcsStatusSubscriptionInput, VcsSwitchRefInput, WorktreeSetupCancelResult, to_json,
 };
 use conn_vcs::{
@@ -90,16 +90,15 @@ impl Workspaces {
         if let Some(engine) = &self.deps.engine
             && let Ok(shell) = engine.shell_snapshot().await
         {
-            let projects = shell["snapshot"]["projects"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            if projects
-                .iter()
-                .filter_map(|p| p["workspaceRoot"].as_str())
-                .any(|root| within(Path::new(root)))
-            {
-                return Ok(());
+            // Decode into the contract type, so a moved field is a decode error, not an
+            // empty list.
+            match conn_contract::from_json::<OrchestrationV2ShellSnapshot>(shell) {
+                Ok(snapshot) => {
+                    if known_workspace(snapshot, real.clone()).await {
+                        return Ok(());
+                    }
+                }
+                Err(error) => eprintln!("review: the shell snapshot does not decode: {error}"),
             }
         }
         Err(Failure::fail(&ReviewGetDiffPreviewError::VcsRepositoryDetectionError(
@@ -112,6 +111,35 @@ impl Workspaces {
             .expect("valid VcsRepositoryDetectionError"),
         )))
     }
+}
+
+/// Whether `real` (canonical) lies in a project or in a thread's worktree that `git worktree
+/// list` names for its project, as the T3 server's `KnownWorkspaces.contains` decides.
+async fn known_workspace(snapshot: OrchestrationV2ShellSnapshot, real: PathBuf) -> bool {
+    let projects: Vec<String> = snapshot
+        .projects
+        .iter()
+        .map(|p| p.workspace_root.clone())
+        .collect();
+    let worktrees: Vec<(String, String)> = snapshot
+        .threads
+        .iter()
+        .chain(&snapshot.archived_threads)
+        .filter_map(|thread| {
+            let worktree = thread.worktree_path.clone()?;
+            let project = snapshot
+                .projects
+                .iter()
+                .find(|p| p.id == thread.project_id)?;
+            Some((project.workspace_root.clone(), worktree))
+        })
+        .collect();
+    // `KnownWorkspaces` resolves paths and runs `git worktree list`.
+    tokio::task::spawn_blocking(move || {
+        conn_files::KnownWorkspaces::new(&projects, &worktrees).contains(&real)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
@@ -445,6 +473,118 @@ mod tests {
             .expect("an item within 15 s")
             .unwrap()
             .unwrap()
+    }
+
+    /// Review reads a project added at run time, outside the server's folder. All three
+    /// `review.*` methods go through the same guard, and refuse a folder outside every project.
+    #[tokio::test(flavor = "current_thread")]
+    async fn review_follows_projects_added_at_run_time() {
+        let root =
+            std::env::temp_dir().join(format!("conn-server-review-{}", crate::auth::random_hex(6)));
+        std::fs::create_dir_all(root.join("server")).unwrap();
+        std::fs::create_dir_all(root.join("project")).unwrap();
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        let project = root.join("project");
+        git(&project, &["init", "-q", "-b", "main"]);
+        std::fs::write(project.join("a.txt"), "a\n").unwrap();
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "-qm", "init"]);
+        git(&root.join("elsewhere"), &["init", "-q", "-b", "main"]);
+
+        let engine: Arc<dyn conn_engine::Engine> = Arc::new(
+            conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(
+                root.join("engine.sqlite"),
+            ))
+            .unwrap(),
+        );
+        let environment =
+            Arc::new(Environment::load(&root.join("state"), None, root.join("server")).unwrap());
+        let deps = Deps {
+            engine: Some(engine),
+            environment: Some(environment),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        super::super::projects::register(&mut table, &deps);
+        let cwd = project.to_string_lossy().into_owned();
+        unary(
+            &table,
+            "projects.mutate",
+            json!({"type": "project.create", "commandId": "c1", "projectId": "p1",
+                   "title": "Project", "workspaceRoot": cwd}),
+        )
+        .await
+        .unwrap();
+
+        // A thread worktree outside every root, which `git worktree list` names for the
+        // project, and a thread that claims a folder git does not list.
+        let worktree = root.join("wt");
+        git(
+            &project,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt",
+                &worktree.to_string_lossy(),
+            ],
+        );
+        let elsewhere = root.join("elsewhere").to_string_lossy().into_owned();
+        for (thread, path) in [
+            ("t1", worktree.to_string_lossy().into_owned()),
+            ("t2", elsewhere.clone()),
+        ] {
+            let create = json!({
+                "type": "thread.create", "commandId": format!("c-{thread}"), "threadId": thread,
+                "projectId": "p1", "title": "T",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+                "runtimeMode": "full-access", "interactionMode": "default",
+                "branch": null, "worktreePath": path, "createdBy": "user", "creationSource": "web",
+            });
+            deps.engine
+                .as_ref()
+                .unwrap()
+                .dispatch(conn_contract::from_json(create).unwrap())
+                .await
+                .unwrap();
+        }
+        let in_worktree = unary(
+            &table,
+            "review.getDiffPreview",
+            json!({ "cwd": worktree.to_string_lossy() }),
+        )
+        .await;
+        assert!(in_worktree.is_ok(), "the thread worktree: {in_worktree:?}");
+
+        let calls = [
+            ("review.getDiffPreview", json!({ "cwd": cwd })),
+            (
+                "review.getDiffFileContents",
+                json!({ "cwd": cwd, "sourceKind": "working-tree", "changeType": "change",
+                        "baseRef": null, "headRef": null, "oldPath": "a.txt", "newPath": "a.txt" }),
+            ),
+            ("review.getBranchCommits", json!({ "cwd": cwd })),
+        ];
+        for (tag, input) in calls {
+            let refused = |result: &Result<Value, Failure>| {
+                matches!(result, Err(Failure::Fail(e))
+                    if e["_tag"] == "VcsRepositoryDetectionError"
+                        && e["detail"].as_str().unwrap_or("").contains("workspace root"))
+            };
+            let inside = unary(&table, tag, input.clone()).await;
+            assert!(!refused(&inside), "{tag} refused the project: {inside:?}");
+            let mut outside_input = input;
+            outside_input["cwd"] = json!(elsewhere);
+            let outside = unary(&table, tag, outside_input).await;
+            assert!(
+                refused(&outside),
+                "{tag} read outside every project: {outside:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test(flavor = "current_thread")]

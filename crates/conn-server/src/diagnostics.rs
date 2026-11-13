@@ -167,7 +167,8 @@ pub fn process_diagnostics() -> Value {
                 "pid": row.pid,
                 "startTimeMs": start_time_ms(row, now),
                 "ppid": row.ppid,
-                "pgid": row.pgid,
+                // An Effect `Option<number>` in the contract: `Some` when `ps` gave a group.
+                "pgid": { "_tag": "Some", "value": row.pgid },
                 "status": row.status,
                 "cpuPercent": row.cpu,
                 "rssBytes": row.rss_bytes,
