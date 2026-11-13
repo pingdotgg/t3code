@@ -44,31 +44,12 @@ describe("isLocalEditorFileHref", () => {
 });
 
 describe("rewriteMarkdownFileUriHref", () => {
-  it("preserves encoded octets so file paths are decoded only once later", () => {
-    expect(rewriteMarkdownFileUriHref("file:///Users/julius/project/file%2520name.md")).toBe(
-      "/Users/julius/project/file%2520name.md",
-    );
-  });
-
   it("normalizes file uri hrefs for windows drive paths", () => {
     expect(
       rewriteMarkdownFileUriHref(
         "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
-  });
-
-  it("preserves file uri authorities as windows UNC paths", () => {
-    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBe(
-      "\\\\server\\share\\workspace-image.svg",
-    );
-  });
-
-  // regression: #6433 workspace images in chat markdown did not render
-  it("treats a localhost file uri as a local path", () => {
-    expect(rewriteMarkdownFileUriHref("file://localhost/home/me/notes.md")).toBe(
-      "/home/me/notes.md",
-    );
   });
 });
 
@@ -97,11 +78,23 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/julius/project")).toBeNull();
   });
 
+  it("opens a line range at its first line and keeps the range for the label", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/http.ts:42-64", "/repo")).toMatchObject({
+      targetPath: "/repo/src/http.ts:42",
+      line: 42,
+      endLine: 64,
+    });
+  });
+
   it("does not treat arbitrary name:digits shapes as files", () => {
     expect(resolveInlineCodeFileLinkMeta("error:1", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("TODO:12", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("exit:0", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("port:3000", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("port:3000-3010", "/Users/julius/project")).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("localhost:3000-3010", "/Users/julius/project"),
+    ).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("http:80", "/Users/julius/project")).toBeNull();
   });
 

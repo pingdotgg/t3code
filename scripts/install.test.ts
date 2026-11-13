@@ -63,12 +63,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
 // regression: #22490
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer channel lookup", () => {
   it.each([
-    ["stable", "1.2.3"],
-    ["preview", "1.2.4-preview.20261019.50"],
-  ])("finds the newest %s release behind a full page of nightlies", async (channel, version) => {
+    // regression: #32897
+    ["stable", "1.2.3", 1],
+    ["preview", "1.2.4-preview.20261019.50", 0],
+  ])("finds %s %s behind nightlies and %i HTTP 504s", async (channel, version, failures) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-index-"));
     const target = NodePath.join(root, "home/runtime/versions", version);
     const server = NodeHttp.createServer((request, response) => {
+      if (failures-- > 0) return response.writeHead(504).end();
       const url = new URL(request.url ?? "/", "http://fixture");
       const body =
         url.pathname === "/pingdotgg/t3code/releases/latest" &&
@@ -127,6 +129,58 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
     }
   });
 });
+
+// regression: #35834
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "installer archive download",
+  () => {
+    it("names the archive when it returns 404", async () => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-archive-"));
+      const arch = HostProcess.Architecture.defaultValue() === "arm64" ? "arm64" : "x64";
+      const archive = `t3-1.2.3-linux-${arch}.tar.gz`;
+      const server = NodeHttp.createServer((request, response) => {
+        if (request.url === "/v1.2.3/SHA256SUMS")
+          return response.end(`${"0".repeat(64)}  ${archive}\n`);
+        response.writeHead(404).end();
+      });
+      try {
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+        const { code, output } = await new Promise<{ code: number | null; output: string }>(
+          (resolve, reject) => {
+            const child = NodeChildProcess.spawn(
+              "sh",
+              [NodePath.resolve(import.meta.dirname, "install.sh")],
+              {
+                env: {
+                  ...process.env,
+                  T3CODE_CHANNEL: "",
+                  T3CODE_VERSION: "1.2.3",
+                  T3CODE_HOME: NodePath.join(root, "home"),
+                  T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+                  T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
+                },
+                stdio: ["ignore", "pipe", "pipe"],
+              },
+            );
+            let output = "";
+            child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.on("error", reject);
+            child.on("close", (code) => resolve({ code, output }));
+          },
+        );
+        expect(code, output).not.toBe(0);
+        expect(output).toMatch(new RegExp(`t3 install: .*${archive.replaceAll(".", "\\.")}`));
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    });
+  },
+);
 
 /** Runs an installer for a version that is already unpacked, so only the t3 command step runs. */
 async function installOver(input: {

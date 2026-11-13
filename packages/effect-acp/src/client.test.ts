@@ -54,7 +54,10 @@ const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
 const DieResponse = Schema.Struct({
   id: Schema.String,
-  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
+  error: Schema.Struct({
+    code: Schema.Literal(-32603),
+    message: Schema.Literal("Internal error"),
+  }),
 });
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
 const XAiPromptCompleteNotification = jsonRpcNotification(
@@ -1018,6 +1021,21 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         ]),
       );
       assert.deepEqual(yield* Fiber.join(promptFiber), { stopReason: "end_turn" });
+      const cancelledPrompt = yield* acp.agent
+        .prompt({ sessionId: "pi-session-1", prompt: [{ type: "text", text: "retry" }] })
+        .pipe(Effect.forkScoped);
+      const cancelledRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PromptRequestV1))),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(Schema.Unknown, {
+          jsonrpc: "2.0",
+          id: cancelledRequest.id,
+          result: { stopReason: "cancelled", usage: {} },
+        }),
+      );
+      assert.deepEqual(yield* Fiber.join(cancelledPrompt), { stopReason: "cancelled" });
       assert.deepEqual(yield* Ref.get(updates), [
         {
           sessionId: "pi-session-1",
