@@ -1034,11 +1034,12 @@ const make = Effect.gen(function* () {
       // In-project folders count only inside this thread's own project, and only for its threads.
       if (
         !roots.some((root) => inside(root, realPath)) &&
-        !(yield* managedWorktreePaths.isProjectWorktreePath({
-          worktreePath,
-          projectRoot,
-          settings: serverSettings,
-        }))
+        (isWorktreeDevHome ||
+          !(yield* managedWorktreePaths.isProjectWorktreePath({
+            worktreePath,
+            projectRoot,
+            settings: serverSettings,
+          })))
       )
         return "outside the managed worktree folder";
       if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")

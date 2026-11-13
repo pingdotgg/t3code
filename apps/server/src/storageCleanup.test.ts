@@ -1882,11 +1882,23 @@ describe("orphan worktree reports", () => {
   );
 
   it.live.each([
-    { home: "an installed", worktreeHome: false, customFolderOutcome: "removed" },
-    { home: "a git worktree's dev", worktreeHome: true, customFolderOutcome: "kept" },
+    { home: "an installed", worktreeHome: false, inProject: false, customFolderOutcome: "removed" },
+    {
+      home: "a git worktree's dev",
+      worktreeHome: true,
+      inProject: false,
+      customFolderOutcome: "kept",
+    },
+    { home: "an installed", worktreeHome: false, inProject: true, customFolderOutcome: "removed" },
+    {
+      home: "a git worktree's dev",
+      worktreeHome: true,
+      inProject: true,
+      customFolderOutcome: "kept",
+    },
   ] as const)(
-    "on $home home, a custom worktrees folder ends $customFolderOutcome",
-    ({ worktreeHome, customFolderOutcome }) =>
+    "on $home home, a custom worktrees folder (in project: $inProject) ends $customFolderOutcome",
+    ({ worktreeHome, inProject, customFolderOutcome }) =>
       runCleanupTest(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -1904,9 +1916,13 @@ describe("orphan worktree reports", () => {
           const customFolder = yield* fs.realPath(
             yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-real-worktrees-" }),
           );
-          const realWorktree = `${customFolder}/seeded`;
+          const realWorktree = inProject
+            ? `${fixture.repo}/.claude/worktrees/seeded`
+            : `${customFolder}/seeded`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "seeded", realWorktree]);
-          fixture.setSettings({ worktreesDirectory: customFolder });
+          fixture.setSettings({
+            worktreesDirectory: inProject ? ".claude/worktrees" : customFolder,
+          });
           fixture.setThreads([
             shell({ branch: "feature", worktreePath: fixture.worktree }),
             shell({
