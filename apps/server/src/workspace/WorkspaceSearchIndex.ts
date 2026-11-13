@@ -579,7 +579,16 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }),
   );
 
-  const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
+  // fff's isScanning takes the picker lock too, so progress is read off the JS thread.
+  const isScanning = Effect.promise(async () => {
+    try {
+      const progress = await finder.getScanProgressAsync();
+      return !progress.ok || progress.value.isScanning;
+    } catch {
+      return true;
+    }
+  });
+  const hasIncompleteInitialScan = () => (initialScanTimedOut ? isScanning : Effect.succeed(false));
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -685,7 +694,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   });
 
   const scanSymlinkEntries = Effect.fn("WorkspaceSearchIndex.scanSymlinkEntries")(function* () {
-    const indexComplete = !finder.isScanning();
+    const indexComplete = !(yield* isScanning);
     const directories = yield* listIndexedDirectories();
     const scanned = yield* Effect.forEach(
       ["", ...directories],
@@ -898,7 +907,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const incompleteBeforeQuery = hasIncompleteInitialScan();
+      const incompleteBeforeQuery = yield* hasIncompleteInitialScan();
       const result = yield* searchVisible(
         "",
         WORKSPACE_INDEX_PAGE_SIZE,
@@ -976,7 +985,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
     // "{" is dropped only when the query finds nothing as a glob, so "*.{ts,tsx}" keeps working.
     const query = rawQuery.replaceAll("[", "");
-    const incompleteBeforeQuery = hasIncompleteInitialScan();
+    const incompleteBeforeQuery = yield* hasIncompleteInitialScan();
     let mapped = yield* searchNames(query, limit, kind, imageOnly);
     if (mapped.entries.length === 0 && query.includes("{")) {
       mapped = yield* searchNames(query.replaceAll("{", ""), limit, kind, imageOnly);

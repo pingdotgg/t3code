@@ -59,7 +59,10 @@ it.effect("filters image searches before applying the result limit", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        isScanning: () => false,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
         watch: () => ({ ok: true as const, value: () => undefined }),
         fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
@@ -107,7 +110,10 @@ it.effect("fetches past a first page of Git-ignored results", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        isScanning: () => false,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
         watch: () => ({ ok: true as const, value: () => undefined }),
         fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
@@ -131,7 +137,10 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         const finder = {
           destroy: vi.fn(),
           waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-          isScanning: () => false,
+          getScanProgressAsync: async () => ({
+            ok: true as const,
+            value: { isScanning: false },
+          }),
           watch: () => ({ ok: true as const, value: () => undefined }),
           fileSearchAsync: vi.fn(async () => ({
             ok: true as const,
@@ -195,7 +204,10 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        isScanning: () => false,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
         watch: () => ({ ok: true as const, value: () => undefined }),
         grepAsync: grep,
       } as unknown as FileFinder;
@@ -260,7 +272,14 @@ function fakeSymlinkFinder(
   const finder = {
     destroy: vi.fn(),
     waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-    isScanning: () => false,
+    // fff's isScanning waits on the picker lock on the JS thread.
+    isScanning: () => {
+      throw new Error("isScanning must not run on the JS thread");
+    },
+    getScanProgressAsync: async () => ({
+      ok: true as const,
+      value: { isScanning: false },
+    }),
     watch: (callback: (events: ReadonlyArray<WatchEvent>) => void) => {
       if (watchFailures > 0) {
         watchFailures -= 1;
