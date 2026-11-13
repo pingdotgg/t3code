@@ -9527,6 +9527,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "Codex completes it later",
     "its thread is unloaded",
     "Codex completes it after the session's Stop deadline",
+    "Codex completes it after a second Stop fails",
   ] as const)("keeps a turn open after an unconfirmed Stop until %s", (ending) =>
     Effect.gen(function* () {
       const nativeThreadId = "unconfirmed-stop-thread";
@@ -9590,6 +9591,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)
               : ([
+                  ...(ending === "Codex completes it after a second Stop fails"
+                    ? ([
+                        {
+                          type: "expect_outbound",
+                          label: "turn/interrupt/second",
+                          frame: {
+                            id: 5,
+                            method: "turn/interrupt",
+                            params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                          },
+                        },
+                        {
+                          type: "emit_inbound",
+                          label: "turn/interrupt/second",
+                          frame: { id: 5, error: { code: -32603, message: "internal error" } },
+                        },
+                      ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)
+                    : []),
                   {
                     type: "emit_inbound",
                     label: "turn/completed",
@@ -9649,6 +9668,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       assert.deepEqual(harness.terminalEvents(), []);
 
+      if (ending === "Codex completes it after a second Stop fails") {
+        const second = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeTurnId,
+            }),
+          })
+          .pipe(Effect.result);
+        assert.equal(second._tag, "Failure");
+        assert.deepEqual(harness.terminalEvents(), []);
+      }
       if (ending === "its thread is unloaded") {
         yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
       } else {

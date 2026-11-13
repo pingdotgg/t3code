@@ -8011,6 +8011,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 readonly completion: Deferred.Deferred<void, never>;
               }> = [];
               const trackedInterruptNativeTurnIds = new Set<string>();
+              let joinedPendingStop = false;
               // Untraced: runs once per lineage turn inside the interruptTurn span.
               const trackInterruptTarget = Effect.fnUntraced(function* (
                 context: ActiveCodexTurnContext,
@@ -8023,6 +8024,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ? [fresh, new Map(current).set(context.nativeTurnId, fresh)]
                     : [pending, current];
                 });
+                joinedPendingStop ||= completion !== fresh;
                 yield* Ref.update(interruptingNativeTurns, (current) =>
                   new Set(current).add(context.nativeTurnId),
                 );
@@ -8346,8 +8348,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   const abandon = finalizeRemainingInterruptLineage.pipe(
                     Effect.ensuring(cleanupInterruptState),
                   );
-                  // A caller's deadline cutting this short confirms nothing about the turn either.
-                  return Cause.hasInterruptsOnly(exit.cause)
+                  // Neither a caller's deadline nor a failed retry of a pending Stop confirms
+                  // that the turn ended.
+                  return Cause.hasInterruptsOnly(exit.cause) || joinedPendingStop
                     ? Effect.flatMap(deferToActiveRoots, (deferred) =>
                         deferred ? Effect.void : abandon,
                       )
