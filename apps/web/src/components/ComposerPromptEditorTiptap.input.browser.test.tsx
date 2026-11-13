@@ -17,6 +17,8 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 
+import "~/index.css";
+
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
 import { isMacPlatform } from "~/lib/utils";
 import { registerCommands } from "~/shortcuts/dispatcher";
@@ -38,8 +40,10 @@ function Composer({
   skills,
   onChange,
   onCommandKeyDown = () => false,
+  placeholder = "",
 }: {
   value: string;
+  placeholder?: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
@@ -55,7 +59,7 @@ function Composer({
       contextRecords={new Map()}
       skills={skills}
       disabled={false}
-      placeholder=""
+      placeholder={placeholder}
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
@@ -333,6 +337,27 @@ it.each([false, true])(
     expect(serializeEditorDoc(editor.state.doc).value).toBe("ö");
   },
 );
+
+it("draws typed text on the placeholder's pixels", async () => {
+  const text = "Run the tests again";
+  await using screen = await render(
+    <Composer value="" richTextEnabled skills={[]} placeholder={text} />,
+  );
+  const textRect = (root: Element | null) => {
+    const node = root && document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
+    if (!node) throw new Error("Text is missing");
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const { x, y, width, height } = range.getBoundingClientRect();
+    return { x, y, width, height };
+  };
+  const shown = textRect(screen.container.querySelector("[data-composer-placeholder]"));
+  const editor = editorIn(screen.container);
+  await act(async () => {
+    editor.commands.insertContent(text);
+  });
+  expect(textRect(editor.view.dom.querySelector("p"))).toEqual(shown);
+});
 
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");

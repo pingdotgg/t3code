@@ -5977,8 +5977,13 @@ body {
   position: relative;
 }
 
-/* Tiptap's injected base CSS disables ligatures; match sent messages. */
-.composer-tiptap.ProseMirror {
+/* The editor and its placeholder; .ProseMirror outranks Tiptap's injected base CSS, which
+   disables ligatures. Ligatures match sent messages. */
+.composer-text,
+.composer-text.ProseMirror {
+  line-height: 1.25rem;
+  white-space: break-spaces;
+  overflow-wrap: break-word;
   font-variant-ligatures: normal;
   font-feature-settings: normal;
 }
@@ -5988,7 +5993,7 @@ body {
   --composer-actions-gap: calc(var(--spacing) * 1.5);
 }
 
-.composer-prompt-body [data-testid="composer-editor"]::before {
+.composer-prompt-body .composer-text::before {
   content: "";
   float: inline-end;
   width: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
@@ -5996,8 +6001,10 @@ body {
 }
 
 .composer-prompt-body[data-composer-multiline]
-  [data-composer-empty="false"]
-  [data-testid="composer-editor"]::before {
+  :is(
+    [data-composer-empty="false"] [data-testid="composer-editor"],
+    [data-composer-placeholder]
+  )::before {
   height: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
 }
 
@@ -6035,8 +6042,9 @@ body {
   }
 }
 
-.composer-prompt-body [data-composer-placeholder] {
-  padding-inline-end: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
+/* A suffix that would run under the actions or past the edge stays hidden, as text never wraps for it. */
+.composer-prompt-body[data-composer-suffix-hidden] [data-composer-placeholder-suffix] {
+  visibility: hidden;
 }
 
 .composer-tiptap p {

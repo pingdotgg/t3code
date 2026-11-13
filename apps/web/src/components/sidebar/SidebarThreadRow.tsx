@@ -714,7 +714,7 @@ function ThreadRenameInput(props: {
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      className="-ms-1 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body font-medium text-strong-foreground outline-none"
+      className="-ms-1 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body leading-5 font-medium text-strong-foreground outline-none"
     />
   );
 }
