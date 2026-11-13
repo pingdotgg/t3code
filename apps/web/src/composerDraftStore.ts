@@ -1,5 +1,8 @@
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
-import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
+import {
+  composerFileAttachmentMimeType,
+  composerImageDedupKey,
+} from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ResponseContextRecord,
@@ -907,11 +910,6 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
-function composerImageDedupKey(image: ComposerImageAttachment): string {
-  // Hydrated images get fresh lastModified values, so exclude it from dedupe.
-  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
-}
-
 export function composerFileDedupKey(
   file: Pick<ComposerFileAttachment, "mimeType" | "sizeBytes" | "name">,
 ): string {
@@ -1547,6 +1545,21 @@ export function resolveComposerDraftKey(
   return threadKey.length > 0 ? threadKey : null;
 }
 
+const QUEUED_RUN_EDIT_DRAFT_PREFIX = "queued-edit:";
+
+// Thread and run ids both contain colons, so the run id is encoded to keep the thread key parseable.
+export function queuedRunEditDraftId(threadRef: ScopedThreadRef, runId: string): DraftId {
+  return DraftId.make(
+    `${QUEUED_RUN_EDIT_DRAFT_PREFIX}${scopedThreadKey(threadRef)}:${encodeURIComponent(runId)}`,
+  );
+}
+
+function queuedRunEditThreadId(draftId: string): ThreadId | null {
+  if (!draftId.startsWith(QUEUED_RUN_EDIT_DRAFT_PREFIX)) return null;
+  const rest = draftId.slice(QUEUED_RUN_EDIT_DRAFT_PREFIX.length);
+  return parseScopedThreadKey(rest.slice(0, rest.lastIndexOf(":")))?.threadId ?? null;
+}
+
 function resolveComposerThreadId(
   state: ComposerThreadLookupState,
   target: ComposerThreadTarget,
@@ -1558,7 +1571,10 @@ function resolveComposerThreadId(
   if (typeof normalizedTarget !== "string") {
     return normalizedTarget.threadId;
   }
-  return state.draftThreadsByThreadKey[normalizedTarget]?.threadId ?? null;
+  return (
+    state.draftThreadsByThreadKey[normalizedTarget]?.threadId ??
+    queuedRunEditThreadId(normalizedTarget)
+  );
 }
 
 function getComposerDraftState(
