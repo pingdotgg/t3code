@@ -253,7 +253,7 @@ it.effect("releases the forward of a bootstrap interrupted before its hub answer
           Effect.gen(function* () {
             if (holdReadiness) {
               yield* Deferred.succeed(probing, undefined);
-              yield* Effect.never;
+              return yield* Effect.never;
             }
             return HttpClientResponse.fromWeb(request, new Response("ok"));
           }),
