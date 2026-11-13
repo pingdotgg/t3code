@@ -483,7 +483,8 @@ const make = Effect.gen(function* () {
     if (Option.isNone(stored)) return;
     const urls = yield* decodeUrls(row.urls_json);
     const origin = yield* Effect.findFirst(urls, (candidate) =>
-      describe(candidate).pipe(
+      probe(candidate).pipe(
+        Effect.option,
         Effect.map(
           (found) => Option.isSome(found) && found.value.environmentId === row.environment_id,
         ),
