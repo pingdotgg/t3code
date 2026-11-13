@@ -3692,10 +3692,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
         ? {}
         : { delegatedFrom: command.delegatedFrom }),
+      ...(command.workflowRun === undefined ? {} : { workflowRun: command.workflowRun }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,
         rootThreadId: command.threadId,
+        ...(command.workflowRun === undefined ? {} : { workflowStep: true }),
       },
       forkedFrom: null,
       createdAt: now,

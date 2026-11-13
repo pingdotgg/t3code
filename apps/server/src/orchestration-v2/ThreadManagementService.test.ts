@@ -68,6 +68,13 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // Nor a workflow run it is a step of.
+    workflowRun: {
+      environmentId: EnvironmentId.make("environment:elsewhere"),
+      runId: "run-1",
+      workflow: "fix",
+      step: "write",
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -80,6 +87,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("workflowRun");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

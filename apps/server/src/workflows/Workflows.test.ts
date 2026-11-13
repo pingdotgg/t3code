@@ -387,6 +387,8 @@ const harness = Effect.gen(function* () {
   return { counts, failures, boot, agents };
 });
 
+/** The review workflow sleeps first, which is waiting too; this is its wait for a verdict. */
+const atVerdict = (run: WorkflowRun) => run.status === "waiting" && run.detail === "verdict";
 const status =
   (...statuses: ReadonlyArray<WorkflowRunStatus>) =>
   (run: WorkflowRun) =>
@@ -450,8 +452,11 @@ it.effect("a wait survives a restart, checks what it is signalled with, and step
           { change: "c1" },
           { idempotencyKey: "c1" },
         );
-        const waiting = yield* workflows.waitFor(runId, status("waiting"));
+        const waiting = yield* workflows.waitFor(runId, atVerdict);
         assert.equal(waiting.title, "review of c1");
+        // The sleep before the wait is a step a person can see.
+        const slept = (yield* workflows.get(runId)).steps.find((step) => step.name === "settle");
+        assert.deepStrictEqual([slept?.kind, slept?.status], ["sleep", "completed"]);
         const wrong = yield* workflows
           .signal({ runId, wait: "verdict" }, { merge: "yes" }, { id: "s0" })
           .pipe(Effect.flip);
@@ -512,7 +517,7 @@ it.effect("a wait past its timeout wakes with nothing, and a workflow may stop o
           { change: "c3", timeout: "now" },
           { idempotencyKey: "c3" },
         );
-        yield* workflows.waitFor(runId, status("waiting"));
+        yield* workflows.waitFor(runId, atVerdict);
         yield* workflows.sweep;
         const stopped = yield* workflows.waitFor(runId, status("stopped"));
         assert.equal(stopped.detail, "nobody answered");
@@ -532,7 +537,7 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
           { change: "c4" },
           { idempotencyKey: "c4" },
         );
-        yield* workflows.waitFor(waiting.runId, status("waiting"));
+        yield* workflows.waitFor(waiting.runId, atVerdict);
         yield* workflows.cancel(waiting.runId, "not needed");
         const cancelled = (yield* workflows.get(waiting.runId)).run;
         assert.equal(cancelled.status, "cancelled");
@@ -586,6 +591,8 @@ it.effect(
 
           yield* workflows.waitFor(runId, (run) => run.detail === "merge");
           const [question] = yield* workflows.questions;
+          // The agent whose work raised the question is one click from it.
+          assert.deepStrictEqual(question?.thread, { threadId: "thread-1", environmentId: null });
           assert.deepStrictEqual(question?.request, {
             title: "Merge fix/1?",
             choices: ["Merge", "Leave"],
@@ -697,8 +704,8 @@ it.effect(
             { change: "k1" },
             { idempotencyKey: "k1c" },
           );
-          yield* workflows.waitFor(second.runId, status("waiting"));
-          yield* workflows.waitFor(third.runId, status("waiting"));
+          yield* workflows.waitFor(second.runId, atVerdict);
+          yield* workflows.waitFor(third.runId, atVerdict);
           // Nothing was left over for them, and each new signal wakes one run.
           assert.equal(yield* workflows.signal(key, { merge: false }, { id: "s1" }), "delivered");
           assert.equal(yield* workflows.signal(key, { merge: true }, { id: "s2" }), "delivered");

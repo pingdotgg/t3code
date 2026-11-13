@@ -1500,6 +1500,10 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
     workflowsLive,
+    workflowCounts: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:workflows:counts",
+      tag: WS_METHODS.workflowsCounts,
+    }),
     // Steps are not in the live list, so a run's detail is read again whenever that list changes.
     workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:workflows:run",

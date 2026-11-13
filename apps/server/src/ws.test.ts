@@ -2491,6 +2491,7 @@ const workflowRun: WorkflowRun = {
   pauses: 1,
   retired: false,
   parentRunId: null,
+  parentStep: null,
   startedAt: "2026-11-01T00:00:00.000Z",
   updatedAt: "2026-11-01T00:01:00.000Z",
   endedAt: null,

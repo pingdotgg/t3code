@@ -931,6 +931,20 @@ export default function ChatView(props: ChatViewProps) {
         },
       };
     }
+    // An agent step of a workflow run leads back to the run, which is where its work is read.
+    const workflowRun = activeThread?.workflowRun ?? null;
+    if (workflowRun !== null) {
+      return {
+        title: `${workflowRun.workflow} · ${workflowRun.step}`,
+        relation: { label: "Step of the workflow run", actionLabel: "Open run" },
+        open: (): void => {
+          void navigate({
+            to: "/workflows",
+            search: { env: workflowRun.environmentId, run: workflowRun.runId },
+          });
+        },
+      };
+    }
     if (delegatedFrom === null || delegatedFromRef === null) return null;
     const parentRef = delegatedFromRef;
     return {

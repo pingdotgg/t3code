@@ -181,8 +181,30 @@ export const step = <A, I, E>(
   });
 
 /** A sleep that survives a restart. */
-export const sleep = (name: string, duration: Duration.Input): Effect.Effect<void, never, InRun> =>
-  Effect.andThen(claim(name), DurableClock.sleep({ name: `sleep/${name}`, duration }));
+export const sleep = Effect.fn("workflow.sleep")(function* (
+  name: string,
+  duration: Duration.Input,
+): Effect.fn.Return<void, never, InRun> {
+  const run = yield* claim(name);
+  // Listed like any step, with when it wakes, so a run that sleeps for days says so.
+  yield* Activity.make({
+    name: `sleep/${name}/open`,
+    execute: Effect.gen(function* () {
+      const wakes = DateTime.addDuration(yield* DateTime.now, Duration.fromInputUnsafe(duration));
+      yield* run.store.stepStarted(run.runId, name, "sleep");
+      yield* run.store.stepDetail(run.runId, name, DateTime.formatIso(wakes));
+      yield* run.store.runStatus(run.runId, "waiting", `sleep ${name}`);
+    }),
+  });
+  yield* DurableClock.sleep({ name: `sleep/${name}`, duration });
+  yield* Activity.make({
+    name: `sleep/${name}/close`,
+    execute: Effect.andThen(
+      run.store.stepEnded(run.runId, name, "completed", null),
+      run.store.runResumed(run.runId),
+    ),
+  });
+});
 
 export const Woke = Schema.Struct({ expired: Schema.Boolean, value: Schema.Json });
 export const wakeOf = (name: string) => DurableDeferred.make(`wait/${name}`, { success: Woke });

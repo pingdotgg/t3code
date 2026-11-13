@@ -42,11 +42,19 @@ Each agent step works in an ordinary thread. Open it to read what the agent did 
 
 ## Follow runs in the app
 
-**Settings → Workflows** lists the runs of each connected environment, newest first, with the runs
-a workflow invoked under the run that invoked them. Questions waiting on you are at the top: pick
-a choice, with a reason if you want to give one, and the run goes on. Select a run to see its
-steps and open the thread of an agent step, to resume it when it is paused, or to cancel it.
-Answering, resuming and cancelling need a connection that may operate threads.
+Once a server has workflow runs, a **Workflows** button appears at the bottom of the sidebar. A
+number on it says how many runs wait on you: a question to answer, or a run paused by a failing
+step.
+
+The page lists what needs you first, then what is under way, then what finished. A run a workflow
+invoked sits under the run that invoked it. Select a run to read what happened in it: its agents,
+questions, waits and sleeps in order, with how long each took, and the quick steps between them
+folded away. From there you can answer its question, open an agent's thread to read its work or
+talk to it before you answer, resume it when it is paused, or cancel it. Answering, resuming and
+cancelling need a connection that may operate threads.
+
+An agent's thread does not appear in the thread list. Open it from its run; the thread itself
+links back to the run.
 
 An agent step can run on another machine: give it the id of a
 [linked environment](remote-access.md#link-another-environment) and a project there. The run itself stays on the

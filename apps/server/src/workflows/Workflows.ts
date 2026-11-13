@@ -1,4 +1,9 @@
-import { type WorkflowHook, WorkflowQuestion, type WorkflowRunsSnapshot } from "@t3tools/contracts";
+import {
+  type WorkflowCounts,
+  type WorkflowHook,
+  WorkflowQuestion,
+  type WorkflowRunsSnapshot,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -110,6 +115,8 @@ export class Workflows extends Context.Service<
     readonly storeDelete: (key: string) => Effect.Effect<void, WorkflowInputError>;
     /** Recent runs and open questions, now and again after every change. */
     readonly watch: Stream.Stream<WorkflowRunsSnapshot>;
+    /** How much is going on, now and again whenever a count changes. */
+    readonly counts: Stream.Stream<WorkflowCounts>;
     /**
      * Deliver timeouts to waits past their deadline, drop expired mail, and resume paused runs
      * whose rest is over. Runs by itself every few seconds.
@@ -152,6 +159,7 @@ export const layerDisabled = Layer.succeed(
     storeSet: refuse,
     storeDelete: refuse,
     watch: Stream.concat(Stream.make({ runs: [], questions: [] }), Stream.never),
+    counts: Stream.concat(Stream.make({ needsYou: 0, active: 0, total: 0 }), Stream.never),
     sweep: Effect.void,
   }),
 );

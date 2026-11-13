@@ -375,6 +375,7 @@ import {
   WorkflowRunDetail,
   WorkflowRunGetInput,
   WorkflowRunResumeInput,
+  WorkflowCounts,
   WorkflowRunsSnapshot,
   WorkflowRunsSubscribeInput,
 } from "./workflow.ts";
@@ -562,6 +563,7 @@ export const WS_METHODS = {
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   workflowsSubscribe: "workflows.subscribe",
+  workflowsCounts: "workflows.counts",
   workflowsGet: "workflows.get",
   workflowsAnswer: "workflows.answer",
   workflowsResume: "workflows.resume",
@@ -2037,6 +2039,13 @@ const WsWorkflowsSubscribeRpc = Rpc.make(WS_METHODS.workflowsSubscribe, {
   stream: true,
 });
 
+const WsWorkflowsCountsRpc = Rpc.make(WS_METHODS.workflowsCounts, {
+  payload: WorkflowRunsSubscribeInput,
+  success: WorkflowCounts,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsWorkflowsGetRpc = Rpc.make(WS_METHODS.workflowsGet, {
   payload: WorkflowRunGetInput,
   success: WorkflowRunDetail,
@@ -2208,6 +2217,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsWorkflowsSubscribeRpc,
+  WsWorkflowsCountsRpc,
   WsWorkflowsGetRpc,
   WsWorkflowsAnswerRpc,
   WsWorkflowsResumeRpc,

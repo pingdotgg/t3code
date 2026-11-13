@@ -93,7 +93,7 @@ const make = Effect.gen(function* () {
     start: Effect.fn("WorkflowAgentThreads.start")(function* (input) {
       const id = yield* idOf(input.key);
       const environment = elsewhere(input.environment);
-      if (environment !== undefined) return yield* linked.start(input, environment, id);
+      if (environment !== undefined) return yield* linked.start(input, environment, id, here);
       const commandId = CommandId.make(id);
       const messageId = MessageId.make(id);
       const outputSchema =
@@ -166,6 +166,7 @@ const make = Effect.gen(function* () {
           initialMessage: { messageId, text: input.prompt, attachments: [], ...outputSchema },
           createdBy: "system",
           creationSource: "server",
+          workflowRun: { environmentId: here, ...input.origin },
         })
         .pipe(Effect.mapError(failed("Could not start the thread")));
       const run = launched.projection.runs.find(

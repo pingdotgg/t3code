@@ -64,3 +64,56 @@ it.effect("a run still waits while one of the things it started side by side is 
     }),
   ),
 );
+
+it.effect("counts what waits on a person, and finds the run's latest agent thread", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const start = (runId: string) =>
+        store.runStarted({
+          runId,
+          workflow: "fix",
+          version: 1,
+          engineTag: "fix@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+      assert.deepStrictEqual(yield* store.counts, { needsYou: 0, active: 0, total: 0 });
+      yield* Effect.forEach(["r1", "r2", "r3"], start);
+      yield* store.runPaused("r1", "the build failed");
+      yield* store.runEnded("r3", "completed", null, null);
+      yield* store.waitOpened({
+        runId: "r2",
+        name: "merge",
+        workflow: "fix",
+        key: undefined,
+        token: "t",
+        schemaJson: "{}",
+        requestJson: '{"title":"Merge?"}',
+        deadline: null,
+      });
+      // A paused run and an open question each wait on someone; a plain wait does not.
+      yield* store.waitOpened({
+        runId: "r2",
+        name: "ci",
+        workflow: "fix",
+        key: undefined,
+        token: "u",
+        schemaJson: "{}",
+        requestJson: null,
+        deadline: null,
+      });
+      assert.deepStrictEqual(yield* store.counts, { needsYou: 2, active: 2, total: 3 });
+
+      assert.isNull(yield* store.latestThread("r2"));
+      yield* store.stepStarted("r2", "write", "agent");
+      yield* store.stepThread("r2", "write", "thread-1", null);
+      yield* store.stepStarted("r2", "review", "agent");
+      yield* store.stepThread("r2", "review", "thread-2", "env-b");
+      assert.deepStrictEqual(yield* store.latestThread("r2"), {
+        threadId: "thread-2",
+        environmentId: "env-b",
+      });
+    }),
+  ),
+);

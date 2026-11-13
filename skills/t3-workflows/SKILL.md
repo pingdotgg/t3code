@@ -312,7 +312,7 @@ t3 workflow hooks                         # webhook URL paths
 t3 workflow store list [prefix]           # what workflows keep between runs
 ```
 
-Run states: `running` (also while it sleeps), `waiting` (on an agent, a signal or a question), `paused` (a step failed),
+Run states: `running`, `waiting` (on an agent, a signal, a question or a sleep), `paused` (a step failed),
 `completed`, `stopped`, `cancelled`.
 
 A paused run shows the failing step and its error in `show`. Fix the cause, then `resume`; only

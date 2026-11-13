@@ -91,6 +91,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     pauses: Number(row.pauses),
     retired: row.ended_at === null && !byTag.has(row.engine_tag),
     parentRunId: row.parent_run_id,
+    parentStep: row.parent_wait,
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -322,18 +323,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     Effect.forkScoped,
   );
 
-  const questions = Effect.map(store.requests, (waits) =>
-    waits.flatMap((wait) =>
-      wait.request_json === null
-        ? []
-        : [
-            {
-              runId: wait.run_id,
-              name: wait.name,
-              request: WorkflowStore.jsonValue(wait.request_json),
-              askedAt: wait.opened_at,
-            },
-          ],
+  const questions = Effect.flatMap(store.requests, (waits) =>
+    Effect.forEach(
+      waits.filter((wait) => wait.request_json !== null),
+      (wait) =>
+        Effect.map(store.latestThread(wait.run_id), (thread) => ({
+          runId: wait.run_id,
+          name: wait.name,
+          request: WorkflowStore.jsonValue(wait.request_json ?? "null"),
+          askedAt: wait.opened_at,
+          thread,
+        })),
     ),
   );
   const snapshot = Effect.all({
@@ -352,6 +352,20 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           Stream.mapEffect(() => snapshot),
         ),
       );
+    }),
+  );
+
+  const counts: Workflows["Service"]["counts"] = Stream.unwrap(
+    Effect.gen(function* () {
+      const changes = yield* PubSub.subscribe(store.changes);
+      return Stream.concat(
+        Stream.fromEffect(store.counts),
+        Stream.fromSubscription(changes).pipe(
+          Stream.debounce(WATCH_SETTLE),
+          Stream.mapEffect(() => store.counts),
+        ),
+        // Most changes move no count, and a badge has no use for hearing of those.
+      ).pipe(Stream.changesWith((left, right) => JSON.stringify(left) === JSON.stringify(right)));
     }),
   );
 
@@ -473,6 +487,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       }
     }, Effect.scoped),
     questions,
+    counts,
     stored: Effect.fn("Workflows.stored")(function* (prefix) {
       return (yield* keyValues.list(prefix)).map((row) => ({
         key: row.key,

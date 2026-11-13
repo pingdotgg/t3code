@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { EnvironmentId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -46,6 +46,7 @@ const peer = (answers: Record<string, ReadonlyArray<unknown>>, enabled = true) =
 
 const input = {
   key: "run-1/write/0",
+  origin: { runId: "run-1", workflow: "fix", step: "write" },
   title: "fix: write",
   prompt: "Write the fix.",
   outputSchema: { type: "object" },
@@ -67,7 +68,9 @@ it.effect("starts a thread there by the project's folder, with the step's key as
       t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
     });
     const turn = yield* Effect.provide(
-      Effect.flatMap(WorkflowAgentLinks.make, (links) => links.start(input, "env-b", "workflow:k")),
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.start(input, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+      ),
       there.layer,
     );
     assert.deepStrictEqual(turn, { threadId: "thread-1", turnId: "turn-1", environment: "env-b" });
@@ -78,6 +81,7 @@ it.effect("starts a thread there by the project's folder, with the step's key as
       message: "Write the fix.",
       outputSchema: { type: "object" },
       clientRequestId: "workflow:k",
+      workflowRun: { environmentId: "env-a", runId: "run-1", workflow: "fix", step: "write" },
     });
     // The link's own access is the ceiling, not a mode narrower than it.
     assert.equal(launch?.runtimeMode, "full-access");
@@ -92,7 +96,9 @@ it.effect("registers a folder that is not a project there yet", () =>
       t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
     });
     yield* Effect.provide(
-      Effect.flatMap(WorkflowAgentLinks.make, (links) => links.start(input, "env-b", "workflow:k")),
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.start(input, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+      ),
       there.layer,
     );
     assert.deepStrictEqual(
@@ -110,7 +116,9 @@ it.effect("does not start anything while linked environments is off", () =>
   Effect.gen(function* () {
     const there = peer({}, false);
     const error = yield* Effect.provide(
-      Effect.flatMap(WorkflowAgentLinks.make, (links) => links.start(input, "env-b", "workflow:k")),
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.start(input, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+      ),
       there.layer,
     ).pipe(Effect.flip);
     assert.match(error.reason, /Linked environments is off/);
