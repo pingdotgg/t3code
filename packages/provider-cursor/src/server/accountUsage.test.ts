@@ -2,6 +2,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -11,7 +13,10 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 
-import { readCursorAccountUsage } from "./accountUsage.ts";
+import * as CursorAccountReader from "./CursorAccountReader.ts";
+
+import { makeCursorAccountUsageReader } from "./accountUsage.ts";
+import type { CursorCredentialSource } from "./accountCache.ts";
 
 interface DashboardRequest {
   readonly url: string;
@@ -20,7 +25,10 @@ interface DashboardRequest {
   readonly headers: Headers;
 }
 
-const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Response>) =>
+const dashboard = (
+  answer: (request: DashboardRequest) => Response | Promise<Response>,
+  membership = { userId: 1, teamIds: [] as number[] },
+) =>
   HttpClient.make((request, url, signal, fiber) =>
     Effect.tryPromise({
       try: async () => {
@@ -34,6 +42,15 @@ const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Res
           return HttpClientResponse.fromWeb(
             request,
             Response.json({ accessToken: request.headers.authorization.slice(7) }),
+          );
+        }
+        if (url.pathname.endsWith("/GetMe")) {
+          return HttpClientResponse.fromWeb(request, Response.json({ userId: membership.userId }));
+        }
+        if (url.pathname.endsWith("/GetTeams")) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ teams: membership.teamIds.map((id) => ({ id })) }),
           );
         }
         const response = await answer({
@@ -52,13 +69,15 @@ const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Res
   );
 
 const readAccountUsage = (
-  credentialSource: Parameters<typeof readCursorAccountUsage>[0],
+  credentialSource: CursorCredentialSource,
   sinceMs: number,
   endDate: number,
   answer: (request: DashboardRequest) => Response | Promise<Response>,
+  membership?: { userId: number; teamIds: number[] },
 ) =>
-  readCursorAccountUsage(credentialSource, sinceMs, endDate).pipe(
-    Effect.provideService(HttpClient.HttpClient, dashboard(answer)),
+  makeCursorAccountUsageReader.pipe(
+    Effect.flatMap((read) => read(credentialSource, sinceMs, endDate)),
+    Effect.provideService(HttpClient.HttpClient, dashboard(answer, membership)),
   );
 
 describe("Cursor account history", () => {
@@ -121,6 +140,157 @@ describe("Cursor account history", () => {
         );
         assert.isFalse(result.accountKey?.includes("demo") ?? true);
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("includes each team's own-user history alongside personal history", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const scopes: unknown[] = [];
+      const result = yield* readAccountUsage(
+        { kind: "apiKey", apiKey: accessToken },
+        0,
+        1781000000000,
+        async ({ init }) => {
+          const body = JSON.parse(String(init.body));
+          scopes.push([body.teamId, body.userId]);
+          const team = body.teamId !== undefined;
+          return Response.json({
+            totalUsageEventsCount: 1,
+            usageEventsDisplay: [
+              {
+                timestamp: "1780000000000",
+                model: "gpt-5",
+                conversationId: "same-conversation",
+                tokenUsage: { cacheReadTokens: team ? 5_000_000 : 10 },
+              },
+            ],
+          });
+        },
+        { userId: 42, teamIds: [7, 8, 7] },
+      );
+      assert.isNull(result.error);
+      assert.deepStrictEqual(scopes, [
+        [undefined, undefined],
+        [7, 42],
+        [8, 42],
+      ]);
+      assert.strictEqual(
+        result.records.reduce((sum, row) => sum + row.totals.cachedInputTokens, 0),
+        10_000_010,
+      );
+      assert.strictEqual(new Set(result.records.map((row) => row.dedupeKey)).size, 3);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("rejects unscoped or incomplete team history without keeping personal totals", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      for (const userId of [0, 42]) {
+        const scopes: unknown[] = [];
+        const result = yield* readAccountUsage(
+          { kind: "apiKey", apiKey: accessToken },
+          0,
+          1781000000000,
+          async ({ init }) => {
+            const body = JSON.parse(String(init.body));
+            scopes.push(body.teamId);
+            return body.teamId === undefined
+              ? Response.json({
+                  totalUsageEventsCount: 1,
+                  usageEventsDisplay: [
+                    {
+                      timestamp: "1780000000000",
+                      model: "gpt-5",
+                      tokenUsage: { inputTokens: 10 },
+                    },
+                  ],
+                })
+              : new Response(null, { status: 403 });
+          },
+          { userId, teamIds: [7] },
+        );
+        assert.isNotNull(result.error);
+        assert.deepStrictEqual(result.records, []);
+        assert.deepStrictEqual(scopes, userId === 0 ? [] : [undefined, 7]);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.each([
+    { exp: undefined, lifetime: "5 minutes" },
+    { exp: 90, lifetime: "1 minute" },
+  ] as const)(
+    "reuses discovery for $lifetime, invalidates rejected auth, and isolates API keys",
+    ({ exp, lifetime }) =>
+      Effect.gen(function* () {
+        const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp })).toString("base64url")}.signature`;
+        const requests: string[] = [];
+        let rejected = false;
+        const client = dashboard(
+          () => (rejected ? new Response(null, { status: 401 }) : Response.json({})),
+          { userId: 42, teamIds: [7] },
+        ).pipe(
+          HttpClient.mapRequest((request) => {
+            requests.push(request.url.split("/").at(-1)!);
+            return request;
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const reader = yield* CursorAccountReader.CursorAccountReader;
+          const credential = { kind: "apiKey", apiKey: accessToken } as const;
+          assert.isNull((yield* reader.read(credential, 0, 1781000000000)).error);
+          requests.length = 0;
+          assert.isNull((yield* reader.read(credential, 0, 1781000000000)).error);
+          assert.deepStrictEqual(requests, ["GetFilteredUsageEvents", "GetFilteredUsageEvents"]);
+          rejected = true;
+          assert.isNotNull((yield* reader.read(credential, 0, 1781000000000)).error);
+          rejected = false;
+          requests.length = 0;
+          assert.isNull((yield* reader.read(credential, 0, 1781000000000)).error);
+          assert.include(requests, "GetTeams");
+          requests.length = 0;
+          yield* TestClock.adjust(lifetime);
+          yield* reader.read(credential, 0, 1781000000000);
+          assert.include(requests, "GetTeams");
+          requests.length = 0;
+          yield* reader.read({ ...credential, apiKey: accessToken + "other" }, 0, 1781000000000);
+          assert.include(requests, "GetTeams");
+        }).pipe(
+          Effect.provide(
+            CursorAccountReader.layer.pipe(
+              Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+            ),
+          ),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("starts personal and team reads together without waiting for either response", () =>
+    Effect.gen(function* () {
+      const personal = yield* Deferred.make<void>();
+      const team = yield* Deferred.make<void>();
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const client = dashboard(() => Response.json({}), { userId: 42, teamIds: [7] }).pipe(
+        HttpClient.transform((response, request) => {
+          if (!request.url.endsWith("/GetFilteredUsageEvents")) return response;
+          const body =
+            request.body._tag === "Uint8Array"
+              ? JSON.parse(new TextDecoder().decode(request.body.body))
+              : {};
+          const isPersonal = body.teamId === undefined;
+          return Effect.gen(function* () {
+            yield* Deferred.succeed(isPersonal ? personal : team, undefined);
+            yield* Deferred.await(isPersonal ? team : personal);
+            return yield* response;
+          });
+        }),
+      );
+      const result = yield* makeCursorAccountUsageReader.pipe(
+        Effect.flatMap((read) => read({ kind: "apiKey", apiKey: accessToken }, 0, 1781000000000)),
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      assert.isNull(result.error);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reads Cursor account history beyond 100 pages", () =>
@@ -341,37 +511,76 @@ describe("readCursorAccountUsage", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads the pages behind the first together and keeps them in page order", () =>
-    Effect.gen(function* () {
-      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-      let inFlight = 0;
-      let mostInFlight = 0;
-      const result = yield* readAccountUsage(
-        { kind: "apiKey", apiKey: accessToken },
-        0,
-        1781000000000,
-        async ({ page }) => {
-          inFlight++;
-          mostInFlight = Math.max(mostInFlight, inFlight);
-          for (let turn = page; turn < 9; turn++) await Promise.resolve();
-          inFlight--;
-          return Response.json({
-            totalUsageEventsCount: 8001,
-            usageEventsDisplay: Array.from({ length: page === 9 ? 1 : 1000 }, (_, index) => ({
-              timestamp: String(1780000000000 + (page - 1) * 1000 + index),
-              model: "gpt-5",
-              tokenUsage: { inputTokens: 1 },
-            })),
-          });
-        },
-      );
-      assert.isNull(result.error);
-      assert.strictEqual(mostInFlight, 6);
-      assert.deepStrictEqual(
-        result.records.map((record) => record.timestampMs),
-        Array.from({ length: 8001 }, (_, index) => 1780000000000 + index),
-      );
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  it.effect.each([{ queued: false }, { queued: true }])(
+    "reads concurrent pages in order with a full request deadline after queuing: $queued",
+    ({ queued }) =>
+      Effect.gen(function* () {
+        const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+        const started = yield* Queue.unbounded<void>();
+        const firstBatch = yield* Deferred.make<void>();
+        const secondBatch = yield* Deferred.make<void>();
+        let delayedRequests = 0;
+        let inFlight = 0;
+        let mostInFlight = 0;
+        const client = dashboard(
+          async ({ page }) => {
+            inFlight++;
+            mostInFlight = Math.max(mostInFlight, inFlight);
+            for (let turn = page; turn < 9; turn++) await Promise.resolve();
+            inFlight--;
+            return Response.json({
+              totalUsageEventsCount: 8001,
+              usageEventsDisplay: Array.from({ length: page === 9 ? 1 : 1000 }, (_, index) => ({
+                timestamp: String(1780000000000 + (page - 1) * 1000 + index),
+                model: "gpt-5",
+                tokenUsage: { inputTokens: 1 },
+              })),
+            });
+          },
+          { userId: 42, teamIds: queued ? [7] : [] },
+        ).pipe(
+          HttpClient.transform((response, request) => {
+            if (!queued || !request.url.endsWith("/GetFilteredUsageEvents")) return response;
+            const body =
+              request.body._tag === "Uint8Array"
+                ? JSON.parse(new TextDecoder().decode(request.body.body))
+                : {};
+            if (body.page === 1) return response;
+            return Effect.gen(function* () {
+              const batch = delayedRequests++ < 6 ? firstBatch : secondBatch;
+              yield* Queue.offer(started, undefined);
+              yield* Deferred.await(batch);
+              return yield* response;
+            });
+          }),
+        );
+        const read = yield* Effect.forkChild(
+          makeCursorAccountUsageReader.pipe(
+            Effect.flatMap((reader) =>
+              reader({ kind: "apiKey", apiKey: accessToken }, 0, 1781000000000),
+            ),
+            Effect.provideService(HttpClient.HttpClient, client),
+          ),
+        );
+        if (queued) {
+          yield* Effect.all(Array.from({ length: 6 }, () => Queue.take(started)));
+          yield* TestClock.adjust("6 seconds");
+          yield* Deferred.succeed(firstBatch, undefined);
+          yield* Effect.all(Array.from({ length: 6 }, () => Queue.take(started)));
+          yield* TestClock.adjust("6 seconds");
+          yield* Deferred.succeed(secondBatch, undefined);
+        }
+        const result = yield* Fiber.join(read);
+        assert.isNull(result.error);
+        assert.strictEqual(mostInFlight, 6);
+        assert.deepStrictEqual(
+          result.records.map((record) => record.timestampMs),
+          Array.from(
+            { length: queued ? 16002 : 8001 },
+            (_, index) => 1780000000000 + (index % 8001),
+          ),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("ends like a page-by-page read when a page fails, leaving no request open", () =>
