@@ -1399,13 +1399,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         });
         const sparseCheckout = sparseConfig.stdout.trim() === "true";
         if (!sparseCheckout) {
+          // Quoted paths are ASCII, so non-UTF-8 names survive decoding;
+          // update-index --stdin unquotes them.
           const listed = yield* execute({
             operation,
             cwd: input.cwd,
-            args: ["ls-files", "-v", "-z", "--", "."],
+            args: ["-c", "core.quotePath=true", "ls-files", "-v", "--", "."],
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            outputMode: "error",
           });
           skipWorktreePaths = listed.stdout
-            .split("\0")
+            .split("\n")
             .filter((entry) => entry.startsWith("S ") || entry.startsWith("s "))
             .map((entry) => entry.slice(2));
         }
@@ -1455,16 +1459,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           (yield* execute({
             operation,
             cwd: input.cwd,
-            args: ["ls-files", "-z", "--", "."],
-          })).stdout.split("\0"),
+            args: ["-c", "core.quotePath=true", "ls-files", "--", "."],
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            outputMode: "error",
+          })).stdout.split("\n"),
         );
         const reflag = skipWorktreePaths.filter((entry) => indexed.has(entry));
         if (reflag.length === 0) return;
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["update-index", "-z", "--skip-worktree", "--stdin"],
-          stdin: reflag.join("\0") + "\0",
+          args: ["update-index", "--skip-worktree", "--stdin"],
+          stdin: reflag.join("\n") + "\n",
         });
       });
       yield* recreateWorkspace;

@@ -1316,6 +1316,43 @@ it.effect("restores later edits to skip-worktree files whose checkpoint matches 
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "keeps skip-worktree bits on non-UTF-8 paths across a checkpoint restore",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-skip-bytes-" });
+      const git = (args: ReadonlyArray<string>, stdin?: string) =>
+        driver.execute({ operation: "checkpoint-test", cwd, args, ...(stdin ? { stdin } : {}) });
+      yield* git(["init"]);
+      yield* git(["config", "user.email", "test@test.com"]);
+      yield* git(["config", "user.name", "Test"]);
+      // Node paths are UTF-8 strings, so git writes the 0xff filename from a quoted index entry.
+      const blob = (yield* git(["hash-object", "-w", "--stdin"], "head\n")).stdout.trim();
+      yield* git(["update-index", "--index-info"], `100644 ${blob}\t"bad-\\377"\n`);
+      yield* git(["checkout-index", "--all"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "control.txt"), "head\n");
+      yield* git(["add", "control.txt"]);
+      yield* git(["commit", "-m", "head"]);
+      yield* git(["update-index", "--skip-worktree", "--stdin"], '"bad-\\377"\n');
+      const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/skip-bytes");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fileSystem.writeFileString(path.join(cwd, "control.txt"), "later\n");
+
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+      );
+
+      assert.strictEqual(
+        (yield* git(["-c", "core.quotePath=true", "ls-files", "-v"])).stdout,
+        'S "bad-\\377"\nH control.txt\n',
+      );
+      assert.strictEqual((yield* git(["status", "--porcelain"])).stdout, "");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(
