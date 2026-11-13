@@ -698,6 +698,8 @@ const make = Effect.gen(function* () {
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     let workspaceReleased = false;
+    // A checkout that cleanup failed to remove may be incomplete, so it stays unjoinable.
+    let removalFailed = false;
     // Stop background renames before forgetting worktrees; completed renames record them again.
     let branchRename: Fiber.Fiber<unknown> | null = null;
     let stopBranchName: Effect.Effect<void> = Effect.void;
@@ -1387,12 +1389,18 @@ const make = Effect.gen(function* () {
                 .pipe(Effect.ignore);
             }).pipe(
               Effect.catchCause((removeCause) =>
-                Effect.logWarning("Failed to remove an abandoned thread worktree", {
-                  commandId: input.commandId,
-                  threadId,
-                  path: removedPath,
-                  cause: removeCause,
-                }),
+                Effect.sync(() => {
+                  removalFailed = true;
+                }).pipe(
+                  Effect.andThen(
+                    Effect.logWarning("Failed to remove an abandoned thread worktree", {
+                      commandId: input.commandId,
+                      threadId,
+                      path: removedPath,
+                      cause: removeCause,
+                    }),
+                  ),
+                ),
               ),
             );
           }
@@ -1401,7 +1409,7 @@ const make = Effect.gen(function* () {
       Effect.ensuring(
         Effect.suspend(() => {
           const path = createdWorktreePath;
-          return path === null
+          return path === null || removalFailed
             ? Effect.void
             : Ref.update(provisionalWorktrees, (paths) => {
                 const next = new Set(paths);
@@ -1812,7 +1820,7 @@ const make = Effect.gen(function* () {
                 ? {
                     type: "existing_worktree",
                     worktreePath: boundWorktreePath,
-                    branch: acceptedStrategy.branch,
+                    branch: current?.thread.branch ?? acceptedStrategy.branch,
                   }
                 : acceptedStrategy;
             // The thread's link decides, as it does when preparation is retried: a request
