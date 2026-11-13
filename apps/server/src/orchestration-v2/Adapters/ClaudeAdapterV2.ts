@@ -2009,12 +2009,16 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
-  const compactQuerySettings =
+  const autoCompactWindow =
     input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
+      ? undefined
+      : input.settings.autoCompactWindow;
+  const compactQuerySettings =
+    autoCompactWindow === undefined
       ? querySettings
       : ({
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
-          autoCompactWindow: Number(input.settings.autoCompactWindow),
+          autoCompactWindow: Number(autoCompactWindow),
         } as ClaudeSdkSettings);
   // Claude Code expands a bare alias to its own model, so a custom model with an alias's name
   // pins the alias to itself.
@@ -2026,7 +2030,9 @@ export function makeClaudeQueryOptions(input: {
     : undefined;
   // A settings file path cannot take extra keys, so it goes through unchanged.
   const effectiveQuerySettings =
-    (input.toolSearchOverride === undefined && aliasOverrideEnv === undefined) ||
+    (input.toolSearchOverride === undefined &&
+      aliasOverrideEnv === undefined &&
+      autoCompactWindow === undefined) ||
     typeof compactQuerySettings === "string"
       ? compactQuerySettings
       : ({
@@ -2034,6 +2040,10 @@ export function makeClaudeQueryOptions(input: {
           env: {
             ...compactQuerySettings?.env,
             ...aliasOverrideEnv,
+            // Claude Code ranks this env var above the autoCompactWindow setting.
+            ...(autoCompactWindow === undefined
+              ? {}
+              : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: autoCompactWindow }),
             ...(input.toolSearchOverride === undefined
               ? {}
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
