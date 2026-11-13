@@ -2772,40 +2772,31 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each([
+    { name: "cancelled (a location reload)", refused: ["FormAlreadySettledError"], closed: true },
+    { name: "dropped (a server restart)", refused: ["FormNotFoundError"], closed: true },
     {
-      name: "cancelled it (a location reload), as closed",
-      settled: event("form.cancelled", { id: colorForm.id, sessionID: SESSION }),
-      closed: true,
-    },
-    {
-      name: "committed it on a reply whose response was lost, as delivered",
-      settled: event("form.replied", {
-        id: colorForm.id,
-        sessionID: SESSION,
-        answer: { q0: "Red" },
-      }),
+      name: "settled with a reply whose response was lost",
+      refused: ["UnknownError", "FormAlreadySettledError"],
       closed: false,
     },
-  ])("reports an answer to a form OpenCode already $name", ({ settled, closed }) =>
+  ])("reports an answer to a form OpenCode $name", ({ refused, closed }) =>
     Effect.gen(function* () {
+      const replyOut = out("session.form.reply", {
+        sessionID: SESSION,
+        formID: colorForm.id,
+        answer: { q0: "Red" },
+      });
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("form.created", { form: colorForm }),
-        out("session.form.reply", {
-          sessionID: SESSION,
-          formID: colorForm.id,
-          answer: { q0: "Red" },
-        }),
-        settled,
-        reply("session.form.reply", {
-          status: 409,
-          body: {
-            _tag: "FormAlreadySettledError",
-            id: colorForm.id,
-            message: "Form already settled",
-          },
-        }),
+        ...refused.flatMap((tag) => [
+          replyOut,
+          reply("session.form.reply", {
+            status: tag === "UnknownError" ? 500 : tag === "FormNotFoundError" ? 404 : 409,
+            body: { _tag: tag, id: colorForm.id, message: tag },
+          }),
+        ]),
       ]);
       const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));

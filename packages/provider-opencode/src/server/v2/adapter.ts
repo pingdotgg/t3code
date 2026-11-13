@@ -388,8 +388,6 @@ interface PendingRequest {
   readonly turn: ActiveTurn;
   readonly sessionId: string;
   answering: boolean;
-  /** How OpenCode settled a form while T3 was answering it. */
-  readonly settled: Deferred.Deferred<"replied" | "cancelled">;
   readonly native:
     | {
         readonly type: "permission";
@@ -608,7 +606,6 @@ const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
 export const OPENCODE_2_STILL_STOPPING =
   "OpenCode is still stopping the previous turn. Send the message again in a moment.";
 const REQUEST_REPLY_TIMEOUT = "10 seconds";
-const SETTLED_EVENT_TIMEOUT = "2 seconds";
 
 const deliver = <E>(answer: Effect.Effect<void, E>) =>
   answer.pipe(
@@ -2462,7 +2459,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn,
         sessionId,
         answering: false,
-        settled: yield* Deferred.make<"replied" | "cancelled">(),
         native,
       });
       yield* emit({ type: "node.updated", driver, node });
@@ -3187,16 +3183,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         const nativeId = event.type === "permission.replied" ? event.data.requestID : event.data.id;
         const entry = [...pending.values()].find((candidate) => candidate.native.id === nativeId);
-        if (entry === undefined) return;
-        if (entry.answering) {
-          if (event.type !== "permission.replied") {
-            yield* Deferred.succeed(
-              entry.settled,
-              event.type === "form.replied" ? "replied" : "cancelled",
-            );
-          }
-          return;
-        }
+        if (entry === undefined || entry.answering) return;
         const answered =
           event.type === "form.replied" ||
           (event.type === "permission.replied" && event.data.reply !== "reject");
@@ -4971,12 +4958,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               })
               .pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }));
           }
-          // A settled form is either our answer committed on a retried reply, or OpenCode cancelled it
-          // (as on a location reload) and continued without the answer; only its event tells which.
+          // OpenCode cancels open forms when it reloads a location and continues without the answer.
+          // Only a first attempt proves that: a retry can find the form our lost reply settled.
+          let attempts = 0;
           let formClosed = false;
           const closeForm = () =>
             Effect.sync(() => {
-              formClosed = true;
+              formClosed = attempts === 1;
             });
           const delivered = yield* native.type === "permission"
             ? deliver(
@@ -4994,29 +4982,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   ? client.session.form
                       .cancel({ sessionID: entry.sessionId, formID: Form.ID.make(native.id) })
                       .pipe(Effect.catchTags(formGone))
-                  : client.session.form
-                      .reply({
-                        sessionID: entry.sessionId,
-                        formID: Form.ID.make(native.id),
-                        answer: formAnswer(native.form, answers),
-                      })
-                      .pipe(
-                        Effect.catchTags({
-                          ...formGone,
-                          FormNotFoundError: closeForm,
-                          FormAlreadySettledError: closeForm,
+                  : Effect.sync(() => attempts++).pipe(
+                      Effect.andThen(
+                        client.session.form.reply({
+                          sessionID: entry.sessionId,
+                          formID: Form.ID.make(native.id),
+                          answer: formAnswer(native.form, answers),
                         }),
                       ),
+                      Effect.catchTags({
+                        ...formGone,
+                        FormNotFoundError: closeForm,
+                        FormAlreadySettledError: closeForm,
+                      }),
+                    ),
               );
-          const cancelled =
-            formClosed &&
-            (yield* Deferred.await(entry.settled).pipe(
-              Effect.timeout(SETTLED_EVENT_TIMEOUT),
-              Effect.orElseSucceed(() => "unknown" as const),
-            )) === "cancelled";
           yield* forgetRequest(entry);
           if (!delivered) yield* abandonRequest(asker, "answer not delivered");
-          if (cancelled) {
+          if (formClosed) {
             return yield* new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
               driver,
               requestId: requestInput.requestId,
