@@ -698,15 +698,36 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
     setupWriteCallback()
     resizeSurface()
+    var replayed = Data()
     if let streamedOutput {
-      feedData(streamedOutput.data)
+      replayed = streamedOutput.data
+      feedData(replayed)
     } else if !hasPendingBuffer {
+      replayed = Data(initialBuffer.utf8)
       feedBuffer(initialBuffer)
     }
     // Ghostty answers the replay's queries on its io thread after any callback change made here,
-    // so drop write output until the fence query fed behind the replay is answered.
-    isAwaitingReplayFence = true
-    feedData(Self.replayFenceQuery)
+    // so drop write output until the fence query fed behind the replay is answered. The fence's
+    // ESC would abort a sequence that live output is still to complete, so skip it then.
+    if Self.endsOutsideEscapeSequence(replayed) {
+      isAwaitingReplayFence = true
+      feedData(Self.replayFenceQuery)
+    }
+  }
+
+  private static func endsOutsideEscapeSequence(_ data: Data) -> Bool {
+    guard let escape = data.lastIndex(of: 0x1B) else { return true }
+    let tail = data[(escape + 1)...]
+    guard let introducer = tail.first else { return false }
+    switch introducer {
+    case UInt8(ascii: "["):
+      return tail.dropFirst().contains { (0x40...0x7E).contains($0) }
+    // OSC, DCS, APC, PM and SOS strings end at BEL; an ESC \ terminator is the last ESC itself.
+    case UInt8(ascii: "]"), UInt8(ascii: "P"), UInt8(ascii: "_"), UInt8(ascii: "^"), UInt8(ascii: "X"):
+      return tail.contains(0x07)
+    default:
+      return tail.contains { (0x30...0x7E).contains($0) }
+    }
   }
 
   private func resetSurface() {
