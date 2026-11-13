@@ -168,4 +168,50 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
     expect(isDarkAt(context, x.outside, 12.5)).toBe(true);
     expect(isDarkAt(context, x.flat, 12.5)).toBe(false);
   });
+
+  // Vertical borders and scrollbar thumbs must join the rows above and below.
+  it.each([
+    ["light vertical", "│"],
+    ["full block", "█"],
+  ])("draws the %s from the top to the bottom edge of its row", (_name, text) => {
+    const context = scaledContext(scale);
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 0, g: 0, b: 0 },
+      background,
+      cursor: { r: 0, g: 0, b: 0 },
+      cursorX: -1,
+      cursorY: -1,
+      cursorVisible: false,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [blank, { ...blank, text }, blank],
+          text: "",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+    renderGhosttySnapshot({ ...layout, context, snapshot, forceFull: true, cursorOn: false });
+
+    expect(darkPixelsInCellRow(context, 1, 4.5)).toBeGreaterThan(0);
+    expect(darkPixelsInCellRow(context, 1, 20.5)).toBeGreaterThan(0);
+  });
 });
+
+/** Dark device pixels on one scanline across a cell of `layout`. */
+function darkPixelsInCellRow(context: CanvasRenderingContext2D, column: number, y: number): number {
+  const { a, d } = context.getTransform();
+  const left = Math.ceil((layout.padding + column * layout.metrics.width) * a);
+  const right = Math.floor((layout.padding + (column + 1) * layout.metrics.width) * a);
+  const { data } = context.getImageData(left, Math.floor(y * d), right - left, 1);
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index]! < 128 && data[index + 1]! < 128 && data[index + 2]! < 128) count += 1;
+  }
+  return count;
+}
