@@ -24,6 +24,7 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -116,16 +117,29 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
-  const listRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<LegendListRef | null>(null);
+  const [listElement, setListElement] = useState<HTMLElement | null>(null);
+  const scrollElement =
+    listElement?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? null;
+  const activeIndex = props.activeItemId
+    ? props.items.findIndex((item) => item.id === props.activeItemId)
+    : -1;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list's scroll area to the highlighted row
   useLayoutEffect(() => {
-    if (!props.activeItemId || !listRef.current) return;
-    const el = listRef.current.querySelector<HTMLElement>(
-      `[data-composer-item-id="${CSS.escape(props.activeItemId)}"]`,
-    );
-    el?.scrollIntoView({ block: "nearest" });
-  }, [props.activeItemId]);
+    // Keyed on the id as well: filtering can highlight a new row at the same index.
+    if (!props.activeItemId || activeIndex < 0) return;
+    if (activeIndex === 0) {
+      // Legend stops at the first row, which leaves the list's top padding scrolled off.
+      scrollElement?.scrollTo({ top: 0 });
+      return;
+    }
+    void listRef.current?.scrollIndexIntoView({
+      index: activeIndex,
+      animated: false,
+      viewportMargin: SCROLL_FADE_MARGIN,
+    });
+  }, [props.activeItemId, activeIndex, scrollElement]);
 
   return (
     <Command
@@ -138,7 +152,6 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       }}
     >
       <ComposerBanner.Surface
-        ref={listRef}
         className="flex min-h-0 w-full flex-col overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=command-item]:rounded-lg **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
         data-composer-command-drawer="true"
       >
@@ -147,20 +160,36 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             id={props.listId}
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
             className="max-h-72 min-h-0 scroll-pb-6"
+            // Legend sizes its first window from the scroll area, which has no height until rows
+            // are placed. Rows are at least 1.75rem tall, so this never exceeds the list's height.
+            style={{ minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }}
+            ref={setListElement}
           >
             <CommandGroup>
-              {props.items.map((item) => (
-                <ComposerCommandMenuItem
-                  key={item.id}
-                  optionId={composerSuggestionOptionId(props.listId, item.id)}
-                  item={item}
-                  triggerKind={props.triggerKind}
-                  resolvedTheme={props.resolvedTheme}
-                  isActive={props.activeItemId === item.id}
-                  onHighlight={props.onHighlightedItemChange}
-                  onSelect={props.onSelect}
-                />
-              ))}
+              <LegendList<ComposerCommandItem>
+                ref={listRef}
+                scrollElement={scrollElement}
+                data={props.items}
+                keyExtractor={(item) => item.id}
+                estimatedItemSize={28}
+                // The composer's aria-activedescendant needs the highlighted row in the DOM.
+                alwaysRender={{ keys: props.activeItemId ? [props.activeItemId] : [] }}
+                // Rows also render from the highlight, theme, trigger and callbacks.
+                extraData={props}
+                renderItem={({ item, index }) => (
+                  <ComposerCommandMenuItem
+                    position={index + 1}
+                    setSize={props.items.length}
+                    optionId={composerSuggestionOptionId(props.listId, item.id)}
+                    item={item}
+                    triggerKind={props.triggerKind}
+                    resolvedTheme={props.resolvedTheme}
+                    isActive={props.activeItemId === item.id}
+                    onHighlight={props.onHighlightedItemChange}
+                    onSelect={props.onSelect}
+                  />
+                )}
+              />
             </CommandGroup>
           </CommandList>
         ) : (
@@ -186,7 +215,12 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   );
 });
 
+// Keeps the highlighted row clear of the scroll area's 1.5rem edge fades.
+const SCROLL_FADE_MARGIN = { start: 24, end: 24 };
+
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
+  position: number;
+  setSize: number;
   optionId: string;
   item: ComposerCommandItem;
   triggerKind: ComposerTriggerKind | null;
@@ -214,6 +248,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   return (
     <CommandItem
       render={<div id={props.optionId} />}
+      // Only a window of the options is mounted, so the browser cannot count the set.
+      aria-posinset={props.position}
+      aria-setsize={props.setSize}
       aria-selected={props.isActive}
       value={props.item.id}
       data-composer-item-id={props.item.id}
