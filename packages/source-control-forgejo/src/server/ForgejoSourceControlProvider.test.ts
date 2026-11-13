@@ -1786,6 +1786,62 @@ it.effect("loads later fj review pages when the server caps pages below the requ
   );
 });
 
+it.effect("re-sends an fj write with its method and body to a renamed repository's path", () => {
+  const requests: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    yield* cli.api({
+      cwd: "/repo",
+      repository: "https://forgejo.local/maria/old-name",
+      path: "repos/maria/old-name/issues/42/comments",
+      method: "POST",
+      body: { body: "only once" },
+    });
+    assert.deepStrictEqual(requests, [
+      "https://forgejo.local/api/v1/repos/maria/old-name/issues/42/comments",
+      "https://forgejo.local/api/v1/repos/maria/new-name/issues/42/comments",
+    ]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forgejo.local": { type: "Application", token: "test-token" } },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        assert.strictEqual(request.method, "POST");
+        assert.strictEqual(request.headers.authorization, "token test-token");
+        assert.deepStrictEqual(requestJson(request), { body: "only once" });
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            requests.length === 1
+              ? new Response(null, {
+                  status: 301,
+                  headers: { location: "/api/v1/repos/maria/new-name/issues/42/comments" },
+                })
+              : new Response("{}", { status: 201 }),
+          ),
+        );
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: { run: () => Effect.succeed(processOutput("")) },
+      }),
+    ),
+  );
+});
+
 it.effect("handles fj mutation statuses without retrying failures or reading absent bodies", () =>
   Effect.gen(function* () {
     for (const status of [204, 205, 302, 401, 403, 404, 429, 500]) {
