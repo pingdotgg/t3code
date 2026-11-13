@@ -295,6 +295,90 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
+  // Every snapshot the paragraph filter passes is appended holding the full text so far.
+  it.effect(
+    "stores snapshots of a long stream whose combined text stays within a few times its final text",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:long-stream");
+        const reasoning = (index: number, text: string, streaming = true) =>
+          ({
+            id: EventId.make(`event:long-stream:${index}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("item:long-stream"),
+              type: "reasoning",
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: streaming ? "running" : "completed",
+              title: null,
+              text,
+              streaming,
+              startedAt: now,
+              completedAt: streaming ? null : now,
+              updatedAt: now,
+            },
+          }) satisfies OrchestrationV2DomainEvent;
+        const storedTexts = sql<{ readonly text: string }>`
+          SELECT json_extract(payload_json, '$.text') AS text FROM orchestration_events
+          WHERE stream_id = ${threadId} ORDER BY sequence ASC
+        `.pipe(Effect.map((rows) => rows.map((row) => row.text)));
+        const paragraph = `${"Checking the next case in detail. ".repeat(8)}\n\n`;
+        let text = "";
+        for (let index = 0; index < 300; index++) {
+          text += paragraph;
+          const [stored] = yield* store.appendAgentEvents({ events: [reasoning(index, text)] });
+          // Live clients and the projections still get every snapshot.
+          assert.deepEqual(stored?.event, reasoning(index, text));
+          // The newest text is durable after each append, as it was before.
+          assert.equal((yield* storedTexts).at(-1), text);
+        }
+        const storedChars = (yield* storedTexts).reduce((sum, stored) => sum + stored.length, 0);
+        assert.isAtMost(storedChars, text.length * 4);
+
+        // A snapshot rolled back with its transaction leaves the committed one in place.
+        yield* sql
+          .withTransaction(
+            store
+              .appendAgentEvents({ events: [reasoning(300, `${text}lost`)] })
+              .pipe(Effect.andThen(Effect.fail("rollback"))),
+          )
+          .pipe(Effect.flip);
+        assert.deepEqual(yield* storedTexts, [text]);
+        // The retried write reuses the event id; an event for something else ends the run.
+        const other = { ...reasoning(302, "Other."), id: EventId.make("event:long-stream:other") };
+        yield* store.appendAgentEvents({
+          events: [
+            reasoning(300, `${text}A`),
+            {
+              ...other,
+              payload: { ...other.payload, id: TurnItemId.make("item:long-stream-other") },
+            },
+            reasoning(301, `${text}AB`),
+            reasoning(303, `${text}ABC`, false),
+          ],
+        });
+        assert.deepEqual(yield* storedTexts, [
+          text,
+          `${text}A`,
+          "Other.",
+          `${text}AB`,
+          `${text}ABC`,
+        ]);
+      }),
+  );
+
   it.effect("orders project and V2 agent events in the retained application event source", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;

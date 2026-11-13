@@ -219,17 +219,3 @@ it("scans each streamed line once while a long code fence is still open", () => 
   text += "```\n";
   assert.equal(shown(filter.filter(snapshot("m", text, true), lineCount * 400)), text);
 });
-
-// Every snapshot the filter passes is stored as a durable event holding the full text so far.
-it("passes snapshots of a long stream whose combined text stays within a few times its final text", () => {
-  const filter = makeAssistantStreamingFilter("paragraph", 800);
-  const paragraph = `${"Checking the next case in detail. ".repeat(8)}\n\n`;
-  let text = "";
-  let passedChars = 0;
-  for (let index = 0; index < 300; index++) {
-    text += paragraph;
-    const passed = shown(filter.filter(snapshot("m", text, true), index * 500));
-    passedChars += passed?.length ?? 0;
-  }
-  expect(passedChars).toBeLessThanOrEqual(text.length * 4);
-});

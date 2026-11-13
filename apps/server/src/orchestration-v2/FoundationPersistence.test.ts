@@ -412,9 +412,10 @@ it.effect(
         published.map((stored) => stored.event.id),
         ["batch-first", "batch-second"],
       );
+      // The second streaming snapshot of the message replaces the first in the log.
       assert.deepEqual(
         yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect),
-        published,
+        published.slice(1),
       );
     }).pipe(Effect.provide(Layer.fresh(layerTest)), Effect.scoped),
 );
