@@ -3,6 +3,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
+  PullRequestReviewThread,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -270,6 +271,64 @@ function changeLines(
   }
 }
 
+/** What the wake says about the pull request as it stands, so the agent need not read it again. */
+export interface PullRequestWatchState {
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** Null when this pass could not read the review threads. */
+  readonly reviewThreads: {
+    readonly threads: ReadonlyArray<PullRequestReviewThread>;
+    readonly truncated: boolean;
+  } | null;
+}
+
+const CHECK_COUNTS: ReadonlyArray<readonly [PullRequestCheck["status"], string]> = [
+  ["success", "passed"],
+  ["failure", "failed"],
+  ["cancelled", "cancelled"],
+  ["pending", "pending"],
+  ["action-required", "awaiting approval"],
+  ["skipped", "skipped"],
+  ["neutral", "neutral"],
+];
+
+function stateLines(state: PullRequestWatchState, commit: string): Array<string> {
+  const checks = state.checks.filter((check) => check.placeholder !== true);
+  const counts = CHECK_COUNTS.flatMap(([status, label]) => {
+    const count = checks.filter((check) => check.status === status).length;
+    return count === 0 ? [] : [`${count} ${label}`];
+  });
+  const failing = checks.filter(isFailedCheck).map((check) => check.name);
+  const more = failing.length > LISTED_ITEMS ? [`and ${failing.length - LISTED_ITEMS} more`] : [];
+  const failingNames = [...failing.slice(0, LISTED_ITEMS), ...more].join(", ");
+  const lines = [
+    "",
+    `The pull request now${commit}:`,
+    counts.length === 0
+      ? "- No checks have reported."
+      : `- Checks: ${counts.join(", ")}.${failing.length === 0 ? "" : ` Failing: ${failingNames}.`}`,
+  ];
+  if (state.reviewThreads === null) return lines;
+  const open = state.reviewThreads.threads.filter((thread) => !thread.isResolved);
+  if (open.length === 0) {
+    return [
+      ...lines,
+      state.reviewThreads.truncated
+        ? "- No unresolved review threads among those read, but not all of them could be read."
+        : "- No unresolved review threads.",
+    ];
+  }
+  return [
+    ...lines,
+    `- ${state.reviewThreads.truncated ? "At least " : ""}${open.length} unresolved review ${open.length === 1 ? "thread" : "threads"}:`,
+    ...listed(open, (thread) => {
+      const first = thread.comments[0];
+      const where = `${thread.path}${thread.line === null ? "" : `:${thread.line}`}${thread.isOutdated ? " (outdated)" : ""}`;
+      const body = first === undefined ? "" : snippet(first.body);
+      return `  - ${first?.author?.login ?? "someone"} on ${where}${body.length === 0 ? "" : `: "${body}"`}${first?.url ? ` ${first.url}` : ""}`;
+    }),
+  ];
+}
+
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
@@ -285,6 +344,7 @@ export function pullRequestWatchMessage(input: {
   readonly baseBranch: string;
   readonly headSha: string | null;
   readonly report: PullRequestWatchReport;
+  readonly state: PullRequestWatchState;
 }): { readonly text: string; readonly notification: OrchestrationV2Notification } {
   const { changes, exhausted } = input.report;
   const context = {
@@ -294,10 +354,11 @@ export function pullRequestWatchMessage(input: {
   const text = [
     `Update on pull request #${input.number} (${input.url}), which T3 Code is watching for you:`,
     ...changes.flatMap((change) => changeLines(change, context)),
+    ...stateLines(input.state, context.commit),
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
+      : `Look into each item and act on it as your task requires. The state above was read just now, so do not read the checks${input.state.reviewThreads === null ? "" : " or review threads"} again unless you need a log or a full comment. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.`,
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",

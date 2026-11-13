@@ -486,9 +486,94 @@ describe("evaluatePullRequestWatch", () => {
       baseBranch: "main",
       headSha: null,
       report,
+      state: { checks: [], reviewThreads: null },
     });
     assert.isTrue(text.isWellFormed());
     assert.include(text, `"${"x".repeat(196)}..."`);
+  });
+
+  it("tells the pull request's state with each wake", () => {
+    const report = evaluatePullRequestWatch(watch(), detail(), [
+      remark("reviewer", "2026-10-02T12:06:00Z"),
+    ]);
+    const reviewThread = (id: string, isResolved: boolean, line: number | null) => ({
+      id,
+      path: "src/index.ts",
+      line,
+      side: "right" as const,
+      isResolved,
+      isOutdated: line === null,
+      comments: [
+        {
+          ...remark("reviewer", STARTED, `Fix ${id}.`),
+          id: `${id}-1`,
+          url: `https://github.com/o/r/pull/1#${id}`,
+        },
+      ],
+    });
+    const message = (state: Parameters<typeof pullRequestWatchMessage>[0]["state"]) =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: "aaaaaaaaaa",
+        report,
+        state,
+      }).text;
+    const checks = [
+      check("lint", "success"),
+      check("test", "failure"),
+      check("build", "pending"),
+      { ...check("deploy", "pending"), placeholder: true },
+    ];
+
+    const told = message({
+      checks,
+      reviewThreads: {
+        threads: [
+          reviewThread("open", false, 4),
+          reviewThread("old", false, null),
+          reviewThread("done", true, 9),
+        ],
+        truncated: false,
+      },
+    });
+    assert.include(
+      told,
+      [
+        "The pull request now on aaaaaaa:",
+        "- Checks: 1 passed, 1 failed, 1 pending. Failing: test.",
+        "- 2 unresolved review threads:",
+        '  - reviewer on src/index.ts:4: "Fix open." https://github.com/o/r/pull/1#open',
+        '  - reviewer on src/index.ts (outdated): "Fix old." https://github.com/o/r/pull/1#old',
+        "",
+      ].join("\n"),
+    );
+    assert.include(told, "do not read the checks or review threads again");
+    assert.include(
+      message({
+        checks,
+        reviewThreads: { threads: [reviewThread("open", false, 4)], truncated: true },
+      }),
+      "- At least 1 unresolved review thread:",
+    );
+
+    const settled = message({
+      checks: [],
+      reviewThreads: { threads: [reviewThread("done", true, 9)], truncated: false },
+    });
+    assert.include(settled, "- No checks have reported.\n- No unresolved review threads.");
+    assert.include(
+      message({
+        checks,
+        reviewThreads: { threads: [reviewThread("done", true, 9)], truncated: true },
+      }),
+      "- No unresolved review threads among those read, but not all of them could be read.",
+    );
+
+    const unread = message({ checks, reviewThreads: null });
+    assert.notInclude(unread, "review thread");
+    assert.include(unread, "do not read the checks again");
   });
 
   it("reports a conflict once, until the branch is clean again", () => {

@@ -41,6 +41,7 @@ import {
   evaluatePullRequestWatch,
   PULL_REQUEST_WATCH_NO_CHECKS_MS,
   pullRequestWatchMessage,
+  type PullRequestWatchReport,
 } from "./pullRequestWatch.ts";
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
@@ -144,8 +145,13 @@ function planRead(
   last: LastRead | undefined,
   fingerprint: ProviderChangeRequestWatchFingerprint | null,
   now: number,
+  released: boolean,
 ): ReadPlan {
-  if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
+  if (
+    released ||
+    last === undefined ||
+    group.targets.some((target) => !last.watches.has(watchKey(target)))
+  ) {
     return { detail: true, activity: true };
   }
   // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
@@ -254,6 +260,11 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
+  /**
+   * Watches with news held while their thread was busy. Their state is not recorded, so the
+   * first read after the thread goes idle tells everything since in one wake.
+   */
+  const deferred = new Set<string>();
   /** The last sweep's groups, whose pull requests get host change feeds. */
   let currentGroups: ReadonlyArray<WatchGroup> = [];
   // A pass reads watches and records new ones, so passes must not overlap.
@@ -476,7 +487,10 @@ export const make = Effect.gen(function* () {
   ) {
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
-    const plan = planRead(group, last, fingerprint, now);
+    const released = group.targets.some(
+      (target) => deferred.has(watchKey(target)) && !target.thread.busy,
+    );
+    const plan = planRead(group, last, fingerprint, now, released);
     if (!plan.detail) return;
     if (
       last === undefined ||
@@ -527,7 +541,8 @@ export const make = Effect.gen(function* () {
       return yield* Effect.failCause(read.cause);
     }
     readFailures.delete(group.key);
-    const [detail, activity] = read.value;
+    const [detail, firstActivity] = read.value;
+    let activity = firstActivity;
     for (const target of group.targets) {
       const life = lifeOf(target);
       const headSha = detail.headSha ?? life.headSha;
@@ -551,31 +566,69 @@ export const make = Effect.gen(function* () {
     }
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
-    const remarks = Option.isSome(activity)
-      ? yield* readRemarks(
-          group.key,
-          reference,
-          activity.value,
-          now,
-          fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
-        )
-      : null;
+    const remarksOf = (read: PullRequestActivity) =>
+      readRemarks(
+        group.key,
+        reference,
+        read,
+        now,
+        fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
+      );
+    let remarks = Option.isSome(activity) ? yield* remarksOf(activity.value) : null;
+    const reportsOf = () =>
+      group.targets.map((target) => evaluatePullRequestWatch(target.watch, detail, remarks, now));
+    let reports = reportsOf();
+    // A wake lists the open review threads, so a pass that skipped them reads them before waking.
+    let activityFresh = plan.activity;
+    const wakes = (report: PullRequestWatchReport, index: number) =>
+      report.changes.length > 0 && !group.targets[index]!.thread.busy;
+    if (Option.isNone(activity) && reports.some(wakes)) {
+      activity = yield* pullRequests.activity(reference).pipe(
+        Effect.asSome,
+        Effect.catch((error) =>
+          Effect.logDebug("pull request watch thread read failed", {
+            pullRequest: group.key,
+            error,
+          }).pipe(Effect.as(Option.none<PullRequestActivity>())),
+        ),
+      );
+      if (Option.isSome(activity)) {
+        activityFresh = true;
+        remarks = yield* remarksOf(activity.value);
+        reports = reportsOf();
+      }
+    }
+    const state = {
+      checks: detail.checks,
+      reviewThreads: Option.match(activity, {
+        onNone: () => null,
+        onSome: (read) => ({
+          threads: read.reviewThreads,
+          truncated: read.reviewThreadsTruncated === true,
+        }),
+      }),
+    };
     lastReads.set(group.key, {
       at:
-        plan.activity || last === undefined
+        activityFresh || last === undefined
           ? (threadTails.get(group.key)?.fetchedAt ?? now)
           : last.at,
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
-      remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
+      remarksComplete: activityFresh ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report = reports[group.targets.indexOf(target)]!;
+      if (report.changes.length > 0 && target.thread.busy) {
+        deferred.add(watchKey(target));
+        return Effect.void;
+      }
+      deferred.delete(watchKey(target));
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -584,6 +637,7 @@ export const make = Effect.gen(function* () {
             baseBranch: detail.baseBranch,
             headSha: report.next.headSha,
             report,
+            state,
           }),
           includesRemarks: report.changes.some((change) => change.kind === "remarks"),
         };
@@ -644,6 +698,8 @@ export const make = Effect.gen(function* () {
       for (const cache of [readFailures, lastReads, threadTails]) {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
+      const watched = new Set(targets.map(watchKey));
+      for (const key of deferred) if (!watched.has(key)) deferred.delete(key);
     }
     yield* Effect.forEach(
       ending,
