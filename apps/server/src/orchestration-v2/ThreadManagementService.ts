@@ -890,21 +890,24 @@ const make = Effect.gen(function* () {
     }
 
     // Turn start would fail on its own after the send reported success; a replay keeps its answer.
-    yield* worktreeRestore
-      .restore(target.thread)
-      .pipe(
-        Effect.catch((cause) =>
-          hasReceipt(input.commandId).pipe(
-            Effect.flatMap((replay) =>
-              replay
-                ? Effect.void
-                : Effect.fail(
-                    new ThreadManagementWorktreeRestoreError({ threadId: input.threadId, cause }),
-                  ),
+    // A live steer starts no turn, so it needs no workspace.
+    if (dispatchMode.type !== "steer_active") {
+      yield* worktreeRestore
+        .restore(target.thread)
+        .pipe(
+          Effect.catch((cause) =>
+            hasReceipt(input.commandId).pipe(
+              Effect.flatMap((replay) =>
+                replay
+                  ? Effect.void
+                  : Effect.fail(
+                      new ThreadManagementWorktreeRestoreError({ threadId: input.threadId, cause }),
+                    ),
+              ),
             ),
           ),
-        ),
-      );
+        );
+    }
 
     const dispatched = yield* dispatch({
       type: "message.dispatch",
