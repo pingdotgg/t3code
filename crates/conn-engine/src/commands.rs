@@ -162,11 +162,7 @@ pub(crate) fn is_active(run: &Value) -> bool {
 }
 
 pub(crate) fn active_run(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<Value>> {
-    Ok(tx
-        .entities(thread_id, "runs")?
-        .into_iter()
-        .rev()
-        .find(is_active))
+    tx.active_run(thread_id)
 }
 
 /// Queued runs in delivery order: `queuePosition`, then ordinal.

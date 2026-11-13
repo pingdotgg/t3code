@@ -162,7 +162,9 @@ pub(crate) async fn subscribe_thread(
                     return Ok(Some((items, high)));
                 }
             }
-            let projection = store.thread_projection(&id)?.unwrap_or(Value::Null);
+            let projection = store
+                .thread_projection_with(&id, omit_local)?
+                .unwrap_or(Value::Null);
             Ok(Some((
                 vec![snapshot_item(projection, high, dedupe, omit_local)],
                 high,
@@ -292,13 +294,12 @@ fn snapshot_item(mut projection: Value, high: u64, dedupe: bool, omit_local: boo
         }
     }
     let mut snapshot = json!({"kind": "snapshot", "snapshotSequence": high});
-    // Every turn item of this engine is a local visible row, so all of them leave `turnItems`.
+    // Every turn item of this engine is a local visible row, so `turnItems` was built empty.
     if omit_local
-        && projection["turnItems"]
+        && projection["visibleTurnItems"]
             .as_array()
-            .is_some_and(|items| !items.is_empty())
+            .is_some_and(|rows| !rows.is_empty())
     {
-        projection["turnItems"] = json!([]);
         snapshot["turnItemsOmitLocalVisible"] = json!(true);
     }
     snapshot["projection"] = projection;

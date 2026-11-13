@@ -273,6 +273,17 @@ impl Store {
 
     /// `OrchestrationV2ThreadProjection`, or `None` for an unknown or deleted thread.
     pub(crate) fn thread_projection(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        self.thread_projection_with(thread_id, false)
+    }
+
+    /// The projection, built with one copy of each turn item: it lives in `visibleTurnItems`,
+    /// and `turnItems` holds the same values unless `omit_local_items` (the client restores
+    /// them from `visibleTurnItems` when the snapshot says `turnItemsOmitLocalVisible`).
+    pub(crate) fn thread_projection_with(
+        &self,
+        thread_id: &str,
+        omit_local_items: bool,
+    ) -> StoreResult<Option<Value>> {
         let row = self
             .conn
             .query_row(
@@ -294,24 +305,22 @@ impl Store {
         let mut projection = serde_json::Map::new();
         projection.insert("thread".into(), parse(thread));
         for kind in COLLECTIONS {
-            projection.insert(
-                kind.into(),
-                Value::Array(entities(&self.conn, thread_id, kind)?),
-            );
-        }
-        let mut items: Vec<&Value> = projection["turnItems"]
-            .as_array()
-            .map(|a| a.iter().collect())
-            .unwrap_or_default();
-        items.sort_by(|a, b| {
-            let key = |v: &Value| {
-                (
-                    v["ordinal"].as_u64().unwrap_or(0),
-                    v["id"].as_str().map(str::to_owned),
-                )
+            let rows = if kind == "turnItems" {
+                vec![]
+            } else {
+                entities(&self.conn, thread_id, kind)?
             };
-            key(a).cmp(&key(b))
-        });
+            projection.insert(kind.into(), Value::Array(rows));
+        }
+        // Turn items in timeline order, read once and moved into their rows.
+        let items = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+             ORDER BY ordinal, id",
+            [thread_id],
+        )?;
+        if !omit_local_items {
+            projection.insert("turnItems".into(), Value::Array(items.clone()));
+        }
         let visible: Vec<Value> = items
             .into_iter()
             .enumerate()
@@ -320,7 +329,7 @@ impl Store {
                     "position": position,
                     "visibility": "local",
                     "sourceThreadId": thread_id,
-                    "sourceItemId": item["id"],
+                    "sourceItemId": item["id"].clone(),
                     "item": item,
                 })
             })
@@ -626,6 +635,21 @@ impl Tx<'_> {
             .map(parse)
             .collect();
         Ok(rows)
+    }
+
+    /// The newest run in an active status, read without loading the thread's other runs.
+    pub(crate) fn active_run(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        self.tx
+            .query_row(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+                 AND json_extract(body, '$.status') IN ('preparing', 'starting', 'running', 'waiting')
+                 ORDER BY ordinal DESC LIMIT 1",
+                [thread_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|body| body.map(parse))
+            .map_err(err)
     }
 
     pub(crate) fn count(&self, thread_id: &str, kind: &str) -> StoreResult<u64> {

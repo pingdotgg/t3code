@@ -23,6 +23,10 @@ fake-provider = []
 name = "export_turn"
 required-features = ["fake-provider"]
 
+[[example]]
+name = "memory_load"
+required-features = ["fake-provider"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 
