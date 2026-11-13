@@ -882,9 +882,8 @@ function ThreadDetailBody(
         },
       };
     }
-    const threadGoal = props.selectedThread.goal ?? props.selectedThread.previousProviderGoal;
-    if (threadGoal !== null && contentPresentationKind === "ready") {
-      const goal = presentProviderGoal(threadGoal, false);
+    if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
+      const goal = presentProviderGoal(props.selectedThread.goal, false);
       return {
         kind: "goal",
         label: goal.title,

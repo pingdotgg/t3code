@@ -91,8 +91,7 @@ export function goalNowItem(input: {
   readonly threadId: ThreadId;
   readonly goal: OrchestrationV2ProviderGoal;
   readonly isWorking: boolean;
-  /** Null when an earlier provider owns the goal: only it can resume or clear it. */
-  readonly onSendCommand: ((text: string, failureMessage: string) => Promise<void>) | null;
+  readonly onSendCommand: (text: string, failureMessage: string) => Promise<void>;
 }): ThreadNowItem {
   const { isWorking, onSendCommand } = input;
   const presentation = presentProviderGoal(input.goal, isWorking);
@@ -105,27 +104,26 @@ export function goalNowItem(input: {
         : `${presentation.title} · ${presentation.usage}`,
     description: presentation.objective,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
-    actions:
-      onSendCommand === null ? null : (
-        <>
-          {presentation.canResume && !isWorking ? (
-            <>
-              <InlineButton
-                onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
-              >
-                Resume
-              </InlineButton>
-              <span aria-hidden>·</span>
-            </>
-          ) : null}
-          <InlineButton
-            tone="muted"
-            onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
-          >
-            Clear
-          </InlineButton>
-        </>
-      ),
+    actions: (
+      <>
+        {presentation.canResume && !isWorking ? (
+          <>
+            <InlineButton
+              onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
+            >
+              Resume
+            </InlineButton>
+            <span aria-hidden>·</span>
+          </>
+        ) : null}
+        <InlineButton
+          tone="muted"
+          onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
+        >
+          Clear
+        </InlineButton>
+      </>
+    ),
   };
 }
 

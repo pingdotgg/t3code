@@ -573,16 +573,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
   const activeGoal = activeThreadShell?.goal ?? null;
-  const shownGoal = activeGoal ?? activeThreadShell?.previousProviderGoal ?? null;
   const goalNow =
-    activeThread && shownGoal !== null
+    activeThread && activeGoal !== null
       ? goalNowItem({
           threadId: activeThread.id,
-          goal: shownGoal,
-          // The active provider's work is not this goal's, and /goal would reach that provider.
-          ...(activeGoal === null
-            ? { isWorking: false, onSendCommand: null }
-            : { isWorking, onSendCommand: sendStandaloneCommandStable }),
+          goal: activeGoal,
+          isWorking,
+          onSendCommand: sendStandaloneCommandStable,
         })
       : null;
 
