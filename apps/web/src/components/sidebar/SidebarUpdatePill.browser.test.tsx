@@ -130,6 +130,21 @@ describe("SidebarUpdatePill update everything", () => {
     expect(document.activeElement).not.toBe(button.element());
   });
 
+  it("keeps the nightly changelog reachable by assistive technology after opening the dialog", async () => {
+    setup(nightlyUpdate(RELEASE_NOTES), { hasUpdates: true });
+    await using _screen = await render(<SidebarUpdatePill />);
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+
+    const exposed = [...document.querySelectorAll("li, p, div, span")].filter(
+      (element) =>
+        element.textContent?.trim() === "Faster sidebar." &&
+        element.closest('[aria-hidden="true"], [inert]') === null,
+    );
+    expect(exposed).not.toHaveLength(0);
+  });
+
   it("returns focus to the update button after Escape", async () => {
     setup(null, { hasUpdates: true });
     await using screen = await render(<SidebarUpdatePill />);
