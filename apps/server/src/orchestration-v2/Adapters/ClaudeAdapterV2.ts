@@ -1986,6 +1986,7 @@ export function makeClaudeQueryOptions(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
+  readonly hooks?: ClaudeQueryOptions["hooks"];
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
@@ -2138,9 +2139,16 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    ...(input.hooks === undefined && !deviceInstructions
+      ? {}
+      : {
+          hooks: {
+            ...input.hooks,
+            ...(deviceInstructions
+              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
+              : {}),
+          },
+        }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -4846,6 +4854,10 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // Session crons (CronCreate, /loop) live only in this process, and Stop's snapshot is their
+  // only report. `held` pins the idle session with no cap, so it counts only crons a cleanly
+  // ended turn reported: `reported` is the latest Stop, adopted or dropped by the turn's result.
+  readonly sessionCrons: { reported: number | null; held: number };
   // Subagents this process still ran when a replacement took over; only its exit can end them.
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
   // The SDK's per-process model ledger at the last result; a new process starts at zero.
@@ -12147,6 +12159,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const sessionCrons: ClaudeLiveQueryContext["sessionCrons"] = { reported: null, held: 0 };
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,
@@ -12186,6 +12199,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
+            hooks: {
+              Stop: [
+                {
+                  hooks: [
+                    (hookInput) => {
+                      if (hookInput.hook_event_name === "Stop") {
+                        sessionCrons.reported = hookInput.session_crons?.length ?? 0;
+                      }
+                      return Promise.resolve({ continue: true });
+                    },
+                  ],
+                },
+              ],
+            },
             onUserDialog,
             onElicitation,
             supportedDialogKinds: ["resume_return"],
@@ -12248,6 +12275,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             handedOffSubagents: new Set(),
+            sessionCrons,
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
@@ -12303,6 +12331,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.permissionMode = message.permissionMode;
                   }
                   if (message.type === "result") {
+                    // A Stop hook can resume the turn, so a snapshot outlives its crons when the
+                    // turn then fails. A result with no Stop before it ended no turn.
+                    if (message.subtype !== "success" || message.is_error) {
+                      sessionCrons.held = 0;
+                    } else if (sessionCrons.reported !== null) {
+                      sessionCrons.held = sessionCrons.reported;
+                    }
+                    sessionCrons.reported = null;
                     const ledger = claudeModelLedger(message.modelUsage);
                     const growth = claudeLedgerDelta(context.modelLedger, ledger);
                     if (growth !== undefined) resultLedgerUsage.set(message, growth);
@@ -13163,6 +13199,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return false;
           }),
+          // Not background work: a cron shows nowhere and must not refuse a model or mode change.
+          hasScheduledWork: Ref.get(queryContext).pipe(
+            Effect.map((live) => live !== null && !live.stopping && live.sessionCrons.held > 0),
+          ),
           // Untraced: the run's event stream calls this once per provider event.
           hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
             const nativeThreadId = providerThread.nativeThreadRef?.nativeId;

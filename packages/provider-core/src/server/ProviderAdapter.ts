@@ -669,6 +669,11 @@ export interface ProviderAdapterV2SessionRuntime {
   /** Manager runtimes broadcast independent subscriptions; adapters may expose only a single-consumer stream. */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  /**
+   * Jobs the live process will start by itself later. They keep an idle session alive with no
+   * pin cap, so report false once none remain. They never block a detach the user asked for.
+   */
+  readonly hasScheduledWork?: Effect.Effect<boolean>;
   /** Root-subscription probe; replacement checks opt in to subagents owned by the live process. */
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,

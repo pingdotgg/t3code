@@ -14,6 +14,7 @@ import type {
   SDKMessage,
   SDKResultMessage,
   SDKUserMessage,
+  SessionCronSummary,
   SpawnedProcess,
   SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -12179,6 +12180,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("holds an idle session for the session crons its last clean turn reported", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const cron: SessionCronSummary = {
+          id: "4e805017",
+          schedule: "20 12 22 10 *",
+          recurring: false,
+          prompt: "Append `date -u` to /tmp/cron.txt",
+        };
+        // The SDK reports CronCreate and /loop jobs only to the Stop hook, before the result.
+        const runTurn = Effect.fnUntraced(function* (
+          ordinal: number,
+          crons: ReadonlyArray<SessionCronSummary>,
+          failed?: true,
+        ) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-claude-session-cron:${ordinal}`),
+              text: "Continue.",
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+            }),
+          );
+          yield* Effect.promise(() =>
+            Promise.all(
+              (harness.getOpenedOptions()?.hooks?.Stop ?? []).flatMap((matcher) =>
+                matcher.hooks.map((hook) =>
+                  hook(
+                    {
+                      hook_event_name: "Stop",
+                      session_id: WAKE_NATIVE_SESSION,
+                      transcript_path: "/tmp/transcript.jsonl",
+                      cwd: "/tmp",
+                      stop_hook_active: false,
+                      background_tasks: [],
+                      session_crons: [...crons],
+                    },
+                    undefined,
+                    { signal: new AbortController().signal },
+                  ),
+                ),
+              ),
+            ),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000001343${ordinal}`,
+              result: failed ? "Usage limit reached." : "Done.",
+              ...(failed
+                ? { isError: true, apiErrorStatus: 429, terminalReason: "api_error" as const }
+                : {}),
+            }),
+          );
+          yield* harness.awaitTerminal(ordinal);
+          return yield* harness.runtime.hasScheduledWork ?? Effect.succeed(false);
+        });
+
+        assert.isTrue(yield* runTurn(1, [cron]), "a pending cron must hold the idle session");
+        assert.isFalse(
+          yield* harness.hasPendingBackgroundWork,
+          "a cron must not refuse a model or mode change",
+        );
+        // A Stop hook resumed the turn, which could delete the cron before the usage limit.
+        assert.isFalse(
+          yield* runTurn(2, [cron], true),
+          "a failed turn must not hold on the Stop snapshot it outlived",
+        );
+        assert.isTrue(yield* runTurn(3, [cron]));
+        assert.isFalse(yield* runTurn(4, []), "a deleted or fired cron must release the session");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

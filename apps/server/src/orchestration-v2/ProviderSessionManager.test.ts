@@ -457,6 +457,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    readonly hasScheduledWork?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
@@ -565,6 +566,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.hasScheduledWork === undefined
+            ? {}
+            : { hasScheduledWork: options.hasScheduledWork }),
           ...(options.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : {
@@ -639,6 +643,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly hasScheduledWork?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
@@ -680,6 +685,7 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.hasScheduledWork === undefined ? {} : { hasScheduledWork: input.hasScheduledWork }),
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
@@ -3555,6 +3561,58 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
     yield* effect.pipe(
       Effect.provide(
         layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite, beforeTurnItemsWrite }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps an idle session alive while it has scheduled work", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const scheduled = yield* Ref.make(true);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-scheduled-work",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-scheduled-work",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+
+      // A job set for later in the night must outlive the pin cap.
+      yield* TestClock.adjust("5 seconds");
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+
+      yield* Ref.set(scheduled, false);
+      yield* TestClock.adjust("1 second");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          maxIdlePinMs: 2000,
+          hasScheduledWork: Ref.get(scheduled),
+        }),
       ),
     );
   }),
