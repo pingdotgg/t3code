@@ -452,6 +452,7 @@ it("readThread returns the newest items that fit the response budget", async () 
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretDeliveries.SecretDeliveries)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
