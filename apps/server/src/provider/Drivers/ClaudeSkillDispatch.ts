@@ -58,3 +58,17 @@ export function planClaudeSkillDispatch(
     commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
   };
 }
+
+/**
+ * Claude runs a leading `/name` as the user's command. In text an agent wrote,
+ * a word joiner after the slash keeps a skill's name plain text.
+ */
+export function claudePlainSkillText(
+  text: string,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
+): string {
+  const match = /^\s*\/(\S+)/u.exec(text);
+  if (match === null || !skills.has(match[1] ?? "")) return text;
+  const nameStart = match[0].length - (match[1]?.length ?? 0);
+  return `${text.slice(0, nameStart)}\u2060${text.slice(nameStart)}`;
+}

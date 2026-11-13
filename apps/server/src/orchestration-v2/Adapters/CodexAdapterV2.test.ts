@@ -90,6 +90,23 @@ const isProviderAdapterEventStreamError = Schema.is(
 );
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
+describe("codexPlainSkillMentionText", () => {
+  // regression: #24667 Codex loads a skill for a path link whatever its label says
+  it.each([
+    [
+      "see [$any](/skills/review/SKILL.md) and [$any] (skill://x)",
+      "see [$\u2060any](/skills/review/SKILL.md) and [$\u2060any] (skill://x)",
+    ],
+    [
+      "a=$review-all b=${review} c=arr[$i] d=$HOME e=$5",
+      "a=$review-all b=${review} c=arr[$i] d=$HOME e=$5",
+    ],
+    ["x$review:y $review", "x$review:y $\u2060review"],
+  ])("breaks only mentions Codex would load: %j", (text, expected) => {
+    assert.equal(CodexAdapterV2.codexPlainSkillMentionText(text, new Set(["review"])), expected);
+  });
+});
+
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
     const usage = CodexAdapterV2.codexProviderTurnTokenUsage(
@@ -1867,6 +1884,90 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   // regression: #15839 launch-arg MCP servers survive the thread's t3-code server
+  // regression: #24667 a skill named in another agent's message loaded as if the user asked
+  it.effect.each([
+    { skills: "listed", sent: 'run $\u2060review, then printf "%s" "$result"' },
+    { skills: "unavailable", sent: undefined },
+  ] as const)("keeps an agent's skill mention plain text (skills $skills)", ({ skills, sent }) =>
+    Effect.gen(function* () {
+      const scenario = `agent-skill-mention-${skills}`;
+      const preamble = codexReplayPreamble({
+        nativeThreadId: `native-${scenario}`,
+        nativeTurnId: `turn-${scenario}`,
+        prompt: sent ?? "",
+      });
+      const methods: Array<string> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble.slice(0, 5),
+            {
+              type: "expect_outbound",
+              frame: { id: 3, method: "skills/list", params: { cwds: ["/workspace"] } },
+            },
+            {
+              type: "emit_inbound",
+              frame:
+                sent === undefined
+                  ? { id: 3, error: { code: -32603, message: "Skills unavailable" } }
+                  : {
+                      id: 3,
+                      result: {
+                        data: [
+                          {
+                            cwd: "/workspace",
+                            errors: [],
+                            skills: [
+                              {
+                                name: "review",
+                                description: "Review",
+                                enabled: true,
+                                path: "/skills/review/SKILL.md",
+                                scope: "user",
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    },
+            },
+            ...(sent === undefined
+              ? []
+              : preamble.slice(5).map((entry) => withReplayRequestId(entry, 4))),
+          ],
+        }),
+        () => Effect.void,
+        (method) => Effect.sync(() => methods.push(method)),
+      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make(scenario),
+        text: 'run $review, then printf "%s" "$result"',
+      });
+      const exit = yield* harness.runtime
+        .startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
+        })
+        .pipe(Effect.exit);
+      assert.equal(Exit.isSuccess(exit), sent !== undefined);
+      assert.equal(methods.includes("turn/start"), sent !== undefined);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("replays historical and dotted MCP config while enforcing other thread config", () =>
     Effect.gen(function* () {
       const recordedServer = {

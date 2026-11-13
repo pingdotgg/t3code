@@ -70,6 +70,15 @@ export const ProviderAdapterV2TurnMessage = Schema.Struct({
 });
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
 
+/**
+ * Text an agent or the server wrote for it, such as a `t3_thread_send` message or a
+ * delegated task's output. A skill it names is not the user's request to run that skill.
+ * A scheduled task's prompt is its owner's standing request, so it is not included.
+ */
+export function isAgentWrittenTurnMessage(message: ProviderAdapterV2TurnMessage): boolean {
+  return message.createdBy === "agent" && message.scheduledTaskId == null;
+}
+
 export const ProviderAdapterV2SessionStatus = Schema.Literals([
   "starting",
   "ready",

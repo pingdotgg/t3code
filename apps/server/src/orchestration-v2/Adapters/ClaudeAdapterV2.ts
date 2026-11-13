@@ -166,6 +166,7 @@ import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
+  claudePlainSkillText,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -5511,6 +5512,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+    );
+
+  const skillInput = (
+    message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+    text: string,
+    cwd: string | null,
+  ) =>
+    userInvocableSkills(cwd).pipe(
+      Effect.map((skills) =>
+        ProviderAdapter.isAgentWrittenTurnMessage(message)
+          ? { text: claudePlainSkillText(text, skills) }
+          : { text, skills },
+      ),
     );
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -12437,7 +12451,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptUuid === null
                 ? null
                 : yield* makeClaudeUserMessageWithAttachments({
-                    text: promptText,
+                    ...(yield* skillInput(
+                      turnInput.message,
+                      promptText,
+                      turnInput.runtimePolicy.cwd,
+                    )),
                     // Mentions in inline handoff history are history, not this turn's skill.
                     ...(turnInput.inlineContextLength === undefined
                       ? {}
@@ -12451,7 +12469,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -12942,20 +12959,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? steerSelection
                 : undefined;
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
-              text: applyClaudePromptEffortPrefix(
-                turnInput.message.text,
-                (
-                  liveSteerSelection ??
-                  compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
-                ).promptEffort,
-              ),
+              ...(yield* skillInput(
+                turnInput.message,
+                applyClaudePromptEffortPrefix(
+                  turnInput.message.text,
+                  (
+                    liveSteerSelection ??
+                    compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+                  ).promptEffort,
+                ),
+                currentTurn.input.runtimePolicy.cwd,
+              )),
               attachments: turnInput.message.attachments,
               priority: "now",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

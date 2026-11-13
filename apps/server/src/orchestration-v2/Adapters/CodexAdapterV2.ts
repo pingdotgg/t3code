@@ -454,6 +454,18 @@ function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
+const CODEX_NATIVE_MENTION = /(\[?)\$([a-zA-Z0-9_:-]+)(?=(\]\s*\()?)/g;
+
+/**
+ * Codex loads a skill for `$name` anywhere in text and for any `[$name](path)`
+ * link. In text an agent wrote, a word joiner after the `$` keeps those plain.
+ */
+export function codexPlainSkillMentionText(text: string, skillNames: ReadonlySet<string>): string {
+  return text.replace(CODEX_NATIVE_MENTION, (match, open: string, name: string, link?: string) =>
+    skillNames.has(name) || (open !== "" && link !== undefined) ? `${open}$\u2060${name}` : match,
+  );
+}
+
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
 const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
 
@@ -3556,16 +3568,42 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // Breaking every `$` would corrupt shell text, so delivery fails when
+        // Codex cannot say which names are skills.
+        const agentMessageText = Effect.fn("CodexAdapterV2.agentMessageText")(function* (
+          text: string,
+          cwd: string | null,
+        ) {
+          if (!text.includes("$")) return text;
+          const response = yield* client
+            .request("skills/list", cwd === null ? {} : { cwds: [cwd] })
+            .pipe(
+              Effect.mapError((cause) =>
+                toProtocolError(
+                  "Codex could not list its skills, so an agent's message containing `$` was not delivered.",
+                  cause,
+                ),
+              ),
+            );
+          return codexPlainSkillMentionText(
+            text,
+            new Set(response.data.flatMap((entry) => entry.skills.map((skill) => skill.name))),
+          );
+        });
+
         const toCodexInput = Effect.fn("CodexAdapterV2.toCodexInput")(function* (
           turnInput: Pick<
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
           >,
+          cwd: string | null,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text: ProviderAdapter.isAgentWrittenTurnMessage(turnInput.message)
+              ? yield* agentMessageText(turnInput.message.text, cwd)
+              : codexSkillMentionText(turnInput.message.text),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
@@ -7509,13 +7547,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               turnInput,
               threadId,
               command.type === "set"
-                ? toCodexInput({
-                    ...turnInput,
-                    message: {
-                      ...turnInput.message,
-                      text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                ? toCodexInput(
+                    {
+                      ...turnInput,
+                      message: {
+                        ...turnInput.message,
+                        text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
+                      },
                     },
-                  })
+                    turnInput.runtimePolicy.cwd,
+                  )
                 : Effect.succeed([]),
             );
           },
@@ -7820,12 +7861,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 goalsPausedForWake.has(nativeThreadId) &&
                 goalsByNativeThread.get(nativeThreadId)?.status === "paused"
               ) {
-                return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
+                return yield* activateGoal(
+                  turnInput,
+                  nativeThreadId,
+                  toCodexInput(turnInput, turnInput.runtimePolicy.cwd),
+                );
               }
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
+                  ? yield* toCodexInput(turnInput, turnInput.runtimePolicy.cwd)
                   : [],
               );
             }).pipe(
@@ -7866,7 +7911,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const codexInput = yield* toCodexInput(turnInput);
+              const codexInput = yield* toCodexInput(turnInput, activeTurn.input.runtimePolicy.cwd);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

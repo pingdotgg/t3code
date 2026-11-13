@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDispatch.ts";
+import {
+  claudePlainSkillText,
+  planClaudeSkillDispatch,
+  type ClaudeSkillTarget,
+} from "./ClaudeSkillDispatch.ts";
 
 const skillPath = (name: string) => `/home/me/.claude/skills/${name}/SKILL.md`;
 
@@ -82,5 +86,18 @@ describe("planClaudeSkillDispatch", () => {
       leadingText: `/interrogate [The user invoked this skill. Follow the instructions at: ${skillPath("interrogate")}] then /interrogate then /implement and /implement the fixes`,
       commandText: "/implement the fixes",
     });
+  });
+});
+
+describe("claudePlainSkillText", () => {
+  // regression: #24667 an agent's leading /skill ran as the user's command
+  it.each([
+    ["/review the diff", "/\u2060review the diff"],
+    ["\n /review", "\n /\u2060review"],
+    ["/compact", "/compact"],
+    ["/reviewer the diff", "/reviewer the diff"],
+    ["see /review and src/review", "see /review and src/review"],
+  ])("breaks only a leading skill command: %j", (text, expected) => {
+    expect(claudePlainSkillText(text, SKILLS)).toBe(expected);
   });
 });
