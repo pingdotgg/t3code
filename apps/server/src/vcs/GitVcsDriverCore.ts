@@ -2098,10 +2098,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       branch = branchNameFromHeadRef(branchResult.stdout);
     }
     const currentUpstreamRef = yield* readCurrentUpstreamRef(cwd);
-    let upstreamRef =
-      currentUpstreamRef === null
-        ? null
-        : (parseUpstreamRefByFirstSeparator(currentUpstreamRef)?.upstreamRef ?? null);
+    let upstreamRef = currentUpstreamRef;
     // Trimming a remote that starts with Unicode whitespace can leave a leading slash.
     if (currentUpstreamRef?.startsWith("/")) {
       upstreamRef = (yield* resolveCurrentUpstream(cwd, currentUpstreamRef))?.upstreamRef ?? null;
@@ -4708,9 +4705,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           runGit(
             "GitVcsDriver.createWorktree.updateSubmodules",
             worktreePath,
-            submoduleMode.value === "recursive"
-              ? ["submodule", "update", "--init", "--recursive"]
-              : ["submodule", "update", "--init"],
+            [
+              "submodule",
+              "update",
+              "--init",
+              ...(submoduleMode.value === "recursive" ? ["--recursive"] : []),
+              // Git reports transfer progress to a pipe only when forced.
+              ...(onSubmoduleLine ? ["--progress"] : []),
+            ],
             {
               // Cloning scales with remote size; let it finish or be cancelled, like worktree add.
               timeoutMs: null,
@@ -4718,6 +4720,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ? {
                     env: { LANGUAGE: "C" },
                     progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+                    // Progress for many submodules can pass the output cap; truncate instead of failing.
+                    appendTruncationMarker: true,
+                    keepLineCallbacksAfterTruncation: true,
                   }
                 : {}),
             },
@@ -5301,15 +5306,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : newTrackingBranch
-            ? ["checkout", newTrackingBranch]
-            : remoteExists && !localTrackingBranch
-              ? ["checkout", "--track", input.refName]
-              : remoteExists && localTrackingBranch
-                ? ["checkout", localTrackingBranch]
-                : ["checkout", input.refName];
+        : newTrackingBranch
+          ? ["checkout", newTrackingBranch]
+          : remoteExists && !localTrackingBranch
+            ? ["checkout", "--track", input.refName]
+            : remoteExists && localTrackingBranch
+              ? ["checkout", localTrackingBranch]
+              : ["checkout", input.refName];
 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
 

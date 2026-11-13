@@ -3873,6 +3873,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports a local upstream without a slash and its divergence", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const initialBranch = yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]);
+        yield* git(cwd, ["branch", "feature"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "advance base"]);
+        yield* git(cwd, ["checkout", "feature"]);
+        yield* git(cwd, ["branch", `--set-upstream-to=${initialBranch}`]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const remoteStatus = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+        assert.equal(remoteStatus.upstreamRef, initialBranch);
+        assert.equal(remoteStatus.hasUpstream, true);
+        assert.equal(remoteStatus.aheadCount, 0);
+        assert.equal(remoteStatus.behindCount, 1);
+      }),
+    );
+
     it.effect("does not open a project folder laid out as a bare repository", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -4939,6 +4958,58 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect.each(["untracked", "other-remote"] as const)(
+      "refuses a remote switch that collides with a local branch (%s)",
+      (tracking) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const remote = yield* makeTmpDir("git-remote-");
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "upstream", remote]);
+          yield* git(cwd, ["push", "upstream", "HEAD:refs/heads/feature"]);
+          yield* git(cwd, ["fetch", "upstream"]);
+          yield* git(cwd, ["checkout", "--no-track", "-b", "feature"]);
+          yield* git(cwd, ["commit", "--allow-empty", "-m", "Local work"]);
+          if (tracking === "other-remote") {
+            yield* git(cwd, ["remote", "add", "origin", remote]);
+            yield* git(cwd, ["fetch", "origin"]);
+            yield* git(cwd, ["branch", "--set-upstream-to=origin/feature", "feature"]);
+          }
+          const featureHead = yield* git(cwd, ["rev-parse", "feature"]);
+          const upstream = yield* git(cwd, [
+            "for-each-ref",
+            "--format=%(upstream)",
+            "refs/heads/feature",
+          ]);
+          yield* git(cwd, ["checkout", initialBranch]);
+          const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* writeTextFile(cwd, "README.md", "Uncommitted work\n");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const result = yield* driver
+            .switchRef({ cwd, refName: "upstream/feature" })
+            .pipe(Effect.result);
+          assert.isTrue(Result.isFailure(result));
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), head);
+          assert.equal(yield* git(cwd, ["rev-parse", "feature"]), featureHead);
+          assert.equal(
+            yield* git(cwd, ["for-each-ref", "--format=%(upstream)", "refs/heads/feature"]),
+            upstream,
+          );
+          assert.equal(
+            yield* (yield* FileSystem.FileSystem).readFileString(
+              (yield* Path.Path).join(cwd, "README.md"),
+            ),
+            "Uncommitted work\n",
+          );
+          // Selecting the existing local branch remains an explicit, attached checkout.
+          assert.equal((yield* driver.switchRef({ cwd, refName: "feature" })).refName, "feature");
+          assert.equal(yield* git(cwd, ["symbolic-ref", "HEAD"]), "refs/heads/feature");
+        }),
+    );
+
     it.effect("rejects a missing branch without restoring a matching dirty file", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -5527,7 +5598,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
+        // A file URL transfers a pack like a network remote; a plain path hardlinks silently.
+        yield* git(cwd, ["submodule", "add", NodeURL.pathToFileURL(submoduleRepo).href, "shared"]);
         yield* git(cwd, ["commit", "-m", "add submodule"]);
         const recordedHead = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
         yield* writeTextFile(submoduleRepo, "SHARED.md", "# newer remote default\n");
@@ -5602,7 +5674,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(pathService.join(worktreePath, "shared"), ["status", "--porcelain"]),
           "",
         );
-        if (progress) assert.isNotEmpty(yield* Ref.get(lines));
+        if (progress) {
+          assert.isTrue(
+            (yield* Ref.get(lines)).some((line) => line.startsWith("Receiving objects")),
+          );
+        }
       }).pipe(withGitFileProtocol),
     );
 
