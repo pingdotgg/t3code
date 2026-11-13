@@ -1975,6 +1975,7 @@ it.effect("a snapshot's network entries keep request paths but not their credent
         "http://127.0.0.1:18457/api/magic?otp=987654&next=/",
         "http://127.0.0.1:18457/api/data?access_token=SYNTHETICACCESSTOKEN&q=ok",
         "http://127.0.0.1:18457/callback?code=SYNTHETICAUTHCODE",
+        "http://admin:SYNTHETICPASSWORD@127.0.0.1:18457/private",
       ]) {
         page.emit("response", {
           url: () => url,
@@ -1998,6 +1999,7 @@ it.effect("a snapshot's network entries keep request paths but not their credent
         expect.stringContaining("http://127.0.0.1:18457/api/magic?"),
         expect.stringContaining("http://127.0.0.1:18457/api/data?"),
         expect.stringContaining("http://127.0.0.1:18457/callback?"),
+        expect.stringContaining("@127.0.0.1:18457/private"),
         expect.stringContaining("http://127.0.0.1:1/beacon?"),
       ]);
       expect(urls[1]).toContain("next=/");
@@ -2007,6 +2009,7 @@ it.effect("a snapshot's network entries keep request paths but not their credent
         "987654",
         "SYNTHETICACCESSTOKEN",
         "SYNTHETICAUTHCODE",
+        "SYNTHETICPASSWORD",
         "FAILEDREQTOKEN",
       ]) {
         expect(JSON.stringify(snapshot.networkEntries)).not.toContain(secret);
