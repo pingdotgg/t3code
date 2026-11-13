@@ -979,6 +979,15 @@ describe("AssetAccess", () => {
         kind: "file",
         path: canonicalCssPath,
       });
+      yield* fileSystem.makeDirectory(path.join(root, "clips"));
+      for (const mediaName of ["clips/clip.mp4", "clips/clip.webm", "clips/clip.mp3"]) {
+        const mediaPath = path.join(root, mediaName);
+        yield* fileSystem.writeFileString(mediaPath, "media bytes");
+        expect(yield* resolveAsset(token, mediaName)).toMatchObject({
+          kind: "file",
+          path: yield* fileSystem.realPath(mediaPath),
+        });
+      }
       for (const extension of ["otf", "ttf", "woff", "woff2"]) {
         const fontName = `preview.${extension}`;
         const fontPath = path.join(root, fontName);
