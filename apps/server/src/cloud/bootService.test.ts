@@ -209,6 +209,9 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         control.managerReachable ||= control.lingerStartsManager;
       }
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
+      if (!failed && command === "launchctl enable gui/501/com.t3tools.t3code.service") {
+        control.enabled = true;
+      }
       const taskMissing =
         input.command === "schtasks" && input.args[0] !== "/Create" && control.task === undefined;
       if (input.command === "schtasks" && !failed) {
@@ -255,13 +258,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ? control.task?.enabled === false
                   ? disabledServiceTask(control.task.xml)
                   : (control.task?.xml ?? "")
-                : input.command === "loginctl" && input.args[0] === "show-user"
-                  ? `${control.linger ?? ""}\n`
-                  : input.args[1] === "is-enabled"
-                    ? control.enabled
-                      ? "enabled\n"
-                      : "disabled\n"
-                    : "",
+                : command === "launchctl print-disabled gui/501"
+                  ? `disabled services = {\n\t"com.t3tools.t3code.service" => ${control.enabled ? "enabled" : "disabled"}\n}\n`
+                  : input.command === "loginctl" && input.args[0] === "show-user"
+                    ? `${control.linger ?? ""}\n`
+                    : input.args[1] === "is-enabled"
+                      ? control.enabled
+                        ? "enabled\n"
+                        : "disabled\n"
+                      : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           taskMissing && input.args.includes("/HRESULT")
@@ -1544,6 +1549,26 @@ process.disconnect();
         "    <key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin</string>",
       );
       expect(plist).not.toContain("\u0001");
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("reports a launch agent disabled after install, and install enables it again", () =>
+    Effect.gen(function* () {
+      const { service, control, commands } = yield* makeHarness("darwin");
+      yield* service.install();
+      // `launchctl disable` persists outside the plist, so every installed file still matches.
+      control.enabled = false;
+
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: false,
+        problems: ["service-disabled"],
+      });
+
+      commands.length = 0;
+      yield* service.install();
+      expect(commands).toContain("launchctl enable gui/501/com.t3tools.t3code.service");
       expect((yield* service.status).current).toBe(true);
     }),
   );
