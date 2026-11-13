@@ -2360,41 +2360,61 @@ it.layer(
     ),
   );
 
-  it.effect("types initial input in order once a fresh shell reads input", () =>
+  it.effect("holds startup writes, in order, until a fresh shell reads input", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
-      const first = yield* manager.open(openInput({ initialInput: "FIRST\r" }));
-      const second = yield* manager.open(openInput({ initialInput: "SECOND\r" }));
+      const afterStartup = (data: string) =>
+        manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data,
+          afterShellStartup: true,
+        });
+      yield* manager.open(openInput());
       const shell = ptyAdapter.processes[0]!;
       const secondWritten = yield* Deferred.make<void>();
       shell.onWrite = (data) => {
         if (data === "SECOND\r") Deferred.doneUnsafe(secondWritten, Effect.void);
       };
 
-      expect([first.initialInputHandled, second.initialInputHandled]).toEqual([true, true]);
+      yield* afterStartup("FIRST\r");
+      // A second action reopens the running terminal before typing.
+      yield* manager.open(openInput());
+      yield* afterStartup("SECOND\r");
       expect(shell.writes).toEqual([]);
+      // Answering an rc-file prompt must not wait behind the held input.
+      yield* manager.write({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, data: "y\r" });
+      expect(shell.writes).toEqual(["y\r"]);
 
       shell.emitData("\x1b[?2004h$ ");
       yield* Deferred.await(secondWritten);
-      expect(shell.writes).toEqual(["FIRST\r", "SECOND\r"]);
+      expect(shell.writes).toEqual(["y\r", "FIRST\r", "SECOND\r"]);
 
-      const third = yield* manager.open(openInput({ initialInput: "THIRD\r" }));
-      expect(third.initialInputHandled).toBe(true);
-      expect(shell.writes).toEqual(["FIRST\r", "SECOND\r", "THIRD\r"]);
+      yield* afterStartup("THIRD\r");
+      expect(shell.writes).toEqual(["y\r", "FIRST\r", "SECOND\r", "THIRD\r"]);
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
   );
 
-  it.effect("drops initial input waiting for a shell that open replaced", () =>
+  it.effect("drops startup writes held for a shell that open replaced", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, baseDir } = yield* createManager(5, { processKillGraceMs: 0 });
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
       const replacementCwd = path.join(baseDir, "replacement");
       yield* fs.makeDirectory(replacementCwd, { recursive: true });
+      const afterStartup = (data: string) =>
+        manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data,
+          afterShellStartup: true,
+        });
 
-      yield* manager.open(openInput({ initialInput: "OLD\r" }));
-      yield* manager.open(openInput({ cwd: replacementCwd, initialInput: "NEW\r" }));
+      yield* manager.open(openInput());
+      yield* afterStartup("OLD\r");
+      yield* manager.open(openInput({ cwd: replacementCwd }));
+      yield* afterStartup("NEW\r");
       const replacement = ptyAdapter.processes[1]!;
       const written = yield* Deferred.make<void>();
       replacement.onWrite = () => Deferred.doneUnsafe(written, Effect.void);
@@ -2405,16 +2425,21 @@ it.layer(
     }),
   );
 
-  it.effect("types initial input into PowerShell without waiting for a line editor", () =>
+  it.effect("types a startup write into PowerShell without waiting for a line editor", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
         env: { PATH: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
       }).pipe(Effect.provide(layerWithHostPlatform("win32")));
 
-      const opened = yield* manager.open(openInput({ initialInput: "npm run dev\r" }));
+      yield* manager.open(openInput());
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "npm run dev\r",
+        afterShellStartup: true,
+      });
 
       expect(ptyAdapter.spawnInputs[0]?.shell).toBe("pwsh.exe");
-      expect(opened.initialInputHandled).toBe(true);
       expect(ptyAdapter.processes[0]?.writes).toEqual(["npm run dev\r"]);
     }),
   );

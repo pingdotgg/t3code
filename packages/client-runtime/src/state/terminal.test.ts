@@ -154,13 +154,15 @@ it("replays the measured grid on every new attachment generation", () => {
   ]);
 });
 
-it("writes the launch's initial input once the first snapshot lands", () => {
+it("sends the launch's initial input once, for the server to type after shell startup", () => {
   const { attached, emit, mount, calls, of } = setup({ initialInput: "pnpm dev\r" });
   mount(attached);
   expect(of("write")).toEqual([]);
   emit({ status: "running", version: 1 });
   emit({ status: "running", version: 2 });
-  expect(of("write")).toEqual([{ threadId, terminalId: "term-1", data: "pnpm dev\r" }]);
+  expect(of("write")).toEqual([
+    { threadId, terminalId: "term-1", data: "pnpm dev\r", afterShellStartup: true },
+  ]);
   // The shell gets the measured grid before the launched command runs.
   expect(calls.map((call) => call.command)).toEqual(["resize", "write"]);
 });
