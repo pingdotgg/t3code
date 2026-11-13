@@ -74,20 +74,19 @@ export const holdWhileWanted = <E, R>(
     Stream.runDrain,
   );
 
-// Reads and the inhibitor retry until they succeed; the cap keeps a host without an
-// inhibitor (e.g. no logind) from retrying and warning constantly.
+// Reads, the event subscription and the inhibitor retry until they succeed; the cap keeps a
+// host without an inhibitor (e.g. no logind) from retrying and warning constantly.
+const backoff = Schedule.exponential("5 seconds").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.minutes(10))),
+  ),
+);
 const retryWithBackoff =
   (message: string) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.tapCause((cause) => Effect.logWarning(message, { cause })),
-      Effect.retry(
-        Schedule.exponential("5 seconds").pipe(
-          Schedule.modifyDelay(({ duration }) =>
-            Effect.succeed(Duration.min(duration, Duration.minutes(10))),
-          ),
-        ),
-      ),
+      Effect.retry(backoff),
     );
 
 class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
@@ -132,7 +131,14 @@ export const layer = Layer.effectDiscard(
           ),
         ),
       ),
-    ).pipe(Stream.mapEffect(() => hasActiveRun));
+    ).pipe(
+      Stream.mapEffect(() => hasActiveRun),
+      // A failed subscription resubscribes, which re-reads the cursor and the snapshot.
+      Stream.tapCause((cause) =>
+        Effect.logWarning("keep-awake run event stream failed", { cause }),
+      ),
+      Stream.retry(backoff),
+    );
     const enabled = Stream.unwrap(
       Effect.gen(function* () {
         const changes = yield* settings.subscribeChanges;
