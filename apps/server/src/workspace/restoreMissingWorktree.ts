@@ -33,6 +33,9 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
   }
 }
 
+// `git worktree remove` skips pnpm junctions on Windows, leaving these behind without a checkout.
+const LEFTOVER_WORKTREE_ENTRIES = new Set(["node_modules", ".next"]);
+
 interface WorktreeThread {
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -42,9 +45,32 @@ interface WorktreeThread {
 
 export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const projects = yield* ProjectService.ProjectService;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+
+  // Only folders holding nothing but leftovers are cleared, never user files.
+  const isLeftoverFolder = (worktreePath: string) =>
+    fileSystem.exists(path.join(worktreePath, ".git")).pipe(
+      Effect.flatMap((hasGit) =>
+        hasGit
+          ? Effect.succeed(false)
+          : fileSystem.readDirectory(worktreePath).pipe(
+              Effect.flatMap((entries) =>
+                Effect.forEach(entries, (entry) =>
+                  LEFTOVER_WORKTREE_ENTRIES.has(entry)
+                    ? fileSystem
+                        .stat(path.join(worktreePath, entry))
+                        .pipe(Effect.map((info) => info.type === "Directory"))
+                    : Effect.succeed(false),
+                ),
+              ),
+              Effect.map((leftovers) => leftovers.every(Boolean)),
+            ),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
     cwd: string,
@@ -116,7 +142,8 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     const { worktreePath, branch } = thread;
     if (worktreePath === null || branch === null) return;
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    if (exists || !(yield* isManagedWorktreePath(worktreePath))) return;
+    const leftover = exists && (yield* isLeftoverFolder(worktreePath));
+    if ((exists && !leftover) || !(yield* isManagedWorktreePath(worktreePath))) return;
     const project = yield* projects.getById(thread.projectId).pipe(
       Effect.map(Option.getOrUndefined),
       Effect.orElseSucceed(() => undefined),
@@ -127,7 +154,9 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       worktreePath,
       branch,
     });
-    yield* recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch }).pipe(
+    // `git worktree add` refuses a non-empty target.
+    yield* (leftover ? fileSystem.remove(worktreePath, { recursive: true }) : Effect.void).pipe(
+      Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
       Effect.mapError((cause) =>
         cause._tag === "WorktreeRecreateNoBaseError"
           ? cause

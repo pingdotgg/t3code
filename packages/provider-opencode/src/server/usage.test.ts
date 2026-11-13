@@ -1,3 +1,4 @@
+import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -12,6 +13,27 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
 import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
+
+const readerWorkers = vi.hoisted(() => ({ started: 0, enabled: false }));
+
+// Statement spies only see the main thread, so reader workers fail to start unless a test enables them.
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeWorkerThreads>();
+  class ReaderWorker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(
+        ...((readerWorkers.enabled
+          ? args
+          : [
+              "throw new Error('reader workers disabled');",
+              { eval: true },
+            ]) as ConstructorParameters<typeof actual.Worker>),
+      );
+      readerWorkers.started++;
+    }
+  }
+  return { ...actual, Worker: ReaderWorker };
+});
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
@@ -141,6 +163,7 @@ describe("readOpenCodeUsage", () => {
         );
       }
       let statements = 0;
+      let bodyReads = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
       yield* Effect.acquireRelease(
         Effect.sync(() =>
@@ -149,6 +172,7 @@ describe("readOpenCodeUsage", () => {
             ...params
           ) {
             statements++;
+            if (this.sourceSQL.includes("data ->")) bodyReads++;
             return originalAll.apply(this, params);
           }),
         ),
@@ -161,6 +185,51 @@ describe("readOpenCodeUsage", () => {
         ["opencode:a", "opencode:b", "opencode:c"],
       );
       assert.isBelow(statements, 10);
+
+      bodyReads = 0;
+      const repeated = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(
+        repeated.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:a", "opencode:b", "opencode:c"],
+      );
+      // An unchanged database must not have its message bodies read and parsed again.
+      assert.strictEqual(bodyReads, 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not reuse rows from a replaced or restored database file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-replaced-" });
+      const write = (name: string, input: number) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const db = yield* openDatabase(path.join(dir, name));
+            yield* db.unsafe("PRAGMA journal_mode = WAL");
+            yield* db.unsafe(
+              "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+            );
+            yield* db.unsafe(
+              "INSERT INTO message(rowid, id, session_id, time_created, time_updated, data) VALUES (1, 'a', 's', 1, 1, ?)",
+              [JSON.stringify({ modelID: "m", tokens: { input } })],
+            );
+          }),
+        );
+      const input = Effect.map(
+        readOpenCodeUsage(dir, 0),
+        (result) => result.files[0]?.records[0]?.totals.uncachedInputTokens,
+      );
+      yield* write("opencode.db", 100);
+      assert.strictEqual(yield* input, 100);
+      yield* write("replacement.db", 900);
+      yield* fileSystem.rename(path.join(dir, "replacement.db"), path.join(dir, "opencode.db"));
+      assert.strictEqual(yield* input, 900);
+      // A backup restored in place keeps the inode and birth time, like `cp -p`.
+      yield* write("backup.db", 500);
+      yield* fileSystem.copyFile(path.join(dir, "backup.db"), path.join(dir, "opencode.db"));
+      yield* fileSystem.utimes(path.join(dir, "opencode.db"), 0, 0);
+      assert.strictEqual(yield* input, 500);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -188,6 +257,27 @@ describe("readOpenCodeUsage", () => {
       const legacy = path.join(dir, "storage", "message", message.sessionID);
       yield* fileSystem.makeDirectory(legacy, { recursive: true });
       yield* fileSystem.writeFileString(path.join(legacy, "msg-1.json"), JSON.stringify(message));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          readerWorkers.enabled = true;
+          readerWorkers.started = 0;
+        }),
+        () => Effect.sync(() => (readerWorkers.enabled = false)),
+      );
+      let mainThreadBodyReads = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            if (this.sourceSQL.includes("data ->")) mainThreadBodyReads++;
+            return originalAll.apply(this, params);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
       const first = yield* readOpenCodeUsage(dir, 0);
       assert.isFalse(first.error);
       const records = first.files.flatMap((file) => file.records);
@@ -212,6 +302,9 @@ describe("readOpenCodeUsage", () => {
         ["opencode:msg-2"],
       );
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
+      // A large database must not be read on the server's event loop.
+      assert.isAbove(readerWorkers.started, 0);
+      assert.strictEqual(mainThreadBodyReads, 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
