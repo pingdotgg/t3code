@@ -41,6 +41,7 @@ import { toastManager } from "../ui/toast";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import {
   checkoutFailureDescription,
+  checkoutUnavailableDescription,
   appendHandoff,
   readableFailure,
 } from "./pullRequestDetail.logic";
@@ -261,7 +262,8 @@ export function writeHandoffToComposer(
 export type PullRequestHandoffDetail = Pick<
   PullRequestDetail,
   "projectId" | "workspaceRoot" | "url"
->;
+> &
+  Partial<Pick<PullRequestDetail, "checkoutUnavailable" | "repository">>;
 
 export function usePullRequestHandoffs({
   environmentId,
@@ -331,6 +333,18 @@ export function usePullRequestHandoffs({
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!detail || handoff !== null) return;
+    const unavailable = checkoutUnavailableDescription({
+      checkoutUnavailable: detail.checkoutUnavailable,
+      repository: detail.repository ?? detail.url,
+    });
+    if (unavailable !== null) {
+      toastManager.add({
+        type: "error",
+        title: `Could not prepare the ${terminology.singular} checkout`,
+        description: unavailable,
+      });
+      return;
+    }
     setHandoff(kind);
     // Dismissing the loading toast cancels the handoff before it touches a draft.
     let cancelled = false;

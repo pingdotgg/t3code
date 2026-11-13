@@ -1084,6 +1084,7 @@ export const make = Effect.gen(function* () {
                         `https://${host}/${repository}`,
                       ),
                       repositoryKey: null,
+                      lentTo: selected.value,
                     };
                   }
                 }
@@ -3779,8 +3780,8 @@ export const make = Effect.gen(function* () {
       });
 
   // Clients check a pull request out in the project its detail names. A project that only lent
-  // its credentials is an unrelated repository, so name a checkout of the repository the host
-  // answered with (a renamed one answers under its new name), else the reference's own project.
+  // the read is an unrelated repository, so name a checkout of the repository the host answered
+  // with (a renamed one answers under its new name) or of the head's fork, else say there is none.
   const detailInCheckoutProject: PullRequestService["Service"]["detail"] = Effect.fn(
     "PullRequestService.detailInCheckoutProject",
   )(function* (input) {
@@ -3788,19 +3789,19 @@ export const make = Effect.gen(function* () {
     const value = yield* credentialCached(detail, route)(input);
     if (route.lentTo === undefined) return value;
     const answered = sourceControlDefinitions.parseChangeRequestUrl(value.url)?.link.repository;
-    const checkout =
-      answered === undefined || answered.toLowerCase() === route.repository.toLowerCase()
-        ? undefined
-        : yield* requireProject({ ...input, repository: answered }).pipe(
-            Effect.map((renamed) => (renamed.lentTo === undefined ? renamed.project : undefined)),
-            Effect.orElseSucceed(() => undefined),
-          );
-    const project = checkout ?? route.lentTo;
+    for (const repository of [answered, value.headRepositoryNameWithOwner]) {
+      if (!repository || repository.toLowerCase() === route.repository.toLowerCase()) continue;
+      const checkout = yield* requireProject({ ...input, repository }).pipe(Effect.option);
+      if (Option.isNone(checkout) || checkout.value.lentTo !== undefined) continue;
+      const { id, title, workspaceRoot } = checkout.value.project;
+      return { ...value, projectId: id, projectTitle: title, workspaceRoot };
+    }
     return {
       ...value,
-      projectId: project.id,
-      projectTitle: project.title,
-      workspaceRoot: project.workspaceRoot,
+      projectId: route.lentTo.id,
+      projectTitle: route.lentTo.title,
+      workspaceRoot: route.lentTo.workspaceRoot,
+      checkoutUnavailable: true,
     };
   });
 

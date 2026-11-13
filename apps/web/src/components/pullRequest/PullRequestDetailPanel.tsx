@@ -138,6 +138,7 @@ import {
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   checkoutFailureDescription,
+  checkoutUnavailableDescription,
   readableFailure,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
@@ -958,6 +959,15 @@ export function PullRequestDetailPanel({
       return;
     }
     if (checkoutRoot === null) return;
+    const unavailable = detail === null ? null : checkoutUnavailableDescription(detail);
+    if (unavailable !== null) {
+      toastManager.add({
+        type: "error",
+        title: `Could not prepare the ${terminology.singular} checkout`,
+        description: unavailable,
+      });
+      return;
+    }
     if (
       !prepareThread.isAllowed ||
       !readEnvironmentScope(actingEnvironmentId, AuthSourceControlWriteScope)

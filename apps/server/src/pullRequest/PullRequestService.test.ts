@@ -2202,7 +2202,7 @@ it.effect("routes a hosted reference to another repository through a project on 
 );
 
 // regression: #16455 handoffs checked the pull request out in the project that lent the read
-it.effect("names a project to check out in, never the one that only lent the read", () =>
+it.effect("names a checkout of the repository, or none, never a project that lent the read", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
     const service = yield* makeService({
@@ -2215,6 +2215,7 @@ it.effect("names a project to check out in, never the one that only lent the rea
         }),
         project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
         project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        project({ id: "fork", title: "fork", workspaceRoot: "/fork", repository: "me/renamed" }),
         project({ id: "inbox", title: "Inbox", workspaceRoot: "/home/alex" }),
       ],
       providers: [
@@ -2227,6 +2228,9 @@ it.effect("names a project to check out in, never the one that only lent the rea
               return {
                 ...hostedChangeRequest("Body"),
                 url: `https://github.com/${repository}/pull/1`,
+                ...(repository === "octocat/upstream"
+                  ? { headRepositoryNameWithOwner: "me/renamed" }
+                  : {}),
               };
             }),
         }),
@@ -2235,17 +2239,25 @@ it.effect("names a project to check out in, never the one that only lent the rea
     const read = (projectId: string, repository: string) =>
       service
         .detail({ projectId: projectId as ProjectId, host: "github.com", repository, number: 1 })
-        .pipe(Effect.map((detail) => [detail.projectId, detail.workspaceRoot]));
+        .pipe(
+          Effect.map((detail) => [
+            detail.projectId,
+            detail.workspaceRoot,
+            detail.checkoutUnavailable ?? false,
+          ]),
+        );
 
-    // No checkout of the repository: the reference's own project, read through the lender.
-    assert.deepStrictEqual(yield* read("web", "acme/api"), ["web", "/web"]);
-    assert.deepStrictEqual(yield* read("inbox", "acme/api"), ["inbox", "/home/alex"]);
+    // No checkout of the repository: still readable from the reference's project, with no target.
+    assert.deepStrictEqual(yield* read("web", "acme/api"), ["web", "/web", true]);
+    assert.deepStrictEqual(yield* read("inbox", "acme/api"), ["inbox", "/home/alex", true]);
     // A renamed repository: its checkout, from its own thread and from another project's.
-    assert.deepStrictEqual(yield* read("app", "old-org/app"), ["app", "/app"]);
-    assert.deepStrictEqual(yield* read("web", "old-org/app"), ["app", "/app"]);
+    assert.deepStrictEqual(yield* read("app", "old-org/app"), ["app", "/app", false]);
+    assert.deepStrictEqual(yield* read("web", "old-org/app"), ["app", "/app", false]);
     assert.deepStrictEqual(seen, ["/unrelated acme/api", "/unrelated old-org/app"]);
+    // A fork-only checkout can take the upstream pull request its fork is the head of.
+    assert.deepStrictEqual(yield* read("fork", "octocat/upstream"), ["fork", "/fork", false]);
     // A checkout under the linked name is still the one named.
-    assert.deepStrictEqual(yield* read("inbox", "acme/app"), ["app", "/app"]);
+    assert.deepStrictEqual(yield* read("inbox", "acme/app"), ["app", "/app", false]);
   }),
 );
 

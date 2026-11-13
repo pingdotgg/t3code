@@ -1449,6 +1449,16 @@ export function checkoutFailureDescription(failure: unknown): string {
   );
 }
 
+/** Why a handoff cannot check this pull request out, when no project is its checkout. */
+export function checkoutUnavailableDescription(detail: {
+  readonly checkoutUnavailable?: boolean | undefined;
+  readonly repository: string;
+}): string | null {
+  return detail.checkoutUnavailable === true
+    ? `No project here is a checkout of ${detail.repository}. Add it as a project, then try again.`
+    : null;
+}
+
 export function resolveBaseFreshness(detail: {
   readonly state: PullRequestState;
   readonly mergeability: PullRequestMergeability;

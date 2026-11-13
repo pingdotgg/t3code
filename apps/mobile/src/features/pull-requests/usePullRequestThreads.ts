@@ -106,6 +106,10 @@ export function usePullRequestThreads(
         throw new Error(
           `Starting work from this ${terminology.shortLabel} requires source control write access.`,
         );
+      if (!thread && pr.checkoutUnavailable === true)
+        throw new Error(
+          `No project here is a checkout of ${pr.repository}. Add it as a project, then try again.`,
+        );
       await waitForComposerDraftsLoaded();
       const draftKey = thread
         ? scopedThreadKey(target.environmentId, ThreadId.make(thread.id))
