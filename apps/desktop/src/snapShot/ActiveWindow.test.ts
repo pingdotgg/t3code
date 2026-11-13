@@ -28,6 +28,7 @@ function macLookup(
     bounds: { x: number; y: number; width: number; height: number };
     alpha?: number;
   }>,
+  accessibilityWindows?: ReadonlyArray<AccessibilityWindow>,
 ) {
   return JSON.stringify({
     owner: {
@@ -37,8 +38,20 @@ function macLookup(
       bundleId: "com.example.editor",
     },
     windows: windows.map((window) => ({ ...window, alpha: window.alpha ?? 1 })),
+    ...(accessibilityWindows ? { accessibilityWindows } : {}),
   });
 }
+
+type AccessibilityWindow = {
+  title: string;
+  onlyButton?: { title: string; identifier: string };
+};
+
+// AX metadata measured on macOS 27.0.1 while ScreenCaptureKit captured the window.
+const sharingIndicator = {
+  title: "Window",
+  onlyButton: { title: "WindowSharingSessionButton", identifier: "" },
+};
 
 it("parses the frontmost macOS window from the osascript lookup", async () => {
   stubMacLookup(
@@ -114,6 +127,35 @@ it.each([
     },
   },
   {
+    name: "the sharing indicator macOS adds while another app captures the window",
+    helpers: [{ id: 33_685, title: "Window", bounds: { x: 166, y: 214, width: 66, height: 20 } }],
+    content: {
+      id: 33_677,
+      title: "T3 Code",
+      bounds: { x: 160, y: 208, width: 900, height: 652 },
+    },
+    accessibility: [sharingIndicator, { title: "T3 Code" }],
+  },
+  {
+    name: "a sharing indicator named by its button identifier",
+    helpers: [
+      { id: 1, title: "Window", bounds: { x: 6, y: 39, width: 66, height: 20 } },
+      { id: 2, title: "", bounds: { x: 0, y: 33, width: 1_512, height: 32 }, alpha: 0 },
+    ],
+    content: {
+      id: 3,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+    accessibility: [
+      {
+        title: "Window",
+        onlyButton: { title: "", identifier: "WindowSharingSessionButton" },
+      },
+      { title: "T3 Code (Nightly)" },
+    ],
+  },
+  {
     name: "a smaller front window's strips with a larger background window",
     helpers: [
       { id: 75, title: "", bounds: { x: 100, y: 139, width: 1_200, height: 41 } },
@@ -128,14 +170,22 @@ it.each([
       { id: 80, title: "Other document", bounds: { x: 0, y: 39, width: 1_800, height: 1_130 } },
     ],
   },
-])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
-  stubMacLookup(macLookup([...helpers, content, ...background]));
+])(
+  "selects the content window behind $name",
+  async ({ helpers, content, background = [], accessibility }) => {
+    stubMacLookup(macLookup([...helpers, content, ...background], accessibility));
 
-  const window = await activeWindow("darwin");
+    const window = await activeWindow("darwin");
 
-  assert.strictEqual(window?.id, content.id);
-  assert.deepEqual(window?.bounds, content.bounds);
-});
+    assert.strictEqual(window?.id, content.id);
+    assert.deepEqual(window?.bounds, content.bounds);
+  },
+);
+
+const okDialog = {
+  title: "Window",
+  onlyButton: { title: "OK", identifier: "" },
+};
 
 it.each([
   { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
@@ -172,19 +222,42 @@ it.each([
     title: "",
     bounds: { x: -250, y: 0, width: 50, height: 1_000 },
   },
-])("keeps a frontmost $name ahead of a larger document", async ({ title, bounds }) => {
-  stubMacLookup(
-    macLookup([
-      { id: 1, title, bounds },
-      { id: 2, title: "Document", bounds: { x: 0, y: 0, width: 800, height: 1_000 } },
-    ]),
-  );
+  {
+    name: "dialog the size of a sharing indicator",
+    title: "Window",
+    bounds: { x: 6, y: 6, width: 66, height: 20 },
+    accessibility: [okDialog, { title: "Document" }],
+  },
+  {
+    name: "small titled dialog without accessibility",
+    title: "Window",
+    bounds: { x: 6, y: 6, width: 66, height: 20 },
+  },
+  {
+    name: "dialog titled like a sharing indicator",
+    title: "Window",
+    bounds: { x: 300, y: 200, width: 400, height: 240 },
+    accessibility: [okDialog, sharingIndicator, { title: "Document" }],
+  },
+])(
+  "keeps a frontmost $name ahead of a larger document",
+  async ({ title, bounds, accessibility }) => {
+    stubMacLookup(
+      macLookup(
+        [
+          { id: 1, title, bounds },
+          { id: 2, title: "Document", bounds: { x: 0, y: 0, width: 800, height: 1_000 } },
+        ],
+        accessibility,
+      ),
+    );
 
-  const window = await activeWindow("darwin");
+    const window = await activeWindow("darwin");
 
-  assert.strictEqual(window?.id, 1);
-  assert.deepEqual(window?.bounds, bounds);
-});
+    assert.strictEqual(window?.id, 1);
+    assert.deepEqual(window?.bounds, bounds);
+  },
+);
 
 it("keeps an untitled content window ahead of a much taller background window", async () => {
   const bounds = { x: 0, y: 0, width: 800, height: 900 };

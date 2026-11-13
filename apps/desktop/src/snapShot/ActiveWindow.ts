@@ -29,6 +29,8 @@ const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
 
+const MAC_SHARING_INDICATOR_BUTTON = "WindowSharingSessionButton";
+
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
     name: Schema.String,
@@ -49,6 +51,16 @@ const MacActiveWindowLookup = Schema.Struct({
       alpha: Schema.Number,
     }),
   ),
+  accessibilityWindows: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        title: Schema.String,
+        onlyButton: Schema.optionalKey(
+          Schema.Struct({ title: Schema.String, identifier: Schema.String }),
+        ),
+      }),
+    ),
+  ),
 });
 const decodeMacActiveWindowLookup = Schema.decodeUnknownSync(
   Schema.fromJsonString(MacActiveWindowLookup),
@@ -57,6 +69,42 @@ const decodeMacActiveWindowLookup = Schema.decodeUnknownSync(
 const MAC_LOOKUP_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
+ObjC.import("ApplicationServices");
+function readAccessibilityWindows(pid) {
+  if (!$.AXIsProcessTrusted()) return undefined;
+  $.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(), 0.25);
+  const copy = (element, name) => {
+    const value = Ref();
+    const error = $.AXUIElementCopyAttributeValue(element, $(name), value);
+    if (error === -25204) throw new Error("accessibility timed out");
+    return error === 0 ? ObjC.castRefToObject(value[0]) : undefined;
+  };
+  const text = (element, name) => {
+    const value = copy(element, name);
+    return value === undefined ? "" : String(ObjC.unwrap(value) || "");
+  };
+  const list = copy($.AXUIElementCreateApplication(pid), "AXWindows");
+  if (list === undefined) return undefined;
+  const windows = [];
+  for (let i = 0; i < Number(list.count); i++) {
+    const window = list.objectAtIndex(i);
+    const children = copy(window, "AXChildren");
+    const child =
+      children !== undefined && Number(children.count) === 1 ? children.objectAtIndex(0) : undefined;
+    windows.push({
+      title: text(window, "AXTitle"),
+      ...(child !== undefined && text(child, "AXRole") === "AXButton"
+        ? {
+            onlyButton: {
+              title: text(child, "AXTitle"),
+              identifier: text(child, "AXIdentifier"),
+            },
+          }
+        : {}),
+    });
+  }
+  return windows;
+}
 function run() {
   const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (app.isNil()) return "";
@@ -84,7 +132,12 @@ function run() {
       alpha: w.objectForKey("kCGWindowAlpha").js,
     });
   }
+  let accessibilityWindows;
+  try {
+    accessibilityWindows = readAccessibilityWindows(pid);
+  } catch (error) {}
   return JSON.stringify({
+    accessibilityWindows,
     owner: {
       name: ownerName,
       processId: pid,
@@ -109,12 +162,45 @@ function runMacLookup(): Promise<string> {
   });
 }
 
+type MacAccessibilityWindow = NonNullable<
+  (typeof MacActiveWindowLookup.Type)["accessibilityWindows"]
+>[number];
+
+function isMacSharingIndicator(window: MacAccessibilityWindow): boolean {
+  const button = window.onlyButton;
+  return (
+    button?.title === MAC_SHARING_INDICATOR_BUTTON ||
+    button?.identifier === MAC_SHARING_INDICATOR_BUTTON
+  );
+}
+
+// macOS puts a titled indicator window in front of a window another app is capturing.
+// AX has no public CGWindowID, so match by title and skip any title a real window also uses.
+function macSharingIndicatorTitles(
+  accessibilityWindows: ReadonlyArray<MacAccessibilityWindow>,
+): ReadonlySet<string> {
+  const titles = new Set(
+    accessibilityWindows
+      .filter((window) => window.title !== "" && isMacSharingIndicator(window))
+      .map((window) => window.title),
+  );
+  for (const window of accessibilityWindows) {
+    if (!isMacSharingIndicator(window)) titles.delete(window.title);
+  }
+  return titles;
+}
+
 async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
   const lookup = decodeMacActiveWindowLookup(output);
+  const sharingIndicatorTitles = macSharingIndicatorTitles(lookup.accessibilityWindows ?? []);
   const visible = lookup.windows.filter(
-    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
+    (window) =>
+      window.alpha > 0 &&
+      window.bounds.width > 0 &&
+      window.bounds.height > 0 &&
+      !sharingIndicatorTitles.has(window.title),
   );
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
