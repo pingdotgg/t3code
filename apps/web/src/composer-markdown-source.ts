@@ -251,7 +251,7 @@ function mapSelection(tr: Transaction, selection: Selection, map: (pos: number) 
 export const collapseShownMarkdownSource: Command = ({ tr }) => {
   const { selection } = tr;
   const type = tr.doc.type.schema.marks[MARKDOWN_SOURCE_MARK];
-  const marks = selection.$from.marks();
+  const marks = tr.storedMarks ?? selection.$from.marks();
   const regions = collapseMarkdownSource(tr);
   // A caret after the closing markers is outside the styles, though parsed text there is inclusive.
   if (type && selection.empty && regions.some(({ to }) => to === selection.from)) {

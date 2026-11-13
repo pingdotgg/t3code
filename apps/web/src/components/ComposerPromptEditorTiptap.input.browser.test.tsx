@@ -616,6 +616,15 @@ describe("Markdown markers around styled text", () => {
       marks: { bold: ["Test"] },
     },
     {
+      name: "bold turned on after typed bold carries across a line break",
+      value: "",
+      caret: 1,
+      keys: `**Test**${isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}"}{Shift>}{Enter}{/Shift}f`,
+      expected: "**Test**\n**f**",
+      // The caret beside f shows it as source.
+      marks: { bold: ["Test"] },
+    },
+    {
       name: "splitting a list item inside bold keeps both halves bold",
       value: "- **bold** after",
       caret: 5,
