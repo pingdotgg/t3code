@@ -1402,6 +1402,8 @@ it.layer(
       process.emitData("\u001b[=c\u001b[=0c");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
+      // BEL is DCS payload, not a terminator: only ST ends the string.
+      process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
       process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
       process.emitData("done\n");
