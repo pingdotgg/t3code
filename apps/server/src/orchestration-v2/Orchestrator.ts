@@ -14031,13 +14031,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      // A cancelled task's completed run ends it interrupted, as does one its parent's Stop
-      // reached: that run can finish its turn and leave background work Stop then kills.
+      // A cancelled task's completed run ends it interrupted, as does one whose provider turn its
+      // parent's Stop interrupted to kill background work. Stop's marker on an idle run names no
+      // provider turn and interrupted nothing.
       const cancelled = task.cancelledRunId === childRun.id;
       const stopped =
         task.completionDelivery?.state === "disposed" &&
         childResult.turnItems.some(
-          (item) => item.runId === childRun.id && item.type === "run_interrupt_request",
+          (item) =>
+            item.runId === childRun.id &&
+            item.type === "run_interrupt_request" &&
+            item.providerTurnId !== null,
         );
       if ((cancelled || stopped) && terminalStatus === "completed")
         outcome = terminalStatus = "interrupted";

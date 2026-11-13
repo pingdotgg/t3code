@@ -19,6 +19,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -4176,7 +4177,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         now,
       });
       // Background launches report their command finished at once; only the roster tracks the work.
-      const seedStoppedChild = (name: string, parentStopped: boolean) =>
+      const seedStoppedChild = (name: string, parentStopped: boolean, reachedTurn: boolean) =>
         Effect.gen(function* () {
           const child = yield* seedRestartCancelledChild({
             parentThreadId: threadId,
@@ -4231,6 +4232,8 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
                 payload: {
                   ...item,
                   id: TurnItemId.make(`turn-item:${name}:interrupt-request`),
+                  // Stop interrupting background work names its provider turn; an idle run's marker does not.
+                  providerTurnId: reachedTurn ? ProviderTurnId.make(`provider-turn:${name}`) : null,
                   type: "run_interrupt_request",
                   ordinal: 2,
                   status: "completed",
@@ -4270,8 +4273,9 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
           }
           return child;
         });
-      const cut = yield* seedStoppedChild("stop-background-cut", true);
-      const finished = yield* seedStoppedChild("stop-background-finished", false);
+      const cut = yield* seedStoppedChild("stop-background-cut", true, true);
+      const idle = yield* seedStoppedChild("stop-background-idle", true, false);
+      const finished = yield* seedStoppedChild("stop-background-finished", false, true);
 
       yield* orchestrator.recoverDelegatedTasks;
 
@@ -4279,6 +4283,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const statusOf = (taskId: NodeId) =>
         settled.subagents.find((row) => row.id === taskId)?.status;
       assert.equal(statusOf(cut.taskId), "interrupted");
+      assert.equal(statusOf(idle.taskId), "completed");
       assert.equal(statusOf(finished.taskId), "completed");
     }),
   );
