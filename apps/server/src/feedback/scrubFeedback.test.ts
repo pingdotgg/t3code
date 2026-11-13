@@ -118,6 +118,12 @@ describe("scrubFeedback", () => {
       "Key [redacted] leaked",
     ],
     [
+      "a random run right before a path",
+      "AbCd1234EfGh5678-QrSt9012UvWx3456=C:\\Users\\private\\file.txt\nAbCd1234EfGh5678-QrSt9012UvWx3456=file:///home/private/file.txt",
+      [],
+      "[redacted]\n[redacted]",
+    ],
+    [
       "UNC paths",
       `Opened \\\\fileserver\\finance\\payroll.xlsx\nand "\\\\fs\\My Share\\a.txt" then`,
       [],
