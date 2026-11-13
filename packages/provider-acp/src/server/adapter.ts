@@ -5061,7 +5061,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
-          // Session metadata and child output do not acknowledge this root prompt.
+          // Session metadata, child output, and updates to earlier tools do not acknowledge this
+          // root prompt; a new root tool call does, since the agent may act before it writes text.
           if (
             context !== null &&
             !context.finalized &&
@@ -5074,7 +5075,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ((update.sessionUpdate === "agent_message_chunk" ||
                 update.sessionUpdate === "agent_thought_chunk" ||
                 update.sessionUpdate === "agent_message" ||
-                update.sessionUpdate === "agent_thought") &&
+                update.sessionUpdate === "agent_thought" ||
+                update.sessionUpdate === "tool_call") &&
                 acpPostSettleWakeEvidence(notification, flavor)))
           ) {
             context.inputRecordedAt = yield* DateTime.now;
