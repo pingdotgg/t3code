@@ -39,3 +39,5 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+
+export { getSpeechSynthesisModels, synthesizeSpeech } from "./environment.ts";

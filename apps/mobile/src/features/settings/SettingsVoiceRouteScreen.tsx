@@ -1,3 +1,4 @@
+import { ReadAloudSection } from "./ReadAloudSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -383,6 +384,7 @@ export function SettingsVoiceRouteScreen() {
             ? " Android may still use a different microphone if the preferred one can’t be routed."
             : null}
         </Text>
+        <ReadAloudSection />
       </ScrollView>
     </SettingsScreen>
   );

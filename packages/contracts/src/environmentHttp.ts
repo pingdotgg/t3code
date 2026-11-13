@@ -1,3 +1,9 @@
+import {
+  SpeechSynthesisProvider,
+  SpeechSynthesisRequest,
+  SpeechSynthesisCatalog,
+  SpeechSynthesisError,
+} from "./readAloud.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -841,6 +847,27 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("synthesisModels", "/api/voice/synthesis/:provider/models", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: SpeechSynthesisProvider }),
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, SpeechSynthesisError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("synthesize", "/api/voice/synthesis/:provider", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: SpeechSynthesisProvider }),
+      payload: SpeechSynthesisRequest,
+      success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentRequestInvalidError,
+        SpeechSynthesisError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
       headers: OptionalBearerHeaders,

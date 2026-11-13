@@ -1,3 +1,4 @@
+import { readAloudController } from "../../speech/readAloud";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -329,6 +330,14 @@ interface MessagesTimelineProps {
 }
 
 export function MessagesTimeline(props: MessagesTimelineProps) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Speech follows the displayed thread rather than the lifetime of virtualized message rows.
+  useEffect(
+    () => () => {
+      if (readAloudController.getSnapshot().id?.startsWith(`${props.routeThreadKey}:`))
+        readAloudController.stop();
+    },
+    [props.routeThreadKey],
+  );
   const find = useContext(ThreadFindTimelineContext);
   const findOpen = find?.findOpen ?? props.findOpen;
   return (
