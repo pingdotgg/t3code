@@ -1304,30 +1304,27 @@ const make = Effect.gen(function* () {
         providerThread.appThreadId === input.threadId ? [providerThread.id] : [],
       );
       // Settling the target can promote a queued follow-up onto the same session; that run is
-      // not Force stop's to end. Sessions are per provider instance and a follow-up may switch
-      // instance, so only a session of the newer run's instance is kept. An unreadable thread
-      // counts as a newer run, so its sessions are kept.
+      // not Force stop's to end. Only a newer run bound to a provider thread on this session
+      // counts. An unreadable thread counts as one, so its sessions are kept.
       const throughRunOrdinal = target?.ordinal ?? 0;
-      const laterRunActive = (providerSessionId: ProviderSessionId) => {
-        const instanceIds = new Set(
-          records.providerThreads.flatMap((providerThread) =>
-            providerThread.providerSessionId === providerSessionId
-              ? [providerThread.providerInstanceId]
-              : [],
-          ),
-        );
-        return orchestrator.getThreadRecords(input.threadId, ["runs"]).pipe(
-          Effect.map(({ runs }) =>
-            runs.some(
+      const laterRunActive = (providerSessionId: ProviderSessionId) =>
+        orchestrator.getThreadRecords(input.threadId, ["runs", "providerThreads"]).pipe(
+          Effect.map(({ runs, providerThreads }) => {
+            const onSession = new Set(
+              providerThreads.flatMap((providerThread) =>
+                providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
+              ),
+            );
+            return runs.some(
               (run) =>
                 run.ordinal > throughRunOrdinal &&
                 isActiveRun(run) &&
-                instanceIds.has(run.providerInstanceId),
-            ),
-          ),
+                run.providerThreadId !== null &&
+                onSession.has(run.providerThreadId),
+            );
+          }),
           Effect.orElseSucceed(() => true),
         );
-      };
       const detach = (providerSessionId: ProviderSessionId) =>
         sessions
           .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })

@@ -1840,34 +1840,49 @@ it.effect.each(["Stop", "Force stop"] as const)(
 );
 
 it.effect.each([
-  { followUp: "started its turn", startedBeforeRelease: true, switchesInstance: false },
-  { followUp: "was promoted", startedBeforeRelease: false, switchesInstance: false },
+  { followUp: "started its turn", startedBeforeRelease: true },
+  { followUp: "was promoted", startedBeforeRelease: false },
   { followUp: "switched provider instance", startedBeforeRelease: true, switchesInstance: true },
+  { followUp: "has fresh context", startedBeforeRelease: true, freshContext: true },
 ])(
   "Force stop keeps only the session of a queued follow-up that $followUp",
-  ({ startedBeforeRelease, switchesInstance }) =>
+  ({ startedBeforeRelease, switchesInstance = false, freshContext = false }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("thread-stop-force-stop-follow-up");
         const driver = adapter.driver;
         const otherInstanceId = ProviderInstanceId.make("codex-other");
-        const eventQueues = new Map([
-          [instanceId, yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>()],
-          [otherInstanceId, yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>()],
-        ]);
+        const eventQueues = new Map<
+          ProviderSessionId,
+          Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>
+        >();
         const started: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
         const interrupted: Array<ProviderAdapter.ProviderAdapterV2InterruptInput> = [];
         let opened = 0;
+        // Fresh context on a one-thread-per-session provider puts the follow-up on its own session.
+        // The session itself reports shared threads so fresh-context cleanup leaves the stopped
+        // run's session to Force stop, as pending background work would.
+        const adapterCapabilities = freshContext
+          ? {
+              ...CodexProviderCapabilitiesV2,
+              sessions: {
+                ...CodexProviderCapabilitiesV2.sessions,
+                supportsMultipleProviderThreadsPerSession: false,
+              },
+            }
+          : CodexProviderCapabilitiesV2;
         const liveAdapter = (
           instanceId: ProviderInstanceId,
         ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
           ...adapter,
           instanceId,
+          getCapabilities: () => Effect.succeed(adapterCapabilities),
           openSession: (input) =>
             Effect.gen(function* () {
               opened += 1;
               const now = yield* DateTime.now;
-              const events = eventQueues.get(instanceId)!;
+              const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+              eventQueues.set(input.providerSessionId, events);
               return {
                 instanceId,
                 driver,
@@ -1887,7 +1902,9 @@ it.effect.each([
                 events: Stream.fromQueue(events),
                 ensureThread: ({ threadId }) =>
                   Effect.succeed({
-                    id: ProviderThreadId.make(`provider-thread:${instanceId}:${threadId}`),
+                    id: ProviderThreadId.make(
+                      `provider-thread:${input.providerSessionId}:${threadId}`,
+                    ),
                     driver,
                     providerInstanceId: instanceId,
                     providerSessionId: input.providerSessionId,
@@ -2017,6 +2034,7 @@ it.effect.each([
             ...(switchesInstance
               ? { modelSelection: { ...modelSelection, instanceId: otherInstanceId } }
               : {}),
+            ...(freshContext ? { freshContext } : {}),
             createdBy: "user",
             creationSource: "web",
           });
@@ -2031,15 +2049,15 @@ it.effect.each([
           );
           assert.equal(
             opened,
-            switchesInstance ? 2 : 1,
+            switchesInstance || freshContext ? 2 : 1,
             "Force stop tore down the session the follow-up was promoted onto",
           );
           const [stopped, followUp] = [started[0]!, started[1]!];
           const providerSessionId = followUp.providerThread.providerSessionId!;
           assert.equal(
             yield* sessions.isLive(stopped.providerThread.providerSessionId!),
-            !switchesInstance,
-            "Force stop kept the stopped run's session for a follow-up on another instance",
+            !switchesInstance && !freshContext,
+            "Force stop kept the stopped run's session for a follow-up on another session",
           );
           assert.isFalse(
             interrupted.some((interrupt) =>
@@ -2058,7 +2076,7 @@ it.effect.each([
           );
 
           // The first run's provider never confirms the stop; the follow-up's turn ends normally.
-          yield* Queue.offer(eventQueues.get(followUp.providerThread.providerInstanceId)!, {
+          yield* Queue.offer(eventQueues.get(providerSessionId)!, {
             type: "turn.terminal",
             driver,
             providerThreadId: followUp.providerThread.id,
