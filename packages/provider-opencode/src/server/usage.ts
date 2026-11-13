@@ -174,13 +174,10 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         )).map((row) => row.name),
       );
       if (!tables.has("message") && !tables.has("session_message")) error = true;
-      const columnsOf = Effect.fnUntraced(function* (table: string) {
-        return new Set(
-          (yield* sql.unsafe<{ readonly name: unknown }>(`PRAGMA table_info(${table})`)).map(
-            (row) => row.name,
-          ),
-        );
-      });
+      const columnsOf = (table: string) =>
+        sql
+          .unsafe<{ readonly name: unknown }>(`PRAGMA table_info(${table})`)
+          .pipe(Effect.map((rows) => new Set(rows.map((row) => row.name))));
       // A fork copies its parent's messages through the boundary under new ids, keeping
       // seq, creation time and data. Resolve each fork to its last copied seq so a copy
       // names its original as (session, seq). A fork whose boundary is gone keeps its usage.
