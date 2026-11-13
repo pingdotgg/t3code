@@ -34,11 +34,7 @@ import {
   Timers,
   utf8ByteLength,
 } from "../../internal/shared.worker.ts";
-import type {
-  R2Conditional,
-  R2Etag,
-  R2ServiceProps,
-} from "./R2BucketOptions.shared.ts";
+import type { R2Conditional, R2Etag, R2ServiceProps } from "./R2BucketOptions.shared.ts";
 import {
   BINDING_R2_BLOBS,
   BINDING_R2_ENABLE_CONTROL_ENDPOINTS,
@@ -73,7 +69,7 @@ const R2Limits = {
   MAX_KEY_SIZE: 1024,
   // https://developers.cloudflare.com/r2/platform/limits/
   MAX_VALUE_SIZE: 5_368_709_120 - 5_242_880, // 5 GiB - 5 MiB
-  MAX_METADATA_SIZE: 2048, // 2048 B
+  MAX_METADATA_SIZE: 8192, // 8 KiB
   MIN_MULTIPART_PART_SIZE: 5 * 1024 * 1024,
   MIN_MULTIPART_PART_SIZE_TEST: 50,
 } as const;
@@ -116,10 +112,7 @@ class WaitGroup {
 function base64UrlEncodeBytes(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
 function hexDecode(hex: string): Uint8Array {
@@ -148,17 +141,15 @@ const HEX_REGEXP = /^[0-9a-f]*$/;
 async function readPrefix(
   stream: ReadableStream<Uint8Array>,
   prefixLength: number,
+  restTransform: IdentityTransformStream = new IdentityTransformStream(),
 ): Promise<[prefix: Uint8Array, rest: ReadableStream<Uint8Array>]> {
   const reader = stream.getReader({ mode: "byob" });
-  const result = await reader.readAtLeast(
-    prefixLength,
-    new Uint8Array(prefixLength),
-  );
+  const result = await reader.readAtLeast(prefixLength, new Uint8Array(prefixLength));
   assert(result.value !== undefined);
   reader.releaseLock();
   // Without this `pipeThrough()`, getting uncaught `TypeError: Can't read from
   // request stream after response has been sent.`
-  const rest = stream.pipeThrough(new IdentityTransformStream());
+  const rest = stream.pipeThrough(restTransform);
   return [result.value, rest];
 }
 
@@ -178,10 +169,7 @@ const rangeRegexp = /^ *(?<start>\d+)? *- *(?<end>\d+)? *$/;
  * - An empty array indicating the entire response should be returned
  * - A non-empty array of inclusive ranges of the response to return
  */
-function parseRanges(
-  rangeHeader: string,
-  length: number,
-): Array<InclusiveRange> | undefined {
+function parseRanges(rangeHeader: string, length: number): Array<InclusiveRange> | undefined {
   // Make sure unit is "bytes"
   const prefixMatch = rangePrefixRegexp.exec(rangeHeader);
   if (prefixMatch === null) return; // Invalid unit (Range Not Satisfiable)
@@ -296,21 +284,13 @@ class InvalidMetadata extends R2Error {
 
 class InternalError extends R2Error {
   constructor() {
-    super(
-      500,
-      "We encountered an internal error. Please try again.",
-      R2ErrorCode.INTERNAL_ERROR,
-    );
+    super(500, "We encountered an internal error. Please try again.", R2ErrorCode.INTERNAL_ERROR);
   }
 }
 
 class NoSuchKey extends R2Error {
   constructor() {
-    super(
-      404,
-      "The specified key does not exist.",
-      R2ErrorCode.NO_SUCH_OBJECT_KEY,
-    );
+    super(404, "The specified key does not exist.", R2ErrorCode.NO_SUCH_OBJECT_KEY);
   }
 }
 
@@ -345,11 +325,7 @@ class MetadataTooLarge extends R2Error {
 }
 
 class BadDigest extends R2Error {
-  constructor(
-    algorithm: DigestAlgorithm,
-    provided: Uint8Array,
-    calculated: Uint8Array,
-  ) {
+  constructor(algorithm: DigestAlgorithm, provided: Uint8Array, calculated: Uint8Array) {
     super(
       400,
       [
@@ -364,41 +340,25 @@ class BadDigest extends R2Error {
 
 class InvalidObjectName extends R2Error {
   constructor() {
-    super(
-      400,
-      "The specified object name is not valid.",
-      R2ErrorCode.INVALID_OBJECT_NAME,
-    );
+    super(400, "The specified object name is not valid.", R2ErrorCode.INVALID_OBJECT_NAME);
   }
 }
 
 class InvalidMaxKeys extends R2Error {
   constructor() {
-    super(
-      400,
-      "MaxKeys params must be positive integer <= 1000.",
-      R2ErrorCode.INVALID_MAX_KEYS,
-    );
+    super(400, "MaxKeys params must be positive integer <= 1000.", R2ErrorCode.INVALID_MAX_KEYS);
   }
 }
 
 class NoSuchUpload extends R2Error {
   constructor() {
-    super(
-      400,
-      "The specified multipart upload does not exist.",
-      R2ErrorCode.NO_SUCH_UPLOAD,
-    );
+    super(400, "The specified multipart upload does not exist.", R2ErrorCode.NO_SUCH_UPLOAD);
   }
 }
 
 class InvalidPart extends R2Error {
   constructor() {
-    super(
-      400,
-      "One or more of the specified parts could not be found.",
-      R2ErrorCode.INVALID_PART,
-    );
+    super(400, "One or more of the specified parts could not be found.", R2ErrorCode.INVALID_PART);
   }
 }
 
@@ -414,21 +374,13 @@ class PreconditionFailed extends R2Error {
 
 class InvalidRange extends R2Error {
   constructor() {
-    super(
-      416,
-      "The requested range is not satisfiable",
-      R2ErrorCode.INVALID_RANGE,
-    );
+    super(416, "The requested range is not satisfiable", R2ErrorCode.INVALID_RANGE);
   }
 }
 
 class BadUpload extends R2Error {
   constructor() {
-    super(
-      500,
-      "There was a problem with the multipart upload.",
-      R2ErrorCode.BAD_UPLOAD,
-    );
+    super(500, "There was a problem with the multipart upload.", R2ErrorCode.BAD_UPLOAD);
   }
 }
 
@@ -610,8 +562,7 @@ type OmitRequest<T> = Omit<T, "method" | "object">;
 type InternalR2GetOptions = OmitRequest<R2GetRequest>;
 type InternalR2PutOptions = OmitRequest<R2PutRequest>;
 type InternalR2ListOptions = OmitRequest<R2ListRequest>;
-type InternalR2CreateMultipartUploadOptions =
-  OmitRequest<R2CreateMultipartUploadRequest>;
+type InternalR2CreateMultipartUploadOptions = OmitRequest<R2CreateMultipartUploadRequest>;
 
 /* Raw (wire-format) shapes, before decoding */
 interface RawR2Conditional {
@@ -626,37 +577,22 @@ interface RawR2HttpFields extends Omit<R2HttpFields, "cacheExpiry"> {
   cacheExpiry?: number | string;
 }
 
-function decodeConditional(
-  raw: RawR2Conditional | undefined,
-): R2Conditional | undefined {
+function decodeConditional(raw: RawR2Conditional | undefined): R2Conditional | undefined {
   if (raw === undefined) return undefined;
   return {
     etagMatches: raw.etagMatches,
     etagDoesNotMatch: raw.etagDoesNotMatch,
-    uploadedBefore: maybeApply(
-      (value) => new Date(Number(value)),
-      raw.uploadedBefore,
-    ),
-    uploadedAfter: maybeApply(
-      (value) => new Date(Number(value)),
-      raw.uploadedAfter,
-    ),
+    uploadedBefore: maybeApply((value) => new Date(Number(value)), raw.uploadedBefore),
+    uploadedAfter: maybeApply((value) => new Date(Number(value)), raw.uploadedAfter),
     secondsGranularity: raw.secondsGranularity,
   };
 }
 
-function decodeRecord(
-  raw: RawRecord | undefined,
-): Record<string, string> | undefined {
-  return maybeApply(
-    (entries) => Object.fromEntries(entries.map(({ k, v }) => [k, v])),
-    raw,
-  );
+function decodeRecord(raw: RawRecord | undefined): Record<string, string> | undefined {
+  return maybeApply((entries) => Object.fromEntries(entries.map(({ k, v }) => [k, v])), raw);
 }
 
-function decodeHttpFields(
-  raw: RawR2HttpFields | undefined,
-): R2HttpFields | undefined {
+function decodeHttpFields(raw: RawR2HttpFields | undefined): R2HttpFields | undefined {
   if (raw === undefined) return undefined;
   return { ...raw, cacheExpiry: maybeApply(Number, raw.cacheExpiry) };
 }
@@ -670,7 +606,6 @@ function decodeRange(raw: R2Range | undefined): R2Range | undefined {
   };
 }
 
-// oxlint-disable-next-line no-explicit-any -- trusted wire format from workerd
 function decodeBindingRequest(raw: any): R2BindingRequest {
   switch (raw.method) {
     case "head":
@@ -910,9 +845,7 @@ const R2_HASH_ALGORITHMS = [
   { name: "SHA-384", field: "sha384" },
   { name: "SHA-512", field: "sha512" },
 ] as const;
-type R2Hashes = Partial<
-  Record<(typeof R2_HASH_ALGORITHMS)[number]["field"], Uint8Array>
->;
+type R2Hashes = Partial<Record<(typeof R2_HASH_ALGORITHMS)[number]["field"], Uint8Array>>;
 type DigestAlgorithm = (typeof R2_HASH_ALGORITHMS)[number]["name"];
 
 function serialisedLength(x: string) {
@@ -924,10 +857,7 @@ function serialisedLength(x: string) {
 }
 
 class Validator {
-  hash(
-    digests: Map<DigestAlgorithm, Uint8Array>,
-    hashes: R2Hashes,
-  ): R2StringChecksums {
+  hash(digests: Map<DigestAlgorithm, Uint8Array>, hashes: R2Hashes): R2StringChecksums {
     const checksums: R2StringChecksums = {};
     for (const { name, field } of R2_HASH_ALGORITHMS) {
       const providedHash = hashes[field];
@@ -946,10 +876,7 @@ class Validator {
     return checksums;
   }
 
-  condition(
-    meta?: Pick<InternalR2Object, "etag" | "uploaded">,
-    onlyIf?: R2Conditional,
-  ): Validator {
+  condition(meta?: Pick<InternalR2Object, "etag" | "uploaded">, onlyIf?: R2Conditional): Validator {
     if (onlyIf !== undefined && !testR2Conditional(onlyIf, meta)) {
       throw new PreconditionFailed();
     }
@@ -1060,9 +987,10 @@ class Validator {
 // uploads. `R2Bucket#{head,get,list}()` will never return data from
 // in-progress uploads.
 
-class DigestingStream<
-  Algorithm extends DigestAlgorithm = DigestAlgorithm,
-> extends TransformStream<Uint8Array, Uint8Array> {
+class DigestingStream<Algorithm extends DigestAlgorithm = DigestAlgorithm> extends TransformStream<
+  Uint8Array,
+  Uint8Array
+> {
   readonly digests: Promise<Map<Algorithm, Uint8Array>>;
 
   constructor(algorithms: Array<Algorithm>) {
@@ -1084,10 +1012,7 @@ class DigestingStream<
         const result = new Map<Algorithm, Uint8Array>();
         for (let i = 0; i < hashes.length; i++) {
           await hashes[i].writer.close();
-          result.set(
-            algorithms[i],
-            new Uint8Array(await hashes[i].stream.digest),
-          );
+          result.set(algorithms[i], new Uint8Array(await hashes[i].stream.digest));
         }
         resolveDigests(result);
       },
@@ -1120,9 +1045,7 @@ function rangeOverlaps(a: InclusiveRange, b: InclusiveRange): boolean {
 }
 
 async function decodeMetadata(req: Request) {
-  const metadataSize = parseInt(
-    req.headers.get(R2Headers.METADATA_SIZE) ?? "NaN",
-  );
+  const metadataSize = parseInt(req.headers.get(R2Headers.METADATA_SIZE) ?? "NaN");
   if (Number.isNaN(metadataSize)) throw new InvalidMetadata();
 
   assert(req.body !== null);
@@ -1147,9 +1070,7 @@ function decodeHeaderMetadata(req: Request) {
   return decodeBindingRequest(JSON.parse(header));
 }
 
-function encodeResult(
-  result: InternalR2Object | InternalR2ObjectBody | InternalR2Objects,
-) {
+function encodeResult(result: InternalR2Object | InternalR2ObjectBody | InternalR2Objects) {
   let encoded: EncodedMetadata;
   if (result instanceof InternalR2Object) {
     encoded = result.encode();
@@ -1165,9 +1086,7 @@ function encodeResult(
     },
   });
 }
-function encodeJSONResult(
-  result: R2CreateMultipartUploadResponse | R2UploadPartResponse,
-) {
+function encodeJSONResult(result: R2CreateMultipartUploadResponse | R2UploadPartResponse) {
   const encoded = JSON.stringify(result);
   return new Response(encoded, {
     headers: {
@@ -1244,15 +1163,8 @@ function sqlStmts(storage: DurableObjectStorage) {
       )
       .toArray()
       .at(0);
-  const updateUploadState = (
-    uploadId: string,
-    state: MultipartUploadRow["state"],
-  ) =>
-    sql.exec(
-      "UPDATE _mf_multipart_uploads SET state = ?2 WHERE upload_id = ?1",
-      uploadId,
-      state,
-    );
+  const updateUploadState = (uploadId: string, state: MultipartUploadRow["state"]) =>
+    sql.exec("UPDATE _mf_multipart_uploads SET state = ?2 WHERE upload_id = ?1", uploadId, state);
 
   interface ListParams {
     limit: number;
@@ -1280,9 +1192,12 @@ function sqlStmts(storage: DurableObjectStorage) {
     `;
     return (params: ListParams) =>
       sql
-        .exec<
-          Omit<ObjectRow, "blob_id"> & Pick<ObjectRow, ExtraColumns[number]>
-        >(query, params.prefix, params.start_after, params.limit)
+        .exec<Omit<ObjectRow, "blob_id"> & Pick<ObjectRow, ExtraColumns[number]>>(
+          query,
+          params.prefix,
+          params.start_after,
+          params.limit,
+        )
         .toArray();
   };
 
@@ -1326,8 +1241,7 @@ function sqlStmts(storage: DurableObjectStorage) {
           if (maybeOldBlobId === null) {
             // If blob_id is null, this was a multipart object, so delete all
             // multipart parts
-            for (const partRow of deletePartsByKey(key))
-              oldBlobIds.push(partRow.blob_id);
+            for (const partRow of deletePartsByKey(key)) oldBlobIds.push(partRow.blob_id);
           } else if (maybeOldBlobId !== undefined) {
             oldBlobIds.push(maybeOldBlobId);
           }
@@ -1428,12 +1342,7 @@ function sqlStmts(storage: DurableObjectStorage) {
       storage.transactionSync(() => {
         // 1. Check the upload exists and is in-progress
         const uploadRow = sql
-          .exec<
-            Pick<
-              MultipartUploadRow,
-              "http_metadata" | "custom_metadata" | "state"
-            >
-          >(
+          .exec<Pick<MultipartUploadRow, "http_metadata" | "custom_metadata" | "state">>(
             "SELECT http_metadata, custom_metadata, state FROM _mf_multipart_uploads WHERE upload_id = ?1 AND key = ?2",
             uploadId,
             key,
@@ -1516,17 +1425,14 @@ function sqlStmts(storage: DurableObjectStorage) {
         if (maybeOldBlobId === null) {
           // If blob_id is null, this was a multipart object, so delete all
           // multipart parts
-          for (const partRow of deletePartsByKey(key))
-            oldBlobIds.push(partRow.blob_id);
+          for (const partRow of deletePartsByKey(key)) oldBlobIds.push(partRow.blob_id);
         } else if (maybeOldBlobId !== undefined) {
           oldBlobIds.push(maybeOldBlobId);
         }
 
         // 6. Write object to the database, and link parts with object
         const totalSize = parts.reduce((acc, { size }) => acc + size, 0);
-        const etag = generateMultipartEtag(
-          parts.map(({ checksum_md5 }) => checksum_md5),
-        );
+        const etag = generateMultipartEtag(parts.map(({ checksum_md5 }) => checksum_md5));
         const newRow: ObjectRow = {
           key,
           blob_id: null,
@@ -1643,18 +1549,12 @@ export class R2BucketObject implements DurableObject {
 
   get name(): string {
     // `name` is initialised from the bucket header on first request
-    assert(
-      this.#name !== undefined,
-      "Expected `R2BucketObject#fetch()` call before `name` access",
-    );
+    assert(this.#name !== undefined, "Expected `R2BucketObject#fetch()` call before `name` access");
     return this.#name;
   }
 
   get blob(): BlobStore {
-    return (this.#blob ??= new BlobStore(
-      this.env[BINDING_R2_BLOBS],
-      this.name,
-    ));
+    return (this.#blob ??= new BlobStore(this.env[BINDING_R2_BLOBS], this.name));
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -1715,10 +1615,7 @@ export class R2BucketObject implements DurableObject {
       // Enable/disable fake timers, advance time, or wait for tasks
       const func: unknown = this.timers[name as keyof Timers];
       assert(typeof func === "function", `Unknown control op: ${name}`);
-      const result = await (func as (...args: Array<unknown>) => unknown).apply(
-        this.timers,
-        args,
-      );
+      const result = await (func as (...args: Array<unknown>) => unknown).apply(this.timers, args);
       return Response.json(result ?? null);
     }
   }
@@ -2036,7 +1933,7 @@ export class R2BucketObject implements DurableObject {
     key: string,
     opts: InternalR2CreateMultipartUploadOptions,
   ): Promise<R2CreateMultipartUploadResponse> {
-    validate.key(key);
+    validate.key(key).metadataSize(opts.customMetadata);
 
     const uploadId = generateId();
     this.#stmts.createMultipartUpload({
@@ -2139,31 +2036,19 @@ export class R2BucketObject implements DurableObject {
       this.#delete("object" in metadata ? metadata.object : metadata.objects);
       return new Response();
     } else if (metadata.method === "put") {
-      const contentLength = parseInt(
-        req.headers.get("Content-Length") ?? "NaN",
-      );
+      const contentLength = parseInt(req.headers.get("Content-Length") ?? "NaN");
       // `workerd` requires a known value size for R2 put requests:
       // - https://github.com/cloudflare/workerd/blob/e3479895a2ace28e4fd5f1399cea4c92291966ab/src/workerd/api/r2-rpc.c%2B%2B#L154-L156
       // - https://github.com/cloudflare/workerd/blob/e3479895a2ace28e4fd5f1399cea4c92291966ab/src/workerd/api/r2-rpc.c%2B%2B#L188-L189
       assert(!isNaN(contentLength));
       const valueSize = contentLength - metadataSize;
-      const result = await this.#put(
-        metadata.object,
-        value,
-        valueSize,
-        metadata,
-      );
+      const result = await this.#put(metadata.object, value, valueSize, metadata);
       return encodeResult(result);
     } else if (metadata.method === "createMultipartUpload") {
-      const result = await this.#createMultipartUpload(
-        metadata.object,
-        metadata,
-      );
+      const result = await this.#createMultipartUpload(metadata.object, metadata);
       return encodeJSONResult(result);
     } else if (metadata.method === "uploadPart") {
-      const contentLength = parseInt(
-        req.headers.get("Content-Length") ?? "NaN",
-      );
+      const contentLength = parseInt(req.headers.get("Content-Length") ?? "NaN");
       // `workerd` requires a known value size for R2 put requests as above
       assert(!isNaN(contentLength));
       const valueSize = contentLength - metadataSize;

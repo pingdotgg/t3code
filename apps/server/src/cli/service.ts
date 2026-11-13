@@ -47,14 +47,37 @@ export const upsertServiceEnv = (
   entries: Readonly<Record<string, string | undefined>>,
 ): string => {
   const written = new Set<string>();
-  const lines = contents.split("\n").flatMap((line) => {
-    const key = SERVICE_ENV_KEY.exec(line)?.[1];
-    if (key === undefined || !Object.hasOwn(entries, key)) return [line];
+  const source = contents.split("\n");
+  const lines: string[] = [];
+  for (let index = 0, offset = 0; index < source.length;) {
+    const line = source[index]!;
+    const match = SERVICE_ENV_KEY.exec(line);
+    let end = index + 1;
+    if (match !== null) {
+      // util.parseEnv lets a quoted value run to its closing quote across lines,
+      // skipping only spaces, tabs and CRs before the opening quote.
+      const rest = line.slice(match[0].length).replace(/^[ \t\r]+/u, "");
+      const quote = rest[0];
+      if ((quote === '"' || quote === "'" || quote === "`") && !rest.includes(quote, 1)) {
+        const closing = contents.indexOf(quote, offset + line.length);
+        if (closing !== -1) {
+          end += contents.slice(offset + line.length, closing).split("\n").length - 1;
+        }
+      }
+    }
+    const span = source.slice(index, end);
+    offset += span.reduce((length, part) => length + part.length + 1, 0);
+    index = end;
+    const key = match?.[1];
+    if (key === undefined || !Object.hasOwn(entries, key)) {
+      lines.push(span.join("\n"));
+      continue;
+    }
     const value = entries[key];
-    if (value === undefined || written.has(key)) return [];
+    if (value === undefined || written.has(key)) continue;
     written.add(key);
-    return [`${key}=${value}`];
-  });
+    lines.push(`${key}=${value}`);
+  }
   while (lines.at(-1) === "") lines.pop();
   for (const [key, value] of Object.entries(entries)) {
     if (value !== undefined && !written.has(key)) lines.push(`${key}=${value}`);
@@ -92,6 +115,13 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
+  // Before the downgrade check, which reads this home's state, not the service's.
+  if (status.otherBaseDir !== undefined) {
+    return yield* new BootService.BootServiceOtherBaseDirError({
+      installedBaseDir: status.otherBaseDir,
+      baseDir,
+    });
+  }
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
   }
@@ -147,10 +177,18 @@ function formatServiceStatus(
   protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
-    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
+    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler";
   }
   if (!status.installed) {
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
+  }
+  if (status.otherBaseDir !== undefined) {
+    return [
+      "T3 Code service",
+      "  Status: installed for another T3 home",
+      `  Base dir: ${status.otherBaseDir}`,
+      `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
+    ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;
   const problems = (status.problems ?? []).map(
@@ -264,7 +302,9 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
             ? `Restarted the T3 Code service${onVersion}.`
             : outcome === "queued"
               ? `Queued a restart of the T3 Code service${onVersion}. This session runs inside the service and disconnects when it goes down.\nLogs: ${status.logPath}`
-              : "T3 Code service is not installed.",
+              : status.otherBaseDir !== undefined
+                ? `The T3 Code service serves ${status.otherBaseDir}, so it was not restarted. Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to restart it.`
+                : "T3 Code service is not installed.",
         );
       }),
     ),
@@ -278,6 +318,22 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
       flags,
       Effect.gen(function* () {
         const service = yield* BootService.BootService;
+        const path = yield* Path.Path;
+        const { baseDir } = yield* ServerConfig.ServerConfig;
+        // An unreadable unit stays removable; only a unit known to serve another home is kept.
+        const installedBaseDir = yield* service.status.pipe(
+          Effect.map((status) => status.installedBaseDir),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (
+          installedBaseDir !== undefined &&
+          path.resolve(installedBaseDir) !== path.resolve(baseDir)
+        ) {
+          yield* Console.log(
+            `The T3 Code service serves ${installedBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(installedBaseDir)}\` to remove it.`,
+          );
+          return;
+        }
         const removed = yield* service.uninstall;
         yield* Console.log(
           removed ? "Removed the T3 Code service." : "T3 Code service is not installed.",
