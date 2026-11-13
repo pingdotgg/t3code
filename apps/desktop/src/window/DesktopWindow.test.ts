@@ -615,6 +615,31 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  it.effect.each([
+    ["a revealing menu action", { reveal: true }, 2],
+    ["a non-revealing menu action", { reveal: false }, 1],
+  ] as const)(
+    "after %s during a restart, a closed main window follows the backend",
+    ([, options, expectedCreates]) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          fake.isDestroyed.mockReturnValue(true);
+          fake.windowListeners.get("closed")?.();
+          yield* windows.handleBackendNotReady;
+          yield* windows.dispatchMenuAction("open-settings", options);
+          assert.equal(yield* Ref.get(createCount), 1);
+          fake.isDestroyed.mockReturnValue(false);
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), expectedCreates);
+        }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
+      }),
+  );
+
   it.effect("reopens a closed main window when a restart recovers from a startup failure", () =>
     Effect.gen(function* () {
       const fake = makeFakeBrowserWindow();

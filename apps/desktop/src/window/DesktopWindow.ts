@@ -1108,7 +1108,11 @@ export const make = Effect.gen(function* () {
   ) {
     if (yield* Ref.get(desktopState.quitting)) return;
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
-    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
+    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) {
+      // A revealing request asks for the window, so a closed one opens once the backend is back.
+      if (reveal) mainClosed = false;
+      return;
+    }
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;
     const targetWindow = window.value;
