@@ -180,7 +180,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
-        "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
+        "Default async; wait only if needed. Question, approval or steering ends wait; child runs.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
@@ -243,6 +243,9 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description: "True only on the timed-out wait call. The child keeps running.",
+  }),
+  interruptedByMessageId: Schema.optional(MessageId).annotate({
+    description: "Incoming steering ended this wait. Handle it first; the child keeps running.",
   }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
@@ -577,6 +580,9 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   runId: Schema.NullOr(RunId),
   status: OrchestratorMcpThreadStatus,
   timedOut: Schema.Boolean,
+  interruptedByMessageId: Schema.optional(MessageId).annotate({
+    description: "Incoming steering ended this wait. Handle it first; the target keeps running.",
+  }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
   /** With untilDelegatedWorkSettled, once settled: the run whose reply is the thread's result. */
   resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),

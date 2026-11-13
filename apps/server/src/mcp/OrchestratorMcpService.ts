@@ -136,6 +136,7 @@ const DEFAULT_TASK_WAIT_TIMEOUT_MS = 4 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
+  { thread: "parent", eventType: "turn-item.updated" },
   { thread: "child", eventType: "run.updated" },
   { thread: "child", eventType: "subagent.updated" },
   { thread: "child", eventType: "provider-thread.updated" },
@@ -1839,7 +1840,11 @@ const make = Effect.gen(function* () {
         Exit.isSuccess(exit) && delivered(exit.value) ? Effect.void : upgradeWake,
       ),
     );
-    if (Option.isSome(waited) && delivered(waited)) return waited.value;
+    if (
+      Option.isSome(waited) &&
+      (delivered(waited) || waited.value.interruptedByMessageId !== undefined)
+    )
+      return waited.value;
     return yield* readTask(scope, taskId, Option.isNone(waited), true);
   });
 
@@ -1963,18 +1968,30 @@ const make = Effect.gen(function* () {
             })
             .pipe(
               Stream.filter(
-                ({ event }) =>
+                (stored) =>
                   thread === "child" ||
-                  event.type !== "subagent.updated" ||
-                  event.payload.id === taskId,
+                  (stored.event.type === "turn-item.updated"
+                    ? ThreadManagementService.steeringInputMessage(stored) !== undefined
+                    : stored.event.type !== "subagent.updated" ||
+                      stored.event.payload.id === taskId),
               ),
             ),
         ),
         { concurrency: "unbounded" },
       ).pipe(
         Stream.mapError(streamError),
-        Stream.mapEffect(() => readTask(scope, taskId, false, true)),
-        Stream.filter(endsTaskWait),
+        Stream.mapEffect((stored) =>
+          Effect.gen(function* () {
+            const result = yield* readTask(scope, taskId, false, true);
+            const messageId = ThreadManagementService.steeringInputMessage(stored);
+            if (messageId === undefined) return result;
+            const { next: _next, ...current } = result;
+            return { ...current, interruptedByMessageId: messageId };
+          }),
+        ),
+        Stream.filter(
+          (result) => result.interruptedByMessageId !== undefined || endsTaskWait(result),
+        ),
         Stream.runHead,
       );
     },
@@ -3301,7 +3318,15 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
-      const { parent, target } = yield* loadScopedThread(scope, input.threadId, []);
+      const { parent, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
+      const callerRun =
+        parent === undefined
+          ? undefined
+          : ThreadManagementService.latestActiveRun({
+              runs: parent.runs.filter(
+                (run) => run.providerInstanceId === scope.thread?.providerInstanceId,
+              ),
+            });
       const result = yield* threadManagement
         .waitForThread({
           projectId: target.thread.projectId,
@@ -3312,6 +3337,11 @@ const make = Effect.gen(function* () {
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          ...(callerRun === undefined || parent === undefined
+            ? {}
+            : {
+                caller: { threadId: parent.thread.id, runId: callerRun.id },
+              }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
@@ -3342,6 +3372,11 @@ const make = Effect.gen(function* () {
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,
+        ...(result.interruptedByMessageId === undefined
+          ? {}
+          : {
+              interruptedByMessageId: result.interruptedByMessageId,
+            }),
         ...(wakesCaller ? { next: ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } : {}),
         ...(result.resultRun === undefined
           ? {}

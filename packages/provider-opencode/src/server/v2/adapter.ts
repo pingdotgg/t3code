@@ -260,6 +260,7 @@ interface ActiveTurn {
   interrupted: boolean;
   unsent: boolean;
   readonly steers: Set<string>;
+  readonly acceptedSteers: Set<string>;
   readonly settledInbox: Set<string>;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
@@ -1506,6 +1507,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       interrupted: false,
       unsent: false,
       steers: new Set(),
+      acceptedSteers: new Set(),
       settledInbox: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
@@ -2619,6 +2621,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       type === "session.execution.failed" ||
       type === "session.execution.interrupted";
 
+    const releaseForeground = Effect.fnUntraced(function* (state: ThreadState, turn: ActiveTurn) {
+      if (
+        state.active !== turn ||
+        turn.interrupted ||
+        turn.acceptedSteers.size === 0 ||
+        ![...state.calls.values()].some(
+          (call) =>
+            call.turn === turn && !call.background && isOrchestrationV2WorkActive(call.status),
+        )
+      )
+        return;
+      // Steers enter the inbox; release foreground observation so the parent can read them.
+      yield* client.session.background({ sessionID: Session.ID.make(state.sessionId) }).pipe(
+        Effect.timeout(REQUEST_REPLY_TIMEOUT),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not background OpenCode tools for an accepted steer.", cause),
+        ),
+      );
+    });
+
     const startCall = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
@@ -2691,7 +2713,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             call.agent = stringField(input, "agent");
             call.model = stringField(input, "model") ?? call.model;
             call.background = input["background"] === true;
-            return yield* emitSubagent(call);
+            yield* emitSubagent(call);
+            if (!call.background && turn.acceptedSteers.size > 0) {
+              // HTTP must not hold the event lock while native child events arrive.
+              yield* Effect.forkIn(releaseForeground(state, turn), sessionScope);
+            }
+            return;
           }
           const tool = turn.tools.get(event.data.id);
           if (tool !== undefined) tool.input = event.data.input;
@@ -3292,6 +3319,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.externalPrompts.delete(event.data.inboxID);
         const turn = state.active;
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
+          turn.acceptedSteers.delete(event.data.inboxID);
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
         } else if (
@@ -3389,6 +3417,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
           for (const message of recent) {
             if (message.type === "user" && turn.steers.delete(message.id)) {
+              turn.acceptedSteers.delete(message.id);
               turn.settledInbox.add(message.id);
             }
           }
@@ -4856,6 +4885,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               lock.withPermit(
                 Effect.gen(function* () {
                   turn.steers.delete(inboxID);
+                  turn.acceptedSteers.delete(inboxID);
                   state.strandedSteers.delete(inboxID);
                   if (state.active === turn) yield* endIfSettled(state, turn);
                 }),
@@ -4866,6 +4896,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* lock.withPermit(
               Effect.gen(function* () {
                 turn.steers.delete(inboxID);
+                turn.acceptedSteers.delete(inboxID);
                 // Stop may have stranded this steer, but it never reached OpenCode.
                 state.strandedSteers.delete(inboxID);
                 if (state.active === turn) {
@@ -4894,12 +4925,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 lock.withPermit(
                   Effect.gen(function* () {
                     turn.steers.delete(inboxID);
+                    turn.acceptedSteers.delete(inboxID);
                     if (!CLEAR_PROMPT_REJECTIONS.has(cause._tag)) state.strandedSteers.add(inboxID);
                     if (state.active === turn) yield* endIfSettled(state, turn);
                   }),
                 ),
               ),
             );
+          if (turn.steers.has(inboxID)) turn.acceptedSteers.add(inboxID);
+          yield* releaseForeground(state, turn);
         },
         (effect, steerInput) =>
           effect.pipe(

@@ -338,6 +338,7 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly onRequest?: (operation: string) => void;
   },
 ) =>
   Effect.gen(function* () {
@@ -375,6 +376,7 @@ const resumed = (
         ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
         ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
+        ...(options?.onRequest === undefined ? {} : { onRequest: options.onRequest }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.processExit === undefined ? {} : { processExit: options.processExit }),
         ...(options?.beforeResponse === undefined
@@ -1655,6 +1657,157 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     returnedRunning("call-background"),
     event("session.execution.started", { sessionID: CHILD }),
   ];
+
+  it.effect.each([
+    { goal: false, late: false, fails: false },
+    { goal: true, late: true, fails: false },
+    { goal: false, late: true, fails: true },
+  ])(
+    "answers steering while foreground subagents keep running, active goal=$goal, child starts after steer=$late, background fails=$fails",
+    ({ goal, late, fails }) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["release-child", "start-child"]);
+        const requests: Array<string> = [];
+        const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
+        const foreground = backgroundLaunch(CHILD).map((entry) => {
+          if (entry.type !== "emit_inbound" || !entry.frame || typeof entry.frame !== "object")
+            return entry;
+          const frame = entry.frame as { event?: { type: string; data: Record<string, unknown> } };
+          if (frame.event?.type !== "session.tool.called") return entry;
+          return event("session.tool.called", {
+            ...frame.event.data,
+            input: { description: "Sleep", prompt: "sleep", background: false },
+          });
+        });
+        const { runtime, thread } = yield* resumed(
+          [
+            ...(late ? foreground.slice(0, 3) : foreground),
+            ...(goal
+              ? [
+                  event("rpc.opencode.goal.changed", {
+                    sessionID: SESSION,
+                    goal: nativeGoal("active"),
+                  }),
+                ]
+              : []),
+            ...(!late ? [event("session.execution.started", { sessionID: CHILD })] : []),
+            out("session.prompt", { sessionID: SESSION, id: steerId, delivery: "steer" }),
+            replyData("session.prompt", {
+              id: steerId,
+              sessionID: SESSION,
+              time: { created: 1790656601500 },
+              type: "user",
+              payload: { text: "Also say STEERED." },
+              delivery: "steer",
+            }),
+            ...(late
+              ? [
+                  ...foreground
+                    .slice(3)
+                    .map((entry, index) =>
+                      entry.type === "emit_inbound" && index === 0
+                        ? { ...entry, label: "start-child" }
+                        : entry,
+                    ),
+                  event("session.execution.started", { sessionID: CHILD }),
+                ]
+              : []),
+            out("session.background", { sessionID: SESSION }),
+            reply(
+              "session.background",
+              fails
+                ? { status: 500, body: { _tag: "UnknownError", message: "background failed" } }
+                : null,
+            ),
+            returnedRunning("call-background"),
+            event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
+            event("session.text.ended", {
+              sessionID: SESSION,
+              assistantMessageID: "msg_steer_reply",
+              ordinal: 0,
+              text: "STEERED",
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            event("session.execution.succeeded", { sessionID: CHILD }, "release-child"),
+            childReport("msg_child_report", "CHILD_DONE"),
+            ...(goal
+              ? [
+                  event("rpc.opencode.goal.changed", {
+                    sessionID: SESSION,
+                    goal: nativeGoal("complete"),
+                  }),
+                ]
+              : []),
+          ],
+          {
+            version: "2.2.5",
+            replayGate: gate,
+            onRequest: (operation) => requests.push(operation),
+          },
+        );
+        const childStarted = yield* Deferred.make<void>();
+        const childDone = yield* Deferred.make<void>();
+        const answered = yield* Deferred.make<void>();
+        const parentEnded = yield* Deferred.make<void>();
+        const terminals: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        let childStatus: string | undefined;
+        let callStatus: string | undefined;
+        let result: string | null = null;
+        yield* runtime.events.pipe(
+          Stream.runForEach((e) => {
+            if (e.type === "turn.terminal") {
+              terminals.push(e);
+              return Deferred.succeed(parentEnded, undefined);
+            }
+            if (
+              e.type === "provider_turn.updated" &&
+              e.providerTurn.nativeTurnRef?.nativeId?.startsWith(`${CHILD}:turn:`)
+            ) {
+              childStatus = e.providerTurn.status;
+              if (childStatus === "running") return Deferred.succeed(childStarted, undefined);
+            }
+            if (e.type === "subagent.updated" && e.subagent.title === "Sleep") {
+              callStatus = e.subagent.status;
+              result = e.subagent.result;
+              if (callStatus === "completed") return Deferred.succeed(childDone, undefined);
+            }
+            return e.type === "message.updated" && e.message.text === "STEERED"
+              ? Deferred.succeed(answered, undefined)
+              : Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        if (!late) yield* Deferred.await(childStarted);
+        yield* runtime.steerTurn({
+          threadId,
+          runId: RunId.make("run:opencode2-adapter"),
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          message: {
+            ...turnInput(thread).message,
+            messageId: MessageId.make("message:opencode2-adapter:steer"),
+            text: "Also say STEERED.",
+          },
+        });
+        if (late) {
+          gate.release("start-child");
+          yield* Deferred.await(childStarted);
+        }
+        assert.include(requests, "session.background");
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        yield* Deferred.await(answered);
+        yield* Effect.promise(() => gate.waitForReached("release-child"));
+        if (!goal) yield* Deferred.await(parentEnded);
+        assert.equal(childStatus, "running");
+        assert.equal(callStatus, "running");
+        assert.lengthOf(terminals, goal ? 0 : 1);
+        gate.release("release-child");
+        yield* Deferred.await(childDone);
+        assert.equal(result, "CHILD_DONE");
+        yield* Deferred.await(parentEnded);
+      }).pipe(Effect.scoped),
+  );
 
   it.effect.each([false, true])(
     "settles a failed background subagent with recovered child=%s",
@@ -6563,7 +6716,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const toolB = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-b" };
       const spawn = { sessionID: SESSION, assistantMessageID: "msg_reply", id: "call-spawn" };
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const gate = makeProviderReplayGate(["settled"]);
+      const stopped = Promise.withResolvers<void>();
       const { runtime, thread } = yield* resumed(
         [
           ...backgroundLaunch(CHILD),
@@ -6683,9 +6836,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.execution.started", { sessionID: SESSION }),
           out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", { interrupted: true }),
-          event("session.execution.interrupted", { sessionID: SESSION }, "settled"),
         ],
-        { replayGate: gate },
+        {
+          beforeResponse: (path) =>
+            Effect.sync(() => {
+              if (path === `/api/session/${SESSION}/interrupt`) stopped.resolve();
+            }),
+        },
       ).pipe(
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Effect.sync(() => void offers.push(request)),
@@ -6728,8 +6885,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           requestRuntimeRestart: true,
         });
       }
-      yield* Effect.promise(() => gate.waitForReached("settled"));
-      gate.release("settled");
+      yield* Effect.promise(() => stopped.promise);
       assert.lengthOf(offers, 1);
       assert.deepEqual(
         collected.flatMap((event) =>
