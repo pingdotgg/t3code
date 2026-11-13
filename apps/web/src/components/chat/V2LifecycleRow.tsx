@@ -499,7 +499,7 @@ function SubagentTimelineLink(props: {
           {statusLabel}
         </span>
       ) : null}
-      <span className="shrink-0 font-mono text-3xs text-dim-foreground tabular-nums">
+      <span className="shrink-0 text-caption text-dim-foreground tabular-nums">
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
       {open !== null ? (
