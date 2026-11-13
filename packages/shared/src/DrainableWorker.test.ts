@@ -80,7 +80,7 @@ describe("makeDrainableWorker", () => {
     }).pipe(Effect.provide(loggerLayer));
   });
 
-  it.live("waits for work enqueued during active processing before draining", () =>
+  it.effect("waits for work enqueued during active processing before draining", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const processed: string[] = [];
