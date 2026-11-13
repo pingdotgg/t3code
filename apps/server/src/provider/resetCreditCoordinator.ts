@@ -1,11 +1,12 @@
 /** Instances sharing a login directory share credits; serialize redemptions on that directory. */
-import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
+import type { ProviderConsumeResetCreditOutcome, ServerProvider } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
 interface AccountRedemptionState {
@@ -69,6 +70,36 @@ export const make = Effect.gen(function* () {
 
   return { redeem } satisfies ResetCreditCoordinator["Service"];
 });
+
+type UsageSnapshot = Pick<ServerProvider, "usageLimits">;
+
+/**
+ * Re-probe after a redemption; true once a `reset` shows fresh limits. A failed
+ * usage read republishes the pre-redemption windows, which are known stale after
+ * a reset, so retry briefly instead of leaving them until the periodic check.
+ */
+export const refreshAfterRedemption = Effect.fn("resetCreditCoordinator.refreshAfterRedemption")(
+  function* <R>(input: {
+    readonly outcome: ProviderConsumeResetCreditOutcome;
+    readonly getSnapshot: Effect.Effect<UsageSnapshot>;
+    readonly refresh: Effect.Effect<UsageSnapshot, never, R>;
+  }) {
+    const before = (yield* input.getSnapshot).usageLimits?.checkedAt;
+    const confirmed = ({ usageLimits }: UsageSnapshot) =>
+      input.outcome !== "reset" ||
+      (usageLimits !== undefined &&
+        usageLimits.checkedAt !== before &&
+        usageLimits.unavailable?.reason !== "probeFailed");
+    return yield* input.refresh.pipe(
+      Effect.map(confirmed),
+      Effect.repeat({
+        until: (ok) => ok,
+        times: 3,
+        schedule: Schedule.exponential("1 second"),
+      }),
+    );
+  },
+);
 
 export const layer = Layer.effect(ResetCreditCoordinator, make);
 
