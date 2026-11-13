@@ -175,25 +175,27 @@ export function SettingsScopeNotice({
         {children}
       </p>
       {target === "project" ? (
-        <InputGroup className="w-full sm:w-64">
-          <InputGroupAddon>
-            <SearchIcon aria-hidden className="size-3.5" />
-          </InputGroupAddon>
-          <InputGroupInput
-            type="search"
-            value={projectQuery}
-            onChange={(event) => setProjectQuery(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape" || projectQuery.length === 0) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setProjectQuery("");
-            }}
-            placeholder="Filter projects"
-            aria-label="Filter projects"
-            size="sm"
-          />
-        </InputGroup>
+        <div className="w-full sm:w-64">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden className="size-3.5" />
+            </InputGroupAddon>
+            <InputGroupInput
+              type="search"
+              value={projectQuery}
+              onChange={(event) => setProjectQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || projectQuery.length === 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setProjectQuery("");
+              }}
+              placeholder="Filter projects"
+              aria-label="Filter projects"
+              size="sm"
+            />
+          </InputGroup>
+        </div>
       ) : null}
       <div className="space-y-4">
         {hasNoProjectMatches ? (
