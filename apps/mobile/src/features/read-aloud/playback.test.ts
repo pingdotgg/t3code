@@ -134,7 +134,29 @@ it("removes lock-screen playback when recording takes audio focus", async () => 
     timeControlStatus: "paused",
   });
   expect(readAloudController.getSnapshot().status).toBe("paused");
+  expect(player.setActiveForLockScreen).toHaveBeenLastCalledWith(true, expect.anything());
+  const pausedRecorder = acquireAudioSession("recording");
+  try {
+    expect(player.setActiveForLockScreen).toHaveBeenLastCalledWith(false);
+  } finally {
+    await releaseAudioSession(pausedRecorder);
+  }
   await readAloudController.resume();
+  statusChanged({
+    currentTime: 1,
+    duration: 10,
+    playing: false,
+    isLoaded: true,
+    isBuffering: false,
+    timeControlStatus: "paused",
+  });
+  const resumed = Promise.withResolvers<void>();
+  const unsubscribeResume = readAloudController.subscribe(() => {
+    if (readAloudController.getSnapshot().status === "playing") resumed.resolve();
+  });
+  cleanup.defer(unsubscribeResume);
+  statusChanged({ playing: true, isLoaded: true });
+  await resumed.promise;
   const recorder = acquireAudioSession("recording");
   try {
     expect(player.setActiveForLockScreen).toHaveBeenLastCalledWith(false);

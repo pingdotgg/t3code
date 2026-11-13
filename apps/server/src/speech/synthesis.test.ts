@@ -116,17 +116,22 @@ it.effect.each(["xai", "openrouter"] as const)(
         if (provider === "openrouter") {
           yield* service.synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
-          upstream.mockResolvedValueOnce(
-            new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
-          );
-          const plainPcm = yield* service.synthesize(provider, {
-            ...request,
-            model: "google/gemini-tts",
-            voice: "reader",
-          });
-          expect(new DataView(plainPcm.buffer, plainPcm.byteOffset).getUint32(24, true)).toBe(
-            24000,
-          );
+          for (const [model, expectedRate] of [
+            ["google/gemini-tts", 24000],
+            ["heygen/heygen-voice-1", 44100],
+          ] as const) {
+            upstream.mockResolvedValueOnce(
+              new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
+            );
+            const plainPcm = yield* service.synthesize(provider, {
+              ...request,
+              model,
+              voice: "reader",
+            });
+            expect(new DataView(plainPcm.buffer, plainPcm.byteOffset).getUint32(24, true)).toBe(
+              expectedRate,
+            );
+          }
           for (const model of ["minimax/speech-test:free", "mistralai/voxtral-mini-tts-2603"]) {
             upstream.mockResolvedValueOnce(new Response(new Uint8Array([73, 68, 51, 1])));
             expect([
@@ -139,14 +144,18 @@ it.effect.each(["xai", "openrouter"] as const)(
               "mp3",
             );
           }
-          upstream.mockResolvedValueOnce(
-            new Response(new Uint8Array([0, 1]), {
-              headers: { "content-type": "audio/pcm;rate=garbage" },
-            }),
-          );
-          expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
-            reason: "unavailable",
-          });
+          for (const contentType of [
+            "audio/pcm;rate=garbage",
+            "audio/pcm;rate=",
+            "audio/pcm;channels=",
+          ]) {
+            upstream.mockResolvedValueOnce(
+              new Response(new Uint8Array([0, 1]), { headers: { "content-type": contentType } }),
+            );
+            expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
+              reason: "unavailable",
+            });
+          }
         }
         upstream.mockResolvedValueOnce(
           new Response("private upstream diagnostic", { status: 429 }),

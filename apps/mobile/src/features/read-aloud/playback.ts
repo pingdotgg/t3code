@@ -150,12 +150,14 @@ export const readAloudController = createReadAloudController(async (text, settin
       pause: (deactivateSession) => player.pause(deactivateSession),
     },
     false,
-    (requested) => {
+    (requested, reason) => {
       if (!requested) {
-        player.setActiveForLockScreen(false);
+        if (reason !== "pause") player.setActiveForLockScreen(false);
         readAloudController.pause();
       }
     },
+    settings.backgroundPlayback,
+    // Native lock-screen Play bypasses JS, so a paused player must keep revocable ownership.
     settings.backgroundPlayback,
   );
   let done: () => void = () => {};
@@ -164,6 +166,12 @@ export const readAloudController = createReadAloudController(async (text, settin
     player.addListener("playbackStatusUpdate", (status) => {
       if (status.didJustFinish) resolve();
       else if (status.error) reject(new Error("Could not play the generated speech."));
+      else if (
+        status.playing &&
+        session.requested &&
+        readAloudController.getSnapshot().status === "paused"
+      )
+        void readAloudController.resume();
       else if (
         session.requested &&
         status.isLoaded &&
@@ -188,7 +196,7 @@ export const readAloudController = createReadAloudController(async (text, settin
     pause: () => session.pause(),
     stop: () => {
       stopWatching();
-      session.pause();
+      session.stop();
       disposeAudioPlayer(player);
       if (file.exists) file.delete();
       done();

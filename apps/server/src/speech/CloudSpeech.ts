@@ -465,8 +465,9 @@ export const layer = Layer.effect(
         if (!bytes.length || bytes.length > MAX_SYNTHESIS_BYTES) return yield* unavailable();
         if (format === "pcm" && provider === "openrouter") {
           const contentType = response.headers["content-type"] ?? "";
-          const rate = Number(/\brate=([^;\s]+)/.exec(contentType)?.[1] ?? "24000");
-          const channels = Number(/\bchannels=(\d+)/.exec(contentType)?.[1] ?? "1");
+          const defaultRate = request.model.startsWith("heygen/") ? 44100 : 24000;
+          const rate = Number(/(?:^|;)\s*rate\s*=([^;]*)/i.exec(contentType)?.[1] ?? defaultRate);
+          const channels = Number(/(?:^|;)\s*channels\s*=([^;]*)/i.exec(contentType)?.[1] ?? "1");
           return yield* Effect.try({
             try: () => speechWave(bytes, rate, channels),
             catch: unavailable,
