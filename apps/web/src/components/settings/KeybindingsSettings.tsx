@@ -36,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { isElectron } from "../../env";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
@@ -50,6 +51,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Toggle } from "../ui/toggle";
+import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import {
   buildKeybindingRows,
@@ -1315,6 +1317,7 @@ function useKeybindingCatalog() {
 }
 
 export function KeybindingsSettingsPanel() {
+  const vimListNavigation = useClientSettings((settings) => settings.vimListNavigation);
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
   const canOpenKeybindingsFile = useEnvironmentScope(
     primaryEnvironment?.environmentId ?? null,
@@ -1470,6 +1473,21 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection title="Navigation">
+        <SettingsRow
+          {...searchableSetting("vim-list-navigation")}
+          description="Use Ctrl+J/K for Down/Up in pickers and menus, overriding other shortcuts there."
+          control={
+            <Switch
+              checked={vimListNavigation}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ vimListNavigation: checked })
+              }
+              aria-label="Vim-style list navigation"
+            />
+          }
+        />
+      </SettingsSection>
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={!isElectron ? <BrowserKeybindingNotice /> : null}

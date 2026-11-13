@@ -71,6 +71,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     <Toolbar.Root
       className="w-11 shrink-0 overflow-hidden bg-muted/30"
       data-model-picker-sidebar="true"
+      data-list-navigation="true"
       aria-label="Providers"
       orientation="vertical"
       onKeyDown={(event) => {

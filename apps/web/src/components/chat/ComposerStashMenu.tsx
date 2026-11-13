@@ -128,6 +128,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
       ref={drawerRef}
       className="flex min-h-0 flex-col after:shrink-0"
       data-composer-stash-drawer="true"
+      data-list-navigation="true"
     >
       <ComposerBanner.Row
         render={<button type="button" />}

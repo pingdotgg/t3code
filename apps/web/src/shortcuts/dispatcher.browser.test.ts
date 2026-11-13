@@ -1,7 +1,11 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import * as settings from "../hooks/useSettings";
 
 import { dispatchMenuAction, registerCommands, registerMenuAction } from "./dispatcher";
+
+vi.mock(import("../hooks/useSettings"), { spy: true });
 
 function bindings(entries: ReadonlyArray<[string, KeybindingCommand]>): ResolvedKeybindingsConfig {
   return entries.map(([key, command]) => ({
@@ -23,9 +27,13 @@ const keybindings = () =>
     ["j", "chat.newLocal"],
   ]);
 
-function press(key: string): KeyboardEvent {
-  const event = new KeyboardEvent("keydown", { key, cancelable: true, bubbles: true });
-  window.dispatchEvent(event);
+function press(
+  key: string,
+  init: KeyboardEventInit = {},
+  target: EventTarget = window,
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key, cancelable: true, bubbles: true, ...init });
+  target.dispatchEvent(event);
   return event;
 }
 
@@ -143,5 +151,51 @@ describe("command dispatcher", () => {
 
     expect(newer).toHaveBeenCalledOnce();
     expect(older).toHaveBeenCalledOnce();
+  });
+
+  it("limits list navigation to visible active lists without leaking raw keys", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `
+      <input id="editor" aria-controls="suggestions">
+      <div id="suggestions" role="listbox"><div role="option" aria-selected="false">Alpha</div></div>
+      <input id="custom" data-list-navigation="true">
+      <input id="unrelated">
+    `;
+    document.body.append(root);
+    using stack = new DisposableStack();
+    stack.defer(() => root.remove());
+    using setting = vi.spyOn(settings, "getClientSettings").mockReturnValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      vimListNavigation: true,
+    });
+    stack.defer(registerCommands({}));
+    const keys: string[] = [];
+    root.addEventListener("keydown", (event) => keys.push(event.key));
+    const input = root.querySelector("#editor")!;
+    const custom = root.querySelector("#custom")!;
+    const keydown = (target: Element, init: KeyboardEventInit = {}) =>
+      press("j", { ctrlKey: true, ...init }, target);
+    for (const init of [
+      { ctrlKey: false },
+      { shiftKey: true },
+      { altKey: true },
+      { metaKey: true },
+      { isComposing: true },
+      { keyCode: 229 },
+    ])
+      expect(keydown(input, init).defaultPrevented).toBe(false);
+    setting.mockReturnValue(DEFAULT_CLIENT_SETTINGS);
+    expect(keydown(input).defaultPrevented).toBe(false);
+    setting.mockReturnValue({ ...DEFAULT_CLIENT_SETTINGS, vimListNavigation: true });
+    expect(keydown(root.querySelector("#unrelated")!).defaultPrevented).toBe(false);
+    keys.length = 0;
+    expect(keydown(input).defaultPrevented).toBe(true);
+    expect(keydown(custom).defaultPrevented).toBe(true);
+    expect(keys).toEqual(["ArrowDown", "ArrowDown"]);
+    custom.setAttribute("data-list-navigation", "false");
+    expect(keydown(custom).defaultPrevented).toBe(false);
+    custom.setAttribute("data-list-navigation", "true");
+    custom.setAttribute("hidden", "");
+    expect(keydown(custom).defaultPrevented).toBe(false);
   });
 });

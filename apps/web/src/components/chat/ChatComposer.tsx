@@ -3533,7 +3533,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               {composerAttachmentFileList}
 
-              <div className="relative">
+              <div className="relative" data-list-navigation={isStashMenuOpen && !composerMenuOpen}>
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
