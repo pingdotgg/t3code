@@ -421,9 +421,27 @@ describe("GhosttyTerminalCore snapshots", () => {
         kittyFlags: replies.join(""),
       };
     };
-    let state = createSession("PRIMARY\r\n1\r\n2\r\n3\x1b[?1049hALT\x1b[>7u\x1b[?1;1000;1006h");
-    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
-    writeTerminalOutputUpdate(core, initial);
+    let state = createSession("PRIMARY\r\n1\r\n2\r\n3");
+    let cursor = INITIAL_TERMINAL_OUTPUT_CURSOR;
+    const consume = () => {
+      const update = readTerminalOutputUpdate(state.output, cursor);
+      writeTerminalOutputUpdate(core, update);
+      cursor = update.cursor;
+      return update;
+    };
+    const target = { threadId: "terminal-stream-test", terminalId: "term-1" };
+    const output = (data: string) => {
+      state = applyTerminalAttachStreamEvent(state, { type: "output", ...target, data });
+    };
+    consume();
+    // The screen switch arrives split across events, then more redraws than the client retains.
+    output("\x1b[?10");
+    output("49hALT\x1b[>7u\x1b[?1;1000;1006h");
+    consume();
+    for (let frame = 0; frame < 160; frame += 1) {
+      output(`\x1b[H${"x".repeat(4096)}`);
+      consume();
+    }
     const negotiated = modes();
     expect(negotiated).toEqual({
       alternateScreen: true,
@@ -432,12 +450,11 @@ describe("GhosttyTerminalCore snapshots", () => {
       kittyFlags: "\x1b[?7u",
     });
 
-    state = applyTerminalAttachStreamEvent(state, {
-      type: "cleared",
-      threadId: "terminal-stream-test",
-      terminalId: "term-1",
-    });
-    writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, initial.cursor));
+    // Output and two clears land before the viewer reads again.
+    output("x");
+    state = applyTerminalAttachStreamEvent(state, { type: "cleared", ...target });
+    state = applyTerminalAttachStreamEvent(state, { type: "cleared", ...target });
+    expect(consume().type).toBe("append");
 
     expect(modes()).toEqual(negotiated);
     expect(core.snapshot().rowData.map((row) => row.text.trim())).toEqual(["", "", ""]);

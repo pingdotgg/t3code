@@ -276,7 +276,6 @@ describe("terminal session reducers", () => {
     const cleared = readTerminalOutputUpdate(state.output, cursor);
     // A live viewer erases in place, keeping the modes the running program negotiated.
     expect(cleared).toMatchObject({ type: "append", data: "\u001b[H\u001b[2J\u001b[3J" });
-    expect(terminalOutputText(state.output)).toBe("\u001b[H\u001b[2J\u001b[3J");
     state = applyTerminalAttachStreamEvent(state, {
       type: "restarted",
       threadId: TARGET.threadId,

@@ -12,6 +12,9 @@ export interface TerminalOutputState {
   readonly retainedBytes: number;
   readonly resetVersion: number;
   readonly nextOffset: number;
+  // Tracked across everything since the last reset, which retained chunks may no longer hold.
+  readonly alternateScreen: boolean;
+  readonly screenSwitchTail: string;
 }
 
 export interface TerminalOutputCursor {
@@ -54,6 +57,8 @@ export const EMPTY_TERMINAL_OUTPUT_STATE = Object.freeze<TerminalOutputState>({
   retainedBytes: 0,
   resetVersion: 0,
   nextOffset: 0,
+  alternateScreen: false,
+  screenSwitchTail: "",
 });
 
 interface Utf8Chunk {
@@ -175,6 +180,8 @@ function appendOutput(
       retainedBytes: 0,
       resetVersion: current.resetVersion + 1,
       nextOffset: current.nextOffset + data.length,
+      alternateScreen: false,
+      screenSwitchTail: "",
     };
   }
   const appended = splitOutputChunks(
@@ -221,6 +228,7 @@ function appendOutput(
     retainedBytes,
     resetVersion: current.resetVersion,
     nextOffset: appended.nextOffset,
+    ...trackScreen(current, data),
   };
 }
 
@@ -241,6 +249,37 @@ function resetOutput(
     retainedBytes: reset.byteLength,
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
+    ...trackScreen(EMPTY_TERMINAL_OUTPUT_STATE, retained),
+  };
+}
+
+const SCREEN_SWITCH = /\u001b(?:\[\?([0-9;]*)([hl])|c)/gu;
+const PARTIAL_SCREEN_SWITCH = /^\u001b(?:\[(?:\?[0-9;]*)?)?$/u;
+const MAX_SCREEN_SWITCH_TAIL = 64;
+
+function trackScreen(
+  current: Pick<TerminalOutputState, "alternateScreen" | "screenSwitchTail">,
+  data: string,
+): Pick<TerminalOutputState, "alternateScreen" | "screenSwitchTail"> {
+  const text = current.screenSwitchTail + data;
+  const lastEscape = text.lastIndexOf("\u001b");
+  if (lastEscape === -1) return { alternateScreen: current.alternateScreen, screenSwitchTail: "" };
+  let alternateScreen = current.alternateScreen;
+  for (const match of text.matchAll(SCREEN_SWITCH)) {
+    if (match[2] === undefined) {
+      alternateScreen = false;
+    } else if (
+      match[1]!.split(";").some((mode) => mode === "47" || mode === "1047" || mode === "1049")
+    ) {
+      alternateScreen = match[2] === "h";
+    }
+  }
+  // A switch split across output events completes in the next one.
+  const tail = text.slice(lastEscape);
+  return {
+    alternateScreen,
+    screenSwitchTail:
+      tail.length <= MAX_SCREEN_SWITCH_TAIL && PARTIAL_SCREEN_SWITCH.test(tail) ? tail : "",
   };
 }
 
@@ -249,27 +288,14 @@ const CLEAR_SEQUENCE = "\u001b[H\u001b[2J\u001b[3J";
 // Mode 47 switches screens without clearing either or touching the saved cursor, so
 // the hidden primary screen is erased too and the program stays on its alternate one.
 const CLEAR_FROM_ALTERNATE_SEQUENCE = `\u001b[H\u001b[2J\u001b[?47l${CLEAR_SEQUENCE}\u001b[?47h`;
-const SCREEN_SWITCH = /\u001b(?:\[\?([0-9;]*)([hl])|c)/gu;
 
-function endsOnAlternateScreen(text: string): boolean {
-  let alternate = false;
-  for (const match of text.matchAll(SCREEN_SWITCH)) {
-    if (match[2] === undefined) {
-      alternate = false;
-    } else if (
-      match[1]!.split(";").some((mode) => mode === "47" || mode === "1047" || mode === "1049")
-    ) {
-      alternate = match[2] === "h";
-    }
-  }
-  return alternate;
-}
-
+// Earlier chunks stay so a viewer that has not read them yet still gets an append.
 function clearOutput(current: TerminalOutputState, maxBufferBytes: number): TerminalOutputState {
-  const sequence = endsOnAlternateScreen(terminalOutputText(current))
-    ? CLEAR_FROM_ALTERNATE_SEQUENCE
-    : CLEAR_SEQUENCE;
-  return appendOutput({ ...current, chunks: [], retainedBytes: 0 }, sequence, maxBufferBytes);
+  return appendOutput(
+    current,
+    current.alternateScreen ? CLEAR_FROM_ALTERNATE_SEQUENCE : CLEAR_SEQUENCE,
+    maxBufferBytes,
+  );
 }
 
 export function terminalOutputText(output: TerminalOutputState): string {
