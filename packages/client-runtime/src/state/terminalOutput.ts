@@ -302,10 +302,7 @@ export function terminalOutputText(output: TerminalOutputState): string {
   const text = output.chunks.map((chunk) => chunk.data).join("");
   const firstOffset = output.chunks[0]?.startOffset ?? output.nextOffset;
   return text.slice(
-    Math.max(
-      terminalSequenceEnd(output.sequenceState, text),
-      output.textStartOffset - firstOffset,
-    ),
+    Math.max(terminalSequenceEnd(output.sequenceState, text), output.textStartOffset - firstOffset),
   );
 }
 
