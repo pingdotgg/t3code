@@ -6314,6 +6314,13 @@ describe("AcpAdapterV2", () => {
     { text: "$other ship it", sent: "$other ship it", native: false },
     // regression: #24667 a skill named in another agent's message ran as the user's command
     { text: "$deploy ship it", sent: "$deploy ship it", native: false, from: "agent" as const },
+    {
+      text: "/deploy ship it",
+      sent: "\u2060/deploy ship it",
+      native: false,
+      from: "agent" as const,
+    },
+    { text: "/other ship it", sent: "/other ship it", native: true, from: "agent" as const },
   ])("Grok sends $text with a picked skill as $sent", ({ text, sent, native, from }) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

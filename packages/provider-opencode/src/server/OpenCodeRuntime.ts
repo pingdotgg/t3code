@@ -232,6 +232,13 @@ export const loadOpenCodeCommands = (client: OpencodeClient) =>
     ),
   );
 
+/** The command a leading `/name` runs. A skill is listed as one, and only the user invokes it. */
+export const findOpenCodeCommand = (
+  commands: ReadonlyArray<OpenCodeSlashCommand>,
+  name: string | undefined,
+  fromAgent: boolean,
+) => commands.find((entry) => entry.name === name && !(fromAgent && entry.source === "skill"));
+
 const loadOpenCodeProviders = (client: OpencodeClient) =>
   runOpenCodeSdk("provider.list", (signal) => client.provider.list(undefined, { signal })).pipe(
     Effect.filterMapOrFail(

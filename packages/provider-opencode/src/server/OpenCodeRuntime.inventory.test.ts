@@ -108,6 +108,19 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
     }),
   );
 
+  // regression: #24667 a skill named in another agent's message ran as the user's command
+  it("runs a skill's command for the user only", () => {
+    const commands = [
+      { name: "review", source: "command" as const, hints: [] },
+      { name: "greet", source: "skill" as const, hints: [] },
+    ];
+    const found = (name: string, fromAgent: boolean) =>
+      OpenCodeRuntime.findOpenCodeCommand(commands, name, fromAgent)?.name;
+    NodeAssert.equal(found("greet", false), "greet");
+    NodeAssert.equal(found("greet", true), undefined);
+    NodeAssert.equal(found("review", true), "review");
+  });
+
   it.effect("keeps provider inventory when agent discovery fails", () =>
     Effect.gen(function* () {
       const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;

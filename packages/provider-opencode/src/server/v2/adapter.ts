@@ -4477,13 +4477,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const location = { directory: turnInput.runtimePolicy.cwd ?? host.paths.cwd };
       const command = bare ? commandOf(text) : undefined;
+      const fromAgent = ProviderAdapter.isAgentWrittenTurnMessage(turnInput.message);
       if (command !== undefined) {
         const commands = yield* client.command.list({ location }).pipe(
           Effect.timeout(INVENTORY_TIMEOUT),
           Effect.map((list) => list.data),
           Effect.orElseSucceed(() => []),
         );
-        if (commands.some((entry) => entry.name === command.name)) {
+        // A command an agent names runs unless it is a skill, which only the user invokes.
+        if (
+          commands.some((entry) => entry.name === command.name) &&
+          !(fromAgent && (yield* listSkills(location)).has(command.name))
+        ) {
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
@@ -4502,9 +4507,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
         }
       }
-      const mentions = ProviderAdapter.isAgentWrittenTurnMessage(turnInput.message)
-        ? []
-        : skillMentions(text);
+      const mentions = fromAgent ? [] : skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);

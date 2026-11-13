@@ -25,6 +25,15 @@ export function leadingGrokSkillMention(
   return { name: match[2], rest: text.slice(match[0].length) };
 }
 
+/** A message opening with a native command, such as `deploy` and ` ship it` for `/deploy ship it`. */
+export function leadingGrokSkillCommand(
+  text: string,
+): { readonly name: string; readonly rest: string } | undefined {
+  const match = /^\s*\/(\S+)/u.exec(text);
+  if (match?.[1] === undefined) return undefined;
+  return { name: match[1], rest: text.slice(match[0].length) };
+}
+
 class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   "GrokSkillsProbeError",
   {

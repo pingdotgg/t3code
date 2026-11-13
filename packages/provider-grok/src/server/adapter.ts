@@ -4,7 +4,7 @@ import {
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
 } from "./xaiAcpExtension.ts";
-import { discoverGrokSkills, leadingGrokSkillMention } from "./skills.ts";
+import { discoverGrokSkills, leadingGrokSkillCommand, leadingGrokSkillMention } from "./skills.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -331,20 +331,19 @@ export function makeGrokAcpAdapterFlavor(
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
     rewriteUserText: (text, turnInput) => {
-      const mention = ProviderAdapter.isAgentWrittenTurnMessage(turnInput.message)
-        ? undefined
-        : leadingGrokSkillMention(text);
+      const fromAgent = ProviderAdapter.isAgentWrittenTurnMessage(turnInput.message);
+      const mention = fromAgent ? leadingGrokSkillCommand(text) : leadingGrokSkillMention(text);
       if (mention === undefined) return Effect.succeed(text);
       return discoverGrokSkills(
         options.settings,
         options.environment,
         turnInput.runtimePolicy.cwd ?? undefined,
       ).pipe(
-        Effect.map((skills) =>
-          skills.some((skill) => skill.enabled && skill.name === mention.name)
-            ? `/${mention.name}${mention.rest}`
-            : text,
-        ),
+        Effect.map((skills) => {
+          if (!skills.some((skill) => skill.enabled && skill.name === mention.name)) return text;
+          // A word joiner ahead of the slash keeps a skill an agent named plain text.
+          return fromAgent ? `\u2060${text}` : `/${mention.name}${mention.rest}`;
+        }),
         Effect.orElseSucceed(() => text),
       );
     },

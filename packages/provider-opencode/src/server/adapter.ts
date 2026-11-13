@@ -3035,6 +3035,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             sessionID: string;
           },
           abortController: AbortController,
+          message: ProviderAdapter.ProviderAdapterV2TurnMessage,
         ) {
           const { variant, ...payloadWithoutVariant } = inputPayload;
           const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
@@ -3055,10 +3056,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             .trim();
           const match = text?.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
           const command = match
-            ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
-                Effect.timeout("10 seconds"),
-                Effect.orElseSucceed(() => []),
-              )).find((entry) => entry.name === match[1])
+            ? OpenCodeRuntime.findOpenCodeCommand(
+                yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
+                  Effect.timeout("10 seconds"),
+                  Effect.orElseSucceed(() => []),
+                ),
+                match[1],
+                ProviderAdapter.isAgentWrittenTurnMessage(message),
+              )
             : undefined;
           if (!command) {
             return yield* sdkCall("session.promptAsync", payload, (signal) =>
@@ -3377,6 +3382,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                turnInput.message,
               ).pipe(
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
@@ -3500,6 +3506,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                steerInput.message,
               ).pipe(
                 Effect.ensuring(
                   Effect.all([
