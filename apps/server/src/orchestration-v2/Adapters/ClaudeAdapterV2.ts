@@ -2024,9 +2024,17 @@ export function makeClaudeQueryOptions(input: {
           compiledSelection.apiModelId,
       }
     : undefined;
+  // Claude Code prefers CLAUDE_CODE_AUTO_COMPACT_WINDOW from any settings env over
+  // autoCompactWindow, and flag settings env beats the settings files.
+  const autoCompactEnv =
+    input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
+      ? undefined
+      : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: input.settings.autoCompactWindow };
   // A settings file path cannot take extra keys, so it goes through unchanged.
   const effectiveQuerySettings =
-    (input.toolSearchOverride === undefined && aliasOverrideEnv === undefined) ||
+    (input.toolSearchOverride === undefined &&
+      aliasOverrideEnv === undefined &&
+      autoCompactEnv === undefined) ||
     typeof compactQuerySettings === "string"
       ? compactQuerySettings
       : ({
@@ -2034,6 +2042,7 @@ export function makeClaudeQueryOptions(input: {
           env: {
             ...compactQuerySettings?.env,
             ...aliasOverrideEnv,
+            ...autoCompactEnv,
             ...(input.toolSearchOverride === undefined
               ? {}
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),

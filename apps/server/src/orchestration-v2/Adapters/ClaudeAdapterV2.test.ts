@@ -395,6 +395,23 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
+  it("makes Auto-compact after beat CLAUDE_CODE_AUTO_COMPACT_WINDOW from settings env", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-auto-compact-env",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+      sdkSettings: { env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000", OTHER: "kept" } },
+    });
+    const settings = options.settings as {
+      autoCompactWindow?: number;
+      env?: Record<string, string>;
+    };
+    assert.equal(settings.autoCompactWindow, 300_000);
+    assert.deepEqual(settings.env, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "300000", OTHER: "kept" });
+  });
+
   it("sends a custom model named like a Claude Code alias to the API unchanged", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: { instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId, model: "opus" },
