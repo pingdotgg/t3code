@@ -50,17 +50,13 @@ export const PullRequestTargetInput = Schema.Struct({
       description: "Thread. Default: this thread.",
     }),
   ),
-  url: Schema.optional(TrimmedNonEmptyString),
-  repository: Schema.optional(
+  url: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "With `number`, when no `url`.",
+      description: "Custom HTTP(S) URLs also need repository and number.",
     }),
   ),
-  number: Schema.optional(
-    PositiveInt.annotate({
-      description: "With `repository`, when no `url`.",
-    }),
-  ),
+  repository: Schema.optional(TrimmedNonEmptyString),
+  number: Schema.optional(PositiveInt),
   host: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description: "Default: this project's host.",

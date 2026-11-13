@@ -18,7 +18,7 @@ export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUr
   {},
 ) {
   override get message(): string {
-    return "This is not a recognised pull request URL. Pass repository and number instead.";
+    return "This is not a recognised pull request URL. For other HTTP(S) URLs, also pass repository and number.";
   }
 }
 
@@ -82,7 +82,23 @@ export const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(func
   if (input.url !== undefined) {
     const parsed = sourceControlDefinitions.parseChangeRequestUrl(input.url)?.link;
     if (parsed === undefined) {
-      return yield* new PullRequestUrlInvalidError({});
+      const url = URL.parse(input.url);
+      if (
+        url === null ||
+        (url.protocol !== "https:" && url.protocol !== "http:") ||
+        input.repository === undefined ||
+        input.number === undefined
+      ) {
+        return yield* new PullRequestUrlInvalidError({});
+      }
+      return {
+        ...normalizeThreadPullRequestKey({
+          host: url.host,
+          repository: input.repository,
+          number: input.number,
+        }),
+        url: input.url,
+      } satisfies ResolvedTarget;
     }
     return {
       ...normalizeThreadPullRequestKey(parsed),
