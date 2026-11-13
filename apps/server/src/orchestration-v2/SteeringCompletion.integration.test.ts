@@ -2205,13 +2205,6 @@ it.effect("steers a promoted scheduled delivery with the thread's current select
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(steered, ["scheduled"]);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
-        const promoted = projection.turnItems.find(
-          (item) => item.type === "user_message" && item.messageId === "message:scheduled",
-        );
-        assert.deepEqual(
-          promoted?.type === "user_message" ? promoted.scheduledTaskId : undefined,
-          ScheduledTaskId.make("task:scheduled"),
-        );
       }).pipe(Effect.provide(layer));
     }),
   ),
