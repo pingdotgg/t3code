@@ -20,6 +20,8 @@ use conn_engine::BoxFuture;
 pub struct CallContext {
     /// The request headers merged with the WebSocket upgrade headers, as Effect does.
     pub headers: Vec<(String, String)>,
+    /// The session that authenticated the WebSocket upgrade.
+    pub principal: Option<Arc<crate::auth::Principal>>,
 }
 
 /// How a call failed, mapped to the Effect `Exit` the client receives.

@@ -178,6 +178,74 @@ pub mod frame_parts {
     pub const QUERY_PARAM: &str = "frameParts";
     pub const PART_BYTES: usize = 48 * 1024;
     pub const PART_PREFIX: char = '\u{1e}';
+
+    /// Splits one text message as `splitSocketFrame` does: every part, prefix included, is at
+    /// most `part_bytes` of UTF-8, and only the last part has no prefix.
+    pub fn split(frame: &str, part_bytes: usize) -> Vec<String> {
+        if frame.len() <= part_bytes {
+            return vec![frame.to_owned()];
+        }
+        let prefix = PART_PREFIX.len_utf8();
+        let mut parts = Vec::with_capacity(frame.len() / part_bytes + 1);
+        let mut start = 0;
+        let mut bytes = prefix;
+        for (index, ch) in frame.char_indices() {
+            if bytes + ch.len_utf8() > part_bytes {
+                let mut part = String::with_capacity(prefix + index - start);
+                part.push(PART_PREFIX);
+                part.push_str(&frame[start..index]);
+                parts.push(part);
+                start = index;
+                bytes = prefix;
+            }
+            bytes += ch.len_utf8();
+        }
+        parts.push(frame[start..].to_owned());
+        parts
+    }
+
+    /// Joins parts back into whole messages, as `joinSocketFrameParts` does on the client.
+    /// Conn clients do not split what they send; this keeps the server tolerant and bounded.
+    #[derive(Debug)]
+    pub struct Joiner {
+        pending: String,
+        max_bytes: usize,
+    }
+
+    /// A joined message would exceed the limit. The connection should close with 1009.
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct TooLarge;
+
+    impl Joiner {
+        pub fn new(max_bytes: usize) -> Self {
+            Self {
+                pending: String::new(),
+                max_bytes,
+            }
+        }
+
+        /// `Ok(Some(message))` once a message is whole, `Ok(None)` while parts are pending.
+        pub fn push(&mut self, text: &str) -> Result<Option<String>, TooLarge> {
+            let (body, more) = match text.strip_prefix(PART_PREFIX) {
+                Some(body) => (body, true),
+                None => (text, false),
+            };
+            if self.pending.len() + body.len() > self.max_bytes {
+                self.pending = String::new();
+                return Err(TooLarge);
+            }
+            if more {
+                self.pending.push_str(body);
+                return Ok(None);
+            }
+            if self.pending.is_empty() {
+                return Ok(Some(body.to_owned()));
+            }
+            let mut whole = std::mem::take(&mut self.pending);
+            whole.push_str(body);
+            Ok(Some(whole))
+        }
+    }
 }
 
 /// T3 ack window. Effect's server waits for an `Ack` after every `Chunk`. T3 instead lets
@@ -192,6 +260,43 @@ pub mod ack_window {
         "orchestration.subscribeThread",
     ];
     pub const BYTE_WINDOWED: &[&str] = &["terminal.attach", "terminal.observe"];
+    /// T3 charges each value this much on top of its size, so tiny values still count.
+    pub const VALUE_OVERHEAD_BYTES: usize = 128;
+
+    /// How many chunks of a stream may be unacked at once.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Window {
+        /// Effect's default: wait for the `Ack` of each chunk before the next.
+        One,
+        /// Up to [`MAX_PENDING_CHUNKS`] chunks.
+        Count,
+        /// Up to [`MAX_PENDING_CHUNKS`] chunks and [`MAX_PENDING_BYTES`].
+        Bytes,
+    }
+
+    impl Window {
+        pub fn for_tag(tag: &str) -> Self {
+            if BYTE_WINDOWED.contains(&tag) {
+                Window::Bytes
+            } else if COUNT_WINDOWED.contains(&tag) {
+                Window::Count
+            } else {
+                Window::One
+            }
+        }
+
+        /// Whether a window holding these pending chunk sizes may not send another chunk.
+        pub fn is_full(self, pending: &std::collections::VecDeque<usize>) -> bool {
+            match self {
+                Window::One => !pending.is_empty(),
+                Window::Count => pending.len() >= MAX_PENDING_CHUNKS,
+                Window::Bytes => {
+                    pending.len() >= MAX_PENDING_CHUNKS
+                        || pending.iter().sum::<usize>() >= MAX_PENDING_BYTES
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -302,6 +407,35 @@ mod tests {
             assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), expected);
             assert_eq!(serde_json::from_str::<FromServer>(&text).unwrap(), frame);
         }
+    }
+
+    #[test]
+    fn splits_frames_on_char_boundaries_and_joins_them() {
+        use frame_parts::{Joiner, PART_PREFIX, TooLarge, split};
+        assert_eq!(split("small", 8), vec!["small".to_owned()]);
+
+        // 'é' is 2 bytes and '😀' 4: no part may cut either, and each part fits the limit.
+        let frame = "aé😀".repeat(50);
+        let parts = split(&frame, 16);
+        assert!(parts.len() > 1);
+        for part in &parts[..parts.len() - 1] {
+            assert!(part.starts_with(PART_PREFIX));
+            assert!(part.len() <= 16, "{} bytes", part.len());
+        }
+        assert!(!parts.last().unwrap().starts_with(PART_PREFIX));
+
+        let mut joiner = Joiner::new(1 << 20);
+        let mut joined = None;
+        for part in &parts {
+            joined = joiner.push(part).unwrap();
+        }
+        assert_eq!(joined.as_deref(), Some(frame.as_str()));
+        assert_eq!(joiner.push("{}").unwrap().as_deref(), Some("{}"));
+
+        let mut joiner = Joiner::new(8);
+        assert_eq!(joiner.push("\u{1e}12345"), Ok(None));
+        assert_eq!(joiner.push("6789"), Err(TooLarge));
+        assert_eq!(joiner.push("ok").unwrap().as_deref(), Some("ok"));
     }
 
     #[test]

@@ -1,0 +1,520 @@
+//! HTTP routes: the environment descriptor, pairing and auth, and the `/ws` upgrade.
+//! Shapes follow `packages/contracts/src/environmentHttp.ts` and `auth.ts`.
+
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use axum::{
+    Form, Json, Router,
+    extract::{Path, Query, Request, State, WebSocketUpgrade},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::{
+    auth::{self, AuthStore, ExchangeError, Principal, iso8601, scope_response},
+    session::{self, SessionOptions},
+    table::{CallContext, MethodTable},
+};
+
+pub const ORCHESTRATION_PROTOCOL_VERSION: u32 = 2;
+const ORCHESTRATION_PROTOCOL_QUERY_PARAM: &str = "orchestrationProtocol";
+/// The largest client message `/ws` accepts.
+pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub table: Arc<MethodTable>,
+    pub auth: Arc<AuthStore>,
+    /// `ExecutionEnvironmentDescriptor`.
+    pub descriptor: Arc<Value>,
+}
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/.well-known/t3/environment", get(descriptor))
+        .route("/api/auth/session", get(session_state))
+        .route("/oauth/token", post(token))
+        .route("/api/auth/websocket-ticket", post(ticket))
+        .route("/api/auth/websocket-ticket/{use}", post(ticket_for))
+        .route("/api/auth/pairing-token", post(pairing_token))
+        .route("/ws", get(ws))
+        .layer(middleware::from_fn(cors))
+        .with_state(state)
+}
+
+/// Packaged T3 allows any origin: credentials are bearer tokens, never cookies.
+async fn cors(request: Request, next: Next) -> Response {
+    let mut response = if request.method() == Method::OPTIONS {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(request).await
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static(
+            "authorization, b3, traceparent, content-type, dpop, x-t3-orchestration-protocol",
+        ),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_MAX_AGE,
+        HeaderValue::from_static("600"),
+    );
+    response
+}
+
+async fn health(State(state): State<AppState>) -> Json<Value> {
+    let coverage = state.table.coverage();
+    Json(json!({
+        "status": "ok",
+        "contractCommit": conn_contract::contract_commit(),
+        "methods": { "implemented": coverage.implemented, "total": coverage.total },
+    }))
+}
+
+async fn descriptor(State(state): State<AppState>) -> Json<Value> {
+    Json(state.descriptor.as_ref().clone())
+}
+
+async fn session_state(State(state): State<AppState>, headers: HeaderMap) -> Json<Value> {
+    let Some(principal) = bearer(&headers).and_then(|t| state.auth.authenticate_bearer(t)) else {
+        return Json(json!({ "authenticated": false, "auth": auth::descriptor() }));
+    };
+    let mut body = scope_response(&principal.scopes);
+    body["authenticated"] = json!(true);
+    body["auth"] = auth::descriptor();
+    body["sessionMethod"] = json!("bearer-access-token");
+    body["expiresAt"] = json!(iso8601(principal.expires_at_ms));
+    Json(body)
+}
+
+/// `AuthTokenExchangeRequest`, form encoded.
+#[derive(Deserialize)]
+struct TokenRequest {
+    grant_type: String,
+    subject_token: String,
+    subject_token_type: String,
+    requested_token_type: String,
+    scope: Option<String>,
+    client_label: Option<String>,
+}
+
+const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
+const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
+const BOOTSTRAP_TOKEN_TYPE: &str = "urn:t3:params:oauth:token-type:environment-bootstrap";
+
+async fn token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(request): Form<TokenRequest>,
+) -> Response {
+    if request.grant_type != GRANT_TYPE
+        || request.subject_token_type != BOOTSTRAP_TOKEN_TYPE
+        || request.requested_token_type != ACCESS_TOKEN_TYPE
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "invalid_command",
+        );
+    }
+    // A DPoP client expects a key-bound token. A bearer token would drop that binding,
+    // so refuse before the code is spent.
+    if headers.contains_key("dpop") {
+        return auth_invalid("invalid_credential");
+    }
+    let requested: Option<Vec<String>> = request
+        .scope
+        .as_deref()
+        .map(|scope| scope.split_whitespace().map(str::to_owned).collect());
+    let label = request.client_label.filter(|l| !l.trim().is_empty());
+    match state
+        .auth
+        .exchange(&request.subject_token, requested.as_deref(), label)
+    {
+        Ok(issued) => Json(json!({
+            "access_token": issued.token,
+            "issued_token_type": ACCESS_TOKEN_TYPE,
+            "token_type": "Bearer",
+            "expires_in": issued.principal.expires_at_ms.saturating_sub(auth::now_ms()) / 1000,
+            "scope": issued.principal.scopes.join(" "),
+        }))
+        .into_response(),
+        Err(ExchangeError::InvalidCredential) => auth_invalid("invalid_credential"),
+        Err(ExchangeError::InvalidScope) => error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "invalid_scope",
+        ),
+        Err(ExchangeError::ScopeNotGranted) => error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "scope_not_granted",
+        ),
+    }
+}
+
+async fn ticket(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    issue_ticket(&state, &headers, None)
+}
+
+async fn ticket_for(
+    State(state): State<AppState>,
+    Path(route): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if route != "rpc" && route != "media" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    issue_ticket(&state, &headers, Some(&route))
+}
+
+fn issue_ticket(state: &AppState, headers: &HeaderMap, route: Option<&str>) -> Response {
+    let Some(token) = bearer(headers) else {
+        return auth_invalid("missing_credential");
+    };
+    match state.auth.issue_ticket(token, route) {
+        Some((ticket, expires_at_ms)) => {
+            Json(json!({ "ticket": ticket, "expiresAt": iso8601(expires_at_ms) })).into_response()
+        }
+        None => auth_invalid("invalid_credential"),
+    }
+}
+
+/// `AuthCreatePairingCredentialInput`. Codes always carry the standard client scopes.
+#[derive(Deserialize, Default)]
+struct PairingTokenRequest {
+    label: Option<String>,
+    scopes: Option<Vec<String>>,
+    access: Option<String>,
+}
+
+async fn pairing_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Option<Json<PairingTokenRequest>>,
+) -> Response {
+    let Some(principal) = bearer(&headers).and_then(|t| state.auth.authenticate_bearer(t)) else {
+        return auth_invalid("missing_credential");
+    };
+    if !principal.has_scope("access:write") {
+        return Json(json!({
+            "_tag": "EnvironmentScopeRequiredError",
+            "code": "insufficient_scope",
+            "requiredScope": "access:write",
+            "traceId": trace_id(),
+        }))
+        .with_status(StatusCode::FORBIDDEN);
+    }
+    let request = body.map(|Json(b)| b).unwrap_or_default();
+    // Agent approval codes and narrowed grants are not supported; refuse rather than widen.
+    if request.access.is_some() || request.scopes.is_some() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "invalid_scope",
+        );
+    }
+    let issued = state
+        .auth
+        .issue_pairing_code(request.label, auth::PAIRING_CODE_TTL_MS);
+    let mut body = json!({
+        "id": issued.id,
+        "credential": issued.code,
+        "expiresAt": iso8601(issued.expires_at_ms),
+    });
+    if let Some(label) = issued.label {
+        body["label"] = json!(label);
+    }
+    Json(body).into_response()
+}
+
+async fn ws(
+    upgrade: WebSocketUpgrade,
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    if query
+        .get(ORCHESTRATION_PROTOCOL_QUERY_PARAM)
+        .map(String::as_str)
+        != Some("2")
+    {
+        return Json(json!({
+            "code": "orchestration_protocol_incompatible",
+            "message": format!("Update this client to one that supports orchestration protocol {ORCHESTRATION_PROTOCOL_VERSION}."),
+            "orchestrationProtocolVersion": ORCHESTRATION_PROTOCOL_VERSION,
+        }))
+        .with_status(StatusCode::UPGRADE_REQUIRED);
+    }
+    let Some(principal) = authenticate_upgrade(&state, &query, &headers) else {
+        let reason =
+            if query.contains_key("wsTicket") || headers.contains_key(header::AUTHORIZATION) {
+                "invalid_credential"
+            } else {
+                "missing_credential"
+            };
+        return auth_invalid(reason);
+    };
+    let options = SessionOptions {
+        frame_parts: query.contains_key(conn_wire::frame_parts::QUERY_PARAM),
+        max_message_bytes: MAX_MESSAGE_BYTES,
+        idle_timeout: Duration::from_secs(60),
+        context: CallContext {
+            headers: Vec::new(),
+            principal: Some(Arc::new(principal)),
+        },
+    };
+    let table = state.table.clone();
+    upgrade
+        .max_message_size(MAX_MESSAGE_BYTES)
+        .max_frame_size(MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| session::run(socket, table, options))
+}
+
+/// `authenticateWebSocketUpgrade`: an RPC ticket in `wsTicket`, else a bearer header.
+fn authenticate_upgrade(
+    state: &AppState,
+    query: &HashMap<String, String>,
+    headers: &HeaderMap,
+) -> Option<Principal> {
+    match query
+        .get("wsTicket")
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+    {
+        Some(ticket) => state.auth.authenticate_ticket(ticket, "rpc"),
+        None => bearer(headers).and_then(|t| state.auth.authenticate_bearer(t)),
+    }
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    scheme
+        .eq_ignore_ascii_case("bearer")
+        .then(|| token.trim())
+        .filter(|t| !t.is_empty())
+}
+
+fn trace_id() -> String {
+    auth::random_hex(16)
+}
+
+fn auth_invalid(reason: &str) -> Response {
+    error(
+        StatusCode::UNAUTHORIZED,
+        "EnvironmentAuthInvalidError",
+        "auth_invalid",
+        reason,
+    )
+}
+
+fn error(status: StatusCode, tag: &str, code: &str, reason: &str) -> Response {
+    Json(json!({ "_tag": tag, "code": code, "reason": reason, "traceId": trace_id() }))
+        .with_status(status)
+}
+
+trait WithStatus {
+    fn with_status(self, status: StatusCode) -> Response;
+}
+
+impl<T: IntoResponse> WithStatus for T {
+    fn with_status(self, status: StatusCode) -> Response {
+        (status, self).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    async fn serve() -> (std::net::SocketAddr, Arc<AuthStore>) {
+        let auth = AuthStore::in_memory();
+        let state = AppState {
+            table: Arc::new(MethodTable::new()),
+            auth: auth.clone(),
+            descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(state)).await });
+        (addr, auth)
+    }
+
+    /// One HTTP/1.1 request; returns the status and the body.
+    async fn call(addr: std::net::SocketAddr, head: &str, body: &str) -> (u16, String) {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "{head}\r\nhost: {addr}\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut bytes = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut buf).await.unwrap();
+            bytes.extend_from_slice(&buf[..n]);
+            // An upgraded socket stays open; its headers are all there is to read.
+            let upgraded =
+                bytes.starts_with(b"HTTP/1.1 101") && bytes.windows(4).any(|w| w == b"\r\n\r\n");
+            if n == 0 || upgraded {
+                break;
+            }
+        }
+        let response = String::from_utf8(bytes).unwrap();
+        let status = response[9..12].parse().unwrap();
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, b)| b.to_owned())
+            .unwrap_or_default();
+        (status, body)
+    }
+
+    const UPGRADE: &str = "connection: upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==";
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pairs_and_authenticates_the_socket() {
+        let (addr, auth) = serve().await;
+        let (status, body) = call(addr, "GET /.well-known/t3/environment HTTP/1.1", "").await;
+        assert_eq!(status, 200);
+        let descriptor: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(descriptor["orchestrationProtocolVersion"], 2);
+
+        let (_, body) = call(addr, "GET /api/auth/session HTTP/1.1", "").await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["authenticated"],
+            false
+        );
+
+        let code = auth
+            .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .code;
+        let form = format!(
+            "grant_type={}&subject_token={code}&subject_token_type={}&requested_token_type={}",
+            "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange",
+            "urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap",
+            "urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token",
+        );
+        let head = "POST /oauth/token HTTP/1.1\r\ncontent-type: application/x-www-form-urlencoded";
+        let (status, body) = call(addr, head, &form).await;
+        assert_eq!(status, 200, "{body}");
+        let token: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(token["token_type"], "Bearer");
+        let access = token["access_token"].as_str().unwrap();
+        // The code is spent.
+        let (status, body) = call(addr, head, &form).await;
+        assert_eq!(status, 401);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["reason"],
+            "invalid_credential"
+        );
+
+        let bearer = format!("authorization: Bearer {access}");
+        let (_, body) = call(
+            addr,
+            &format!("GET /api/auth/session HTTP/1.1\r\n{bearer}"),
+            "",
+        )
+        .await;
+        let session: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(session["authenticated"], true);
+        assert_eq!(session["sessionMethod"], "bearer-access-token");
+
+        let (status, body) = call(
+            addr,
+            &format!("POST /api/auth/websocket-ticket/rpc HTTP/1.1\r\n{bearer}"),
+            "",
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let ticket: Value = serde_json::from_str(&body).unwrap();
+        let ticket = ticket["ticket"].as_str().unwrap();
+
+        let ws = |query: String| format!("GET /ws?{query} HTTP/1.1\r\n{UPGRADE}");
+        let (status, _) = call(
+            addr,
+            &ws(format!("orchestrationProtocol=2&wsTicket={ticket}")),
+            "",
+        )
+        .await;
+        assert_eq!(status, 101);
+        let (status, body) = call(
+            addr,
+            &ws("orchestrationProtocol=2&wsTicket=forged".into()),
+            "",
+        )
+        .await;
+        assert_eq!(
+            (
+                status,
+                serde_json::from_str::<Value>(&body).unwrap()["reason"].clone()
+            ),
+            (401, json!("invalid_credential"))
+        );
+        let (status, body) = call(addr, &ws("orchestrationProtocol=2".into()), "").await;
+        assert_eq!(
+            (
+                status,
+                serde_json::from_str::<Value>(&body).unwrap()["reason"].clone()
+            ),
+            (401, json!("missing_credential"))
+        );
+        // The bearer token is not accepted as a ticket.
+        let (status, _) = call(
+            addr,
+            &ws(format!("orchestrationProtocol=2&wsTicket={access}")),
+            "",
+        )
+        .await;
+        assert_eq!(status, 401);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn refuses_other_protocol_versions_before_auth() {
+        let (addr, _) = serve().await;
+        for query in ["", "orchestrationProtocol=1", "orchestrationProtocol=3"] {
+            let (status, body) =
+                call(addr, &format!("GET /ws?{query} HTTP/1.1\r\n{UPGRADE}"), "").await;
+            assert_eq!(status, 426);
+            let body: Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(body["code"], "orchestration_protocol_incompatible");
+            assert_eq!(body["orchestrationProtocolVersion"], 2);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dpop_exchanges_are_refused_without_spending_the_code() {
+        let (addr, auth) = serve().await;
+        let code = auth
+            .issue_pairing_code(None, auth::PAIRING_CODE_TTL_MS)
+            .code;
+        let form = format!(
+            "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token={code}&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token"
+        );
+        let head = "POST /oauth/token HTTP/1.1\r\ncontent-type: application/x-www-form-urlencoded";
+        let (status, _) = call(addr, &format!("{head}\r\ndpop: x.y.z"), &form).await;
+        assert_eq!(status, 401);
+        let (status, _) = call(addr, head, &form).await;
+        assert_eq!(status, 200);
+    }
+}
