@@ -130,6 +130,20 @@ describe("turnDetail", () => {
       activity: "Compacting context",
     },
     {
+      name: "nothing once the context is compacted",
+      entries: [
+        prompt,
+        command("git"),
+        work("compact", {
+          tone: "info",
+          sourceActivityKind: "context-compaction",
+          label: "Context compacted",
+          toolLifecycleStatus: "completed",
+        }),
+      ],
+      activity: null,
+    },
+    {
       name: "nothing from the turn before",
       entries: [message("earlier", "user"), command("git"), prompt],
       activity: null,
