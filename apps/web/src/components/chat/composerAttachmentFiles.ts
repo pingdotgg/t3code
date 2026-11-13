@@ -61,6 +61,28 @@ export function normalizeComposerImageFileMimeType(file: File): File {
   });
 }
 
+export function composerImageDedupKey(
+  image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
+): string {
+  // Hydrated images get fresh lastModified values, so exclude it from dedupe.
+  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
+}
+
+// Compression changes an image's bytes, so a compressed image answers for the file it came from.
+const composerImageSourceKeys = new WeakMap<File, string>();
+
+/** The draft store's image dedupe key, taken from the file as pasted rather than as compressed. */
+export function composerImageSourceKey(file: File): string {
+  return (
+    composerImageSourceKeys.get(file) ??
+    composerImageDedupKey({ mimeType: file.type, sizeBytes: file.size, name: file.name || "image" })
+  );
+}
+
+export function rememberComposerImageSource(source: File, prepared: File): void {
+  if (prepared !== source) composerImageSourceKeys.set(prepared, composerImageSourceKey(source));
+}
+
 function isDngFile(file: Pick<File, "name" | "type">): boolean {
   const mimeType = file.type.split(";", 1)[0]?.trim().toLowerCase();
   return (

@@ -8,6 +8,8 @@ const isThreadReadResponse = Schema.is(CodexSchema.V2ThreadReadResponse);
 const isThreadResumeResponse = Schema.is(CodexSchema.V2ThreadResumeResponse);
 const isThreadForkResponse = Schema.is(CodexSchema.V2ThreadForkResponse);
 const isTurnCompletedNotification = Schema.is(CodexSchema.V2TurnCompletedNotification);
+const isHookStartedNotification = Schema.is(CodexSchema.V2HookStartedNotification);
+const isHookCompletedNotification = Schema.is(CodexSchema.V2HookCompletedNotification);
 const decodeThreadResumeResponse = Schema.decodeUnknownSync(CodexSchema.V2ThreadResumeResponse);
 
 it("keeps async questions in live notifications and thread history", () => {
@@ -237,5 +239,28 @@ it("accepts account plan slugs newer than the pinned protocol", () => {
     };
 
     assert.equal(isGetAccountResponse(accountResponse), true);
+  }
+});
+
+it("accepts Codex model-request hook runs", () => {
+  for (const eventName of ["preModelRequest", "postModelRequest"]) {
+    const notification = {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      run: {
+        id: `hook-${eventName}`,
+        eventName,
+        executionMode: "sync",
+        handlerType: "command",
+        scope: "turn",
+        sourcePath: "/tmp/project/.codex/hooks.json",
+        startedAt: 1,
+        status: "stopped",
+        displayOrder: 0,
+        entries: [{ kind: "stop", text: "Stop reason supplied by hook" }],
+      },
+    };
+    assert.equal(isHookStartedNotification(notification), true);
+    assert.equal(isHookCompletedNotification(notification), true);
   }
 });

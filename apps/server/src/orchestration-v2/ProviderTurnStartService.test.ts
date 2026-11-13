@@ -272,6 +272,7 @@ it.each([
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly nativeGoals?: boolean;
+  readonly goalDriver?: "opencode" | "antigravity";
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -341,7 +342,9 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make(input.nativeGoals === undefined ? "codex" : "opencode"),
+    driver: ProviderDriverKind.make(
+      input.nativeGoals === undefined ? "codex" : (input.goalDriver ?? "opencode"),
+    ),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -1134,6 +1137,12 @@ effectIt.effect(
           upstream: "refs/remotes/origin/feature/restore",
           base: "",
         },
+        "pushed-sole-remote": {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/upstream/feature/restore",
+          base: "",
+        },
         detached: { tip: baseTip, file: null, upstream: null, base: "main" },
         "detached-no-remote": { tip: projectTip, file: "project.txt", upstream: null, base: "" },
       } as const;
@@ -1148,7 +1157,11 @@ effectIt.effect(
           yield* git(workspaceRoot, ["switch", "--detach"]);
           expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
         }
+        if (scenario === "pushed-sole-remote") {
+          yield* git(workspaceRoot, ["remote", "rename", "origin", "upstream"]);
+        }
         if (scenario === "detached") {
+          yield* git(workspaceRoot, ["remote", "rename", "upstream", "origin"]);
           yield* git(workspaceRoot, ["push", "origin", "--delete", "feature/restore"]);
         }
         if (scenario === "detached-no-remote") {
@@ -1366,12 +1379,18 @@ effectIt.effect.each([
     }),
 );
 
-effectIt.effect.each([false, true])(
-  "OpenCode goal prompts defer switched-provider history only with native support: %s",
-  (nativeGoals) =>
+effectIt.effect.each([
+  { goalDriver: "opencode", nativeGoals: false },
+  { goalDriver: "opencode", nativeGoals: true },
+  { goalDriver: "antigravity", nativeGoals: false },
+  { goalDriver: "antigravity", nativeGoals: true },
+] as const)(
+  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals",
+  ({ goalDriver, nativeGoals }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "/goal all tests pass",
+        goalDriver,
         nativeGoals,
         sideChat: { contextRun: "failed", switchedProvider: true },
       });
