@@ -95,7 +95,8 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
 
 export const readAloudController = createReadAloudController(async (text, settings, signal) => {
   if (settings.provider === "system") {
-    const voices = settings.voice ? await Speech.getAvailableVoicesAsync() : [];
+    const voices =
+      settings.voice || Platform.OS === "android" ? await Speech.getAvailableVoicesAsync() : [];
     signal.throwIfAborted();
     return systemPlayback(text, {
       ...settings,
@@ -130,7 +131,8 @@ export const readAloudController = createReadAloudController(async (text, settin
   try {
     file.write(bytes);
     player = createAudioPlayer(file.uri, { updateInterval: 500 });
-    if (settings.provider === "chatgpt") player.setPlaybackRate(settings.speed);
+    if (settings.provider === "chatgpt" || settings.provider === "openrouter")
+      player.setPlaybackRate(settings.speed);
   } catch {
     if (file.exists) file.delete();
     throw new Error("Could not prepare the generated speech for playback.");
@@ -153,6 +155,17 @@ export const readAloudController = createReadAloudController(async (text, settin
     player.addListener("playbackStatusUpdate", (status) => {
       if (status.didJustFinish) resolve();
       else if (status.error) reject(new Error("Could not play the generated speech."));
+      else if (
+        session.requested &&
+        status.isLoaded &&
+        status.duration > 0 &&
+        status.currentTime < status.duration &&
+        !status.playing &&
+        !status.isBuffering &&
+        status.timeControlStatus === "paused" &&
+        readAloudController.getSnapshot().status === "playing"
+      )
+        readAloudController.pause();
     });
   });
   return {

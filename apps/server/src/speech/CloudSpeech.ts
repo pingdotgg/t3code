@@ -397,7 +397,6 @@ export const layer = Layer.effect(
                   input: request.text,
                   model: request.model,
                   ...(voice ? { voice } : {}),
-                  ...(request.speed !== 1 ? { speed: request.speed } : {}),
                   response_format: format,
                 };
         if (provider !== "chatgpt") {
