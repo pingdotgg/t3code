@@ -48,6 +48,7 @@ import {
   type AcpRegistryConfigurationProbe,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
+  type AcpRegistryModelOptions,
   deleteAcpRegistrySession,
   disableAcpRegistryProvider,
   listAcpRegistrySessions,
@@ -98,6 +99,7 @@ function modelsFromDiscovery(
     | undefined,
   customModels: ReadonlyArray<string>,
   previousModels: ReadonlyArray<ServerProviderModel> = [],
+  modelOptions?: AcpRegistryModelOptions,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
   const capabilities =
@@ -114,7 +116,9 @@ function modelsFromDiscovery(
   const capabilitiesFor = (slug: string) => {
     if (slug === discovery?.currentModelId) return capabilities;
     const own = (
-      previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []
+      modelOptions?.get(slug) ??
+      previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ??
+      []
     ).filter((descriptor) => !sharedIds.has(descriptor.id));
     const optionDescriptors = [...shared, ...own];
     return optionDescriptors.length === 0
@@ -251,7 +255,12 @@ function baseSnapshot(
             : input.settings.agentId.length > 0),
     },
     ...(input.message ? { message: input.message } : {}),
-    models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
+    models: modelsFromDiscovery(
+      input.probe?.probe,
+      input.settings.customModels,
+      [],
+      input.probe?.modelOptions,
+    ),
     ...(input.probe === undefined
       ? {}
       : {

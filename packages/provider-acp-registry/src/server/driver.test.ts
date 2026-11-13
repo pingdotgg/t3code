@@ -273,6 +273,61 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
+  it("gives a model the probe is not on the options the agent listed for it", () => {
+    const option = (id: string) => ({
+      id,
+      label: id,
+      type: "select" as const,
+      options: [{ id: "high", label: "High" }],
+      currentValue: "high",
+    });
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "cursor" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: { status: "ready", agentId: "cursor", version: "1.0.0", distribution: "npx" },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [
+            { id: "composer", name: "Composer", description: null },
+            { id: "opus", name: "Opus", description: null },
+          ],
+          currentModelId: "composer",
+          configOptions: [option("mode"), option("fast")],
+          modelOptionIds: ["fast"],
+          sessionManagement: {
+            canList: false,
+            canLoad: false,
+            canResume: false,
+            canLogout: false,
+            canDelete: false,
+            canConfigureProviders: false,
+          },
+        },
+        slashCommands: [],
+        skills: [],
+        modelOptions: new Map([
+          ["composer", [option("fast")]],
+          ["opus", [option("effort"), option("context")]],
+        ]),
+      },
+    });
+
+    expect(
+      provider.models.map((model) => [
+        model.slug,
+        (model.capabilities?.optionDescriptors ?? []).map((descriptor) => descriptor.id),
+      ]),
+    ).toEqual([
+      ["composer", ["mode", "fast"]],
+      ["opus", ["mode", "effort", "context"]],
+    ]);
+  });
+
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,

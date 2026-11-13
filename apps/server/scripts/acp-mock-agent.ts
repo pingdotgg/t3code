@@ -338,11 +338,7 @@ function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.Session
   }
 }
 
-function availableModels(): ReadonlyArray<{
-  readonly value: string;
-  readonly name: string;
-  readonly configOptions: ReadonlyArray<AcpSchema.SessionConfigOption>;
-}> {
+function availableModels() {
   return [
     { value: "default", name: "Auto" },
     { value: "composer-2", name: "Composer 2" },
@@ -351,7 +347,11 @@ function availableModels(): ReadonlyArray<{
   ].map((model) => ({
     value: model.value,
     name: model.name,
-    configOptions: modelConfigOptionsFor(model.value),
+    // Cursor answers this extension method in ACP v1's shape, whatever the session speaks.
+    configOptions: modelConfigOptionsFor(model.value).map(({ configId, ...option }) => ({
+      id: configId,
+      ...option,
+    })),
   }));
 }
 

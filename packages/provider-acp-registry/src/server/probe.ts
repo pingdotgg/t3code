@@ -8,6 +8,7 @@ import {
   type AcpRegistryProbeModel,
   type AcpRegistryUrlAuthAction,
   type ProviderInstanceId,
+  type ProviderOptionDescriptor,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -26,7 +27,12 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { cursorClientCapabilitiesMeta, isCursorAcp } from "./cursorAcp.ts";
+import {
+  CURSOR_LIST_MODELS_METHOD,
+  cursorClientCapabilitiesMeta,
+  cursorModelOptions,
+  isCursorAcp,
+} from "./cursorAcp.ts";
 import {
   findModelConfigOption,
   parseSessionModeState,
@@ -172,6 +178,9 @@ export interface AcpRegistryLiveConfiguration {
   readonly modelOptionIds?: NonNullable<AcpRegistryProbeResult["modelOptionIds"]>;
 }
 
+/** Model-specific options of models the session is not on, by model id. */
+export type AcpRegistryModelOptions = ReadonlyMap<string, ReadonlyArray<ProviderOptionDescriptor>>;
+
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
@@ -316,6 +325,7 @@ export interface AcpRegistryConfigurationProbeResult {
   readonly probe: AcpRegistryProbeResult;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly modelOptions?: AcpRegistryModelOptions;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
@@ -448,7 +458,13 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       yield* Deferred.await(commandsAdvertised).pipe(
         Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
       );
-      return { resolved, started, commands: yield* Ref.get(commandsRef) };
+      const modelOptions = isCursorAcp(input.settings)
+        ? yield* runtime.request(CURSOR_LIST_MODELS_METHOD, {}).pipe(
+            Effect.map(cursorModelOptions),
+            Effect.orElseSucceed(() => undefined),
+          )
+        : undefined;
+      return { resolved, started, commands: yield* Ref.get(commandsRef), modelOptions };
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
@@ -477,6 +493,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
+      ...(result.modelOptions === undefined ? {} : { modelOptions: result.modelOptions }),
     };
   },
 );

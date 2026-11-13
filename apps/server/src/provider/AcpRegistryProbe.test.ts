@@ -501,6 +501,13 @@ describe("ACP Registry probe", () => {
         "gpt-5.4",
         "claude-opus-4-6",
       ]);
+      // The probe session sits on Auto, which has no options of its own.
+      expect(result.probe.modelOptionIds).toEqual([]);
+      expect(result.modelOptions?.get("gpt-5.4")?.map((option) => option.id)).toEqual([
+        "reasoning",
+        "context",
+        "fast",
+      ]);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

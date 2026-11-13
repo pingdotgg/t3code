@@ -1,4 +1,7 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionDescriptor } from "@t3tools/contracts";
+import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import type { AcpRegistrySettings } from "../settings.ts";
 
@@ -35,4 +38,60 @@ export function splitCursorPresetModel(model: string): {
           : [{ id: entry.slice(0, separator), value: entry.slice(separator + 1) }];
       }),
   };
+}
+
+export const CURSOR_LIST_MODELS_METHOD = "cursor/list_available_models";
+
+const optionalText = Schema.optionalKey(Schema.NullOr(Schema.String));
+const cursorConfigOption = {
+  id: Schema.String,
+  name: Schema.String,
+  description: optionalText,
+  category: optionalText,
+};
+const decodeCursorModelList = Schema.decodeUnknownOption(
+  Schema.Struct({
+    models: Schema.Array(
+      Schema.Struct({
+        value: Schema.String,
+        configOptions: Schema.Array(
+          Schema.Union([
+            Schema.Struct({
+              ...cursorConfigOption,
+              type: Schema.Literal("select"),
+              currentValue: Schema.String,
+              options: Schema.Array(
+                Schema.Struct({
+                  value: Schema.String,
+                  name: Schema.String,
+                  description: optionalText,
+                }),
+              ),
+            }),
+            Schema.Struct({
+              ...cursorConfigOption,
+              type: Schema.Literal("boolean"),
+              currentValue: Schema.Boolean,
+            }),
+          ]),
+        ),
+      }),
+    ),
+  }),
+);
+
+/**
+ * A session reports options for its current model only. Cursor's model list
+ * carries every model's, so a model can be configured before it has run.
+ */
+export function cursorModelOptions(
+  response: unknown,
+): ReadonlyMap<string, ReadonlyArray<ProviderOptionDescriptor>> {
+  const models = Option.getOrUndefined(decodeCursorModelList(response))?.models ?? [];
+  return new Map(
+    models.map((model) => [
+      model.value,
+      acpProviderOptionDescriptors({ configOptions: model.configOptions, modeState: undefined }),
+    ]),
+  );
 }
