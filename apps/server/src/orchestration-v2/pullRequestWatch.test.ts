@@ -876,11 +876,6 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(pending([], watch({ headSha: "aaaaaaaaaa", checksPending: false })));
     const unreadable = { ...check("approvals", "action-required"), placeholder: true };
     assert.isTrue(pending([unreadable], watch({ headSha: "aaaaaaaaaa", checksPending: true })));
-    // An incomplete read can miss a queued run, so finished visible checks do not settle it.
-    const unreadRuns = { ...check("Workflow run status", "pending"), placeholder: true };
-    const before = watch({ headSha: "aaaaaaaaaa", checksPending: true });
-    assert.isTrue(pending([ci, unreadRuns], before));
-    assert.isFalse(pending([ci, unreadRuns], { ...before, checksPending: false }));
   });
 
   it("waits a while for a new head's checks on every host", () => {

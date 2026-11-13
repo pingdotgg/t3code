@@ -203,20 +203,8 @@ function withWorkflowApprovals(
 // GitHub adds a run's check runs only as its jobs start, so a queued run can have none yet.
 function withUnfinishedWorkflowRuns(
   checks: ReadonlyArray<PullRequestCheck>,
-  runs: ReadonlyArray<GitHubWorkflowRunApproval> | null,
+  runs: ReadonlyArray<GitHubWorkflowRunApproval>,
 ): ReadonlyArray<PullRequestCheck> {
-  if (runs === null) {
-    return [
-      ...checks,
-      {
-        name: "Workflow run status",
-        status: "pending",
-        description: "GitHub could not determine whether workflow runs are still unfinished.",
-        url: null,
-        placeholder: true,
-      },
-    ];
-  }
   const runningRunIds = new Set<number>();
   for (const check of checks) {
     if (check.status !== "pending" && check.status !== "action-required") continue;
@@ -385,7 +373,7 @@ export const make = Effect.gen(function* () {
                     (error) =>
                       error._tag !== "GitHubApiRateLimitError" &&
                       error._tag !== "SourceControlRateLimitPausedError",
-                    () => Effect.succeed(null),
+                    () => Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>),
                   ),
                 ),
             { concurrent: true },

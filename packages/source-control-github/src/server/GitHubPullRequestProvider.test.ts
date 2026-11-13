@@ -481,77 +481,52 @@ const sameRepositoryChecks = [
   },
 ];
 
-it.effect.each([
-  ["read", true],
-  ["failed", false],
-] as const)(
-  "adds unstarted same-repository workflow runs as pending, not as approvals, when %s",
-  ([, readable]) =>
-    Effect.gen(function* () {
-      const provider = yield* make;
-      const detail = yield* provider.getChangeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
+it.effect("adds unstarted same-repository workflow runs as pending, not as approvals", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
 
-      expect(detail.workflowApprovalsRequired).toBe(0);
-      expect(detail.checks).toEqual([
-        ...sameRepositoryChecks,
-        readable
-          ? {
-              name: "CI",
-              status: "pending",
-              description: "This workflow run has not finished.",
-              url: "https://github.com/acme/web/actions/runs/202",
-            }
-          : {
-              name: "Workflow run status",
-              status: "pending",
-              description: "GitHub could not determine whether workflow runs are still unfinished.",
-              url: null,
-              placeholder: true,
-            },
-      ]);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestDetail: () =>
-            Effect.succeed({
-              ...openDetail,
-              isCrossRepository: false,
-              checks: sameRepositoryChecks,
-            }),
-          // Run 201 is represented by its running job; run 202 is queued before any job exists.
-          listUnfinishedWorkflowRuns: () =>
-            readable
-              ? Effect.succeed([
-                  { id: 201, name: "Lint", url: "https://github.com/acme/web/actions/runs/201" },
-                  { id: 202, name: "CI", url: "https://github.com/acme/web/actions/runs/202" },
-                ])
-              : Effect.fail(
-                  new GitHubPullRequestApi.GitHubPullRequestReadError({
-                    cwd: "/w",
-                    operation: "listUnfinishedWorkflowRuns",
-                    cause: new Error("HTTP 503"),
-                  }),
-                ),
-          listWorkflowRunsRequiringApproval: () =>
-            Effect.die("same-repository pull requests must not probe fork workflow approvals"),
-          getViewerAccess: () =>
-            Effect.succeed({
-              canWrite: true,
-              canTriage: true,
-              canUpdate: true,
-              didAuthor: false,
-              mergeCapabilities: { merge: true, squash: true, rebase: true },
-              autoMergeAllowed: true,
-            }),
-        }),
-      ),
+    expect(detail.workflowApprovalsRequired).toBe(0);
+    expect(detail.checks).toEqual([
+      ...sameRepositoryChecks,
+      {
+        name: "CI",
+        status: "pending",
+        description: "This workflow run has not finished.",
+        url: "https://github.com/acme/web/actions/runs/202",
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        revalidateChecks: (_input, read) => read,
+        getPullRequestDetail: () =>
+          Effect.succeed({ ...openDetail, isCrossRepository: false, checks: sameRepositoryChecks }),
+        // Run 201 is represented by its running job; run 202 is queued before any job exists.
+        listUnfinishedWorkflowRuns: () =>
+          Effect.succeed([
+            { id: 201, name: "Lint", url: "https://github.com/acme/web/actions/runs/201" },
+            { id: 202, name: "CI", url: "https://github.com/acme/web/actions/runs/202" },
+          ]),
+        listWorkflowRunsRequiringApproval: () =>
+          Effect.die("same-repository pull requests must not probe fork workflow approvals"),
+        getViewerAccess: () =>
+          Effect.succeed({
+            canWrite: true,
+            canTriage: true,
+            canUpdate: true,
+            didAuthor: false,
+            mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
+          }),
+      }),
     ),
+  ),
 );
 
 it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>

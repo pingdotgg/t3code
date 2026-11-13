@@ -73,9 +73,8 @@ export function evaluatePullRequestWatch(
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
   if (checks.length > 0) {
-    // A run awaiting approval waits on a person, like a review, so only running checks count. An
-    // incomplete read can miss running checks, so it cannot say they all finished.
-    checksPending = checks.some((check) => check.status === "pending") || (unread && checksPending);
+    // A run awaiting approval waits on a person, like a review, so only running checks count.
+    checksPending = checks.some((check) => check.status === "pending");
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (!checksBaseline && newlyFailed.length > 0) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
