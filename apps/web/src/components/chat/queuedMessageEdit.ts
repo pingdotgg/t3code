@@ -28,9 +28,8 @@ export function recoverQueuedMessageEdit(input: {
   });
   if (recovery === "kept") {
     store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
-  } else {
-    store.clearComposerContent(input.editTarget);
   }
+  store.clearComposerContent(input.editTarget);
   return recovery;
 }
 
