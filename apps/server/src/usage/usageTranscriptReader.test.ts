@@ -561,7 +561,7 @@ describe("readTranscriptRecords resume", () => {
 
 describe("usage marker gate", () => {
   const markers = { one: ['"usage"'], several: ['"token_count"', '"session_meta"', '"a.b(c)"'] };
-  // Returns the indexes of the lines the gate let through to the parser.
+  // Returns the ids of the lines the gate let through to the parser.
   const gatedLines = async (kind: keyof typeof markers, lines: readonly Buffer[]) => {
     const path = NodePath.join(dir, `${kind}.jsonl`);
     await NodeFSP.writeFile(
@@ -570,13 +570,14 @@ describe("usage marker gate", () => {
     );
     const format: TranscriptUsageFormat<unknown> = {
       ...TEST_FORMATS.claude,
+      selectFields: { id: true },
       usageMarkers: markers[kind] as [string, ...string[]],
-      parseLine: (line) => [
+      parseProjected: (projected) => [
         {
           provider: "claude",
           timestampMs: 0,
           model: "",
-          sessionId: line,
+          sessionId: String((projected as { id: number }).id),
           totals: EMPTY_TOTALS,
           reportedCostUsd: null,
           speed: "standard",
@@ -585,9 +586,7 @@ describe("usage marker gate", () => {
       ],
     };
     const result = await readTranscriptRecords(path, format);
-    return result!.records.map((record) =>
-      lines.findIndex((line) => line.toString("utf8") === record.sessionId),
-    );
+    return result!.records.map((record) => record.sessionId);
   };
 
   it("matches markers beside multi-byte and malformed UTF-8", async () => {
@@ -595,11 +594,17 @@ describe("usage marker gate", () => {
     for (const kind of ["one", "several"] as const) {
       for (const marker of markers[kind]) {
         const lines = [
-          Buffer.from(`{"text":"日本語 é",${marker}:1}`),
-          Buffer.concat([invalid, Buffer.from(marker), invalid]),
-          Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`),
+          Buffer.from(`{"id":0,"text":"日本語 é",${marker}:1}`),
+          Buffer.concat([
+            Buffer.from('{"id":1,"text":"'),
+            invalid,
+            Buffer.from(`",${marker}:"`),
+            invalid,
+            Buffer.from('"}'),
+          ]),
+          Buffer.from(`{"id":2,"text":"日本語 é ${marker.slice(1, -1)}"}`),
         ];
-        assert.deepStrictEqual(await gatedLines(kind, lines), [0, 1]);
+        assert.deepStrictEqual(await gatedLines(kind, lines), ["0", "1"]);
       }
     }
   });

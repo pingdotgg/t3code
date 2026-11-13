@@ -48,7 +48,6 @@ const STAT_CONCURRENCY = 32;
 const WALK_CONCURRENCY = 16;
 // Measured about 3x faster than the promise API's stat across 20,000 transcripts.
 const statFile = NodeUtil.promisify(NodeFS.stat);
-const CARRIAGE_RETURN = 0x0d;
 
 function selectUsageFields(fields: SelectedFields) {
   return (path: ReadonlyArray<string | number | null>): boolean => {
@@ -181,13 +180,18 @@ interface ScanJob {
   readonly start: number;
   readonly compressed: boolean;
   readonly streamingThresholdBytes: number;
+  readonly selectFields: SelectedFields;
   readonly marker?: string;
   readonly pattern?: string;
 }
 
-/** Each part ends at `ends[i]` in `bytes`; parts arrive in file order. */
+/**
+ * Parts arrive in file order. A LINE or TAIL takes the next entry of `values`, a gated line
+ * parsed and projected to the format's selected fields; each PIECE ends at `ends[i]` in `bytes`.
+ */
 interface ScanBatch {
   readonly kinds: readonly number[];
+  readonly values: readonly unknown[];
   readonly ends: readonly number[];
   readonly bytes: ArrayBuffer;
   readonly resumeOffset: number;
@@ -196,8 +200,8 @@ interface ScanBatch {
   readonly streaming: boolean;
 }
 
-// Splitting and gating lines is most of a scan's CPU, so it runs off the main thread; the
-// main thread parses only lines that pass the gate, in order, so totals and state are unchanged.
+// Splitting, gating and JSON-parsing lines is most of a scan's CPU, so it runs off the main
+// thread; the main thread applies the format to the projected lines in order, keeping its state.
 // Inline source also runs in bundles and single-executable builds without module files.
 const scanWorkerSource = `
 const { parentPort } = require("node:worker_threads");
@@ -209,6 +213,18 @@ const READ_CHUNK_BYTES = ${READ_CHUNK_BYTES};
 const BATCH_BYTES = 1024 * 1024;
 const [LINE, PIECE, LINE_END, TAIL] = [${LINE}, ${PIECE}, ${LINE_END}, ${TAIL}];
 const EMPTY = Buffer.alloc(0);
+const CARRIAGE_RETURN = 0x0d;
+
+// Mirrors the streaming JSON reader's projection, so a line projects the same either way.
+const project = (value, fields) => {
+  if (fields === true || typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) return [];
+  const projected = {};
+  for (const key of Object.keys(value)) {
+    if (Object.hasOwn(fields, key)) projected[key] = project(value[key], fields[key]);
+  }
+  return projected;
+};
 
 const read = (fd, buffer, position) =>
   new Promise((resolve, reject) =>
@@ -249,12 +265,27 @@ async function* scan(job) {
     passes = (line) => pattern.test(line.toString("latin1"));
   }
   let kinds = [];
+  let values = [];
   let parts = [];
   let bytes = 0;
   const push = (kind, part) => {
     kinds.push(kind);
     parts.push(part);
     bytes += part.length;
+  };
+  // Every format reads a line as JSON.parse plus parseProjected, and skips unparseable lines.
+  const pushLine = (kind, line) => {
+    const content =
+      line.length > 0 && line[line.length - 1] === CARRIAGE_RETURN ? line.subarray(0, -1) : line;
+    let parsed;
+    try {
+      parsed = JSON.parse(content.toString("utf8"));
+    } catch {
+      return;
+    }
+    kinds.push(kind);
+    values.push(project(parsed, job.selectFields));
+    parts.push(EMPTY);
   };
   let resumeOffset = job.start;
   let scanOffset = job.start;
@@ -271,8 +302,9 @@ async function* scan(job) {
       offset += part.length;
       ends.push(offset);
     }
-    const result = { kinds, ends, bytes: out.buffer, resumeOffset, done, streaming };
+    const result = { kinds, values, ends, bytes: out.buffer, resumeOffset, done, streaming };
     kinds = [];
+    values = [];
     parts = [];
     bytes = 0;
     return result;
@@ -305,13 +337,13 @@ async function* scan(job) {
       }
       if (!streaming && pendingBytes === 0) {
         const line = chunk.subarray(lineStart, newlineIndex);
-        if (passes(line)) push(LINE, Buffer.from(line));
+        if (passes(line)) pushLine(LINE, line);
       } else {
         append(chunk.subarray(lineStart, newlineIndex));
         if (streaming) push(LINE_END, EMPTY);
         else if (pendingBytes > 0) {
           const line = pendingLine();
-          if (passes(line)) push(LINE, line);
+          if (passes(line)) pushLine(LINE, line);
         }
         pending = [];
         pendingBytes = 0;
@@ -329,7 +361,7 @@ async function* scan(job) {
   }
   if (!streaming && pendingBytes > 0) {
     const line = pendingLine();
-    if (passes(line)) push(TAIL, line);
+    if (passes(line)) pushLine(TAIL, line);
   }
   yield batch(true);
 }
@@ -487,21 +519,13 @@ export async function readTranscriptRecords<State>(
       resumed = true;
     }
 
-    const toLineString = (lineBuffer: Buffer): string => {
-      const content =
-        lineBuffer.length > 0 && lineBuffer[lineBuffer.length - 1] === CARRIAGE_RETURN
-          ? lineBuffer.subarray(0, -1)
-          : lineBuffer;
-      return content.toString("utf8");
-    };
-
-    const parseLine = (lineBuffer: Buffer, lineState: State, out: UsageRecord[]): void => {
-      for (const record of format.parseLine(toLineString(lineBuffer), lineState)) out.push(record);
+    const parseProjected = (projected: unknown, lineState: State, out: UsageRecord[]): void => {
+      for (const record of format.parseProjected(projected, lineState)) out.push(record);
     };
 
     const records: UsageRecord[] = [];
     let resumeOffset = start;
-    let tail: Buffer | undefined;
+    let tail: { readonly value: unknown } | undefined;
     let tailStreaming = false;
     let streaming:
       | {
@@ -519,7 +543,7 @@ export async function readTranscriptRecords<State>(
       const { reader, decoder } = streaming ?? startStreaming();
       streaming = undefined;
       reader.write(decoder.end());
-      for (const record of format.parseProjected(reader.finish(), lineState)) out.push(record);
+      parseProjected(reader.finish(), lineState, out);
     };
 
     const [firstMarker, ...otherMarkers] = format.usageMarkers;
@@ -528,6 +552,7 @@ export async function readTranscriptRecords<State>(
       start,
       compressed,
       streamingThresholdBytes,
+      selectFields: format.selectFields,
       ...(otherMarkers.length === 0
         ? { marker: firstMarker }
         : {
@@ -539,15 +564,16 @@ export async function readTranscriptRecords<State>(
     for await (const batch of scanTranscript(job)) {
       const bytes = Buffer.from(batch.bytes);
       let partStart = 0;
+      let valueIndex = 0;
       for (const [index, kind] of batch.kinds.entries()) {
         const part = bytes.subarray(partStart, batch.ends[index]);
         partStart = batch.ends[index]!;
-        if (kind === LINE) parseLine(part, state, records);
+        if (kind === LINE) parseProjected(batch.values[valueIndex++], state, records);
         else if (kind === PIECE) {
           streaming ??= startStreaming();
           streaming.reader.write(streaming.decoder.write(part));
         } else if (kind === LINE_END) finishStreaming(state, records);
-        else tail = part;
+        else tail = { value: batch.values[valueIndex++] };
       }
       resumeOffset = batch.resumeOffset;
       tailStreaming = batch.done && batch.streaming;
@@ -559,7 +585,7 @@ export async function readTranscriptRecords<State>(
     const tailState =
       decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
     if (tailStreaming) finishStreaming(tailState, tailRecords);
-    else if (tail !== undefined) parseLine(tail, tailState, tailRecords);
+    else if (tail !== undefined) parseProjected(tail.value, tailState, tailRecords);
 
     const guardLength = compressed ? 0 : Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;
