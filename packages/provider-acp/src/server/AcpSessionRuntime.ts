@@ -1955,6 +1955,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
     const merged = mergeLateSessionLoadResponse({
       response: exit.value,
+      provisional: late.provisional,
       configOptions: yield* SubscriptionRef.get(configOptionsRef),
       modeState: yield* Ref.get(modeStateRef),
     });

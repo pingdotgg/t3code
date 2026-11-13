@@ -143,30 +143,50 @@ describe("AcpRuntimeModel", () => {
     // Nothing live: the response is the session's configuration.
     const empty = mergeLateSessionLoadResponse({
       response,
+      provisional: {},
       configOptions: [],
       modeState: undefined,
     });
     expect(empty.configOptions).toEqual(response.configOptions);
     expect(empty.modeState?.currentModeId).toBe("ask");
 
+    // Modes the placeholder took from `initialize` are older than the response.
+    const initializeModes = {
+      currentModeId: "architect",
+      availableModes: [{ id: "architect", name: "architect" }],
+    };
+    const untouched = mergeLateSessionLoadResponse({
+      response,
+      provisional: { modes: initializeModes },
+      configOptions: [],
+      modeState: initializeModes,
+    });
+    expect(untouched.configOptions).toEqual(response.configOptions);
+    expect(untouched.modeState?.currentModeId).toBe("ask");
+
     // A model written since readiness and a mode set through session/set_mode both stay.
     const liveModel = select("model", "model", "fast", ["default", "fast"]);
     const merged = mergeLateSessionLoadResponse({
       response,
+      provisional: {},
       configOptions: [liveModel],
       modeState: {
         currentModeId: "architect",
-        availableModes: [
-          { id: "ask", name: "ask" },
-          { id: "architect", name: "architect" },
-        ],
+        availableModes: [{ id: "architect", name: "architect" }],
       },
     });
     expect(merged.configOptions).toEqual([
       select("mode", "mode", "architect", ["ask", "architect"]),
       liveModel,
     ]);
-    expect(merged.modeState?.currentModeId).toBe("architect");
+    // The selected mode stays, and the modes the response offers replace the earlier list.
+    expect(merged.modeState).toEqual({
+      currentModeId: "architect",
+      availableModes: [
+        { id: "ask", name: "ask" },
+        { id: "architect", name: "architect" },
+      ],
+    });
   });
 
   it("ignores malformed initialize mode state in synthetic load responses", () => {

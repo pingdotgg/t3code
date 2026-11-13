@@ -1382,13 +1382,22 @@ export function syntheticLoadSessionResponseFromInitialize(
  */
 export function mergeLateSessionLoadResponse(input: {
   readonly response: EffectAcpSchema.LoadSessionResponse;
+  /** The placeholder setup replay idle stood in with. */
+  readonly provisional: EffectAcpSchema.LoadSessionResponse;
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly modeState: AcpSessionModeState | undefined;
 }): {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly modeState: AcpSessionModeState | undefined;
 } {
-  const liveModeId = input.modeState?.currentModeId;
+  // Mode state the placeholder copied from `initialize` is older than the response.
+  const provisionalModeState = parseSessionModeState(input.provisional);
+  const modeChanged =
+    input.modeState?.currentModeId !== provisionalModeState?.currentModeId ||
+    input.modeState?.availableModes.map((mode) => mode.id).join("\n") !==
+      provisionalModeState?.availableModes.map((mode) => mode.id).join("\n");
+  const liveModeState = modeChanged ? input.modeState : undefined;
+  const liveModeId = liveModeState?.currentModeId;
   const loaded = input.response.configOptions ?? [];
   const configOptions = [
     ...loaded.map((option) => {
@@ -1404,9 +1413,15 @@ export function mergeLateSessionLoadResponse(input: {
     }),
     ...input.configOptions.filter((live) => !loaded.some((option) => option.id === live.id)),
   ];
+  const loadedModeState = parseSessionModeState({ ...input.response, configOptions });
+  if (loadedModeState === undefined || liveModeId === undefined) {
+    return { configOptions, modeState: liveModeState ?? loadedModeState ?? input.modeState };
+  }
   return {
     configOptions,
-    modeState: input.modeState ?? parseSessionModeState({ ...input.response, configOptions }),
+    modeState: loadedModeState.availableModes.some((mode) => mode.id === liveModeId)
+      ? { ...loadedModeState, currentModeId: liveModeId }
+      : liveModeState,
   };
 }
 
