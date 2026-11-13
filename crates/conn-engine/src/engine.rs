@@ -107,7 +107,7 @@ impl SqliteEngine {
                 "failed",
                 Some(failure(
                     "transport_error",
-                    "The Conn server restarted while this turn was running. Send the message again to continue.",
+                    "The Conn Server restarted while this turn was running. Send the message again to continue.",
                     Some("server_restart"),
                 )),
             )?;
@@ -271,7 +271,7 @@ impl Inner {
             other => {
                 return Err((
                     format!(
-                        "conn-server cannot prepare a `{}` workspace yet.",
+                        "Conn Server cannot prepare a `{}` workspace yet.",
                         other.unwrap_or("unknown")
                     ),
                     false,

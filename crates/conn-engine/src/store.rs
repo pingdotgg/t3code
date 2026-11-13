@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS shell_changes (
   seq  INTEGER PRIMARY KEY,
   item TEXT NOT NULL
 );
+-- Final message texts for `searchThreads`. Trigram tokens make LIKE '%q%' an index lookup
+-- for queries of three or more characters. `message_keys` gives each message a stable rowid.
+CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(text, tokenize = 'trigram');
+CREATE TABLE IF NOT EXISTS message_keys (
+  id         INTEGER PRIMARY KEY,
+  thread_id  TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  UNIQUE (thread_id, message_id)
+);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value INTEGER NOT NULL
@@ -147,6 +156,7 @@ impl Store {
         )
         .map_err(err)?;
         conn.execute_batch(SCHEMA).map_err(err)?;
+        migrate(&conn)?;
         let high: i64 = conn
             .query_row(
                 "SELECT MAX(COALESCE((SELECT MAX(seq) FROM events), 0),
@@ -344,6 +354,40 @@ impl Store {
         Ok(rows)
     }
 
+    /// One JSON column per row.
+    pub(crate) fn query_json(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> StoreResult<Vec<Value>> {
+        let mut stmt = self.conn.prepare(sql).map_err(err)?;
+        let rows = stmt
+            .query_map(args, |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .map(parse)
+            .collect();
+        Ok(rows)
+    }
+
+    /// A text column and a JSON column per row.
+    pub(crate) fn query_rows(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> StoreResult<Vec<(String, Value)>> {
+        let mut stmt = self.conn.prepare(sql).map_err(err)?;
+        let rows = stmt
+            .query_map(args, |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(err)?
+            .filter_map(Result::ok)
+            .map(|(key, body)| (key, parse(body)))
+            .collect();
+        Ok(rows)
+    }
+
     /// Runs that were live when the store was last written: `(thread_id, run)`.
     pub(crate) fn unfinished_runs(&self) -> StoreResult<Vec<(String, Value)>> {
         let mut stmt = self
@@ -447,6 +491,14 @@ impl Tx<'_> {
                 "runs" => payload["ordinal"].as_i64(),
                 _ => None,
             };
+            if kind == "messages" && payload["streaming"] != true {
+                index_message(
+                    &self.tx,
+                    &thread_id,
+                    &id,
+                    payload["text"].as_str().unwrap_or(""),
+                )?;
+            }
             let first_seq = existing.map(|(first, _)| first).unwrap_or(seq as i64);
             self.tx
                 .execute(
@@ -808,6 +860,62 @@ pub(crate) fn shell_project(project: &Value) -> Value {
         map.remove("deletedAt");
     }
     row
+}
+
+/// Schema steps beyond `CREATE ... IF NOT EXISTS`, by `PRAGMA user_version`.
+fn migrate(conn: &Connection) -> StoreResult<()> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(err)?;
+    if version < 1 {
+        // 1: index the messages a store written before search had.
+        let rows: Vec<(String, String, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT thread_id, id, COALESCE(json_extract(body, '$.text'), '') FROM entities
+                     WHERE kind = 'messages' AND COALESCE(json_extract(body, '$.streaming'), 0) = 0",
+                )
+                .map_err(err)?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(err)?
+                .filter_map(Result::ok)
+                .collect()
+        };
+        for (thread_id, message_id, text) in rows {
+            index_message(conn, &thread_id, &message_id, &text)?;
+        }
+        conn.execute_batch("PRAGMA user_version = 1").map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Puts the final text of one message into `message_search`, replacing an older version.
+fn index_message(
+    conn: &Connection,
+    thread_id: &str,
+    message_id: &str,
+    text: &str,
+) -> StoreResult<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO message_keys (thread_id, message_id) VALUES (?1, ?2)",
+        params![thread_id, message_id],
+    )
+    .map_err(err)?;
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM message_keys WHERE thread_id = ?1 AND message_id = ?2",
+            params![thread_id, message_id],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    conn.execute("DELETE FROM message_search WHERE rowid = ?1", [id])
+        .map_err(err)?;
+    conn.execute(
+        "INSERT INTO message_search (rowid, text) VALUES (?1, ?2)",
+        params![id, text],
+    )
+    .map_err(err)?;
+    Ok(())
 }
 
 /// Bounds the tables that only serve resumes and retries. Events and projections stay: they

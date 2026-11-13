@@ -591,6 +591,51 @@ impl Inner {
         }
     }
 
+    /// `forceStopThread`: ends the provider process without waiting for it, then ends the
+    /// active run as interrupted. Used when Stop was ignored.
+    pub(crate) async fn force_stop(
+        self: &Arc<Self>,
+        input: Value,
+    ) -> Result<Value, crate::EngineError<Value>> {
+        let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
+        let wanted = input["runId"].as_str().map(str::to_owned);
+        let tid = thread_id.clone();
+        let run = self
+            .db(move |store| -> Result<Option<Value>, String> {
+                let tx = store.tx()?;
+                let run = crate::commands::active_run(&tx, &tid);
+                tx.rollback();
+                run
+            })
+            .await
+            .map_err(crate::EngineError::Internal)?;
+        let error = |reason: Option<&str>| {
+            let mut e =
+                json!({"_tag": "OrchestrationV2ForceStopThreadError", "threadId": thread_id});
+            if let Some(reason) = reason {
+                e["reason"] = json!(reason);
+            }
+            crate::EngineError::Rejected(e)
+        };
+        let run_id = run
+            .as_ref()
+            .and_then(|r| r["id"].as_str())
+            .map(str::to_owned);
+        if let (Some(wanted), Some(active)) = (&wanted, &run_id)
+            && wanted != active
+        {
+            return Err(error(Some("superseded")));
+        }
+        if let Some(live) = self.live_thread(&thread_id) {
+            live.take_active();
+        }
+        self.close_session(&thread_id).await;
+        if let Some(run_id) = run_id {
+            self.end_run(&thread_id, &run_id, "interrupted", None).await;
+        }
+        Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}))
+    }
+
     pub(crate) async fn respond(self: Arc<Self>, thread_id: String, request: Value) {
         let response = (|| -> Result<RuntimeRequestResponse, String> {
             Ok(RuntimeRequestResponse {

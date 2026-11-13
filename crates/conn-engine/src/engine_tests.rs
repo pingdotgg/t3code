@@ -1093,7 +1093,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
         } else {
             assert_ne!(
                 crate::commands::refusal(command),
-                "conn-server does not support this command.",
+                "Conn Server does not support this command.",
                 "{command} has no reason"
             );
         }
@@ -1264,4 +1264,321 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
             .unwrap()
             .contains("checkpoints")
     );
+}
+
+async fn stream_items(engine: &SqliteEngine, method: &str, input: Value, n: usize) -> Vec<Value> {
+    let mut rx = engine
+        .open_stream(method, input)
+        .await
+        .unwrap_or_else(|_| panic!("{method}"));
+    let mut out = vec![];
+    for _ in 0..n {
+        let item = timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        out.push(item.unwrap());
+    }
+    out
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn orchestration_reads_answer_from_the_store() {
+    let db = TempDb::new("reads");
+    let (engine, _) = open(&db);
+    for (thread, title) in [("t1", "Fix the login bug"), ("t2", "Write docs")] {
+        let mut c = create(thread, &format!("create-{thread}"));
+        c["title"] = json!(title);
+        c["worktreePath"] = json!("/tmp/wt");
+        dispatch(&engine, c).await;
+    }
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(
+        &engine,
+        message("t1", "m1", "the parser chokes on Unicode quotes"),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "a1", "threadId": "t2"}),
+    )
+    .await;
+
+    let titles = call(
+        &engine,
+        "orchestration.getThreadTitles",
+        json!({"threadIds": ["t1", "t2", "nope"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        titles,
+        json!({"t1": "Fix the login bug", "t2": "Write docs"})
+    );
+    let meta = call(
+        &engine,
+        "orchestration.getThreadLinkMetadata",
+        json!({"threadIds": ["t1"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(meta["t1"]["projectId"], project_id());
+
+    let archived = call(&engine, "orchestration.getArchivedShellSnapshot", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(archived["threads"][0]["id"], "t2");
+    let family = call(
+        &engine,
+        "orchestration.getThreadFamily",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(family["threads"].as_array().unwrap().len(), 1);
+    let ids = call(
+        &engine,
+        "orchestration.getWorktreeThreadIds",
+        json!({"worktreePath": "/tmp/wt"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ids, json!({"threadIds": ["t1"]}));
+
+    let item = call(
+        &engine,
+        "orchestration.getTurnItem",
+        json!({"threadId": "t1", "itemId": "turn-item:message:m1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(item["item"]["type"], "user_message");
+
+    // Search: a title, a message (FTS for 3+ characters), and a two-letter query (scan).
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "login"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found["matches"][0]["threadId"], "t1");
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "UNICODE quo"}),
+    )
+    .await
+    .unwrap();
+    // One match per thread, from its newest matching message: the assistant's echo.
+    assert_eq!(found["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(found["matches"][0]["source"], "assistant");
+    assert!(
+        found["matches"][0]["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("Unicode quotes")
+    );
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "ch", "titlesOnly": false}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found["matches"].as_array().unwrap().len(), 1);
+
+    // In-thread find: "the" once in the user message, once in its echo.
+    let find = call(
+        &engine,
+        "orchestration.searchThread",
+        json!({"threadId": "t1", "query": "the"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(find["totalMatches"], 2);
+    assert_eq!(
+        find["match"],
+        json!({"entryId": "message:m1", "runId": "run:t1:1", "occurrence": 0})
+    );
+    let next_hit = call(
+        &engine,
+        "orchestration.searchThread",
+        json!({"threadId": "t1", "query": "the", "start": {"entryId": "message:m1", "occurrence": 0}, "offset": 1}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(next_hit["activeIndex"], 1);
+    assert_eq!(next_hit["match"]["entryId"], "message:run:t1:1:a");
+    let streamed = stream_items(
+        &engine,
+        "orchestration.searchThreadStream",
+        json!({"threadId": "t1", "query": "the"}),
+        1,
+    )
+    .await;
+    assert_eq!(streamed[0]["totalMatches"], 2);
+    let suggestion = stream_items(
+        &engine,
+        "orchestration.subscribePromptSuggestion",
+        json!({"threadId": "t1"}),
+        1,
+    )
+    .await;
+    assert_eq!(suggestion, [Value::Null]);
+    assert_eq!(
+        call(
+            &engine,
+            "orchestration.getNativeChildWork",
+            json!({"threadId": "t1"})
+        )
+        .await
+        .unwrap(),
+        json!({"children": []})
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn older_settled_threads_page_and_trim() {
+    let db = TempDb::new("settled");
+    let (engine, _) = open(&db);
+    for n in 0..30 {
+        let id = format!("s{n:02}");
+        dispatch(&engine, create(&id, &format!("c{id}"))).await;
+        dispatch(
+            &engine,
+            json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
+                   "settledAt": format!("2026-01-01T00:00:{n:02}.000Z")}),
+        )
+        .await;
+    }
+    // A bounded shell keeps the newest 25 settled threads and counts the 5 older ones.
+    let mut shell = engine
+        .subscribe_shell(
+            from_json(json!({"omitOlderSettled": true, "omitIdleSubagents": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let snapshot = next(&mut shell).await["snapshot"].clone();
+    assert_eq!(snapshot["threads"].as_array().unwrap().len(), 25);
+    assert_eq!(
+        snapshot["olderSettled"]["before"],
+        "2026-01-01T00:00:05.000Z"
+    );
+    assert_eq!(snapshot["olderSettled"]["counts"][0]["count"], 5);
+
+    let page = call(
+        &engine,
+        "orchestration.getOlderSettledThreads",
+        json!({"before": {"settledAt": "2026-01-01T00:00:05.000Z"}, "limit": 2}),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<_> = page["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].clone())
+        .collect();
+    assert_eq!(ids, [json!("s04"), json!("s03")]);
+    let counts = call(
+        &engine,
+        "orchestration.getOlderSettledThreads",
+        json!({"before": {"settledAt": "2026-01-01T00:00:05.000Z"}, "limit": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(counts["counts"][0]["count"], 5);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn force_stop_and_command_output() {
+    let db = TempDb::new("force");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    // A command item that grows while it runs.
+    let item = |output: &str, status: &str| {
+        json!({"id": "turn-item:cmd", "threadId": "t1", "runId": "run:t1:1", "nodeId": "node:run:t1:1:root",
+            "providerThreadId": null, "providerTurnId": null, "nativeItemRef": null, "parentItemId": null,
+            "ordinal": 0, "status": status, "title": null, "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": null, "updatedAt": "2026-01-01T00:00:00.000Z", "type": "command_execution",
+            "input": "ls", "output": output})
+    };
+    let write = |value: Value| {
+        let inner = engine.inner().clone();
+        async move {
+            inner
+                .write(move |tx| {
+                    tx.append(crate::store::Draft::new("t1", "turn-item.updated", value))
+                        .map(|_| ())
+                })
+                .await
+                .unwrap()
+        }
+    };
+    write(item("a\n", "running")).await;
+    let mut output = engine
+        .open_stream(
+            "orchestration.subscribeCommandOutput",
+            json!({"threadId": "t1", "itemId": "turn-item:cmd"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "replace", "text": "a\n", "truncated": false, "running": true})
+    );
+    write(item("a\nb\n", "completed")).await;
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "append", "text": "b\n", "truncated": false, "running": false})
+    );
+    assert!(output.recv().await.is_none());
+    let missing = engine
+        .open_stream(
+            "orchestration.subscribeCommandOutput",
+            json!({"threadId": "t1", "itemId": "nope"}),
+        )
+        .await;
+    assert!(matches!(missing, Err(EngineError::Rejected(_))));
+
+    let superseded = call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1", "runId": "run:t1:9"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(superseded["reason"], "superseded");
+    let stopped = call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stopped["outcome"], "killed");
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][0]["status"], "interrupted");
+}
+
+async fn frame(rx: &mut Subscription<Value, Value>) -> Value {
+    timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
 }

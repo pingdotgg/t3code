@@ -130,10 +130,99 @@ struct ThreadIdInput {
     thread_id: ThreadId,
 }
 
+/// Registers one engine-served method with its contract types: `unary!(table, engine, name)`
+/// for `orchestration.<camelName>` with module `rpc::orchestration::<name>`.
+macro_rules! unary {
+    ($table:expr, $engine:expr, $module:ident, $tag:literal) => {{
+        use conn_contract::rpc::orchestration::$module as m;
+        engine_unary::<m::Payload, m::Success, m::Error>($table, $engine, $tag);
+    }};
+}
+macro_rules! stream {
+    ($table:expr, $engine:expr, $module:ident, $tag:literal) => {{
+        use conn_contract::rpc::orchestration::$module as m;
+        engine_stream::<m::Payload, m::Item, m::Error>($table, $engine, $tag);
+    }};
+}
+
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     let Some(engine) = deps.engine.clone() else {
         return;
     };
+    unary!(
+        table,
+        &engine,
+        get_archived_shell_snapshot,
+        "orchestration.getArchivedShellSnapshot"
+    );
+    unary!(
+        table,
+        &engine,
+        get_older_settled_threads,
+        "orchestration.getOlderSettledThreads"
+    );
+    unary!(
+        table,
+        &engine,
+        get_thread_titles,
+        "orchestration.getThreadTitles"
+    );
+    unary!(
+        table,
+        &engine,
+        get_thread_link_metadata,
+        "orchestration.getThreadLinkMetadata"
+    );
+    unary!(
+        table,
+        &engine,
+        get_thread_family,
+        "orchestration.getThreadFamily"
+    );
+    unary!(table, &engine, get_turn_item, "orchestration.getTurnItem");
+    unary!(
+        table,
+        &engine,
+        get_worktree_thread_ids,
+        "orchestration.getWorktreeThreadIds"
+    );
+    unary!(
+        table,
+        &engine,
+        get_native_child_work,
+        "orchestration.getNativeChildWork"
+    );
+    unary!(table, &engine, search_thread, "orchestration.searchThread");
+    unary!(
+        table,
+        &engine,
+        search_threads,
+        "orchestration.searchThreads"
+    );
+    unary!(
+        table,
+        &engine,
+        force_stop_thread,
+        "orchestration.forceStopThread"
+    );
+    stream!(
+        table,
+        &engine,
+        search_thread_stream,
+        "orchestration.searchThreadStream"
+    );
+    stream!(
+        table,
+        &engine,
+        subscribe_command_output,
+        "orchestration.subscribeCommandOutput"
+    );
+    stream!(
+        table,
+        &engine,
+        subscribe_prompt_suggestion,
+        "orchestration.subscribePromptSuggestion"
+    );
     let with = |engine: &Arc<dyn Engine>| engine.clone();
 
     let e = with(&engine);
@@ -259,6 +348,74 @@ mod tests {
         );
         let missing = subscribe(CallContext::default(), json!({"threadId": "nope"})).await;
         assert!(matches!(missing, Err(Failure::Fail(_))));
+
+        // Every engine read answers in its contract type (a mismatch would be a defect).
+        for (tag, input) in [
+            ("orchestration.getArchivedShellSnapshot", json!({})),
+            (
+                "orchestration.getOlderSettledThreads",
+                json!({"before": {"settledAt": "2030-01-01T00:00:00.000Z"}, "limit": 5}),
+            ),
+            (
+                "orchestration.getThreadTitles",
+                json!({"threadIds": ["t1"]}),
+            ),
+            (
+                "orchestration.getThreadLinkMetadata",
+                json!({"threadIds": ["t1"]}),
+            ),
+            ("orchestration.getThreadFamily", json!({"threadId": "t1"})),
+            (
+                "orchestration.getTurnItem",
+                json!({"threadId": "t1", "itemId": "x"}),
+            ),
+            (
+                "orchestration.getWorktreeThreadIds",
+                json!({"worktreePath": "/tmp/p"}),
+            ),
+            (
+                "orchestration.getNativeChildWork",
+                json!({"threadId": "t1"}),
+            ),
+            (
+                "orchestration.searchThread",
+                json!({"threadId": "t1", "query": "T"}),
+            ),
+            ("orchestration.searchThreads", json!({"query": "TT"})),
+            ("orchestration.forceStopThread", json!({"threadId": "t1"})),
+        ] {
+            let Some(Handler::Unary(read)) = table.get(tag) else {
+                panic!("{tag} is registered")
+            };
+            if let Err(e) = read(CallContext::default(), input).await {
+                panic!("{tag}: {e:?}");
+            }
+        }
+        let family = {
+            let Some(Handler::Unary(read)) = table.get("orchestration.getThreadFamily") else {
+                panic!()
+            };
+            read(CallContext::default(), json!({"threadId": "t1"}))
+                .await
+                .unwrap()
+        };
+        assert_eq!(family["threads"][0]["id"], "t1");
+        for (tag, input) in [
+            (
+                "orchestration.searchThreadStream",
+                json!({"threadId": "t1", "query": "T"}),
+            ),
+            (
+                "orchestration.subscribePromptSuggestion",
+                json!({"threadId": "t1"}),
+            ),
+        ] {
+            let Some(Handler::Stream(open)) = table.get(tag) else {
+                panic!("{tag} is registered")
+            };
+            let mut items = open(CallContext::default(), input).await.unwrap();
+            assert!(items.recv().await.unwrap().is_ok(), "{tag}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

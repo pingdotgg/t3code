@@ -62,6 +62,8 @@ pub(crate) async fn subscribe_shell(
     let after = input["afterSequence"].as_u64();
     let fallback = input["httpSnapshotFallback"] == true;
     let marker = input["requestCompletionMarker"] == true;
+    let omit_idle = input["omitIdleSubagents"] == true;
+    let omit_older = input["omitOlderSettled"] == true;
     // Subscribe before reading, so a commit between the read and the first wait still wakes us.
     let mut wake = inner.notify.subscribe();
     let (first, mut cursor) = inner
@@ -77,7 +79,7 @@ pub(crate) async fn subscribe_shell(
                     (vec![json!({"kind": "snapshot-required"})], high)
                 }
                 None => (
-                    vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot()?})],
+                    vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot_trimmed(omit_idle, omit_older)?})],
                     high,
                 ),
             })
@@ -107,7 +109,7 @@ pub(crate) async fn subscribe_shell(
                     Ok(match store.shell_changes_since(after)? {
                         Some(items) => items,
                         None => {
-                            vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot()?})]
+                            vec![json!({"kind": "snapshot", "snapshot": store.shell_snapshot_trimmed(omit_idle, omit_older)?})]
                         }
                     })
                 })

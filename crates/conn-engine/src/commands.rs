@@ -100,33 +100,33 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
 pub(crate) fn refusal(command_type: &str) -> &'static str {
     match command_type {
         "checkpoint.rollback" | "thread.merge_back" => {
-            "conn-server has no checkpoints yet, so it cannot restore or merge a turn."
+            "Conn Server has no checkpoints yet, so it cannot restore or merge a turn."
         }
-        "thread.fork" => "conn-server cannot fork a thread yet.",
+        "thread.fork" => "Conn Server cannot fork a thread yet.",
         "prepared-run.release"
         | "prepared-run.progress"
         | "prepared-run.fail"
-        | "prepared-run.retry" => "conn-server does not prepare worktrees for runs yet.",
+        | "prepared-run.retry" => "Conn Server does not prepare worktrees for runs yet.",
         "thread.guest-share.close" | "thread.guest-message.dismiss" => {
-            "conn-server does not share threads with guests."
+            "Conn Server does not share threads with guests."
         }
         "thread.pull-request-link.sync"
         | "thread.pull-request.watch"
-        | "thread.pull-request.sync" => "conn-server does not watch pull requests yet.",
+        | "thread.pull-request.sync" => "Conn Server does not watch pull requests yet.",
         "notification.delivery.accept" => {
-            "conn-server does not deliver background notifications yet."
+            "Conn Server does not deliver background notifications yet."
         }
         "subagent.stop" => {
-            "conn-server cannot stop a single subagent yet; stop the thread instead."
+            "Conn Server cannot stop a single subagent yet; stop the thread instead."
         }
         "delegated_task.request"
         | "delegated_task.wake-policy"
         | "delegated_task.completion-delivery.acknowledge"
         | "delegated_task.completion-delivery.dispose" => {
-            "conn-server does not run delegated tasks yet."
+            "Conn Server does not run delegated tasks yet."
         }
-        "thread.created.record" => "conn-server does not record threads from linked environments.",
-        _ => "conn-server does not support this command.",
+        "thread.created.record" => "Conn Server does not record threads from linked environments.",
+        _ => "Conn Server does not support this command.",
     }
 }
 
@@ -336,7 +336,7 @@ fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             | "restart_active"
     ) {
         return reject(format!(
-            "conn-server does not support dispatch mode `{}` yet.",
+            "Conn Server does not support dispatch mode `{}` yet.",
             c.dispatch_mode.kind
         ));
     }
