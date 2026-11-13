@@ -191,7 +191,7 @@ export const CodexDriver: ProviderDriver<
     );
     const environmentHome = processEnv.CODEX_HOME;
     const homeLayout = yield* resolveCodexHomeLayout(
-      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
+      !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
         : config,
     );
