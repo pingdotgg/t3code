@@ -79,7 +79,7 @@ const read = (input: {
           Layer.succeed(HostProcess.Platform, input.platform),
           Layer.succeed(TailscaleHost, {
             networkInterfaces: () => input.interfaces,
-            hasTailscaledSocket: () => input.tailscaledSocket === true,
+            tailscaledAnswers: Effect.succeed(input.tailscaledSocket === true),
             lookupMagicDnsName: (address) => Effect.succeed(input.names?.[address] ?? null),
           }),
         ),

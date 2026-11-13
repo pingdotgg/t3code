@@ -1,10 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- the socket check is a reference default, which takes no FileSystem.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isTailnetHost } from "@t3tools/shared/hostClassification";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as NodeDns from "node:dns";
-import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import {
@@ -41,15 +40,25 @@ const lookupMagicDnsName = (address: string) =>
     return Effect.sync(() => resolver.cancel());
   });
 
+const tailscaledAnswers = Effect.callback<boolean>((resume) => {
+  const socket = NodeNet.connect({ path: TAILSCALED_SOCKET });
+  socket.once("connect", () => {
+    socket.destroy();
+    resume(Effect.succeed(true));
+  });
+  socket.once("error", () => resume(Effect.succeed(false)));
+  return Effect.sync(() => socket.destroy());
+});
+
 /** What discovery reads from the machine instead of the CLI; a reference so tests can replace it. */
 export const TailscaleHost = Context.Reference<{
   readonly networkInterfaces: () => NetworkInterfaces;
-  readonly hasTailscaledSocket: () => boolean;
+  readonly tailscaledAnswers: Effect.Effect<boolean>;
   readonly lookupMagicDnsName: (address: string) => Effect.Effect<string | null>;
 }>("@t3tools/tailscale/TailscaleHost", {
   defaultValue: () => ({
     networkInterfaces: () => NodeOS.networkInterfaces(),
-    hasTailscaledSocket: () => NodeFS.existsSync(TAILSCALED_SOCKET),
+    tailscaledAnswers,
     lookupMagicDnsName,
   }),
 });
@@ -60,7 +69,7 @@ export const TailscaleHost = Context.Reference<{
  */
 const cliIsMacApp = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "darwin") return false;
-  return !(yield* TailscaleHost).hasTailscaledSocket();
+  return !(yield* (yield* TailscaleHost).tailscaledAnswers);
 });
 
 const readStatusWithoutCli = Effect.gen(function* () {

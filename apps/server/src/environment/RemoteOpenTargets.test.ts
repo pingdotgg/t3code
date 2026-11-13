@@ -223,7 +223,7 @@ describe("RemoteOpenTargets", () => {
               },
             ],
           }),
-          hasTailscaledSocket: () => false,
+          tailscaledAnswers: Effect.succeed(false),
           lookupMagicDnsName: () => Effect.succeed(null),
         }),
       );
