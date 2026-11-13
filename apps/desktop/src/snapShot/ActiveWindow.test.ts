@@ -239,13 +239,21 @@ it.each([
     bounds: { x: 300, y: 200, width: 400, height: 240 },
     accessibility: [okDialog, sharingIndicator, { title: "Document" }],
   },
+  {
+    name: "dialog missing from accessibility with the same title as an indicator",
+    title: "Window",
+    bounds: { x: 300, y: 200, width: 400, height: 240 },
+    accessibility: [sharingIndicator, { title: "Document" }],
+    additionalWindows: [{ id: 3, title: "Window", bounds: { x: 6, y: 6, width: 66, height: 20 } }],
+  },
 ])(
   "keeps a frontmost $name ahead of a larger document",
-  async ({ title, bounds, accessibility }) => {
+  async ({ title, bounds, accessibility, additionalWindows = [] }) => {
     stubMacLookup(
       macLookup(
         [
           { id: 1, title, bounds },
+          ...additionalWindows,
           { id: 2, title: "Document", bounds: { x: 0, y: 0, width: 800, height: 1_000 } },
         ],
         accessibility,

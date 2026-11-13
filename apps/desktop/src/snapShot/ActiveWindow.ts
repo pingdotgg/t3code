@@ -70,10 +70,12 @@ const MAC_LOOKUP_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
 ObjC.import("ApplicationServices");
-function readAccessibilityWindows(pid) {
+function readAccessibilityWindows(pid, deadline) {
+  if (Date.now() >= deadline) return undefined;
   if (!$.AXIsProcessTrusted()) return undefined;
   $.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(), 0.25);
   const copy = (element, name) => {
+    if (Date.now() >= deadline) throw new Error("accessibility budget exhausted");
     const value = Ref();
     const error = $.AXUIElementCopyAttributeValue(element, $(name), value);
     if (error === -25204) throw new Error("accessibility timed out");
@@ -88,11 +90,13 @@ function readAccessibilityWindows(pid) {
   const windows = [];
   for (let i = 0; i < Number(list.count); i++) {
     const window = list.objectAtIndex(i);
+    const title = copy(window, "AXTitle");
+    if (title === undefined) throw new Error("accessibility window title unavailable");
     const children = copy(window, "AXChildren");
     const child =
       children !== undefined && Number(children.count) === 1 ? children.objectAtIndex(0) : undefined;
     windows.push({
-      title: text(window, "AXTitle"),
+      title: String(ObjC.unwrap(title) || ""),
       ...(child !== undefined && text(child, "AXRole") === "AXButton"
         ? {
             onlyButton: {
@@ -106,6 +110,8 @@ function readAccessibilityWindows(pid) {
   return windows;
 }
 function run() {
+  // Leave time to return the CG result when accessibility calls are slow.
+  const accessibilityDeadline = Date.now() + 2000;
   const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (app.isNil()) return "";
   const pid = app.processIdentifier;
@@ -134,7 +140,7 @@ function run() {
   }
   let accessibilityWindows;
   try {
-    accessibilityWindows = readAccessibilityWindows(pid);
+    accessibilityWindows = readAccessibilityWindows(pid, accessibilityDeadline);
   } catch (error) {}
   return JSON.stringify({
     accessibilityWindows,
@@ -175,9 +181,10 @@ function isMacSharingIndicator(window: MacAccessibilityWindow): boolean {
 }
 
 // macOS puts a titled indicator window in front of a window another app is capturing.
-// AX has no public CGWindowID, so match by title and skip any title a real window also uses.
+// AX has no public CGWindowID, so only match titles unambiguous in both window lists.
 function macSharingIndicatorTitles(
   accessibilityWindows: ReadonlyArray<MacAccessibilityWindow>,
+  visibleTitles: ReadonlyArray<string>,
 ): ReadonlySet<string> {
   const titles = new Set(
     accessibilityWindows
@@ -187,6 +194,9 @@ function macSharingIndicatorTitles(
   for (const window of accessibilityWindows) {
     if (!isMacSharingIndicator(window)) titles.delete(window.title);
   }
+  for (const title of titles) {
+    if (visibleTitles.filter((candidate) => candidate === title).length !== 1) titles.delete(title);
+  }
   return titles;
 }
 
@@ -194,14 +204,14 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
   const lookup = decodeMacActiveWindowLookup(output);
-  const sharingIndicatorTitles = macSharingIndicatorTitles(lookup.accessibilityWindows ?? []);
-  const visible = lookup.windows.filter(
-    (window) =>
-      window.alpha > 0 &&
-      window.bounds.width > 0 &&
-      window.bounds.height > 0 &&
-      !sharingIndicatorTitles.has(window.title),
+  const candidates = lookup.windows.filter(
+    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
   );
+  const sharingIndicatorTitles = macSharingIndicatorTitles(
+    lookup.accessibilityWindows ?? [],
+    candidates.map((window) => window.title),
+  );
+  const visible = candidates.filter((window) => !sharingIndicatorTitles.has(window.title));
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
     if (candidate.title.trim() !== "") return true;
