@@ -5,9 +5,10 @@
 //! helper_memory <claude-binary> <cwd> [turns]
 //! ```
 //!
-//! Prints RSS (`ps`) and private memory (`footprint`, macOS) of the helper and of this process:
-//! once the query is open, after the first turn, after the last turn, and after the session
-//! closed (when the helper must be gone).
+//! Prints RSS (`ps`) and private memory of the helper and of this process (`footprint` on
+//! macOS; `Pss_Anon` and `Private_Dirty` from `/proc/<pid>/smaps_rollup` on Linux): once the
+//! query is open, after the first turn, after the last turn, and after the session closed
+//! (when the helper must be gone).
 
 use std::{path::PathBuf, process::Command, time::Duration};
 
@@ -27,6 +28,24 @@ fn rss_mib(pid: u32) -> f64 {
     out.parse::<f64>().unwrap_or(0.0) / 1024.0
 }
 
+/// `Pss_Anon` and `Private_Dirty` in MiB, from `smaps_rollup`.
+#[cfg(target_os = "linux")]
+fn footprint(pid: u32) -> String {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).unwrap_or_default();
+    let mib = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(key))
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<f64>().ok())
+            .map_or_else(|| "-".into(), |kb| format!("{:.1} MiB", kb / 1024.0))
+    };
+    format!(
+        "Pss_Anon {}, Private_Dirty {}",
+        mib("Pss_Anon:"),
+        mib("Private_Dirty:")
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
 fn footprint(pid: u32) -> String {
     let out = Command::new("footprint")
         .args(["-p", &pid.to_string()])

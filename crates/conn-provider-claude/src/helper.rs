@@ -669,14 +669,20 @@ mod tests {
     /// and `npm ci` in helpers/sdk-host; skipped without them.
     #[tokio::test(flavor = "current_thread")]
     async fn host_death_ends_sessions_and_children() {
-        let script = development_script();
-        let modules = script
-            .parent()
-            .map(|d| d.join("node_modules/@anthropic-ai/claude-agent-sdk"));
-        if !modules.is_some_and(|m| m.is_dir()) {
-            eprintln!("skipped: run npm ci in helpers/sdk-host");
-            return;
-        }
+        // `CONN_SDK_HOST` runs it on that host, such as the single executable.
+        let command = if std::env::var_os(HELPER_ENV).is_some_and(|p| !p.is_empty()) {
+            HelperCommand::discover()
+        } else {
+            let script = development_script();
+            let modules = script
+                .parent()
+                .map(|d| d.join("node_modules/@anthropic-ai/claude-agent-sdk"));
+            if !modules.is_some_and(|m| m.is_dir()) {
+                eprintln!("skipped: run npm ci in helpers/sdk-host");
+                return;
+            }
+            HelperCommand::from_path(&script)
+        };
         let dir = std::env::temp_dir().join(format!("conn-host-death-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -693,7 +699,7 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755))
             .unwrap();
-        let helper = Helper::new(HelperCommand::from_path(&script), "claudeAgent");
+        let helper = Helper::new(command, "claudeAgent");
         let mut query = helper
             .open(
                 json!({"model": "x", "pathToClaudeCodeExecutable": stub, "cwd": dir}),
