@@ -25,7 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
+import * as WindowsTcpListenerQuery from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as WindowsTcpListeners from "./WindowsTcpListeners.ts";
 
@@ -299,18 +299,13 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
-const projectWindowsListeners = (
-  rows: ReadonlyArray<{
-    readonly port: number;
-    readonly pid: number | null;
-    readonly processName: string | null;
-  }>,
-  owners: ReadonlyMap<number, ServerOwner> = new Map(),
+const discoveredWindowsListeners = (
+  listeners: ReadonlyArray<WindowsTcpListenerQuery.WindowsTcpListener>,
+  owners: ReadonlyMap<number, ServerOwner>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
-  for (const parsed of rows) {
-    const { port, pid: normalizedPid, processName } = parsed;
-    const owner = normalizedPid === null ? undefined : owners.get(normalizedPid);
+  for (const { port, pid } of listeners) {
+    const owner = pid === null ? undefined : owners.get(pid);
     const existing = seen.get(port);
     if (existing) {
       if (owner === undefined) seen.set(port, { ...existing, ...UNOWNED });
@@ -320,22 +315,13 @@ const projectWindowsListeners = (
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
-      processName,
-      pid: normalizedPid,
+      processName: null,
+      pid,
       ...(owner ?? UNOWNED),
     });
   }
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
 };
-
-const parseWindowsListenerOutput = (raw: string, owners: ReadonlyMap<number, ServerOwner>) =>
-  projectWindowsListeners(
-    raw.split(/\r?\n/g).flatMap((line) => {
-      const parsed = parseWindowsListenerLine(line);
-      return parsed === null ? [] : [parsed];
-    }),
-    owners,
-  );
 
 const PROC_TCP_LISTEN = "0A";
 
@@ -907,12 +893,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       agentsPossible ? withAgentOwners(terminalOwners, pids) : Effect.succeed(terminalOwners);
     if (hostPlatform === "win32") {
       const nativeListeners = yield* windowsTcpListeners.scan.pipe(
-        Effect.map((rows) =>
-          projectWindowsListeners(
-            rows.map((row) => ({ ...row, processName: null })),
-            terminalOwners,
-          ),
-        ),
+        Effect.map((rows) => discoveredWindowsListeners(rows, terminalOwners)),
         Effect.catchTags({
           WindowsTcpProbeError: (error) =>
             Effect.logDebug("preview native listener scan failed; falling back to netstat", {
@@ -927,7 +908,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         );
       }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const listeners = yield* WindowsTcpListeners.queryWindowsTcpListeners(
+      const listeners = yield* WindowsTcpListenerQuery.queryWindowsTcpListeners(
         processRunner,
         "netstat.exe",
       ).pipe(
