@@ -100,6 +100,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  draftModelPick,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -1179,6 +1180,14 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
+    // A new thread is created on the composer's model; a started one follows its own unless picked.
+    const sentModelPick = isServerThread
+      ? draftModelPick(useComposerDraftStore.getState().getComposerDraft(composerDraftTarget))
+      : null;
+    const sendModel =
+      sentModelPick === null || sentModelPick.held
+        ? { modelSelection: ctxSelectedModelSelection }
+        : {};
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
@@ -1235,7 +1244,7 @@ export function useComposerSend(input: ComposerSendInput) {
             attachments: [],
             idleCompaction: "onReturn",
           },
-          modelSelection: ctxSelectedModelSelection,
+          ...sendModel,
           runtimeMode,
           interactionMode: DEFAULT_INTERACTION_MODE,
         },
@@ -1304,7 +1313,7 @@ export function useComposerSend(input: ComposerSendInput) {
               ),
             }),
           },
-          modelSelection: ctxSelectedModelSelection,
+          ...sendModel,
           titleSeed: title,
           runtimeMode,
           interactionMode: DEFAULT_INTERACTION_MODE,
@@ -1342,6 +1351,15 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        // The delivered message took its pick with it; a newer pick is a different object.
+        if (sentModelPick?.active) {
+          useComposerDraftStore
+            .getState()
+            .releaseModelSelection(
+              scopeThreadRef(environmentId, threadIdForSend),
+              sentModelPick.active,
+            );
+        }
         if (checkoutPullRequestUrl) {
           linkCheckoutPullRequest(
             scopeThreadRef(environmentId, threadIdForSend),

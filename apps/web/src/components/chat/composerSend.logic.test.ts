@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
@@ -6,6 +6,7 @@ import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
+  draftModelPick,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -22,6 +23,28 @@ describe("referencedThreadContexts", () => {
     expect(
       referencedThreadContexts({ prompt, threadContexts: [localThread, remoteThread] }),
     ).toEqual([remoteThread]);
+  });
+});
+
+describe("draftModelPick", () => {
+  it("names a model only when the draft holds one, and releases only the active pick", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const pick = { instanceId: codex, model: "gpt-5.5" };
+    expect(draftModelPick(null)).toEqual({ held: false, active: null });
+    expect(draftModelPick({ activeProvider: null, modelSelectionByProvider: {} })).toEqual({
+      held: false,
+      active: null,
+    });
+    // Options changed without switching provider still ride along.
+    expect(
+      draftModelPick({ activeProvider: null, modelSelectionByProvider: { [codex]: pick } }),
+    ).toEqual({ held: true, active: null });
+    const picked = draftModelPick({
+      activeProvider: codex,
+      modelSelectionByProvider: { [codex]: pick },
+    });
+    expect(picked.held).toBe(true);
+    expect(picked.active).toBe(pick);
   });
 });
 
