@@ -175,6 +175,15 @@ describe("orchestration V2 wire projection", () => {
       summary: '"'.repeat(159) + "…",
       truncated: true,
     });
+
+    const boundary = projectTurnItemForWire({
+      ...base,
+      input: { text: "a".repeat(149) + "😀" + "b".repeat(17_000) },
+    });
+    expect(boundary.type === "dynamic_tool" ? boundary.input : null).toEqual({
+      summary: '{"text":"' + "a".repeat(149) + "…",
+      truncated: true,
+    });
   });
 
   it("truncates detail at a UTF-8 boundary without changing the source", () => {
