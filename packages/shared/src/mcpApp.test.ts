@@ -2,6 +2,7 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampMcpAppHeight,
   injectMcpAppCsp,
   injectMcpAppThemeBootstrap,
   injectMcpAppCookieBootstrap,
@@ -172,6 +173,12 @@ describe("tool metadata", () => {
     expect(mcpAppToolCallableByApp(undefined)).toBe(true);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model"] } })).toBe(false);
     expect(mcpAppToolCallableByApp({ ui: { visibility: ["model", "app"] } })).toBe(true);
+  });
+});
+
+describe("clampMcpAppHeight", () => {
+  it("keeps a compact height the app reports", () => {
+    expect(clampMcpAppHeight(48)).toBe(48);
   });
 });
 
