@@ -77,6 +77,8 @@ struct State {
     sessions: HashMap<String, mpsc::Sender<SessionMsg>>,
     /// Set from the `initialize` answer.
     version: Option<String>,
+    /// Native threads loaded on a process (started, resumed or forked there), by generation.
+    loaded: HashMap<String, u64>,
 }
 
 pub struct AppServer {
@@ -130,6 +132,29 @@ impl AppServer {
         if let Some(live) = live {
             live.process.terminate(FORCE_KILL_AFTER).await;
         }
+    }
+
+    /// Records that `native` is loaded on the running process.
+    pub fn mark_loaded(&self, native: &str) {
+        let mut state = self.lock();
+        if let Some(generation) = state.live.as_ref().map(|l| l.generation) {
+            state.loaded.insert(native.to_owned(), generation);
+        }
+    }
+
+    /// Whether the running process holds `native`, so a session can use it without
+    /// `thread/resume` (TS starts a turn on a thread it forked without resuming it).
+    pub fn is_loaded(&self, native: &str) -> bool {
+        let state = self.lock();
+        let live = state
+            .live
+            .as_ref()
+            .filter(|l| l.initialized && !l.process.has_exited());
+        live.is_some_and(|l| state.loaded.get(native) == Some(&l.generation))
+    }
+
+    pub fn forget_loaded(&self, native: &str) {
+        self.lock().loaded.remove(native);
     }
 
     /// How many sessions share the process.
@@ -187,6 +212,7 @@ impl AppServer {
             let mut state = self.lock();
             state.generation += 1;
             let generation = state.generation;
+            state.loaded.clear();
             state.live = Some(Live {
                 process,
                 generation,

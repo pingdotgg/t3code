@@ -53,8 +53,29 @@ const saveCursor = () => NodeFS.writeFileSync(cursorFile, String(cursor));
 // recorded request id -> id the client used
 const responseIds = new Map();
 
+// `normalizeLegacyInboundFrame` in the TS replay driver: older recordings lack fields that
+// newer CLIs send; both servers get the same upgraded frames.
+const upgrade = (value) => {
+  if (Array.isArray(value)) return value.map(upgrade);
+  if (typeof value !== "object" || value === null) return value;
+  const out = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, upgrade(v)]));
+  if (typeof out.id === "string" && "modelProvider" in out && "status" in out) {
+    if (out.sessionId === undefined) out.sessionId = out.id;
+    if (out.projectId === undefined) out.projectId = null;
+  }
+  const params = typeof out.params === "object" && out.params !== null ? { ...out.params } : undefined;
+  if (params !== undefined && typeof out.method === "string") {
+    if (out.method === "item/started" && params.startedAtMs === undefined) params.startedAtMs = 0;
+    if (out.method === "item/completed" && params.completedAtMs === undefined) params.completedAtMs = 0;
+    if (out.method.endsWith("/requestApproval") && params.startedAtMs === undefined) params.startedAtMs = 0;
+    if (out.method === "item/tool/requestUserInput" && params.isBlocking === undefined) params.isBlocking = true;
+    out.params = params;
+  }
+  return out;
+};
+
 const send = (frame) => {
-  process.stdout.write(`${JSON.stringify(frame)}\n`);
+  process.stdout.write(`${JSON.stringify(upgrade(frame))}\n`);
 };
 
 const emitUntilExpectation = () => {

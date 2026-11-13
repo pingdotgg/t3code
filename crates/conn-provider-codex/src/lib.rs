@@ -146,6 +146,10 @@ impl Provider for CodexProvider {
                 self.server.clone(),
                 tx,
                 self.config.attachments_dir.clone(),
+                (
+                    Some(launch::selection_model(&input.model_selection)),
+                    input.runtime_policy.cwd.clone(),
+                ),
             );
             Ok(OpenedSession {
                 session: Box::new(session),

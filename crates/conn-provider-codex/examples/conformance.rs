@@ -11,9 +11,9 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use conn_contract::{ModelSelection, ProviderThread, to_json};
 use conn_provider::{
-    EnsureThreadInput, InterruptInput, McpServer, OpenSessionInput, OpenedSession, Provider,
-    ProviderEvent, ResumeThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput,
-    TurnInput, TurnMessage,
+    EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, OpenSessionInput, OpenedSession,
+    Provider, ProviderEvent, ResumeThreadInput, RollbackTarget, RollbackThreadInput, RuntimePolicy,
+    RuntimeRequestResponse, Session, SteerInput, TurnInput, TurnMessage,
 };
 use conn_provider_codex::{CodexConfig, CodexProvider};
 use serde_json::Value;
@@ -26,7 +26,37 @@ struct Seen {
     events: Vec<Value>,
 }
 
+/// Distinct turn items by type: `turn_item.updated` rows, keyed `<type>` → item ids.
+fn items_by_type<'a>(events: impl Iterator<Item = &'a Value>) -> Vec<(String, String)> {
+    let mut items: Vec<(String, String)> = Vec::new();
+    for e in events {
+        if e["type"] != "turn_item.updated" {
+            continue;
+        }
+        let kind = e["turnItem"]["type"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        // Command rows are what TS calls wait on (an interrupt mid-tool); other rows' ids or
+        // timing differ by design and are compared by the replay tests instead.
+        if kind != "command_execution" {
+            continue;
+        }
+        let id = e["turnItem"]["id"].as_str().unwrap_or_default().to_owned();
+        if !items.iter().any(|(k, i)| *k == kind && *i == id) {
+            items.push((kind, id));
+        }
+    }
+    items
+}
+
 impl Seen {
+    /// Whether this side has seen every turn item TS had seen (by id) before a call.
+    fn has_items(&self, wanted: &[(String, String)]) -> bool {
+        let have = items_by_type(self.events.iter());
+        wanted.iter().all(|w| have.contains(w))
+    }
+
     fn running_turn(&self) -> Option<String> {
         let mut running = None;
         for e in &self.events {
@@ -100,6 +130,19 @@ impl Run {
     }
 }
 
+/// Collects a session's events into the shared record.
+fn pump(run: &Run, events: tokio::sync::mpsc::Receiver<ProviderEvent>) {
+    let (seen, changed) = (run.seen.clone(), run.changed.clone());
+    tokio::spawn(async move {
+        let mut events = events;
+        while let Some(event) = events.recv().await {
+            let value = serde_json::to_value(&event).unwrap_or(Value::Null);
+            seen.lock().await.events.push(value);
+            changed.notify_waiters();
+        }
+    });
+}
+
 fn json<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|e| format!("{e}: {value}"))
 }
@@ -142,15 +185,34 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
         changed: Arc::new(Notify::new()),
     };
     let mut answered = 0usize;
+    let mut session_thread: Option<String> = None;
+    let mut parked: Vec<Box<dyn Session>> = Vec::new();
+    let mut results: Vec<Value> = Vec::new();
     let mut turns = 0usize;
     let log = calls["log"].as_array().cloned().unwrap_or_default();
-    for entry in log.iter().filter(|e| e["kind"] == "call") {
+    for (index, entry) in log.iter().enumerate() {
+        if entry["kind"] != "call" {
+            continue;
+        }
         let input = &entry["input"];
         let method = entry["method"].as_str().unwrap_or_default();
+        // The turn items TS had seen when it made this call (an interrupt can wait for a
+        // command row); ids derive from Codex's item ids, so both sides name them alike.
+        let before = items_by_type(
+            log.iter()
+                .take(index)
+                .filter(|e| e["kind"] == "event")
+                .map(|e| &e["event"]),
+        );
+        if !matches!(method, "openSession" | "normalizeThreadLoadModelSelection") {
+            run.wait_until("the turn items TS had seen", |s| s.has_items(&before))
+                .await;
+        }
         match method {
             "openSession" => {
                 if let Some(old) = session.take() {
                     // TS released the idle session; a new process serves the next one.
+                    session_thread = None;
                     old.close().await;
                     provider = Arc::new(CodexProvider::new("codex".into(), config.clone()));
                 }
@@ -170,16 +232,7 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                     })
                     .await
                     .map_err(|e| e.to_string())?;
-                let (seen, changed) = (run.seen.clone(), run.changed.clone());
-                tokio::spawn(async move {
-                    let mut events = events;
-                    while let Some(event) = events.recv().await {
-                        let value = serde_json::to_value(&event).unwrap_or(Value::Null);
-                        let _: &ProviderEvent = &event;
-                        seen.lock().await.events.push(value);
-                        changed.notify_waiters();
-                    }
-                });
+                pump(&run, events);
                 if scenario["mcp"] == true {
                     // What the engine passes when the thread has T3's MCP session; the TS
                     // side gets the same endpoint and token from its McpProviderSessions.
@@ -209,6 +262,9 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                     })
                     .await
                     .map_err(|e| e.to_string())?;
+                session_thread = to_json(&row)["nativeThreadRef"]["nativeId"]
+                    .as_str()
+                    .map(str::to_owned);
                 thread = Some(row);
             }
             "resumeThread" => {
@@ -222,6 +278,9 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                     })
                     .await
                     .map_err(|e| e.to_string())?;
+                session_thread = to_json(&row)["nativeThreadRef"]["nativeId"]
+                    .as_str()
+                    .map(str::to_owned);
                 thread = Some(row);
             }
             "startTurn" => {
@@ -229,6 +288,32 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                 run.wait_until("the previous turn to end", |s| s.terminals() >= done)
                     .await;
                 turns += 1;
+                // A turn on another native thread (a fork target) gets its own session on the
+                // same app-server, as the engine opens one session per app thread.
+                let native = input["providerThread"]["nativeThreadRef"]["nativeId"]
+                    .as_str()
+                    .map(str::to_owned);
+                if native.is_some() && session_thread.is_some() && native != session_thread {
+                    if let Some(old) = session.take() {
+                        parked.push(old);
+                    }
+                    let OpenedSession {
+                        session: opened,
+                        events,
+                    } = provider
+                        .open_session(OpenSessionInput {
+                            thread_id: input["threadId"].as_str().unwrap_or("t").into(),
+                            provider_session_id: "provider-session:second".into(),
+                            model_selection: json(&input["modelSelection"])?,
+                            runtime_policy: json(&input["runtimePolicy"])?,
+                            resume_from_session: None,
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    pump(&run, events);
+                    session = Some(opened);
+                }
+                session_thread = native.or(session_thread);
                 let s = session.as_ref().ok_or("no session")?;
                 let provider_thread: ProviderThread = json(&input["providerThread"])
                     .ok()
@@ -307,6 +392,56 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
                 .await
                 .map_err(|e| e.to_string())?;
             }
+            "rollbackThread" => {
+                let s = session.as_ref().ok_or("no session")?;
+                let target = &input["target"];
+                let checkpoint_id = target["checkpointId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let target = if target["type"] == "provider_turn" {
+                    RollbackTarget::ProviderTurn {
+                        checkpoint_id,
+                        app_run_ordinal: target["appRunOrdinal"].as_u64().unwrap_or(0) as u32,
+                        provider_turn: json(&target["providerTurn"])?,
+                    }
+                } else {
+                    RollbackTarget::ThreadStart { checkpoint_id }
+                };
+                let snapshot = s
+                    .rollback_thread(RollbackThreadInput {
+                        provider_thread: json(&input["providerThread"])?,
+                        target,
+                        provider_thread_turns: json(&input["providerThreadTurns"])?,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+                results.push(serde_json::json!({
+                    "method": "rollbackThread",
+                    "output": {
+                        "providerThread": to_json(&snapshot.provider_thread),
+                        "providerTurns": snapshot.provider_turns.len(),
+                        "messages": snapshot.messages.len(),
+                        "runtimeRequests": snapshot.runtime_requests.len(),
+                    },
+                }));
+            }
+            "forkThread" => {
+                let s = session.as_ref().ok_or("no session")?;
+                let forked = s
+                    .fork_thread(ForkThreadInput {
+                        source_provider_thread: json(&input["sourceProviderThread"])?,
+                        source_provider_turns: json(&input["sourceProviderTurns"])
+                            .unwrap_or_default(),
+                        provider_turn_id: input["providerTurnId"].as_str().map(Into::into),
+                        target_thread_id: input["targetThreadId"].as_str().unwrap_or("t").into(),
+                        owner_node_id: input["ownerNodeId"].as_str().map(Into::into),
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+                results
+                    .push(serde_json::json!({"method": "forkThread", "output": to_json(&forked)}));
+            }
             "applyModelSelection" => {
                 let s = session.as_ref().ok_or("no session")?;
                 let _ = s
@@ -328,12 +463,17 @@ async fn scenario(plan: &Value, scenario: &Value) -> Result<(), String> {
     let done = turns;
     run.wait_until("every turn to end", |s| s.terminals() >= done)
         .await;
-    if let Some(s) = session.take() {
+    for s in parked.into_iter().chain(session.take()) {
         s.close().await;
     }
     let _ = to_json(&thread);
     let events = Value::Array(run.seen.lock().await.events.clone());
     std::fs::write(dir.join("rust/events.json"), events.to_string()).map_err(|e| e.to_string())?;
+    std::fs::write(
+        dir.join("rust/results.json"),
+        Value::Array(results).to_string(),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

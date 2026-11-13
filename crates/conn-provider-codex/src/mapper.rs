@@ -5,7 +5,11 @@
 //! `build*Artifacts` helpers, the text coalescers, `finalizeCodexTurn`). One mapper serves one
 //! session; turns are keyed by native turn id. Known differences are in the README.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+
+/// How many ended turn ids the mapper remembers, so a late frame of an ended turn is not
+/// taken for a new one.
+const ENDED_TURNS_KEPT: usize = 64;
 
 use conn_contract::{from_json, to_json};
 use conn_provider::{ProviderError, ProviderEvent, RuntimeRequestResponse, TurnInput};
@@ -159,7 +163,8 @@ pub struct Mapper<E: Env> {
     /// Native thread id → the turn input whose `turn/start` is in flight.
     pending_turns: HashMap<String, PendingTurn>,
     requests: HashMap<String, Pending>,
-    plan_ids: HashMap<String, String>,
+    /// Plan item key → (native turn, plan id); pruned when the turn ends.
+    plan_ids: HashMap<String, (String, String)>,
     bufs: Vec<Buf>,
     reasoning_parts: Vec<ReasoningPart>,
     thread_models: HashMap<String, String>,
@@ -171,6 +176,8 @@ pub struct Mapper<E: Env> {
     mcp_failures: HashMap<String, Vec<(String, String)>>,
     interrupting: HashSet<String>,
     ended_unfinished: HashSet<String>,
+    /// The latest ended turns, newest last; at most [`ENDED_TURNS_KEPT`].
+    ended: VecDeque<String>,
 }
 
 fn ref_strong(native: &str) -> Value {
@@ -280,6 +287,7 @@ impl<E: Env> Mapper<E> {
             mcp_failures: HashMap::new(),
             interrupting: HashSet::new(),
             ended_unfinished: HashSet::new(),
+            ended: VecDeque::new(),
         }
     }
 
@@ -500,7 +508,9 @@ impl<E: Env> Mapper<E> {
         let (Some(native_turn), Some(thread)) = (native_turn, p["threadId"].as_str()) else {
             return;
         };
-        if self.turns.contains_key(native_turn) {
+        // A late frame of an ended turn (the interrupted command's `item/completed` after
+        // the next `turn/start` went out) must not become the new turn.
+        if self.turns.contains_key(native_turn) || self.ended.iter().any(|t| t == native_turn) {
             return;
         }
         if let Some(pending) = self.pending_turns.remove(thread) {
@@ -868,7 +878,7 @@ impl<E: Env> Mapper<E> {
     }
 
     fn plan_id(&mut self, turn_id: &str, key: &str) -> String {
-        if let Some(id) = self.plan_ids.get(key) {
+        if let Some((_, id)) = self.plan_ids.get(key) {
             return id.clone();
         }
         let Some(turn) = self.turns.get(turn_id) else {
@@ -880,7 +890,8 @@ impl<E: Env> Mapper<E> {
             DRIVER,
             &self.env.uuid(),
         );
-        self.plan_ids.insert(key.to_owned(), id.clone());
+        self.plan_ids
+            .insert(key.to_owned(), (turn_id.to_owned(), id.clone()));
         id
     }
 
@@ -1115,6 +1126,11 @@ impl<E: Env> Mapper<E> {
         );
     }
 
+    /// After a rollback the thread's usage totals start over (`turnTokenUsageByThread`).
+    pub fn forget_usage(&mut self, native_thread_id: &str) {
+        self.usage.remove(native_thread_id);
+    }
+
     fn token_usage(&mut self, turn_id: &str, p: &Value, out: &mut Vec<Out>) {
         let thread = p["threadId"].as_str().unwrap_or_default();
         let usage = &p["tokenUsage"];
@@ -1346,6 +1362,15 @@ impl<E: Env> Mapper<E> {
                 _ => failure_json(class, failure_message.unwrap_or(""), code.as_deref(), None),
             }
         });
+        // The turn is gone: drop what was kept for it.
+        self.ended_unfinished.remove(native);
+        self.interrupting.remove(native);
+        self.rerouted_turn_models.remove(native);
+        self.plan_ids.retain(|_, (turn_id, _)| turn_id != native);
+        self.ended.push_back(native.to_owned());
+        while self.ended.len() > ENDED_TURNS_KEPT {
+            self.ended.pop_front();
+        }
         push_event(
             out,
             json!({

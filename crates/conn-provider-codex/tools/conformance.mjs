@@ -50,6 +50,29 @@ const SCENARIOS = {
     covers: "a model and effort change between turns",
   },
   attachment: { fixture: "simple", attachments: true, covers: "a turn with attachments" },
+  rollback: { fixture: "thread_rollback", covers: "rollback to an earlier turn" },
+  rollbackRestart: {
+    fixture: "thread_rollback_after_restart",
+    covers: "rollback after the thread was released",
+  },
+  rollbackStopped: {
+    fixture: "thread_rollback_to_stopped_turn",
+    covers: "rollback to an interrupted turn",
+  },
+  fork: {
+    fixture: "simple",
+    transcript: "thread_fork_native_prior_turn",
+    steps: [
+      { type: "message", text: "For this fork-boundary fixture, respond with exactly: fork boundary alpha" },
+      { type: "message", text: "For this fork-boundary fixture, respond with exactly: fork boundary beta" },
+      {
+        type: "fork",
+        fromRunIndex: 1,
+        text: "Repeat the user-visible conversation so far verbatim. Include only user and assistant messages. Do not include hidden system/developer content.",
+      },
+    ],
+    covers: "a native fork at an earlier turn",
+  },
 };
 
 /**
@@ -57,6 +80,19 @@ const SCENARIOS = {
  * gets a difference record and returns true when it is this one.
  */
 const KNOWN = [
+  {
+    scenario: "rollbackRestart",
+    reason:
+      "as in resume: the fixture releases the first process by advancing the TS test clock 31 minutes",
+    match: (d) =>
+      d.kind === "shutdown" && d.process === 0 && /SIGTERM@\d+ms > killed@0ms$/.test(d.ts),
+  },
+  {
+    scenario: "fork",
+    reason:
+      "Conn Server opens one session per app thread; when the source thread's session closes while the fork's session still uses the process it unloads the source thread, as TS does for an idle thread (unloadThread). TS's single shared session stops the process without it at the end of the test",
+    match: (d) => d.kind === "rust-only-frame" && d.method === "thread/unsubscribe",
+  },
   {
     scenario: "resume",
     reason:
@@ -156,6 +192,8 @@ import { findReplayFixture, runReplayFixture } from "./ProviderReplayFixtures.ts
 
 const PLAN = JSON.parse(fs.readFileSync(__PLAN__, "utf8"));
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
+// Calls whose answer is compared with the Rust provider's.
+const RESULTS = new Set(["rollbackThread", "forkThread"]);
 
 const safeJson = (value: unknown) =>
   JSON.stringify(value, (_key, v) => (typeof v === "function" || typeof v === "symbol" ? undefined : v));
@@ -166,7 +204,7 @@ const attachments = [
 ];
 
 const changedInput = (scenario: any, base: any) => {
-  let steps = [...base.steps];
+  let steps = [...(scenario.steps ?? base.steps)];
   if (scenario.attachments) {
     const first = steps.findIndex((s: any) => s.type === "message");
     steps[first] = { ...steps[first], attachments };
@@ -253,7 +291,14 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
                           if (typeof value !== "function" || key === "subscribeEvents") continue;
                           wrapped[key] = (...callArgs: Array<unknown>) => {
                             log.push({ kind: "call", method: key, input: callArgs[0] ?? null });
-                            return (value as any)(...callArgs);
+                            const out = (value as any)(...callArgs);
+                            return RESULTS.has(key) && Effect.isEffect(out)
+                              ? (out as any).pipe(
+                                  Effect.tap((output: unknown) =>
+                                    Effect.sync(() => log.push({ kind: "result", method: key, output })),
+                                  ),
+                                )
+                              : out;
                           };
                         }
                         wrapped.events = runtime.events.pipe(
@@ -276,13 +321,16 @@ describe("conn codex conformance", () => {
     it.effect(scenario.name, () => {
       const log: Array<unknown> = [];
       const fixture = findReplayFixture(scenario.fixture)!;
-      // A recording without a Codex fixture entry (provider_thread_resume) runs with the
-      // simple fixture's Codex settings and no output assertions.
+      // A recording without a Codex fixture entry (provider_thread_resume), or a scenario with
+      // its own steps and recording, runs with the simple fixture's Codex settings and no
+      // output assertions.
+      const own = scenario.transcript === undefined ? fixture.providers.find((p: any) => p.driver === "codex") : undefined;
+      const recording = scenario.transcript ?? scenario.fixture;
       const driver =
-        fixture.providers.find((p: any) => p.driver === "codex") ?? {
+        own ?? {
           ...findReplayFixture("simple")!.providers.find((p: any) => p.driver === "codex")!,
-          recordedScenario: scenario.fixture,
-          transcriptFile: new URL(\`./fixtures/\${scenario.fixture}/codex_transcript.ndjson\`, import.meta.url),
+          recordedScenario: recording,
+          transcriptFile: new URL(\`./fixtures/\${recording}/codex_transcript.ndjson\`, import.meta.url),
           assertOutput: () => {},
         };
       return runReplayFixture({
@@ -485,6 +533,23 @@ for (const scenario of plan) {
       add("shutdown", { process: p, ts: show(a.end), rust: show(b.end) });
     }
   }
+  // Answers of rollbackThread and forkThread, in call order.
+  const tsResults = tsCalls.log.filter((e) => e.kind === "result");
+  const rustResultsPath = NodePath.join(scenario.dir, "rust/results.json");
+  const rustResults = NodeFS.existsSync(rustResultsPath) ? JSON.parse(NodeFS.readFileSync(rustResultsPath, "utf8")) : [];
+  if (tsResults.length !== rustResults.length) {
+    add("result-count", { ts: tsResults.map((r) => r.method), rust: rustResults.map((r) => r.method) });
+  }
+  tsResults.forEach((r, k) => {
+    const theirs = rustResults[k];
+    if (theirs === undefined) return;
+    // The snapshot's rows: TS returns empty lists; the Rust side reports their lengths.
+    const ours =
+      r.method === "rollbackThread"
+        ? { providerThread: r.output.providerThread, providerTurns: r.output.providerTurns.length, messages: r.output.messages.length, runtimeRequests: r.output.runtimeRequests.length }
+        : r.output;
+    for (const d of diffPaths(stable(ours), stable(theirs.output))) add("result", { method: r.method, ...d });
+  });
   for (const d of diffs) {
     const known = KNOWN.find((k) => (k.scenario == null || k.scenario === scenario.name) && k.match(d));
     d.known = known?.reason;
@@ -501,7 +566,7 @@ for (const r of report) {
   if (!r.tsOk) console.log(`   note: the TS fixture assertions failed: ${String(r.tsFailure).split("\n")[0]}`);
   for (const d of r.diffs) {
     const tag = d.known ? "known" : "OPEN ";
-    const where = d.kind === "frame" ? `${d.method} ${d.path}` : d.kind === "env" ? d.key : (d.method ?? "");
+    const where = d.kind === "frame" || d.kind === "result" ? `${d.method} ${d.path}` : d.kind === "env" ? d.key : (d.method ?? "");
     const values =
       d.kind === "rust-only-frame" || d.kind === "ts-only-frame" ? short(d.frame.params ?? d.frame.result ?? null) : `ts=${short(d.ts)} rust=${short(d.rust)}`;
     console.log(`   ${tag} ${d.kind} ${where}: ${values}${d.known ? ` (${d.known})` : ""}`);
