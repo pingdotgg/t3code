@@ -176,5 +176,6 @@ The Conn Server moves to its own repository, `conn-server`. For delivery:
   `{"server":"conn-server","version","contractCommit","methods"}`; the T3 server has no such
   route. A typed field (for example `serverImplementation` in the descriptor) would need a
   contract change in Conn first.
-- **Tools that need Conn.** `tools/gen-keybindings.mjs` and `fixtures/recorder` read the
-  monorepo from `$CONN_MONOREPO` (default: the checkout this folder sits in).
+- **Tools that need Conn.** `tools/gen-keybindings.mjs`, `fixtures/recorder` and the other
+  Node tools read the monorepo from `$CONN_MONOREPO`. There is no default
+  (`tools/monorepo.mjs` at the repository root).

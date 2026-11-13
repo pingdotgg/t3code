@@ -160,14 +160,15 @@ is the cost that grows. It also always answers over SSE. Ours is about 300 lines
   flow including idempotent launch and send; read-only clients; an agent's credential, its
   delegated task and its wake; every result checked against the tool's TS `outputSchema`; the
   catalog equal to `fixtures/ts-tools-list.json`; bounded credentials and sessions.
-- `node native/conn-server/crates/conn-mcp/tools/gen-tools.mjs --check`: the served definitions
+- `node crates/conn-mcp/tools/gen-tools.mjs --check`: the served definitions
   still match `apps/server`. The nightly upstream merge runs it; on failure, rerun without
   `--check`, read the diff, and fix the handler if a schema changed.
-- `node native/conn-server/crates/conn-mcp/tools/parity.mjs native/conn-server/target/debug/examples/replay_server`:
-  both servers on throwaway state, same inputs, outcomes and result shapes compared. One Haiku
-  turn on the T3 server.
-- The tools take the Conn monorepo root from `CONN_MONOREPO` (`tools/monorepo.mjs`), default the
-  checkout they sit in.
+- `node crates/conn-mcp/tools/parity.mjs [--no-model] target/debug/examples/replay_server`:
+  both servers on throwaway state (the T3 server gets a temp `T3CODE_HOME` and a free port),
+  same inputs, outcomes and result shapes compared. Without `--no-model` it spends one Haiku
+  turn on the T3 server; `--no-model` skips the thread launch and every step on that thread.
+- The tools take the Conn monorepo root from `CONN_MONOREPO` (the root `tools/monorepo.mjs`).
+  There is no default. Run them from the repository root.
 
 ## Agent wiring
 

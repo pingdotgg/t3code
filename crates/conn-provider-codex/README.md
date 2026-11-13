@@ -92,7 +92,7 @@ Typed upstream definitions were measured and not used:
 ```sh
 cargo test -p conn-provider-codex                                                # offline
 cargo test -p conn-provider-codex live_ -- --ignored --test-threads=1 --nocapture  # real CLI
-node tools/capture-ts-events.mjs        # regenerate testdata from CONN_MONOREPO (default /Users/nckrtl/apps/conn)
+CONN_MONOREPO=/path/to/conn node tools/capture-ts-events.mjs   # regenerate testdata, offline
 ```
 
 - `src/replay_tests.rs` replays 15 of the TS test kit's 25 Codex recordings (all that do not

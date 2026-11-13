@@ -53,6 +53,7 @@ Where this project differs from the skills:
 
 The contract (`packages/contracts`), the web client used by the recorder, and the TypeScript
 adapters used for comparison live in the Conn monorepo (`nckrtl/conn`). This repository pins
-one Conn commit (`crates/conn-contract/methods.json`). The tools under `tools/` and
-`fixtures/recorder` still expect the monorepo layout; until that is changed, run them from a
-Conn checkout.
+one Conn commit (`crates/conn-contract/methods.json`). Run every tool from this repository.
+The Node tools (`crates/*/tools`, `fixtures/recorder`) take the monorepo root from
+`CONN_MONOREPO`, a Conn checkout after `vp i`; there is no default. `tools/check.sh` runs all
+checks that need no model, and the Rust-only part without `CONN_MONOREPO`.
