@@ -120,6 +120,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 });
 
 import ChatMarkdown from "./ChatMarkdown";
+import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
@@ -578,6 +579,66 @@ describe("ChatMarkdown inline code selection", () => {
     const fenced = screen.container.querySelector("pre code")!;
     await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
     expect(window.getSelection()?.toString()).toBe("fenced");
+  });
+
+  it("selects the whole line on triple-click beside a favicon link or a file chip", async () => {
+    setup();
+    await using screen = await renderText(
+      "Before [docs](https://example.com/docs) after words\n\nBefore [App.tsx](/tmp/project/src/App.tsx) after words",
+    );
+    const tripleClickWord = async (paragraph: HTMLElement, word: string) => {
+      const text = [...paragraph.childNodes].find((node) => node.textContent?.includes(word))!;
+      const range = document.createRange();
+      range.setStart(text, text.textContent!.indexOf(word));
+      range.setEnd(text, text.textContent!.indexOf(word) + word.length);
+      const wordBox = range.getBoundingClientRect();
+      const paragraphBox = paragraph.getBoundingClientRect();
+      window.getSelection()?.removeAllRanges();
+      await userEvent.tripleClick(paragraph, {
+        position: {
+          x: wordBox.left - paragraphBox.left + wordBox.width / 2,
+          y: wordBox.top - paragraphBox.top + wordBox.height / 2,
+        },
+      });
+      return window.getSelection()?.toString().trim();
+    };
+
+    const paragraphs = screen.container.querySelectorAll("p");
+    expect(paragraphs).toHaveLength(2);
+    const selections = [];
+    const lines = [];
+    for (const paragraph of paragraphs) {
+      lines.push(paragraph.textContent?.trim(), paragraph.textContent?.trim());
+      selections.push(
+        await tripleClickWord(paragraph, "Before"),
+        await tripleClickWord(paragraph, "after"),
+      );
+    }
+    expect(selections).toEqual(lines);
+  });
+});
+
+describe("ChatMarkdown alert copy", () => {
+  it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
+    setup();
+    await using screen = await renderText("> [!WARNING]\n> Back up first.");
+    const [label, body] = screen.container.querySelectorAll('[role="note"] > p');
+    const select = (startNode: Node, endNode: Node, endOffset: number) => {
+      const range = document.createRange();
+      range.setStart(startNode, 0);
+      range.setEnd(endNode, endOffset);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return chatMarkdownClipboardPayload(selection)?.text;
+    };
+    const labelText = label!.lastChild!;
+    const bodyText = body!.firstChild!;
+
+    expect(select(labelText, bodyText, bodyText.textContent!.length)).toBe(
+      "> [!WARNING]\n> Back up first.",
+    );
+    expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
 });
 
