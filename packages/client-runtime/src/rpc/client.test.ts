@@ -285,7 +285,6 @@ describe("environment RPC", () => {
       const resumedValue = { source: "resumed" } as unknown as ServerLifecycleStreamEvent;
       const firstSubscribed = yield* Deferred.make<void>();
       let subscriptions = 0;
-      const observedDefects: unknown[] = [];
       const client = {
         [WS_METHODS.subscribeServerLifecycle]: () => {
           subscriptions += 1;
@@ -300,16 +299,7 @@ describe("environment RPC", () => {
       const { activeSession, retryCount, supervisor } = yield* makeHarness();
 
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
-      const resultFiber = yield* subscribe(
-        WS_METHODS.subscribeServerLifecycle,
-        {},
-        {
-          onDefect: (cause) =>
-            Effect.sync(() => {
-              observedDefects.push(Cause.squash(cause));
-            }),
-        },
-      ).pipe(
+      const resultFiber = yield* subscribe(WS_METHODS.subscribeServerLifecycle, {}).pipe(
         Stream.runHead,
         Effect.timeoutOption("2 seconds"),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
@@ -324,7 +314,6 @@ describe("environment RPC", () => {
       ).toEqual(Option.some(Option.some(resumedValue)));
       expect(subscriptions).toBe(2);
       expect(yield* Ref.get(retryCount)).toBe(0);
-      return observedDefects;
     },
   );
 
@@ -342,16 +331,10 @@ describe("environment RPC", () => {
   );
 
   it.effect("resubscribes on the same session after a stream chunk fails to decode", () =>
-    Effect.gen(function* () {
-      // Mirrors RpcClient, which decodes each chunk with `Effect.orDie`.
-      const decodeDefect = decodeNumber("not a number").pipe(Effect.orDie);
-      const observedDefects = yield* resumesOnTheSameSession(
-        Stream.fromEffect(decodeDefect).pipe(Stream.drain),
-      );
-
-      expect(observedDefects).toHaveLength(1);
-      expect(Schema.isSchemaError(observedDefects[0])).toBe(true);
-    }),
+    // Mirrors RpcClient, which decodes each chunk with `Effect.orDie`.
+    resumesOnTheSameSession(
+      Stream.fromEffect(decodeNumber("not a number").pipe(Effect.orDie)).pipe(Stream.drain),
+    ),
   );
 
   it.effect(
@@ -598,7 +581,7 @@ it.effect.each([true, false])(
         ),
       ).toBeUndefined();
       expect(inputs).toEqual(supported ? [{ cwd: "/repo" }] : []);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("binds branch capability selection and execution to one session", () =>
@@ -634,5 +617,5 @@ it.effect("binds branch capability selection and execution to one session", () =
     } as ServerConfig);
     expect(yield* Fiber.join(refresh)).toBeUndefined();
     yield* Deferred.await(executed);
-  }).pipe(Effect.scoped),
+  }),
 );
