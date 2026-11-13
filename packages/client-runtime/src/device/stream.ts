@@ -725,15 +725,28 @@ export function createDeviceStreamClient(
       // silent: the decoder errors and the panel never shows a frame.
       ...(platform === "android" ? { hardwareAcceleration: "prefer-software" as const } : {}),
     };
-    const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
+    const supports = async (candidate: VideoDecoderConfig) =>
+      (await VideoDecoder.isConfigSupported(candidate).catch(() => ({ supported: false })))
+        .supported;
+    let chosen: VideoDecoderConfig | undefined = full;
+    if (!(await supports(full))) {
+      // A host with hardware decoding but no software decoder cannot use the
+      // preference, so the default is tried before the stream is given up on.
+      chosen =
+        "hardwareAcceleration" in full
+          ? (await supports({ ...full, hardwareAcceleration: "no-preference" }))
+            ? { ...full, hardwareAcceleration: "no-preference" }
+            : undefined
+          : undefined;
+    }
     if (!isCurrent() || epoch !== decoderEpoch) return false;
-    if (!support.supported) {
+    if (chosen === undefined) {
       if (platform === "android") fail(`This browser cannot decode ${config.codec}.`);
       return false;
     }
     try {
       if (!videoDecoder || videoDecoder.state === "closed") videoDecoder = makeDecoder();
-      videoDecoder.configure(full);
+      videoDecoder.configure(chosen);
       return true;
     } catch (cause) {
       if (platform === "android") fail(`Video decoder: ${(cause as Error).message}`);
@@ -1357,13 +1370,26 @@ export function createDeviceStreamClient(
             return;
           }
           configuredCodec = codec;
+          let drained = true;
           for (const frame of sequence) {
             // A delta before the first key frame cannot be decoded.
             if (awaitingKeyframe && !frame.isKey) continue;
             // Stop before the decoder queue overflows: the frames that are
-            // left are older than the ones still coming.
-            if (videoDecoder && videoDecoder.decodeQueueSize >= SOFT_DECODE_QUEUE) break;
-            if (!decode(frame.isKey, frame.data, frame.timestamp)) break;
+            // left are older than the frames still coming.
+            if (videoDecoder && videoDecoder.decodeQueueSize >= SOFT_DECODE_QUEUE) {
+              drained = false;
+              break;
+            }
+            if (!decode(frame.isKey, frame.data, frame.timestamp)) {
+              drained = false;
+              break;
+            }
+          }
+          // Frames were skipped or no key frame was decoded: the next deltas
+          // have no valid reference, so ask for a fresh key frame.
+          if (!drained || awaitingKeyframe) {
+            awaitingKeyframe = true;
+            requestKeyframe();
           }
         });
         return;

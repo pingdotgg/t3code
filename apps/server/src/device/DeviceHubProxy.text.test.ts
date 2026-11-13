@@ -86,9 +86,11 @@ it.effect("keeps a client text frame as text for the upstream hub", () =>
     client.addEventListener("message", ({ data }) => {
       if (data instanceof ArrayBuffer && new Uint8Array(data)[0] === 0x83) {
         client.send('{"type":"reset-video","ack":false}');
-      } else if (typeof data === "string" && data.includes("reset-video")) {
-        echoed.resolve();
+        return;
       }
+      // The control frame comes back in whatever form the proxy forwarded it,
+      // so the wait ends on any frame and its type is asserted below.
+      echoed.resolve();
     });
     yield* Effect.promise(() => echoed.promise);
     const control = received.find((entry) => entry.bytes.includes("reset-video"));

@@ -344,7 +344,10 @@ function recoveryFixture(
     close() {
       this.state = "closed";
     }
-    decode = vi.fn();
+    decode = vi.fn(() => {
+      // The decoder holds every chunk it was given until it decodes them.
+      this.decodeQueueSize += 1;
+    });
     readonly callbacks: { output: (frame: VideoFrame) => void; error: () => void };
     constructor(callbacks: { output: (frame: VideoFrame) => void; error: () => void }) {
       this.callbacks = callbacks;
@@ -619,6 +622,33 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("asks for a key frame when the kept frames do not fit the decoder", async () => {
+    const { client, sockets, sps, delta, decoders, Decoder } = recoveryFixture("android");
+    let resolveSupport!: (support: { supported: boolean }) => void;
+    Decoder.isConfigSupported.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSupport = resolve;
+        }),
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    // The key frame that carries the SPS starts the decoder configuration.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    // More frames arrive than the decoder can hold.
+    for (let index = 0; index < 12; index += 1) sockets[0]!.onmessage?.({ data: delta });
+    resolveSupport({ supported: true });
+    await vi.advanceTimersByTimeAsync(0);
+    // The frames that were left out leave a gap, so a fresh key frame is asked for.
+    expect(decoders[0]!.decode).toHaveBeenCalledTimes(8);
+    expect(sockets[0]!.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "reset-video", ack: false }),
+    );
+    client.stop();
+  });
+
   it("keeps the decoder when the encoder restarts at the same size", async () => {
     const { client, sockets, sps, decoders, decodedFrame } = recoveryFixture("android");
     client.start();
@@ -678,6 +708,22 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("falls back to the default decoder when software decoding is unsupported", async () => {
+    const { client, sockets, sps, decoders, Decoder } = recoveryFixture("android");
+    // A host with hardware decoding but no software decoder rejects the
+    // preference, so the stream is configured without it.
+    Decoder.isConfigSupported
+      .mockImplementationOnce(async () => ({ supported: false }))
+      .mockImplementationOnce(async () => ({ supported: true }));
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.configs[0]?.hardwareAcceleration).toBe("no-preference");
+    client.stop();
+  });
+
   it("leaves the iOS decoder acceleration alone", async () => {
     const { client, videoBodies, decoders } = recoveryFixture("ios", false);
     client.start();
@@ -686,6 +732,7 @@ describe("shared device stream readiness and recovery", () => {
       new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [2])]),
     );
     await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.configs).toHaveLength(1);
     expect(decoders[0]!.configs[0]?.hardwareAcceleration).toBeUndefined();
     client.stop();
   });
