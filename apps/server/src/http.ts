@@ -558,6 +558,9 @@ export const layerAssetRoute = HttpRouter.add(
             request.method === "HEAD" ? "HEAD" : "GET",
           ).pipe(
             Effect.map((response) =>
+              HttpServerResponse.setHeader(response, "cache-control", "private, no-store"),
+            ),
+            Effect.map((response) =>
               file.mimeType === "image/svg+xml"
                 ? HttpServerResponse.setHeader(
                     response,
