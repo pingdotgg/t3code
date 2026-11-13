@@ -37,7 +37,23 @@ with `id` and no `method` is a response.
   provider session id is `provider-session:provider-instance:codex:shared`. On Linux it wraps
   the spawn in a systemd agent scope, with a 2 s force-kill after SIGTERM.
 - **Conn only:** before the first spawn, it waits up to 120 s for `*.orbit` MCP hosts in
-  `config.toml` to accept TCP (`codexMcpNetworkGate.ts`).
+  `config.toml` to accept TCP (`codexMcpNetworkGate.ts`). This crate does the same.
+- **Stop:** stdin closed, SIGTERM to the process group, SIGKILL after 2 s. Same here.
+- **Linux agent scope (not done here):** on Linux, with `XDG_RUNTIME_DIR` set and both
+  `systemd-run` and `systemctl` on PATH, and a probe `systemd-run --user --scope --quiet
+  --collect --slice=app-t3code-agents.slice --property=TimeoutStopSec=10s
+  --property=Delegate=yes [--property=OOMPolicy=stop] -- true` succeeding, TS starts the
+  app-server as `/bin/sh -c '<raise oom_score_adj to 800>; : "${XDG_RUNTIME_DIR:=$1}"; export
+  XDG_RUNTIME_DIR; shift; exec "$@"' t3-agent <runtime dir> <systemd-run> --user --scope
+  --quiet --slice=app-t3code-agents-<sha256(stateDir)[:12]>.slice
+  --unit=t3code-codex-<8 hex>.scope --property=TimeoutStopSec=10s --property=Delegate=yes
+  --property=OOMPolicy=continue -- <codex> app-server ...` (shared process: OOMPolicy
+  `continue`, no `--collect`). Before the first scope it stops a populated leftover slice,
+  and sets `MemoryHigh`/`MemoryMax` on `app-t3code-agents.slice` and `CPUWeight=10
+  IOWeight=10 TasksMax=25%` on `app-t3code.slice`. Without systemd it still wraps the
+  command in `/bin/sh -c '<oom score>; exec "$@"' t3-agent <codex> ...`. On macOS it does
+  nothing. A Linux step must port `apps/server/src/process/agentScope.ts` and run the
+  conformance check on Linux (the stub records the wrapped argv).
 
 In a container, Codex reaches models through whatever the inherited environment and
 `config.toml` configure. No sign-in call is made.
@@ -53,7 +69,8 @@ In a container, Codex reaches models through whatever the inherited environment 
    `-32600 "Already initialized"` counts as success.
 2. The `initialized` notification.
 
-Done once per process, before the first thread call.
+Done once per process, before the first thread call. Nothing else goes to the session's
+process before a thread call (the TS server lists models in a separate probe process).
 
 ## Threads
 
@@ -178,7 +195,7 @@ fuzzy-search and fs families.
 ## Not used by T3 here
 
 `review/start`, `command/exec`, the `fs/*`, `plugin/*` and `skills/*` families, and the
-realtime methods. Rollback (`thread/revert`, `thread/turns/list`), fork (`thread/fork`),
-goals (`thread/goal/*`), compaction (`thread/compact/start`), `thread/inject_items`,
+realtime methods. Rollback (`thread/read`, `thread/turns/list`, `thread/revert`) and fork (`thread/fork`)
+are done here as TS does them. Goals (`thread/goal/*`), compaction (`thread/compact/start`), `thread/inject_items`,
 `thread/sample`, `feedback/upload` and the MCP-app calls are used by TS; this crate leaves them
 out (see the README).

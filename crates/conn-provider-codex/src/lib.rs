@@ -169,8 +169,8 @@ impl Provider for CodexProvider {
     }
 }
 
-/// `CodexProviderCapabilitiesV2` with what this crate does not do switched off: rollback,
-/// fork, snapshots, subagents, handoff context, queued messages, dynamic tool callbacks.
+/// `CodexProviderCapabilitiesV2` with what this crate does not do switched off: snapshots,
+/// subagents, handoff context, queued messages, dynamic tool callbacks.
 pub fn capabilities() -> Value {
     json!({
         "sessions": {
@@ -183,9 +183,9 @@ pub fn capabilities() -> Value {
         "threads": {
             "canCreateEmptyThread": true,
             "canReadThreadSnapshot": false,
-            "canRollbackThread": false,
-            "canForkThread": false,
-            "canForkFromTurn": false,
+            "canRollbackThread": true,
+            "canForkThread": true,
+            "canForkFromTurn": true,
             "canForkFromSubagentThread": false,
             "exposesNativeThreadId": true,
         },
@@ -251,8 +251,8 @@ pub fn capabilities() -> Value {
         "checkpointing": {
             "appCanCheckpointFilesystem": true,
             "supportsNestedCheckpointScopes": false,
-            "providerCanRollbackConversation": false,
-            "providerRollbackReturnsSnapshot": false,
+            "providerCanRollbackConversation": true,
+            "providerRollbackReturnsSnapshot": true,
             "providerCanReadConversationSnapshot": false,
         },
         "identity": {
@@ -265,7 +265,7 @@ pub fn capabilities() -> Value {
     })
 }
 
-/// Offered before an app-server has answered `model/list`, when Codex has no model cache.
+/// Offered when Codex has no model cache (the session process sends no `model/list`).
 pub fn fallback_models() -> Vec<(String, String)> {
     [
         ("gpt-6.1-sol", "GPT-6.1-Sol"),
