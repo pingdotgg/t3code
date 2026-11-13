@@ -31,6 +31,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -552,6 +553,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         title: "Delete retry",
         workspaceRoot: "/work/delete-retry",
       });
+      // Enrichment landing between the two deletes would change the project the retry reads.
+      yield* waitForProject(
+        service,
+        projectId,
+        (project) => project.faviconPath !== null && project.repositoryIdentity !== null,
+      );
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
       const deleted = yield* service.delete(input);
       assert.deepEqual(yield* service.delete(input), deleted);
@@ -775,6 +782,69 @@ it.effect("resolves a restored icon immediately after reselecting its saved path
       assert.equal(yield* resolver.resolvePath(cwd, "icon.svg"), iconPath);
     }).pipe(Effect.provide(layerTestFor(metadata)));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses a worktree container as a new project and as a new workspace root", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    const fixture = yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-container-" });
+    const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+      processRunner.run({
+        command: "git",
+        args: ["-C", cwd, "-c", "user.email=t@t", "-c", "user.name=t", ...args],
+      });
+    const source = `${fixture}/source`;
+    const container = `${fixture}/container`;
+    yield* fileSystem.makeDirectory(source);
+    yield* fileSystem.makeDirectory(container);
+    yield* git(source, "init", "-b", "develop");
+    yield* fileSystem.writeFileString(`${source}/README.md`, "readme\n");
+    yield* git(source, "add", "README.md");
+    yield* git(source, "commit", "-m", "init");
+    yield* git(fixture, "clone", "--bare", source, `${container}/.bare`);
+    yield* fileSystem.writeFileString(`${container}/.git`, "gitdir: ./.bare\n");
+    yield* git(container, "worktree", "add", "develop", "develop");
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      // As cloned the container is bare; Initialize Git or a config edit clears core.bare.
+      for (const coreBare of ["true", "false"]) {
+        yield* git(container, "config", "core.bare", coreBare);
+        const rejected = yield* service
+          .create({
+            commandId: CommandId.make(`command:container:create:${coreBare}`),
+            projectId: ProjectId.make(`project:container:${coreBare}`),
+            title: "Container",
+            workspaceRoot: container,
+          })
+          .pipe(Effect.flip);
+        assert.equal(rejected._tag, "ProjectInvalidError", `core.bare=${coreBare}`);
+        assert.include(rejected.message, "Add one of its worktrees");
+        assert.isTrue(Option.isNone(yield* service.getByWorkspaceRoot(container)));
+      }
+
+      const projectId = ProjectId.make("project:container:worktree");
+      const worktree = yield* service.create({
+        commandId: CommandId.make("command:container:worktree"),
+        projectId,
+        title: "Worktree",
+        workspaceRoot: `${container}/develop`,
+      });
+      const moved = yield* service
+        .update({
+          commandId: CommandId.make("command:container:move"),
+          projectId,
+          workspaceRoot: container,
+        })
+        .pipe(Effect.flip);
+      assert.equal(moved._tag, "ProjectInvalidError");
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(projectId)).workspaceRoot,
+        worktree.workspaceRoot,
+      );
+    }).pipe(Effect.provide(layerTest));
+  }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
 it.effect("serializes two projects claiming the same workspace root", () =>

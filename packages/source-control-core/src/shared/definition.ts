@@ -354,6 +354,15 @@ export interface SourceControlDefinition {
    * media itself, so it asks the server, whose driver for this host fetches it.
    */
   readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
+  /**
+   * A URL `mediaUrl` claims for the bytes of `path` at full commit `sha` in the repository at
+   * `repositoryUrl`. Null or absent when the host cannot serve one.
+   */
+  readonly rawFileUrl?: (input: {
+    readonly repositoryUrl: string;
+    readonly sha: string;
+    readonly path: string;
+  }) => string | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
