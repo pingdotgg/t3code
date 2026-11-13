@@ -3743,7 +3743,8 @@ const idleDeadlineAcrossHostSleep = (input: {
       sleptMs = input.timerCountsSleep ? input.sleepMs - untilDeadlineMs : input.sleepMs;
       yield* TestClock.adjust(untilDeadlineMs);
       let deadline = Math.ceil(input.awakeMs / HOST_SLEEP_IDLE_MS);
-      while (yield* manager.isLive(providerSessionId)) {
+      for (let checked = 0; yield* manager.isLive(providerSessionId); checked += 1) {
+        if (checked === 5) return Number.POSITIVE_INFINITY;
         deadline += 1;
         yield* TestClock.adjust(HOST_SLEEP_IDLE_MS);
       }
