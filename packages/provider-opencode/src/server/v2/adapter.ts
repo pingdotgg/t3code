@@ -1835,53 +1835,52 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
           }
         }
-        const jobs =
-          compareSemverVersions(connection.version, "2.2.6") >= 0 &&
-          connection.shellJobs !== undefined
-            ? yield* connection.shellJobs(state.sessionId).pipe(Effect.option)
-            : undefined;
-        const data =
-          jobs?._tag === "Some"
-            ? jobs.value.data.map((job) => ({
-                id: Shell.ID.make(job.shellID),
-                command: job.command,
-                metadata: { sessionID: job.sessionID },
-              }))
-            : (yield* client.shell.list({ location: { directory: state.directory } })).data;
-        for (const info of data) {
-          const sessionId = stringField(info.metadata, "sessionID");
-          const owner =
-            sessionId === undefined
-              ? undefined
-              : (threads.get(sessionId) ??
-                ownerOf(sessionId) ??
-                (jobs?._tag === "Some" ? state : undefined));
-          if (owner === undefined || !sessionsOf(state).includes(owner)) continue;
-          const existing = shells.get(info.id);
-          if (existing === undefined) {
-            if (state.active === undefined && !hasBackground(state)) {
-              state.sessionScopedBackground = true;
-              delete state.publishedBackgroundWork;
+        yield* Effect.gen(function* () {
+          const jobs =
+            compareSemverVersions(connection.version, "2.2.6") >= 0 &&
+            connection.shellJobs !== undefined
+              ? yield* connection.shellJobs(state.sessionId).pipe(Effect.option)
+              : undefined;
+          const data =
+            jobs?._tag === "Some"
+              ? jobs.value.data.map((job) => ({
+                  id: Shell.ID.make(job.shellID),
+                  command: job.command,
+                  metadata: { sessionID: job.sessionID },
+                }))
+              : (yield* client.shell.list({ location: { directory: state.directory } })).data;
+          for (const info of data) {
+            const sessionId = stringField(info.metadata, "sessionID");
+            const owner =
+              sessionId === undefined
+                ? undefined
+                : (threads.get(sessionId) ??
+                  ownerOf(sessionId) ??
+                  (jobs?._tag === "Some" ? state : undefined));
+            if (owner === undefined || !sessionsOf(state).includes(owner)) continue;
+            const existing = shells.get(info.id);
+            if (existing === undefined) {
+              if (state.active === undefined && !hasBackground(state)) {
+                state.sessionScopedBackground = true;
+                delete state.publishedBackgroundWork;
+              }
+              shells.set(info.id, recoveredShell(owner, info.id, info.command));
+            } else if (existing.state !== owner) {
+              shells.set(info.id, {
+                ...recoveredShell(owner, info.id, info.command),
+                awaited: existing.awaited === true,
+                output: existing.output,
+                cursor: existing.cursor,
+              });
             }
-            shells.set(info.id, recoveredShell(owner, info.id, info.command));
-          } else if (existing.state !== owner) {
-            shells.set(info.id, {
-              ...recoveredShell(owner, info.id, info.command),
-              awaited: existing.awaited === true,
-              output: existing.output,
-              cursor: existing.cursor,
-            });
           }
-        }
+        }).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
         for (const [id, shell] of shells) {
           if (!shell.running || !sessionsOf(state).includes(shell.state)) continue;
           yield* Effect.gen(function* () {
             const found = yield* client.shell
               .get({ id: Shell.ID.make(id), location: { directory: shell.state.directory } })
-              .pipe(
-                Effect.timeout(INVENTORY_TIMEOUT),
-                Effect.catchTags({ ShellNotFoundError: () => Effect.undefined }),
-              );
+              .pipe(Effect.catchTags({ ShellNotFoundError: () => Effect.undefined }));
             if (found === undefined) {
               shell.running = false;
               yield* emitShell(id, "interrupted");
@@ -1908,6 +1907,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
             if (!shell.running) shells.delete(id);
           }).pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
             Effect.catch((cause) =>
               Effect.logWarning("Could not recover an OpenCode shell.", cause).pipe(
                 Effect.andThen(emitShell(id, "running")),
@@ -1919,7 +1919,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       (effect, state) =>
         lock.withPermit(
           effect.pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
             Effect.ensuring(
               Effect.gen(function* () {
                 for (const [id, shell] of shells) {

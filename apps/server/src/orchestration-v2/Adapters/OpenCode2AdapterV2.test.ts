@@ -1133,12 +1133,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     "inventory-failed",
     "inventory-timeout",
     "inventory-retried",
+    "inventory-settled",
+    "inventory-timeout-settled",
   ] as const)("recovers only owned native shells using %s inventory", (discovery) =>
     Effect.gen(function* () {
       const inventoryUnavailable =
         discovery === "inventory-failed" ||
         discovery === "inventory-timeout" ||
-        discovery === "inventory-retried";
+        discovery === "inventory-retried" ||
+        discovery === "inventory-settled" ||
+        discovery === "inventory-timeout-settled";
+      const inventoryTimedOut =
+        discovery === "inventory-timeout" || discovery === "inventory-timeout-settled";
+      const settled =
+        discovery === "settled" ||
+        discovery === "inventory-settled" ||
+        discovery === "inventory-timeout-settled";
       const awaited = discovery === "awaited" || discovery === "settled" || inventoryUnavailable;
       const legacyInventory = discovery === "shell" || inventoryUnavailable;
       const idAllocator = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
@@ -1146,8 +1156,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const info = {
         id,
         command: "sleep 600",
-        status: discovery === "settled" ? "exited" : "running",
-        ...(discovery === "settled" ? { exit: 0 } : {}),
+        status: settled ? "exited" : "running",
+        ...(settled ? { exit: 0 } : {}),
         cwd: WORK,
         shell: "/bin/sh",
         file: "/remote/output",
@@ -1197,9 +1207,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "recovered-exit",
         "inventory-pending",
         "inventory-retry",
+        "inventory-polled",
       ]);
       const recovery = yield* resumed(
-        discovery === "settled"
+        settled
           ? []
           : [
               ...(discovery === "inventory-retried"
@@ -1250,11 +1261,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           shellRecovery: inventoryUnavailable
             ? [
                 out("shell.list", "<any>"),
-                reply(
-                  "shell.list",
-                  discovery === "inventory-timeout" ? "<hang>" : { status: 500, body: {} },
-                ),
-                ...(discovery === "inventory-timeout"
+                reply("shell.list", inventoryTimedOut ? "<hang>" : { status: 500, body: {} }),
+                ...(inventoryTimedOut
                   ? [
                       event(
                         "session.execution.succeeded",
@@ -1265,12 +1273,23 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   : []),
                 ...(discovery === "inventory-timeout"
                   ? [
-                      out("shell.output", { id, cursor: "0" }),
+                      ...inventory.slice(2),
+                      out("shell.output", { id, cursor: "8" }),
                       reply(
                         "shell.output",
-                        response({ output: "retained", cursor: 8, size: 8, truncated: false }),
+                        response({ output: "", cursor: 8, size: 8, truncated: false }),
+                      ),
+                      event(
+                        "session.execution.succeeded",
+                        { sessionID: "ses_unrelated" },
+                        "inventory-polled",
                       ),
                     ]
+                  : []),
+                ...(discovery === "inventory-settled" ? inventory.slice(2) : []),
+                ...(discovery === "inventory-timeout-settled" ? inventory.slice(2) : []),
+                ...(discovery === "inventory-failed" || discovery === "inventory-retried"
+                  ? [out("shell.get", { id }), reply("shell.get", { status: 500, body: {} })]
                   : []),
               ]
             : inventory,
@@ -1291,7 +1310,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           replayGate: gate,
         },
       ).pipe(Effect.forkScoped);
-      if (discovery === "inventory-timeout") {
+      if (inventoryTimedOut) {
         yield* Effect.promise(() => gate.waitForReached("inventory-pending"));
         yield* TestClock.adjust("5 seconds");
         gate.release("inventory-pending");
@@ -1328,7 +1347,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(
         thread.pendingBackgroundTasks ?? [],
-        discovery === "settled"
+        settled
           ? []
           : [
               {
@@ -1345,8 +1364,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           { taskId: id, kind: "command", description: info.command, awaited: true },
         ]);
       }
-      if (discovery === "inventory-timeout") yield* Deferred.await(shellRead);
-      if (inventoryUnavailable) {
+      if (discovery === "inventory-timeout") {
+        yield* Deferred.await(shellRead);
+        yield* Effect.promise(() => gate.waitForReached("inventory-polled"));
+        gate.release("inventory-polled");
+      }
+      if (inventoryUnavailable && !settled) {
         assert.deepEqual(
           yield* runtime.awaitBackgroundTasks!({
             providerThread: thread,
@@ -1356,10 +1379,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           { matched: [id] },
         );
       }
-      assert.equal(
-        yield* runtime.hasPendingBackgroundWorkForThread!(thread),
-        discovery !== "settled",
-      );
+      assert.equal(yield* runtime.hasPendingBackgroundWorkForThread!(thread), !settled);
       yield* runtime.stopTask!({ providerThread: thread, taskId: "sh_other" });
       assert.deepEqual(
         yield* runtime.awaitBackgroundTasks!({
@@ -1367,12 +1387,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           taskIds: [id, "sh_other"],
           awaited: true,
         }),
-        { matched: discovery === "settled" ? [] : [id] },
+        { matched: settled ? [] : [id] },
       );
-      assert.equal(
-        yield* runtime.hasPendingBackgroundWorkForThread!(thread),
-        discovery !== "settled",
-      );
+      assert.equal(yield* runtime.hasPendingBackgroundWorkForThread!(thread), !settled);
       if (discovery === "exited") gate.release("recovered-exit");
       else yield* runtime.stopTask!({ providerThread: thread, taskId: id });
       yield* Deferred.await(shellEnded);
@@ -1384,7 +1401,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       if (stopped?.type === "turn_item.updated" && stopped.turnItem.type === "command_execution") {
         assert.equal(
           stopped.turnItem.status,
-          discovery === "settled" || discovery === "exited" ? "completed" : "interrupted",
+          settled || discovery === "exited" ? "completed" : "interrupted",
         );
         assert.equal(
           stopped.turnItem.output,
@@ -1410,7 +1427,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.deepInclude(projected.turnItem, {
           type: "command_execution",
           input: info.command,
-          output: inventoryUnavailable ? "" : "retained",
+          output:
+            inventoryUnavailable && !settled && discovery !== "inventory-timeout" ? "" : "retained",
         });
       }
     }),
@@ -1469,6 +1487,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           shellRecovery: [
             out("shell.list", "<any>"),
             reply("shell.list", { status: 500, body: {} }),
+            out("shell.get", { id }),
+            reply("shell.get", { status: 500, body: {} }),
           ],
           pendingBackgroundTasks: [
             { taskId: id, kind: "command", description: info.command, awaited: true },
@@ -1578,6 +1598,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                       { sessionID: "ses_unrelated" },
                       "recovery-pending",
                     ),
+                    out("shell.get", { id: ids[1] }),
+                    reply("shell.get", response(info(ids[1]!))),
+                    ...output(ids[1]!),
                     ...ids.map((id) => out("shell.output", { id })),
                     ...ids.map(() =>
                       reply(
@@ -1610,6 +1633,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         if (failure === "timeout") {
           yield* Effect.promise(() => gate.waitForReached("recovery-pending"));
           yield* TestClock.adjust("5 seconds");
+          gate.release("recovery-pending");
         }
         const { runtime, thread } = yield* Fiber.join(recovery);
         const recovered = yield* runtime.events.pipe(
@@ -1629,7 +1653,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ids,
         );
         if (failure === "timeout") {
-          gate.release("recovery-pending");
           yield* Effect.promise(() => gate.waitForReached("polled"));
           gate.release("polled");
         }
