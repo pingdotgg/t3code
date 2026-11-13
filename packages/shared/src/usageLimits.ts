@@ -209,12 +209,61 @@ function accountKey(
   driver: ServerProvider["driver"],
   email: string | undefined,
   limits?: ServerProviderUsageLimits,
+  credentialAliases?: ReadonlyMap<string, string>,
 ): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   if (normalizedEmail) return `${driver}:${normalizedEmail}`;
-  return limits?.credentialFingerprint
-    ? `${driver}:credential:${limits.credentialFingerprint}`
-    : null;
+  if (!limits?.credentialFingerprint) return null;
+  const key = `${driver}:credential:${limits.credentialFingerprint}`;
+  return credentialAliases?.get(key) ?? key;
+}
+
+const GO_MONTHLY_WINDOW = "go_monthly";
+
+const goMonthlyReset = (limits: ServerProviderUsageLimits) =>
+  Date.parse(limits.windows.find((window) => window.id === GO_MONTHLY_WINDOW)?.resetsAt ?? "");
+
+// Usage only grows inside a fixed window, so a later reading that shows less
+// is another subscription. The session window rolls and is not compared.
+function continuesGoReading(earlier: ServerProviderUsageLimits, later: ServerProviderUsageLimits) {
+  return (
+    goMonthlyReset(earlier) === goMonthlyReset(later) &&
+    earlier.windows.every((window) => {
+      if (window.kind === "session") return true;
+      const next = later.windows.find((candidate) => candidate.id === window.id);
+      return !next || next.resetsAt !== window.resetsAt || next.usedPercent >= window.usedPercent;
+    })
+  );
+}
+
+// OpenCode Go reports no account id, and one subscription can hold several API
+// keys. Its monthly window resets at the second the subscription began, so keys
+// sharing that second whose readings continue one another are one subscription.
+function goCredentialAliases(reports: readonly AccountReport[]) {
+  const freshest = new Map<string, ServerProviderUsageLimits>();
+  for (const { driver, email, usageLimits } of reports) {
+    if (email?.trim() || !usageLimits || Number.isNaN(goMonthlyReset(usageLimits))) continue;
+    const key = accountKey(driver, email, usageLimits);
+    if (!key) continue;
+    const previous = freshest.get(key);
+    if (!previous || Date.parse(usageLimits.checkedAt) > Date.parse(previous.checkedAt)) {
+      freshest.set(key, usageLimits);
+    }
+  }
+  const subscriptions: Array<{ readonly key: string; latest: ServerProviderUsageLimits }> = [];
+  const aliases = new Map<string, string>();
+  for (const [key, limits] of [...freshest].sort(
+    ([, a], [, b]) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt),
+  )) {
+    const subscription = subscriptions.find(({ latest }) => continuesGoReading(latest, limits));
+    if (subscription) {
+      aliases.set(key, subscription.key);
+      subscription.latest = limits;
+    } else {
+      subscriptions.push({ key, latest: limits });
+    }
+  }
+  return aliases;
 }
 
 interface AccountReport {
@@ -232,16 +281,17 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 // Include every enabled login, even unreadable workspaces.
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+function accountKeyResolver(reports: readonly AccountReport[]) {
+  const aliases = goCredentialAliases(reports);
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report.driver, report.email, report.usageLimits, aliases);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = accountKey(report.driver, report.email, report.usageLimits, aliases);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);

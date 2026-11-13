@@ -384,6 +384,67 @@ describe("pools", () => {
     });
     expect(collectLimitAccounts(input)).toHaveLength(2);
 
+    const monthlyReset = "2026-09-15T15:39:18.000Z";
+    const reading = (
+      credentialFingerprint: string,
+      checkedAt: string,
+      weeklyUsed: number,
+      monthlyUsed: number,
+      monthlyResetsAt = monthlyReset,
+    ) => ({
+      ...go,
+      usageLimits: {
+        checkedAt,
+        credentialFingerprint,
+        windows: [
+          { ...window, id: "go_rolling", usedPercent: 3 },
+          { ...weekly, id: "go_weekly", usedPercent: weeklyUsed },
+          {
+            id: "go_monthly",
+            kind: "monthly" as const,
+            label: "Go · Monthly",
+            usedPercent: monthlyUsed,
+            resetsAt: monthlyResetsAt,
+          },
+        ],
+      },
+    });
+    const stale = reading("old-key", checkedAt, 3, 13);
+    const later = "2026-09-03T11:30:00.000Z";
+    for (const [fresh, count] of [
+      [reading("new-key", later, 18, 21), 1],
+      [reading("new-key", later, 18, 21, "2026-09-15T15:39:19.000Z"), 2],
+      [reading("new-key", later, 18, 5), 2],
+      [reading("new-key", later, 1, 21), 2],
+    ] as const) {
+      for (const order of [
+        [stale, fresh],
+        [fresh, stale],
+      ]) {
+        const merged = collectLimitAccounts(
+          new Map(
+            order.map((entry, index) => [
+              EnvironmentId.make(`env-${index}`),
+              { ...laptop, serverConfig: { providers: [entry] } },
+            ]),
+          ),
+        );
+        expect(merged).toHaveLength(count);
+        if (count === 1) expect(merged[0]?.limits.windows[2]?.usedPercent).toBe(21);
+        expect(
+          collectProviderUsageLimits(
+            go.instanceId,
+            order.map((entry, index) => ({
+              ...entry,
+              instanceId: ProviderInstanceId.make(index === 0 ? "opencode" : "opencode-2"),
+            })),
+            [],
+            now,
+          )?.accounts,
+        ).toHaveLength(count);
+      }
+    }
+
     input.set(EnvironmentId.make("env-a"), {
       ...laptop,
       serverConfig: {
