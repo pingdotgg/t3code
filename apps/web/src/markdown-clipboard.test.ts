@@ -198,6 +198,22 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
   });
 
+  it("copies a GitHub alert callout as alert Markdown instead of its rendered label", () => {
+    // The shape ChatMarkdown renders for `> [!WARNING]\n> Back up first.`.
+    const callout = new FakeElement("DIV", [], { role: "note" }).append(
+      new FakeElement("P", [], { "data-thread-find-ignore": "true" }).append(
+        new FakeElement("SVG", [], { "aria-hidden": "true" }),
+        new FakeText("Warning"),
+      ),
+      new FakeElement("P").append(new FakeText("Back up first.")),
+    );
+    const container = new FakeElement("DIV").append(callout);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "> [!WARNING]\n> Back up first.",
+    );
+  });
+
   it("preserves explicit ordered-list values and continues from resets when copying", () => {
     const list = new FakeElement("OL", [], { start: "0" }).append(
       new FakeElement("LI").append(new FakeText("A")),
