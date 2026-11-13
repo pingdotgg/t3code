@@ -55,7 +55,7 @@ describe("watchManagedTunnelOrigin", () => {
           return input.failRegistration ? Effect.fail("relay unavailable") : Effect.void;
         }),
       }).pipe(Effect.forkChild);
-      for (; minute < input.minutes;) {
+      while (minute < input.minutes) {
         minute += 1;
         yield* TestClock.adjust("1 minute");
       }
