@@ -43,10 +43,9 @@ export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAt
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );
-const visibleThreadSnapshotAtom = withoutForgottenThreads(threadEnvironment.snapshotAtom);
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  snapshotAtom: visibleThreadSnapshotAtom,
+  snapshotAtom: threadEnvironment.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
 const steadyShells = createSteadyShellAtoms({
@@ -63,7 +62,9 @@ const steadyShells = createSteadyShellAtoms({
 export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
 export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  // Filtered after the hold, which can keep showing an older snapshot that still has the row.
+  // Only lists drop threads removed from the list: the outbox reads environmentThreadShells and
+  // deletes queued messages for a thread it is missing. Filtered after the hold, which can keep
+  // showing an older snapshot that still has the row.
   snapshotAtom: withoutForgottenThreads(steadyShells.snapshotAtom),
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 }).navigationThreadShellsAtom;
