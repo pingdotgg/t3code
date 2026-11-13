@@ -725,56 +725,64 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
+  it.effect.each(["WSLENV", "wslenv"])(
+    `resolveWsl preserves existing %s entries when forwarding backend secrets`,
+    (wslEnvKey) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
 
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
+        yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
 
-        assert.equal(config.executablePath, "wsl.exe");
-        assert.equal(config.bootstrap.port, 5050);
-        assert.equal(config.bootstrap.host, "0.0.0.0");
-        assert.equal(config.bootstrap.tailscaleServeEnabled, false);
-        assert.notProperty(config.bootstrap, "desktopTelemetryFd");
-        assert.notProperty(config.bootstrap, "resourceMonitorPath");
-        assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
-        assert.equal(config.env.OPENAI_API_KEY, "openai-key");
-        assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
-        assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
-        assert.equal(
-          config.env.WSLENV,
-          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
-        );
-      }).pipe(
-        Effect.provide(
-          layerBackendConfiguration().pipe(
-            Layer.provideMerge(layerServerExposure),
-            Layer.provideMerge(DesktopAppSettings.layerTest()),
-            Layer.provideMerge(DesktopWslServerTree.layerTest()),
-            Layer.provideMerge(
-              DesktopWslEnvironment.layerTest({
-                isAvailable: true,
-                windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                getDistroIp: () => Option.some("172.27.0.99"),
-              }),
+          assert.equal(config.executablePath, "wsl.exe");
+          assert.equal(config.bootstrap.port, 5050);
+          assert.equal(config.bootstrap.host, "0.0.0.0");
+          assert.equal(config.bootstrap.tailscaleServeEnabled, false);
+          assert.notProperty(config.bootstrap, "desktopTelemetryFd");
+          assert.notProperty(config.bootstrap, "resourceMonitorPath");
+          assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
+          assert.equal(config.env.OPENAI_API_KEY, "openai-key");
+          assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
+          assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
+          // Windows env keys are case-insensitive; spawn keeps only one spelling.
+          assert.deepEqual(
+            Object.entries(config.env).filter(([key]) => key.toUpperCase() === "WSLENV"),
+            [
+              [
+                "WSLENV",
+                "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+              ],
+            ],
+          );
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: () => Option.some("172.27.0.99"),
+                }),
+              ),
+              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
             ),
-            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
           ),
-        ),
-        Effect.provideService(HostProcess.Environment, {
-          WSLENV: "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u",
-          OPENAI_API_KEY: "openai-key",
-          ANTHROPIC_API_KEY: "anthropic-key",
-          T3CODE_OTLP_HEADERS: 'authorization="Bearer%20my-token"',
-          T3CODE_OTLP_PROTOCOL: "http/protobuf",
-        }),
-      );
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+          Effect.provideService(HostProcess.Environment, {
+            [wslEnvKey]: "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u",
+            OPENAI_API_KEY: "openai-key",
+            ANTHROPIC_API_KEY: "anthropic-key",
+            T3CODE_OTLP_HEADERS: 'authorization="Bearer%20my-token"',
+            T3CODE_OTLP_PROTOCOL: "http/protobuf",
+          }),
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
