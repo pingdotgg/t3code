@@ -25,6 +25,7 @@ import {
   scheduleFromDraft,
   scheduleLabel,
   taskToDraft,
+  unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -184,6 +185,19 @@ describe("fixed-time scheduled tasks", () => {
 });
 
 describe("scheduled task destination", () => {
+  it("unbinding leaves the shared checkout for a new worktree from the remote", () => {
+    const rootBound = taskToDraft({
+      ...legacyTask,
+      threadId: ThreadId.make("thread:bound"),
+      workspaceStrategy: { type: "root" },
+    });
+    expect(unbindDraftFromThread(rootBound)).toMatchObject({
+      threadId: "",
+      workspaceMode: "worktree",
+      startFromOrigin: true,
+    });
+  });
+
   it("restores the saved thread when the project changes back", () => {
     const task = {
       ...legacyTask,
