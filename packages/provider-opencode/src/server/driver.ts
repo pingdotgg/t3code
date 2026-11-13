@@ -482,8 +482,17 @@ export const OpenCodeDriver: ProviderDriver<
       const limits = yield* openCode2Server.withConnection((connection) =>
         connection.usageLimits(host.paths.cwd),
       );
-      if (limits === undefined) unsupportedUsageVersion = runtime.version;
-      return limits ?? (yield* legacyUsageLimits);
+      if (limits === undefined) {
+        unsupportedUsageVersion = runtime.version;
+        return yield* legacyUsageLimits;
+      }
+      // A local server reports no workspace when only a Go key is stored, but
+      // that key still has a Go allowance the credential reader can report.
+      if (limits.unavailable?.reason === "unsupported" && !effectiveConfig.serverUrl.trim()) {
+        const legacy = yield* legacyUsageLimits;
+        if (legacy.windows.length > 0) return legacy;
+      }
+      return limits;
     }).pipe(
       Effect.timeout("10 seconds"),
       Effect.catch(() =>

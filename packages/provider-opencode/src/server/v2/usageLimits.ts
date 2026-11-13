@@ -65,7 +65,7 @@ const resetTime = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const budgetPercent = (spent: number, limit: number) =>
   limit <= 0 ? 100 : clampPercent((spent / limit) * 100);
 
-/** Undefined alone permits the legacy credential reader; null data is authoritative. */
+/** Undefined permits the legacy credential reader; null data reports a signed-out workspace. */
 export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(function* (
   directory: string,
 ) {

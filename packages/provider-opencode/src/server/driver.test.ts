@@ -879,6 +879,100 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }),
   );
 
+  it.effect("reads Go usage from local credentials when the server has no Console workspace", () =>
+    Effect.gen(function* () {
+      let usageReads = 0;
+      const usageStarted = yield* Deferred.make<void>();
+      const server = HttpClient.make((request) => {
+        if (request.url === "https://opencode.ai/zen/go/v1/usage") {
+          usageReads += 1;
+          assert.strictEqual(request.headers.authorization, "Bearer test-go-key");
+          const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+          return Deferred.succeed(usageStarted, undefined).pipe(
+            Effect.as(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ usage: { rolling: window, weekly: window, monthly: window } }),
+              ),
+            ),
+          );
+        }
+        const path = new URL(request.url).pathname;
+        if (path === "/api/experimental/usage/limits")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ location: { directory: "/work" }, data: null }),
+            ),
+          );
+        if (path === "/api/info")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(OPENCODE_2_RESPONSES["/api/info"].body, {
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          );
+        const body =
+          path === "/api/model"
+            ? {
+                location: { directory: "/work" },
+                data: [openCode2Model("opencode", "big-pickle", "Big Pickle")],
+              }
+            : { location: { directory: "/work" }, data: [] };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const runtime = {
+        ...openCode2Runtime,
+        startOpenCodeServerProcess: ({
+          verify,
+        }: Parameters<
+          OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]
+        >[0]) =>
+          Effect.gen(function* () {
+            const url = "http://127.0.0.1:4096";
+            const version = verify ? yield* verify(url) : "2.0.18";
+            return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+          }),
+      };
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-local-go-fallback"),
+        displayName: undefined,
+        environment: [
+          {
+            name: "OPENCODE_AUTH_CONTENT",
+            sensitive: true,
+            value: JSON.stringify({
+              "opencode-go": { type: "api", key: "test-go-key" },
+            }),
+          },
+        ],
+        enabled: true,
+        config: OpenCodeDriver.defaultConfig(),
+      }).pipe(
+        Effect.provide(TestProviderHost.layer({ runBackgroundWork: true })),
+        Effect.provideService(HttpClient.HttpClient, server),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+      const result = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.usageLimits?.windows.length === 3),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(usageStarted);
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(result));
+      assert.deepStrictEqual(
+        snapshot?.usageLimits?.windows.map((window) => window.id),
+        ["go_rolling", "go_weekly", "go_monthly"],
+      );
+      assert.strictEqual(snapshot?.usageLimits?.unavailable?.reason, undefined);
+      assert.isAtLeast(usageReads, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect.each(
     [
       { name: "recovers" },
