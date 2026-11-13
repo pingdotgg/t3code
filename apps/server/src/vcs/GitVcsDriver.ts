@@ -469,6 +469,10 @@ const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 /** Opens the message of a checkpoint commit captured as a baseline. */
 const BASELINE_CHECKPOINT_SUBJECT = "t3 checkpoint baseline";
+// Reflog subjects that only point a ref at an existing commit. Anything else counts as creating
+// one, so an unknown subject keeps its commit attributed.
+const REF_MOVE_REFLOG_SUBJECT =
+  /^(?:$|(?:checkout|reset|branch|clone|fetch)\b|[^:]*\((?:start|finish|abort|reset)\): |(?:merge|pull|rebase|cherry-pick)\b[^()]*: fast-forward$)/i;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1879,7 +1883,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return null;
       }
 
-      const listPaths = (args: ReadonlyArray<string>) =>
+      const listLines = (args: ReadonlyArray<string>, stdin?: string) =>
+        execute({
+          operation,
+          cwd: input.cwd,
+          // log.showSignature prints verification text into the output.
+          args: ["-c", "log.showSignature=false", ...args],
+          ...(stdin === undefined ? {} : { stdin }),
+          maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        }).pipe(Effect.map((result) => result.stdout.split("\n").filter((line) => line !== "")));
+      const listPaths = (args: ReadonlyArray<string>, stdin?: string) =>
         execute({
           operation,
           cwd: input.cwd,
@@ -1895,26 +1909,73 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "--no-renames",
             "--no-ext-diff",
           ],
+          ...(stdin === undefined ? {} : { stdin }),
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
+
+      // A commit is an import when a fetch delivered it since the previous checkpoint and no
+      // reflog in any worktree shows this repository creating it. --all covers every worktree's
+      // HEAD, and with --walk-reflogs --since compares each entry's own time.
+      const listImportedCommits = Effect.gen(function* () {
+        const entries = (yield* listLines([
+          "log",
+          "--walk-reflogs",
+          "--all",
+          `--since=@${capturedAt}`,
+          "--format=%H %gD %gs",
+        ])).map((line) => {
+          const [commit = "", selector = "", ...subject] = line.split(" ");
+          return {
+            commit,
+            fetched: selector.startsWith("refs/remotes/"),
+            subject: subject.join(" "),
+          };
+        });
+        // A push records commits this repository already had.
+        const fetchedTips = new Set(
+          entries
+            .filter((entry) => entry.fetched && entry.subject !== "update by push")
+            .map((entry) => entry.commit),
+        );
+        if (fetchedTips.size === 0) return fetchedTips;
+        // Fetching another branch can deliver a commit that was made here and pushed.
+        const createdHere = new Set(
+          entries
+            .filter((entry) => !entry.fetched && !REF_MOVE_REFLOG_SUBJECT.test(entry.subject))
+            .map((entry) => entry.commit),
+        );
+        const fetched = yield* listLines(
+          ["rev-list", `--since=@${capturedAt}`, "--stdin"],
+          `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
+        );
+        return new Set(fetched.filter((commit) => !createdHere.has(commit)));
+      });
+
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
-      const pathLists = yield* Effect.all(
+      const [recentCommits, ...pathLists] = yield* Effect.all(
         [
+          listLines(["rev-list", `--since=@${capturedAt}`, `${startHead}..${endHead}`]),
           listPaths(["diff", startHead, `${turnStart}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
           listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
-          listPaths([
-            "log",
-            "--format=",
-            "--diff-merges=remerge",
-            `--since=@${capturedAt}`,
-            `${startHead}..${endHead}`,
-          ]),
         ],
         { concurrency: "unbounded" },
       );
-      return new Set(pathLists.flat().filter((path) => path.length > 0));
+      // Without readable reflogs every recent commit stays attributed, as before.
+      const importedCommits =
+        recentCommits.length === 0
+          ? new Set<string>()
+          : yield* listImportedCommits.pipe(Effect.orElseSucceed(() => new Set<string>()));
+      const ownCommits = recentCommits.filter((commit) => !importedCommits.has(commit));
+      const ownCommitPaths =
+        ownCommits.length === 0
+          ? []
+          : yield* listPaths(
+              ["log", "--no-walk=unsorted", "--stdin", "--format=", "--diff-merges=remerge"],
+              `${ownCommits.join("\n")}\n`,
+            );
+      return new Set([...pathLists.flat(), ...ownCommitPaths].filter((path) => path.length > 0));
     }),
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
