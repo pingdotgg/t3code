@@ -542,29 +542,18 @@ const refreshOnSignalWhileRead =
     );
   };
 
-/**
- * Subscribes rather than reading `self` as a dependency: an idle node would only be marked stale
- * by a refresh, dropping its timer, and a signed asset URL must keep renewing while cached.
- */
 const refreshEveryUntilFinal =
   <V>(intervalMs: number, isFinal: (value: V) => boolean) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
     Atom.transform(
       self,
       (get) => {
-        let handle: ReturnType<typeof setTimeout> | undefined;
-        const schedule = (value: A) => {
-          clearTimeout(handle);
+        const value = get(self);
+        if (!isFinal(value)) {
           // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
-          if (!isFinal(value)) handle = setTimeout(() => get.refresh(self), intervalMs);
-        };
-        get.addFinalizer(() => clearTimeout(handle));
-        get.subscribe(self, (value) => {
-          schedule(value);
-          get.setSelf(value);
-        });
-        const value = get.once(self);
-        schedule(value);
+          const handle = setTimeout(() => get.refresh(self), intervalMs);
+          get.addFinalizer(() => clearTimeout(handle));
+        }
         return value;
       },
       { initialValueTarget: self },
