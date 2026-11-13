@@ -260,6 +260,21 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // stat succeeds on a folder macOS privacy settings block; opening it is what fails.
+  const rejectUnreadableWorkspace = Effect.fn("ProjectService.rejectUnreadableWorkspace")(
+    function* (projectId: ProjectId, workspaceRoot: string) {
+      const denied = yield* fileSystem.readDirectory(workspaceRoot).pipe(
+        Effect.as(false),
+        Effect.catch((error) => Effect.succeed(error.reason._tag === "PermissionDenied")),
+      );
+      if (!denied) return;
+      return yield* new ProjectInvalidError({
+        projectId,
+        detail: `T3 Code cannot read ${workspaceRoot}. Check the folder's permissions, or on macOS allow T3 Code to access it in System Settings > Privacy & Security.`,
+      });
+    },
+  );
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -399,6 +414,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
+      yield* rejectUnreadableWorkspace(input.projectId, workspaceRoot);
       yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       yield* commit({
         type: "project.create",
@@ -428,6 +444,7 @@ export const make = Effect.gen(function* () {
               workspaceRoot: input.workspaceRoot,
             });
       if (workspaceRoot !== previousRoot) {
+        yield* rejectUnreadableWorkspace(input.projectId, workspaceRoot);
         yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       }
       yield* commit({
