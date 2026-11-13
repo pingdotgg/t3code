@@ -119,7 +119,15 @@ pub fn descriptor(environment_id: &str, label: &str) -> Value {
         "platform": { "os": os(), "arch": arch() },
         "serverVersion": CONTRACT_SERVER_VERSION,
         "orchestrationProtocolVersion": ORCHESTRATION_PROTOCOL_VERSION,
-        "capabilities": { "repositoryIdentity": false },
+        "capabilities": {
+            "repositoryIdentity": false,
+            // Uploads are claimed by the message that sends them (`host.rs`).
+            "attachmentUploads": true,
+            "fileAttachments": { "maxUploadBytes": conn_files::attachments::MAX_FILE_BYTES },
+            "threadForceStop": true,
+            "shellThreadFamilies": true,
+            "shellOlderSettled": true,
+        },
     })
 }
 

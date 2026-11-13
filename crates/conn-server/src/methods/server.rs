@@ -197,6 +197,12 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Value 
         // The engine's managed folders (`EngineConfig::home` is the state folder).
         "newProjectsRoot": environment.state_dir.join("projects"),
         "scratchWorkspaceRoot": environment.state_dir.join("scratch"),
+        // The engine serves getThreadFamily, getOlderSettledThreads,
+        // getThreadLinkMetadata and searchThread.
+        "shellThreadFamilies": true,
+        "shellOlderSettled": true,
+        "threadLinkMetadata": true,
+        "threadFind": true,
     })
 }
 
