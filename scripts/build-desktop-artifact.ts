@@ -673,6 +673,17 @@ export class MacProvisioningProfileNotFoundError extends Schema.TaggedError<MacP
   }
 }
 
+export class MacLocalSigningIdentityNotFoundError extends Schema.TaggedError<MacLocalSigningIdentityNotFoundError>()(
+  "MacLocalSigningIdentityNotFoundError",
+  {
+    identity: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY "${this.identity}" is not a valid code-signing identity in the keychain. Renew or import it, or unset the variable for an unsigned build.`;
+  }
+}
+
 export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedError<DesktopBuildDistDirectoryMissingError>()(
   "DesktopBuildDistDirectoryMissingError",
   {
@@ -2836,7 +2847,19 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // A persistent local identity keeps Keychain approvals valid across fork rebuilds.
+    const localSigningIdentity = signed
+      ? undefined
+      : loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY?.trim();
     buildConfig.mac = {
+      ...(localSigningIdentity
+        ? {
+            identity: localSigningIdentity,
+            type: "development",
+            forceCodeSigning: true,
+            notarize: false,
+          }
+        : {}),
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
@@ -2879,7 +2902,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // The custom signer receives the resolved certificate hash; the default one only its name.
+      ...(signed || localSigningIdentity
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3855,6 +3881,20 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
+
+  const localSigningIdentity =
+    options.platform === "mac" && !options.signed
+      ? loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY?.trim()
+      : undefined;
+  if (localSigningIdentity) {
+    // With a custom signer set, electron-builder skips a missing or expired identity silently.
+    const identities = yield* spawnAndCollectOutput(
+      ChildProcess.make("security", ["find-identity", "-v", "-p", "codesigning"]),
+    ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stderr: "", exitCode: 1 })));
+    if (identities.exitCode !== 0 || !identities.stdout.includes(localSigningIdentity)) {
+      return yield* new MacLocalSigningIdentityNotFoundError({ identity: localSigningIdentity });
+    }
+  }
 
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
