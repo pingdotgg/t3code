@@ -1500,7 +1500,15 @@ const make = Effect.gen(function* () {
               force: submodules.force,
               execute: git.execute,
               run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
-            }).pipe(Effect.onError(() => Effect.ignore(recordDetached(null))));
+            }).pipe(
+              // A removal that fails with the checkout already gone still needs the commit.
+              Effect.onError(() =>
+                fs.exists(path.join(worktreePath, ".git")).pipe(
+                  Effect.flatMap((exists) => (exists ? recordDetached(null) : Effect.void)),
+                  Effect.ignore,
+                ),
+              ),
+            );
             entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
             yield* gitManager.invalidateStatus(project.workspaceRoot);
             // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.

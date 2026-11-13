@@ -16,6 +16,7 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   DEFAULT_SERVER_SETTINGS,
+  GitCommandError,
   type WorktreeKeepWhen,
   type StorageCleanupSettings,
   type TerminalMetadataStreamEvent,
@@ -353,6 +354,7 @@ const cleanupFixture = (
     let storedWorktreePaths: string[] = [worktree];
     let projectRoots = [repo];
     let editBeforeRemoval = false;
+    let failRemoval: "before-deleting" | "after-deleting" | null = null;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
     let sessionLiveChecks = 0;
@@ -377,6 +379,16 @@ const cleanupFixture = (
               (input.args.includes("remove") || input.args.includes("--porcelain"))
             )
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
+            if (failRemoval !== null && input.args.includes("remove")) {
+              if (failRemoval === "after-deleting") yield* git.execute(input);
+              failRemoval = null;
+              return yield* new GitCommandError({
+                operation: input.operation,
+                command: "git worktree remove",
+                cwd: input.cwd,
+                detail: "removal failed",
+              });
+            }
             return yield* git.execute(input);
           }),
         statusDetailsLocal: (...args) => {
@@ -491,6 +503,9 @@ const cleanupFixture = (
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
       editBeforeRemoval: () => {
         editBeforeRemoval = true;
+      },
+      failRemoval: (when: NonNullable<typeof failRemoval>) => {
+        failRemoval = when;
       },
       fs,
       worktree,
@@ -2796,6 +2811,22 @@ describe("storage cleanup reports and local file policies", () => {
         // The saved branch holds other files, so restoration needs the detached commit.
         const recorded = yield* command(repo, ["rev-parse", detachedWorktreeRef(worktree), "main"]);
         expect(new Set(recorded.stdout.trim().split("\n")).size).toBe(1);
+      }),
+    ),
+  );
+  it.live("keeps a detached commit recorded only when a failed removal left no checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { service, repo, worktree, command } = fixture;
+        yield* command(worktree, ["checkout", "--detach"]);
+        const recorded = command(repo, ["for-each-ref", detachedWorktreeRef(worktree)]);
+        fixture.failRemoval("before-deleting");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "failed" });
+        expect((yield* recorded).stdout).toBe("");
+        fixture.failRemoval("after-deleting");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "failed" });
+        expect((yield* recorded).stdout).not.toBe("");
       }),
     ),
   );
