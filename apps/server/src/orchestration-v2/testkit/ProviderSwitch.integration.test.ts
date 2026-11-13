@@ -1511,6 +1511,8 @@ describe("orchestration v2 provider switching", () => {
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("provider-switch-goal-owner");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const failResumeOnce = yield* Ref.make(false);
+        const generation = yield* Ref.make(0);
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -1527,6 +1529,8 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: {},
             capturedTurns,
+            failResumeOnce,
+            nativeThreadGeneration: generation,
           }),
         ]);
         yield* Effect.gen(function* () {
@@ -1599,6 +1603,23 @@ describe("orchestration v2 provider switching", () => {
           assert.include(target.text, "paused");
           assert.include(target.text, owner.id);
           assert.include(target.text, "25909 tokens");
+
+          // A replacement native session after a failed resume is told again.
+          const claude = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
+            (thread) => thread.id !== owner.id,
+          )!;
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("goal-owner:detach"),
+            threadId,
+            providerSessionId: claude.providerSessionId!,
+          });
+          yield* worker.drain();
+          yield* Ref.set(failResumeOnce, true);
+          yield* run(3, CLAUDE_MODEL_SELECTION);
+          const recovered = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notEqual(recovered.nativeThreadId, target.nativeThreadId);
+          assert.include(recovered.text, "Finish the ZEBRA-42 migration");
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(

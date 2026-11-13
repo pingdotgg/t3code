@@ -999,6 +999,7 @@ export const layer: Layer.Layer<
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
             runs: projection.runs,
+            providerThreads: projection.providerThreads,
             items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
               (item) =>
                 item.runId === null ||

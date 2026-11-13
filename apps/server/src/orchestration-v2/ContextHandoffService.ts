@@ -289,9 +289,13 @@ export function makeSideChatContext(input: {
 export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff): boolean =>
   handoff.strategy === "manual_context" && handoff.transferId != null;
 
-/** A native goal stays with the provider thread that set it; the next provider has to be told. */
+const GOAL_OBJECTIVE_MAX_CHARS = 2_000;
+
+/**
+ * A native goal stays with the provider thread that set it; whichever provider thread runs next
+ * has to be told. Any earlier owner counts, so a later switch or a resume fallback still carries it.
+ */
 function sourceGoalNotice(input: {
-  readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
   readonly toProviderThreadId: ProviderThreadId;
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
 }): string | null {
@@ -299,7 +303,7 @@ function sourceGoalNotice(input: {
     .filter(
       (thread) =>
         thread.id !== input.toProviderThreadId &&
-        input.fromProviderThreadIds.includes(thread.id) &&
+        thread.ownerNodeId === null &&
         thread.goal != null &&
         thread.goal.status !== "complete",
     )
@@ -314,7 +318,11 @@ function sourceGoalNotice(input: {
     goal.checks === undefined ? null : `${goal.checks} checks`,
   ].filter((part) => part !== null);
   return [
-    `Thread goal (${goal.status}), owned by provider thread ${owner.id} (${owner.providerInstanceId}${owner.providerSessionId === null ? "" : `, session ${owner.providerSessionId}`}); it was not transferred to your native goal state: ${goal.objective}`,
+    `Thread goal (${goal.status}), owned by provider thread ${owner.id} (${owner.providerInstanceId}${owner.providerSessionId === null ? "" : `, session ${owner.providerSessionId}`}); it was not transferred to your native goal state: ${
+      goal.objective.length > GOAL_OBJECTIVE_MAX_CHARS
+        ? `${goal.objective.slice(0, GOAL_OBJECTIVE_MAX_CHARS)}… (objective truncated)`
+        : goal.objective
+    }`,
     ...(usage.length === 0 ? [] : [`Goal usage so far: ${usage.join(", ")}.`]),
     ...(goal.lastCheck === undefined ? [] : [`Last goal check: ${goal.lastCheck}`]),
   ].join("\n");

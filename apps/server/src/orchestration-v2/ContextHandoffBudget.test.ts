@@ -592,7 +592,7 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("delivers a source provider's goal whole or not at all", () =>
+  it.effect("delivers a source provider's goal when it fits and never fails without it", () =>
     Effect.gen(function* () {
       const goal = `Thread goal (paused), owned by provider thread codex: ${"x".repeat(3_900)}`;
       const withGoal = { ...handoff, history: { ...handoff.history!, goal } };
@@ -610,10 +610,10 @@ describe("handoff delivery", () => {
             }),
           persist: () => Effect.void,
         });
-      assert.equal((yield* deliver(3_000).pipe(Effect.result))._tag, "Failure");
-      assert.lengthOf(injected, 0);
+      yield* deliver(3_000);
+      assert.notInclude(injected[0]?.context, goal);
       yield* deliver(16_000);
-      assert.include(injected[0]?.context, goal);
+      assert.include(injected[1]?.context, goal);
     }),
   );
 
