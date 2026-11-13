@@ -1,5 +1,5 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -7,6 +7,7 @@ import { render } from "../../../test/render";
 import "~/index.css";
 import { chooseAudioDestination } from "../../speech/voiceConsent";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 
@@ -265,4 +266,40 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       expect(writes).toEqual([]);
     },
   );
+});
+
+it("waits for the read-aloud key lookup before allowing a save", async () => {
+  let resolveKeys: (response: Response) => void = () => {};
+  const keys = new Promise<Response>((resolve) => {
+    resolveKeys = resolve;
+  });
+  const previous = getClientSettings().readAloud;
+  await updateClientSettings({
+    readAloud: { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "xai", environmentId: id },
+  });
+  try {
+    await withVoicePanel(
+      (url) => {
+        if (url.pathname === "/api/voice/cloud/keys") return keys;
+        if (url.pathname === "/api/voice/cloud/xai/key")
+          return Promise.resolve(new Response(null, { status: 204 }));
+        if (url.pathname === "/api/voice/synthesis/xai/models")
+          return Promise.resolve(Response.json({ models: [] }));
+        return null;
+      },
+      async (screen) => {
+        await screen.getByRole("textbox", { name: "Read-aloud API key" }).fill("test-speech-key");
+        const save = screen.getByRole("button", { name: "Save", exact: true });
+        await expect.element(save).toBeDisabled();
+        resolveKeys(Response.json({ openai: false, xai: false, openrouter: false }));
+        await expect.element(save).toBeEnabled();
+        await save.click();
+        await expect
+          .element(screen.getByRole("button", { name: "Remove", exact: true }))
+          .toBeVisible();
+      },
+    );
+  } finally {
+    await updateClientSettings({ readAloud: previous });
+  }
 });

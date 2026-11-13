@@ -59,7 +59,7 @@ function ReadAloudKey({
     const controller = new AbortController();
     void runEnvironmentSpeech(getCloudSpeechKeys(prepared), { signal: controller.signal }).then(
       (keys) => setConfigured(Boolean(keys[provider])),
-      () => {},
+      () => setConfigured(false),
     );
     return () => controller.abort();
   }, [prepared, provider]);
@@ -100,7 +100,7 @@ function ReadAloudKey({
           />
           <Button
             size="sm"
-            disabled={!canManage || busy || !draft.trim()}
+            disabled={!canManage || busy || configured === null || !draft.trim()}
             onClick={() => void save(false)}
           >
             Save

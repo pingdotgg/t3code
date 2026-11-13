@@ -23,6 +23,15 @@ export function createReadAloudController(
   let state: State = { id: null, status: "idle" };
   let active: AbortController | null = null;
   let playback: SpeechPlayback | null = null;
+  let disposing = false;
+  const dispose = (current: SpeechPlayback) => {
+    disposing = true;
+    try {
+      current.stop();
+    } finally {
+      disposing = false;
+    }
+  };
   let paused = false;
   let starting = false;
   let resumePending: (() => void) | null = null;
@@ -44,7 +53,7 @@ export function createReadAloudController(
     starting = false;
     resumePending?.();
     resumePending = null;
-    playback?.stop();
+    if (playback) dispose(playback);
     playback = null;
     publish({ id: null, status: "idle" });
   };
@@ -58,7 +67,8 @@ export function createReadAloudController(
     },
     stop,
     pause() {
-      if (state.status !== "playing" && state.status !== "loading") return;
+      if (disposing || !active || (state.status !== "playing" && state.status !== "loading"))
+        return;
       paused = true;
       publish({ ...state, status: "paused" });
       if (!starting) playback?.pause();
@@ -106,7 +116,7 @@ export function createReadAloudController(
           publish({ id, status: paused ? "paused" : "loading" });
           const next = await prepare(chunk, settings, owner.signal);
           if (active !== owner) {
-            next.stop();
+            dispose(next);
             return;
           }
           playback = next;
@@ -128,7 +138,7 @@ export function createReadAloudController(
           publish({ id, status: "playing" });
           await next.finished;
           if (active !== owner) return;
-          next.stop();
+          dispose(next);
           playback = null;
         }
         if (active === owner) stop();
