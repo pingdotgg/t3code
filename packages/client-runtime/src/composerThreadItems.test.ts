@@ -118,3 +118,44 @@ describe("matchComposerEnvironmentItems", () => {
     ).toEqual([]);
   });
 });
+
+it("reads dashes, underscores, and dots in a mention as spaces", () => {
+  const match = (query: string) =>
+    matchComposerThreadItems({
+      shells: [
+        shell("follow-up", "Review PR 195 follow-up: tests", {
+          updatedAt: "2026-10-22T00:00:00.000Z",
+        }),
+        shell("exact", "Review PR 195"),
+        shell("other", "Review PR 194"),
+      ],
+      environmentId,
+      linkedEnvironments: new Map(),
+      excludeThreadId: null,
+      query,
+      now: Date.parse("2026-10-23T00:00:00.000Z"),
+    }).map((item) => item.thread.threadId);
+  expect(match("review-pr-195")).toEqual(["exact", "follow-up"]);
+  expect(match("review_pr.195")).toEqual(["exact", "follow-up"]);
+});
+
+it("preserves literal thread ids and punctuation in exact titles", () => {
+  const match = (query: string, shells: ReadonlyArray<ComposerThreadCandidate>) =>
+    matchComposerThreadItems({
+      shells,
+      environmentId,
+      linkedEnvironments: new Map(),
+      excludeThreadId: null,
+      query,
+      now: Date.parse("2026-10-23T00:00:00.000Z"),
+    }).map((item) => item.thread.threadId);
+  expect(match("review-pr-195", [shell("review-pr-195", "Unrelated title")])).toEqual([
+    "review-pr-195",
+  ]);
+  expect(
+    match("node.js", [
+      shell("prefix", "Node.js guide", { updatedAt: "2026-10-22T00:00:00.000Z" }),
+      shell("exact", "Node.js"),
+    ]),
+  ).toEqual(["exact", "prefix"]);
+});
