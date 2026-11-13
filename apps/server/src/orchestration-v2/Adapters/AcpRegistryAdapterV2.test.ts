@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -471,11 +472,15 @@ describe("AcpRegistryAdapterV2", () => {
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
+      readonly agentId?: string;
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
+      readonly storedOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
+      readonly failsConfiguration?: boolean;
+      readonly liveConfiguration?: AcpRegistryLiveConfiguration;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -522,7 +527,7 @@ describe("AcpRegistryAdapterV2", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
-          agentId: "fixture-agent",
+          agentId: input.agentId ?? "fixture-agent",
           authMethodId: "test",
           customModels: input.customModels ?? [],
         }),
@@ -543,6 +548,8 @@ describe("AcpRegistryAdapterV2", () => {
             layerInjectedRuntimeCatalog,
             Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
               withForegroundStartup: (_startupKey, effect) => effect,
+              getLiveConfiguration: () =>
+                Effect.sync(() => Option.fromUndefinedOr(published ?? input.liveConfiguration)),
               publishLiveConfiguration: (_instanceId, configuration) =>
                 Effect.sync(() => {
                   published = configuration;
@@ -563,6 +570,7 @@ describe("AcpRegistryAdapterV2", () => {
         ...(input.storedModePick === undefined
           ? {}
           : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
+        ...(input.storedOptions === undefined ? {} : { options: input.storedOptions }),
       };
       const configurations: Array<AcpRegistryLiveConfiguration | undefined> = [];
       yield* Effect.gen(function* () {
@@ -616,13 +624,17 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(
         Effect.match({
           onFailure: (error) => {
+            if (input.failsConfiguration === true) return;
             assert.isDefined(input.rejectedModel);
             assert.equal(
               makeProviderFailure({ cause: error }).message,
               `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
             );
           },
-          onSuccess: () => assert.isUndefined(input.rejectedModel),
+          onSuccess: () => {
+            assert.isUndefined(input.rejectedModel);
+            assert.notEqual(input.failsConfiguration, true, "configuration should have failed");
+          },
         }),
         Effect.scoped,
       );
@@ -644,7 +656,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_mode", {}),
         ],
         storedModePick: "autoEdit",
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
     );
 
     it.effect("switches a mode config option under its own id", () =>
@@ -659,7 +671,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
     );
 
     const modelOption = (id: string, currentValue: string, grouped = false) => ({
@@ -789,7 +801,86 @@ describe("AcpRegistryAdapterV2", () => {
               { models: ["hermes", "auto", "default"], current: "hermes" },
             ],
           );
-        }).pipe(Effect.provide(layerTest), Effect.scoped),
+        }).pipe(Effect.provide(layerTest)),
+    );
+
+    // Copilot's session/new reports its built-in default, not the model it will run
+    // (github/copilot-cli#5363), so the selected model must be written even when it matches,
+    // and an unset effort gets the value the composer shows.
+    it.effect(
+      "writes the selected Copilot model and the shown effort when session/new reports defaults",
+      () => {
+        const copilotModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["claude-sonnet-5.5", "claude-haiku-4.5"].map((value) => ({
+            value,
+            name: value,
+          })),
+        });
+        const effort = (currentValue: string) => ({
+          id: "reasoning_effort",
+          name: "Reasoning effort",
+          category: "thought_level",
+          type: "select",
+          currentValue,
+          options: ["medium", "xhigh"].map((value) => ({ value, name: value })),
+        });
+        return openWithStoredPicks({
+          agentId: "github-copilot-cli",
+          setup: { configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")] },
+          storedModel: "claude-sonnet-5.5",
+          liveConfiguration: {
+            models: [],
+            currentModelId: null,
+            configOptions: [
+              {
+                id: "reasoning_effort",
+                label: "Reasoning effort",
+                type: "select",
+                role: "reasoning",
+                currentValue: "xhigh",
+                options: [
+                  { id: "medium", label: "medium" },
+                  { id: "xhigh", label: "xhigh" },
+                ],
+              },
+            ],
+          },
+          pickFrames: [
+            // The new session's own update replaces the shared live configuration.
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "agent-session",
+                  update: {
+                    sessionUpdate: "config_option_update",
+                    configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+                  },
+                },
+              },
+            },
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "claude-sonnet-5.5",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "reasoning_effort",
+              value: "xhigh",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5"), effort("xhigh")],
+            }),
+          ],
+        }).pipe(Effect.provide(layerTest));
+      },
     );
 
     it.effect.each([
@@ -850,7 +941,7 @@ describe("AcpRegistryAdapterV2", () => {
                   }),
                 ]
               : [],
-        }).pipe(Effect.provide(layerTest), Effect.scoped);
+        }).pipe(Effect.provide(layerTest));
       },
     );
 
@@ -901,7 +992,56 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.map((configuration) => configuration?.currentModelId),
           ["hermes", "hermes", "hermes", "other", "other", "other", "other", "other"],
         );
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
+    );
+    it.effect(
+      "fails configuration when an option write errors for a reason other than refusal",
+      () => {
+        const sessionModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["default", "named"].map((value) => ({ value, name: value })),
+        });
+        const thinking = {
+          id: "thinking",
+          name: "Thinking",
+          category: "thought_level",
+          type: "select",
+          currentValue: "low",
+          options: ["low", "high"].map((value) => ({ value, name: value })),
+        };
+        return openWithStoredPicks({
+          setup: { configOptions: [sessionModel("default")] },
+          storedModel: "named",
+          storedOptions: [
+            { id: "thinking", value: "high" },
+            { id: "unavailable", value: "x" },
+          ],
+          failsConfiguration: true,
+          pickFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "named",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [sessionModel("named"), thinking],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "thinking",
+              value: "high",
+            }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/set_config_option",
+                error: { code: -32603, message: "Internal error" },
+              },
+            },
+          ],
+        }).pipe(Effect.provide(layerTest));
+      },
     );
     const modelOptions = [
       { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
@@ -984,7 +1124,7 @@ describe("AcpRegistryAdapterV2", () => {
           storedModel: model,
         });
         assert.equal(opened.configurations.at(-1)?.currentModelId, "codex");
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
     );
   });
 
@@ -1080,7 +1220,7 @@ describe("AcpRegistryAdapterV2", () => {
       const terminal = completed.at(-1)!;
       if (terminal.type !== "turn.terminal") throw new Error("Missing fallback terminal");
       assert.equal(terminal.status, "completed");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   // regression: #26695 cancelling a Copilot prompt kills its background agents
@@ -1116,7 +1256,7 @@ describe("AcpRegistryAdapterV2", () => {
         ...copilot,
         supportsSteeringByInterruptRestart: true,
       });
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("gives Copilot T3's MCP server over HTTP when it advertises HTTP", () =>
@@ -1210,7 +1350,10 @@ describe("AcpRegistryAdapterV2", () => {
           type: "http",
           name: "t3-code",
           url: endpoint,
-          headers: [{ name: "Authorization", value: authorization }],
+          headers: [
+            { name: "Authorization", value: authorization },
+            { name: "t3-tool-exposure", value: "deferred" },
+          ],
         },
       ];
       const stdio = (authorization: string) => [
@@ -1246,7 +1389,7 @@ describe("AcpRegistryAdapterV2", () => {
         new: stdio("Bearer opened-token"),
         load: stdio("Bearer rotated-token"),
       });
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("the agent process env names the thread it serves", () =>
@@ -1325,7 +1468,7 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(agentEnvironment?.T3CODE_THREAD_ID, "thread-acp-registry-thread-env");
       assert.equal(agentEnvironment?.T3_ACP_MCP_ENDPOINT, endpoint);
       assert.equal(agentEnvironment?.T3_ACP_MCP_AUTHORIZATION, "Bearer thread-env-token");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["before", "after"] as const)(
@@ -1347,7 +1490,7 @@ describe("AcpRegistryAdapterV2", () => {
                   })
                 : "test prompt",
           },
-          runtimeInstructions,
+          ...(ordinal === 1 ? [runtimeInstructions] : []),
         ];
         const echo = (messageId: string, content: ReadonlyArray<unknown>) =>
           claudeFrames.update(CLAUDE_ROOT_SESSION, {
@@ -1368,6 +1511,7 @@ describe("AcpRegistryAdapterV2", () => {
               {
                 type: "text",
                 text: promptText(ordinal),
+                annotations: { audience: ["user"] },
               },
             ]),
             ...(ordering === "before" ? [matching, acknowledgment] : [acknowledgment, matching]),
@@ -1417,7 +1561,7 @@ describe("AcpRegistryAdapterV2", () => {
             );
           }
         }
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
@@ -1621,7 +1765,96 @@ describe("AcpRegistryAdapterV2", () => {
         ),
         "autonomous root echoes only signal acceptance",
       );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293);
+  // its documented foreground-done signal is the opt-in assistant.idle session event.
+  it.effect("settles Copilot's reply on assistant.idle while an async shell holds the prompt", () =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const sessionEvent = (type: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type, data: {} },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.110" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          // A previous prompt's idle can land before this prompt's turn starts.
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after stale idle" }),
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "shell-1",
+            title: "sleep 120",
+            kind: "execute",
+            status: "completed",
+            rawInput: { command: "sleep 120", mode: "async", detach: false },
+          }),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The shell never exits, so the first session/prompt is never answered.
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          sessionEvent("assistant.turn_start"),
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "two" } }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after second idle" }),
+        ],
+        undefined,
+        false,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const stale = yield* session.throughMarker("after stale idle");
+      assert.isFalse(stale.some((event) => event.type === "turn.terminal"));
+      const foreground = yield* session.throughMarker("after foreground idle");
+      const terminal = foreground.find((event) => event.type === "turn.terminal");
+      assert.isDefined(terminal, "the run settles once Copilot's foreground work is idle");
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      yield* session.runtime.startTurn(session.turnInput(2));
+      const second = yield* session.throughMarker("after second idle");
+      const secondTerminal = second.find((event) => event.type === "turn.terminal");
+      assert.equal(secondTerminal?.type === "turn.terminal" ? secondTerminal.runOrdinal : null, 2);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each([
@@ -1806,7 +2039,7 @@ describe("AcpRegistryAdapterV2", () => {
         ),
         "detached requests are cancelled before turn admission",
       );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("retains streamed child tool output through the generic Devin route", () =>
@@ -1943,7 +2176,70 @@ describe("AcpRegistryAdapterV2", () => {
           (event) => event.type === "message.updated" && event.message.text.includes("onetwo"),
         ),
       );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("replaces streamed root tool output with a later content list", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const text = (value: string) => [{ type: "content", content: { type: "text", text: value } }];
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "root-tool",
+          title: "Stream",
+          status: "in_progress",
+          content: text("one"),
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: { type: "content", content: { type: "text", text: "two" } },
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "root-tool",
+          status: "completed",
+          content: text("replacement"),
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: { type: "content", content: { type: "text", text: "-more" } },
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "root-tool",
+          content: {
+            type: "diff",
+            changes: [{ operation: "add", path: "/a.txt" }],
+            patch: { format: "git_patch", text: "PATCH" },
+          },
+        }),
+        claudeMarker("tools complete"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("tools complete");
+      const outputs = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "root-tool" &&
+        "output" in event.turnItem
+          ? [event.turnItem.output]
+          : [],
+      );
+      assert.deepEqual(outputs, [
+        text("one"),
+        text("onetwo"),
+        text("replacement"),
+        text("replacement-more"),
+        { type: "Text", text: "replacement-morePATCH" },
+      ]);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
@@ -2050,7 +2346,7 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(tools.at(-1)?.output, [
         { type: "content", content: { type: "text", text: "stoppingcancelled" } },
       ]);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps native child tools interrupted after idle and late output", () =>
@@ -2090,7 +2386,7 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(tools.at(-1)?.output, [
         { type: "content", content: { type: "text", text: "late" } },
       ]);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["error", "end_turn"])(
@@ -2386,7 +2682,7 @@ describe("AcpRegistryAdapterV2", () => {
           "a new execution does not append the previous execution's text",
         );
         assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("fails active Claude work and releases its children when the process exits", () =>
@@ -2456,7 +2752,7 @@ describe("AcpRegistryAdapterV2", () => {
             event.turnItem.status === "interrupted",
         ),
       );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps Claude activity after a refused Stop and closes it on retry", () =>
@@ -2574,7 +2870,7 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(queuedTerminal.status, "interrupted");
       assert.isNull(queuedTerminal.failure);
       assert.isFalse(yield* queued.runtime.hasPendingBackgroundWork!);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each([
@@ -2743,6 +3039,6 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(yield* runTurn(1), "failed");
       assert.equal(yield* runTurn(2), "completed");
       assert.equal(spawned, restarts ? 2 : 1);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    }).pipe(Effect.provide(layerTest)),
   );
 });

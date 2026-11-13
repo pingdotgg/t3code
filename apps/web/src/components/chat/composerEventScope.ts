@@ -1,4 +1,5 @@
 import { useComposerHandleContext } from "../../composerHandleContext";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-composer-drawer-layer="true"]',
@@ -11,19 +12,22 @@ export const composerFloatingLayerProps = {
 
 export function useComposerMenuProps() {
   const composerRef = useComposerHandleContext();
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
 
   return {
     ...composerFloatingLayerProps,
-    finalFocus: composerRef
-      ? () => {
-          const activeElement = document.activeElement;
-          if (activeElement !== document.body && !isInsideComposerFloatingLayer(activeElement)) {
+    // Focusing the editor on a touch device opens the on-screen keyboard, so the menu keeps its own focus return.
+    finalFocus:
+      composerRef && !isCoarsePointer
+        ? () => {
+            const activeElement = document.activeElement;
+            if (activeElement !== document.body && !isInsideComposerFloatingLayer(activeElement)) {
+              return false;
+            }
+            composerRef.current?.focusAtEnd();
             return false;
           }
-          composerRef.current?.focusAtEnd();
-          return false;
-        }
-      : undefined,
+        : undefined,
   };
 }
 
