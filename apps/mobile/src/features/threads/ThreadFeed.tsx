@@ -234,7 +234,6 @@ import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import {
   htmlRenderLiveHeight,
-  htmlRenderLiveHeightsVersion,
   htmlRenderRowHeight,
   subscribeHtmlRenderLiveHeights,
   ThreadHtmlRender,
@@ -3218,10 +3217,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [props.feed],
   );
   // A page that changes height changes its row's fixed size, which LegendList only re-reads
-  // when extraData changes.
-  const htmlRenderHeightsVersion = useSyncExternalStore(
-    subscribeHtmlRenderLiveHeights,
-    htmlRenderLiveHeightsVersion,
+  // when extraData changes. Only this feed's pages count, so other threads' feeds stay put.
+  const htmlRenderAttachmentIds = useMemo(
+    () =>
+      props.feed.flatMap((entry) =>
+        entry.type === "html-render" ? [entry.render.attachmentId] : [],
+      ),
+    [props.feed],
+  );
+  const htmlRenderHeights = useSyncExternalStore(subscribeHtmlRenderLiveHeights, () =>
+    htmlRenderAttachmentIds.map((id) => htmlRenderLiveHeight(id, contentWidth) ?? "").join(","),
   );
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
@@ -3246,7 +3251,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     contentWidth,
     skills: props.skills,
     workflowOpening,
-    htmlRenderHeightsVersion,
+    htmlRenderHeights,
   };
   const reportHeaderMaterialVisibility = (visible: boolean) => {
     if (headerMaterialVisibleRef.current === visible) {
@@ -3439,8 +3444,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   };
 
   // A page taller than the screen is never the list's anchor (it anchors the first row fully on
-  // screen), so a ballot growing under the reader's tap would slide up, or follow the end at the
-  // bottom of the thread. Hold the page's own row while it is on screen, as a disclosure does.
+  // screen), so a ballot growing under the reader's tap would slide up. Hold the page's own row
+  // while it is on screen, as a disclosure does; at the very end the list keeps the end in view.
   const onHtmlRenderResize = (rowKey: string, previousRowHeight: number) => {
     const list = listRef.current;
     if (!list) return;

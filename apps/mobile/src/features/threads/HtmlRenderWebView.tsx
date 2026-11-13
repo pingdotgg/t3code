@@ -27,6 +27,8 @@ import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   BALLOT_TAP_WINDOW_MS,
+  type BallotTouchPoint,
+  isBallotTap,
   createBallotToken,
   createBallotTapGate,
   ballotScript,
@@ -69,7 +71,9 @@ const FIELD_FOCUS_MESSAGE_TYPE = "t3-html-render-field-focus";
 // it, and the focused text field's rect, re-read on request since the page may move it, so the
 // thread can lift it above the keyboard, which doesn't resize the page.
 const FIELD_REPORT_FUNCTION = "__t3HtmlRenderReportField";
-const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h+","+window.innerWidth;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);window.addEventListener("load",report);function isField(t){return !!t&&(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type));}window.${FIELD_REPORT_FUNCTION}=function(){var t=document.activeElement;if(!isField(t)){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});return;}var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom});};document.addEventListener("focusin",function(e){if(isField(e.target))window.${FIELD_REPORT_FUNCTION}();},true);document.addEventListener("focusout",function(){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});},true);})();true;`;
+// An animating page resizes every frame; reporting once it settles keeps feed updates to one.
+const HEIGHT_SETTLE_MS = 80;
+const OVERFLOW_SCRIPT = `(function(){var last;function post(m){window.ReactNativeWebView.postMessage(JSON.stringify(m));}function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h+","+window.innerWidth;if(o===last)return;last=o;post({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,h:h});}var timer;function settle(){clearTimeout(timer);timer=setTimeout(report,${HEIGHT_SETTLE_MS});}report();if(window.ResizeObserver){var r=new ResizeObserver(settle);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",settle);window.addEventListener("load",report);function isField(t){return !!t&&(t.isContentEditable||t.tagName==="TEXTAREA"||t.tagName==="INPUT"&&/^(text|search|email|url|tel|number|password)$/.test(t.type));}window.${FIELD_REPORT_FUNCTION}=function(){var t=document.activeElement;if(!isField(t)){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});return;}var f=t.getBoundingClientRect();post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},top:f.top,bottom:f.bottom});};document.addEventListener("focusin",function(e){if(isField(e.target))window.${FIELD_REPORT_FUNCTION}();},true);document.addEventListener("focusout",function(){post({type:${JSON.stringify(FIELD_FOCUS_MESSAGE_TYPE)},blur:true});},true);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
@@ -145,7 +149,6 @@ const withoutFragment = (url: string) => url.split("#", 1)[0];
 // The feed gives these rows fixed sizes, which it never re-measures, so it re-renders on a change.
 const liveHeights = new Map<string, number>();
 const liveHeightListeners = new Set<() => void>();
-let liveHeightsVersion = 0;
 const liveHeightKey = (attachmentId: string, width: number) =>
   `${attachmentId}:${Math.round(width)}`;
 
@@ -160,13 +163,10 @@ export function subscribeHtmlRenderLiveHeights(listener: () => void): () => void
   };
 }
 
-export const htmlRenderLiveHeightsVersion = () => liveHeightsVersion;
-
 function setHtmlRenderLiveHeight(attachmentId: string, width: number, height: number) {
   const key = liveHeightKey(attachmentId, width);
   if (liveHeights.get(key) === height) return;
   liveHeights.set(key, height);
-  liveHeightsVersion += 1;
   for (const listener of liveHeightListeners) listener();
 }
 
@@ -203,6 +203,7 @@ export function HtmlRenderWebView(props: {
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
   const frame = useRef<ViewInstance>(null);
+  const touchStart = useRef<BallotTouchPoint | null>(null);
   const lastTouchAt = useRef<number | null>(null);
   const pendingField = useRef<((field: { top: number; bottom: number } | null) => void) | null>(
     null,
@@ -234,9 +235,14 @@ export function HtmlRenderWebView(props: {
       // Raw touches reach this wrapper even when the web view handles them. A page may only fill
       // the message box just after a tap (a touch that barely moved), not on load, on its own
       // timer or during a scroll.
-      onTouchStart={isBallot ? (event) => tapGate.touchStart(touchPoint(event)) : undefined}
+      onTouchStart={(event) => {
+        touchStart.current = touchPoint(event);
+        if (isBallot) tapGate.touchStart(touchStart.current);
+      }}
       onTouchEnd={(event) => {
-        lastTouchAt.current = Date.now();
+        const start = touchStart.current;
+        const end = touchPoint(event);
+        if (start !== null && isBallotTap(start, end)) lastTouchAt.current = end.at;
         if (isBallot) handOverPicks(tapGate.touchEnd(touchPoint(event)));
       }}
       onTouchCancel={isBallot ? () => tapGate.touchCancel() : undefined}
