@@ -571,7 +571,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let declinedRunSettling = false;
       // Sent when the admitted run settles: queued into that run, the prompt would join its first
       // model request, and a run that aborts itself would never deliver it.
-      let promptAfterAdmittedRun: PiPromptSend | null = null;
+      // Steers sent meanwhile wait behind it, so they cannot overtake the prompt they modify.
+      let promptsAfterAdmittedRun: Array<PiPromptSend> = [];
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -2265,9 +2266,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return;
             }
             if (turn !== null) {
-              const deferred = promptAfterAdmittedRun;
-              promptAfterAdmittedRun = null;
-              if (deferred?.providerTurnId === turn.providerTurn.id) yield* sendPrompt(deferred);
+              const deferred = promptsAfterAdmittedRun;
+              promptsAfterAdmittedRun = [];
+              for (const prompt of deferred) {
+                if (prompt.providerTurnId === turn.providerTurn.id) yield* sendPrompt(prompt);
+              }
               turn.nativeAborted = event["aborted"] === true;
               turn.settleWhenIdle = true;
               turn.settleProbeGeneration += 1;
@@ -3036,7 +3039,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       ...(payload.images.length === 0 ? {} : { images: payload.images }),
                     },
                   };
-                  if (admittedRun) promptAfterAdmittedRun = prompt;
+                  if (admittedRun) promptsAfterAdmittedRun = [prompt];
                   else yield* sendPrompt(prompt);
                 }
                 yield* emit({
@@ -3126,7 +3129,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     kind: "steer",
                   });
                 } else if (payload !== null) {
-                  yield* sendPrompt({
+                  const prompt: PiPromptSend = {
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
                     messageId: steerInput.message.messageId,
@@ -3136,7 +3139,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       streamingBehavior: "steer",
                       ...(payload.images.length === 0 ? {} : { images: payload.images }),
                     },
-                  });
+                  };
+                  if (promptsAfterAdmittedRun[0]?.providerTurnId === turn.providerTurn.id)
+                    promptsAfterAdmittedRun.push(prompt);
+                  else yield* sendPrompt(prompt);
                 }
                 turn.settleProbeGeneration += 1;
               }),

@@ -2297,10 +2297,27 @@ describe("PiAdapterV2", () => {
       );
       // The turn's prompt waits for the admitted run, even one that aborts itself: queued into
       // that run it would join its first model request, or never be delivered.
+      const running = yield* takeEvent((event) => event.type === "provider_turn.updated");
+      assert(running.type === "provider_turn.updated");
+      // A steer sent meanwhile stays behind the prompt it modifies.
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread: resumed,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          messageId: "message:steer-after-admission" as never,
+          text: "Steer",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
       assert.isFalse(fake.allRequests().some((sent) => sent["type"] === "prompt"));
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled", aborted: true });
       assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");
+      assert.equal((yield* fake.takeRequest("prompt"))["message"], "Steer");
 
       yield* askAdmission("owned-run");
       assert.equal((yield* fake.takeRequest("extension_ui_response"))["id"], "owned-run");
