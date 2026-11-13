@@ -252,8 +252,14 @@ export const layerResetFallback = Layer.effect(
     return {
       resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
         // Only the hub at the instance's endpoint serves its turns.
+        const atEndpoint = Effect.map(sources.current, (current) =>
+          current.filter((source) => source.origin === endpoint),
+        );
+        if ((yield* atEndpoint).length === 0) return null;
+        // The pool usually ran out after the last poll, so the cached accounts still show room.
+        yield* sources.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
         return hubPoolResetAt(
-          (yield* sources.current).filter((source) => source.origin === endpoint),
+          yield* atEndpoint,
           driver,
           model,
           DateTime.toEpochMillis(yield* DateTime.now),
