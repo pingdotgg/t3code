@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   writeSettings: vi.fn(),
   writeText: vi.fn(),
   openScratch: vi.fn(),
+  prepareTriage: vi.fn(),
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -82,6 +83,7 @@ vi.mock("../../state/project-grouping", () => ({
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.openScratch }));
+vi.mock("../triage/usePrepareTriage", () => ({ usePrepareTriage: () => mocks.prepareTriage }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
   useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
@@ -518,3 +520,77 @@ it.each([
       expect(message?.attachments).toMatchObject([{ id: "picked", name: "picked.txt" }]);
   }
 });
+const playbookPrompt = (machine: string) =>
+  `Read [triage-playbook.md](/${machine}/triage-playbook.md) and follow it. `;
+
+/** A triage draft on machine one's No project home; machine two opens its own. */
+async function renderTriageDraft(screen: ReturnType<typeof setup>) {
+  mocks.config.mockReturnValue({
+    scratchWorkspaceRoot: "/a",
+    providers: [],
+    settings: DEFAULT_SERVER_SETTINGS,
+  });
+  mocks.openScratch.mockResolvedValue({ _tag: "Success", value: screen.projects[2] });
+  await screen.render(true);
+  act(() => screen.current.setPrompt(`${playbookPrompt("one")}It is slow.`));
+}
+
+it("takes a triage draft's session along when its machine changes", async () => {
+  using screen = setup();
+  await renderTriageDraft(screen);
+  mocks.prepareTriage.mockResolvedValue({
+    _tag: "Success",
+    value: { prompt: playbookPrompt("two") },
+  });
+
+  await act(async () => {
+    await screen.current.switchEnvironment(EnvironmentId.make("two"));
+  });
+
+  expect(screen.current.prompt).toBe(`${playbookPrompt("two")}It is slow.`);
+  expect(screen.current.selectedProject).toEqual(screen.projects[2]);
+});
+
+it.each([
+  [
+    "a project is picked",
+    1,
+    (flow: ReturnType<typeof useNewTaskFlow>, picked: EnvironmentProject) =>
+      flow.setProject(picked),
+  ],
+  [
+    "a send starts and ends",
+    0,
+    (flow: ReturnType<typeof useNewTaskFlow>) => {
+      flow.setSubmitting(true);
+      flow.setSubmitting(false);
+    },
+  ],
+] as const)(
+  "leaves a triage draft alone when %s while its new machine prepares",
+  async (_name, expectedProject, interrupt) => {
+    using screen = setup();
+    await renderTriageDraft(screen);
+    let finishPreparing!: (result: unknown) => void;
+    mocks.prepareTriage.mockReturnValue(
+      new Promise((resolve) => {
+        finishPreparing = resolve;
+      }),
+    );
+
+    let switching!: Promise<boolean>;
+    act(() => {
+      switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
+    });
+    await act(async () => interrupt(screen.current, screen.projects[1]!));
+    let switched = true;
+    await act(async () => {
+      finishPreparing({ _tag: "Success", value: { prompt: playbookPrompt("two") } });
+      switched = await switching;
+    });
+
+    expect(switched).toBe(false);
+    expect(screen.current.prompt).toBe(`${playbookPrompt("one")}It is slow.`);
+    expect(screen.current.selectedProject).toEqual(screen.projects[expectedProject]);
+  },
+);
