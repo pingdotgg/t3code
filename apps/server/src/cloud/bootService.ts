@@ -45,6 +45,7 @@ import {
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
+  systemdUnitDirectoryOf,
   type ServiceState,
 } from "./serviceProtocol.ts";
 
@@ -90,8 +91,16 @@ export interface BootServicePlan {
   readonly handedOff?: boolean;
 }
 
+// systemd refuses an executable with a quote, backslash or control character even when
+// quoted. The executable lives under the T3 home, so this also catches a home with a newline.
+const systemdUnsafeValue = (plan: BootServicePlan) =>
+  /[\x00-\x1f\x7f"'\\]/.test(plan.program[0] ?? "");
+
 /** Service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  if (systemdUnsafeValue(plan)) {
+    throw new BootServiceBaseDirUnsupportedError({ baseDir: plan.baseDir });
+  }
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
@@ -550,7 +559,7 @@ const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
 const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
-  function* (runner: ProcessRunner.ProcessRunner["Service"], path: Path.Path) {
+  function* (runner: ProcessRunner.ProcessRunner["Service"]) {
     const result = yield* runner.run({
       command: "busctl",
       args: [
@@ -566,14 +575,7 @@ const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit
     });
     if (result.code !== 0) return undefined;
     const { data } = yield* decodeSystemdUnitPaths(result.stdout);
-    // The persistent control directory identifies the manager's config root despite UnitPath overrides.
-    const controlDirectory = data.find(
-      (directory) =>
-        path.isAbsolute(directory) &&
-        directory.endsWith("/systemd/user.control") &&
-        data.includes(directory.slice(0, -".control".length)),
-    );
-    return controlDirectory?.slice(0, -".control".length);
+    return systemdUnitDirectoryOf(data);
   },
   Effect.orElseSucceed(() => undefined),
 );
@@ -591,7 +593,7 @@ export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(fun
   }
   if (platform !== "linux") return undefined;
   const unitDir =
-    (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner, path)) ??
+    (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner)) ??
     defaultSystemdUnitDir(path, homeDir, (yield* HostProcess.Environment).XDG_CONFIG_HOME ?? "");
   return path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
 });
@@ -711,8 +713,22 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   }
 }
 
+export class BootServiceBaseDirUnsupportedError extends Schema.TaggedError<BootServiceBaseDirUnsupportedError>()(
+  "BootServiceBaseDirUnsupportedError",
+  { baseDir: Schema.String },
+) {
+  override get message(): string {
+    return `systemd cannot run T3 Code from ${JSON.stringify(this.baseDir)}: the path contains a quote, backslash or control character. Choose another T3 home with --base-dir.`;
+  }
+
+  override get [CliError.userMessage]() {
+    return this.message;
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
+  | BootServiceBaseDirUnsupportedError
   | BootServiceOtherBaseDirError
   | BootServiceCommandError
   | BootServiceInstallError
@@ -972,8 +988,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     };
     return { manager, unitPath, plan };
   };
-  let systemdUnitDir =
-    platform === "linux" ? yield* readSystemdUnitDirectory(runner, path) : undefined;
+  let systemdUnitDir = platform === "linux" ? yield* readSystemdUnitDirectory(runner) : undefined;
   let { manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
@@ -1181,6 +1196,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     let manager = yield* requireManager;
+    if (manager.kind === "systemd" && systemdUnsafeValue(plan)) {
+      return yield* new BootServiceBaseDirUnsupportedError({ baseDir: input.baseDir });
+    }
     // The unit is per user. Rewriting one that serves another home moves the
     // service onto this home's data, which looks like every thread vanished.
     const refuseOtherBaseDir = Effect.gen(function* () {
@@ -1205,7 +1223,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       // Without a session the manager was unreachable at construction, and the one lingering
       // started may use another config root than this shell's XDG_CONFIG_HOME.
       if (systemdUnitDir === undefined) {
-        systemdUnitDir = yield* readSystemdUnitDirectory(runner, path);
+        systemdUnitDir = yield* readSystemdUnitDirectory(runner);
         ({ manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir));
         manager = yield* requireManager;
         yield* refuseOtherBaseDir;
@@ -1544,6 +1562,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
+        !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
         normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
