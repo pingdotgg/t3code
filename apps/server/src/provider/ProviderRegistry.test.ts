@@ -45,6 +45,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { WindowsShellEnvironment } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
+import { isAutoModelSlug } from "@t3tools/shared/autoModel";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
@@ -4391,7 +4392,9 @@ it.layer(
           }),
         );
         const catalogSlugs = new Set(BUNDLED_CLAUDE_MODEL_CATALOG.models.map((m) => m.model.slug));
-        const added = status.models.filter((model) => !catalogSlugs.has(model.slug));
+        const added = status.models.filter(
+          (model) => !catalogSlugs.has(model.slug) && !isAutoModelSlug(model.slug),
+        );
 
         assert.deepStrictEqual(
           added.map((model) => [model.slug, model.name, model.isCustom]),
