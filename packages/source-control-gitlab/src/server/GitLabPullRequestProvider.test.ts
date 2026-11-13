@@ -1,5 +1,6 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -80,6 +81,7 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
       );
       const cli = yield* GitLabPullRequestCli.make.pipe(
         Effect.provideService(GitLabCli.GitLabCli, native),
+        Effect.provide(FileSystem.layerNoop({})),
       );
       const provider = yield* make.pipe(
         Effect.provideService(GitLabPullRequestCli.GitLabPullRequestCli, cli),
@@ -1016,6 +1018,113 @@ describe("review decisions", () => {
         expect(versionReads).toBe(1);
       }),
   );
+
+  it.effect("asks a host for its version once across checkouts of its projects", () =>
+    Effect.gen(function* () {
+      const versionReads: Array<string> = [];
+      const provider = yield* providerWith(() => Effect.succeed(new Map()), {
+        supportsGraphqlList: (input) =>
+          Effect.sync(() => {
+            versionReads.push(input.cwd);
+            return true;
+          }),
+      });
+
+      yield* provider.listChangeRequests({ ...listing, cwd: "/a", repository: "acme/web" });
+      yield* provider.listChangeRequests({ ...listing, cwd: "/b", repository: "acme/docs" });
+
+      expect(versionReads).toHaveLength(1);
+    }),
+  );
+
+  describe("first pages of several projects", () => {
+    const across = {
+      ...listing,
+      repositories: [
+        { repository: "acme/web", cwd: "/w/web" },
+        { repository: "acme/docs", cwd: "/w/docs" },
+      ],
+      limit: 99,
+    };
+    const readFirstPages = (
+      listMergeRequestsInProjects: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestsInProjects"],
+    ) =>
+      providerWith(() => Effect.die("a GraphQL page carries its own states"), {
+        supportsGraphqlList: () => Effect.succeed(true),
+        listMergeRequestsInProjects,
+      }).pipe(
+        Effect.flatMap((provider) => {
+          assert.isDefined(provider.listChangeRequestsInRepositories);
+          return provider.listChangeRequestsInRepositories(across);
+        }),
+      );
+
+    it.effect("leaves out a failed read's projects, but fails on a rate limit", () =>
+      Effect.gen(function* () {
+        const failure = (
+          error: GitLabCli.GitLabCliCommandError | GitLabCli.GitLabCliRateLimitError,
+        ) =>
+          readFirstPages(() => Effect.fail(error)).pipe(
+            Effect.map((pages) => pages.map(({ repository }) => repository)),
+            Effect.catch(({ reason }) => Effect.succeed(reason)),
+          );
+        const context = {
+          operation: "execute" as const,
+          command: "glab" as const,
+          cwd: "/w",
+          cause: null,
+        };
+
+        expect(yield* failure(new GitLabCli.GitLabCliCommandError(context))).toEqual([]);
+        expect(yield* failure(new GitLabCli.GitLabCliRateLimitError(context))).toBe("rate-limited");
+      }),
+    );
+
+    it.effect(
+      "sends a host that cannot list projects together back to single reads, asking once",
+      () =>
+        Effect.gen(function* () {
+          const context = {
+            operation: "execute" as const,
+            command: "glab" as const,
+            cwd: "/w",
+            cause: null,
+          };
+          const readTwice = (
+            probe: Effect.Effect<boolean, GitLabPullRequestCli.GitLabPullRequestCliError>,
+          ) =>
+            Effect.gen(function* () {
+              let versionReads = 0;
+              const provider = yield* providerWith(() => Effect.succeed(new Map()), {
+                supportsGraphqlList: () => {
+                  versionReads += 1;
+                  return probe;
+                },
+                listMergeRequestsInProjects: () => Effect.die("no batched read on this host"),
+              });
+              const reasons: Array<string> = [];
+              for (const _ of [1, 2]) {
+                assert.isDefined(provider.listChangeRequestsInRepositories);
+                const error = yield* Effect.flip(provider.listChangeRequestsInRepositories(across));
+                reasons.push(error.reason);
+              }
+              return { reasons, versionReads };
+            });
+
+          expect(yield* readTwice(Effect.succeed(false))).toEqual({
+            reasons: ["failed", "failed"],
+            versionReads: 1,
+          });
+          expect(
+            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliCommandError(context))),
+          ).toEqual({ reasons: ["failed", "failed"], versionReads: 1 });
+          // The caller has to see a rate limit to back off, so it is not cached.
+          expect(
+            yield* readTwice(Effect.fail(new GitLabCli.GitLabCliRateLimitError(context))),
+          ).toEqual({ reasons: ["rate-limited", "rate-limited"], versionReads: 2 });
+        }),
+    );
+  });
 
   it.effect.each([
     {

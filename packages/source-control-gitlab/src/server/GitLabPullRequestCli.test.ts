@@ -1,6 +1,7 @@
 import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import { VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -8,12 +9,20 @@ import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
+const mockedExists = vi.fn((_path: string) => false);
+const mockedRealPath = vi.fn((path: string) => path);
 
 const layer = it.layer(
   GitLabPullRequestCli.layer.pipe(
     Layer.provide(
       Layer.mock(GitLabCli.GitLabCli)({
         execute: mockedExecute,
+      }),
+    ),
+    Layer.provide(
+      FileSystem.layerNoop({
+        exists: (path) => Effect.sync(() => mockedExists(path)),
+        realPath: (path) => Effect.sync(() => mockedRealPath(path)),
       }),
     ),
   ),
@@ -118,6 +127,20 @@ function callAt(index: number) {
   return call[0];
 }
 
+function graphqlListNode(number: number) {
+  return {
+    iid: String(number),
+    title: `Merge request ${number}`,
+    webUrl: `https://gitlab.com/acme/web/-/merge_requests/${number}`,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    sourceBranch: "feat/page",
+    targetBranch: "main",
+    approved: true,
+    approvedBy: { nodes: [{ username: "julius" }] },
+  };
+}
+
 function graphqlListPage(
   numbers: ReadonlyArray<number>,
   pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null },
@@ -125,22 +148,7 @@ function graphqlListPage(
   return JSON.stringify({
     data: {
       metadata: { enterprise: true },
-      project: {
-        mergeRequests: {
-          pageInfo,
-          nodes: numbers.map((number) => ({
-            iid: String(number),
-            title: `Merge request ${number}`,
-            webUrl: `https://gitlab.com/acme/web/-/merge_requests/${number}`,
-            createdAt: "2026-07-01T00:00:00Z",
-            updatedAt: "2026-07-02T00:00:00Z",
-            sourceBranch: "feat/page",
-            targetBranch: "main",
-            approved: true,
-            approvedBy: { nodes: [{ username: "julius" }] },
-          })),
-        },
-      },
+      project: { mergeRequests: { pageInfo, nodes: numbers.map(graphqlListNode) } },
     },
   });
 }
@@ -154,6 +162,8 @@ function graphqlRequestOf(index: number) {
 
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedExists.mockReset();
+  mockedRealPath.mockReset();
 });
 
 layer("GitLabPullRequestCli.layer", (it) => {
@@ -412,6 +422,112 @@ layer("GitLabPullRequestCli.layer", (it) => {
         { first: 3, after: null, approvedBy: ["Any"] },
         { first: 1, after: "c1" },
       ]);
+    }),
+  );
+
+  it.effect("leaves out a project whose batched page is null, loses rows, or signs in apart", () =>
+    Effect.gen(function* () {
+      // glab reads /w/own as the account in its own config, so it is read on its own, and so is
+      // /w/link, a symlink into it.
+      mockedExists.mockImplementation((path) => {
+        const parts = path.split(/[\\/]/u);
+        return parts.at(-1) === ".git"
+          ? ["own", "shared"].includes(parts.at(-2) ?? "")
+          : parts.includes("own") && parts.at(-1) === "config.yml";
+      });
+      mockedRealPath.mockImplementation((path) => (path === "/w/link" ? "/w/own/sub" : path));
+      const page = (nodes: ReadonlyArray<unknown>, hasNextPage: boolean) => ({
+        pageInfo: { hasNextPage, endCursor: hasNextPage ? "c1" : null },
+        nodes,
+      });
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                metadata: { enterprise: true },
+                projects: {
+                  nodes: [
+                    { fullPath: "acme/web", mergeRequests: page([graphqlListNode(1)], true) },
+                    { fullPath: "acme/docs", mergeRequests: null },
+                    { fullPath: "acme/api", mergeRequests: page([null, graphqlListNode(3)], true) },
+                    { fullPath: "acme/ops", mergeRequests: page([null], false) },
+                  ],
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const pages = yield* cli.listMergeRequestsInProjects({
+        repositories: [
+          { repository: "acme/own", cwd: "/w/own" },
+          { repository: "acme/linked", cwd: "/w/link" },
+          ...["acme/web", "acme/docs", "acme/api", "acme/ops"].map((repository) => ({
+            repository,
+            cwd: "/w/shared",
+          })),
+        ],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        first: 2,
+      });
+
+      expect(pages.map(({ repository, batch }) => [repository, batch.items.length])).toEqual([
+        ["acme/web", 1],
+        ["acme/ops", 0],
+      ]);
+      const [request] = mockedExecute.mock.calls[0]!;
+      expect(request.cwd).toBe("/w/shared");
+      expect(JSON.parse(request.stdin ?? "{}").variables.fullPaths).toEqual([
+        "acme/web",
+        "acme/docs",
+        "acme/api",
+        "acme/ops",
+      ]);
+    }),
+  );
+
+  it.effect("reads a batched answer larger than one project's output allowance", () =>
+    Effect.gen(function* () {
+      const repositories = Array.from({ length: 10 }, (_, index) => `acme/p${index}`);
+      const body = JSON.stringify({
+        data: {
+          metadata: { enterprise: true },
+          projects: {
+            nodes: repositories.map((fullPath) => ({
+              fullPath,
+              mergeRequests: {
+                pageInfo: { hasNextPage: true, endCursor: "c1" },
+                nodes: Array.from({ length: 99 }, (_, index) => ({
+                  ...graphqlListNode(index + 1),
+                  title: "x".repeat(1_100),
+                })),
+              },
+            })),
+          },
+        },
+      });
+      // VcsProcess truncates stdout at the caller's allowance, 1 MB unless one is given.
+      mockedExecute.mockImplementation((request) => {
+        const allowance = request.maxOutputBytes ?? 1_000_000;
+        return Effect.succeed(output(body.slice(0, allowance), body.length > allowance));
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const pages = yield* cli.listMergeRequestsInProjects({
+        repositories: repositories.map((repository) => ({ repository, cwd: "/w" })),
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        first: 99,
+      });
+
+      expect(body.length).toBeGreaterThan(1_000_000);
+      expect(pages.map(({ batch }) => batch.items.length)).toEqual(repositories.map(() => 99));
     }),
   );
 

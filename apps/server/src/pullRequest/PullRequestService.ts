@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -89,6 +90,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import {
   type ProviderChangeRequest,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestPage,
   type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
@@ -122,6 +124,8 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
+// Each batched read is one host request; this many per host stays polite to its quota.
+const BATCHED_READS_PER_HOST = 4;
 const FILTERED_LIST_READS = 5;
 
 // Host reads spawn CLIs and hit low quotas; briefly share results and identical in-flight reads.
@@ -559,6 +563,17 @@ function withRateLimitBackoff(
       ? {}
       : {
           listChangeRequestsAcross: wrap("listChangeRequestsAcross", api.listChangeRequestsAcross),
+        }),
+    ...(api.repositoriesPerRead === undefined
+      ? {}
+      : { repositoriesPerRead: api.repositoriesPerRead }),
+    ...(api.listChangeRequestsInRepositories === undefined
+      ? {}
+      : {
+          listChangeRequestsInRepositories: wrap(
+            "listChangeRequestsInRepositories",
+            api.listChangeRequestsInRepositories,
+          ),
         }),
     ...(api.listChangeRequestStats === undefined
       ? {}
@@ -1418,7 +1433,41 @@ export const make = Effect.gen(function* () {
     const cursorOf = (project: SupportedProject): ListCursor | undefined =>
       continuation?.get(project.cursorKey);
 
-    const readSlice = (
+    const pageBatch = (
+      project: SupportedProject,
+      cursor: ListCursor | undefined,
+      page: ProviderChangeRequestPage,
+      observedAt: number,
+    ): RepositoryBatch => {
+      const viewer = viewers[project.host]!;
+      // The boundary instant was asked for inclusively, so the rows already sent at it
+      // come back with the slice. Dropping them here rather than asking for strictly
+      // older is what keeps their neighbours at the same instant from being skipped.
+      const items =
+        cursor === undefined
+          ? page.items
+          : page.items.filter(
+              (item) =>
+                item.updatedAt !== cursor.updatedBefore || !cursor.seenAt.includes(item.number),
+            );
+      return {
+        key: project.cursorKey,
+        entries: items
+          .filter((item) => matchesRowFilters(item, input.filters, viewer))
+          .map((item) => toEntry({ project, item, viewer, observedAt })),
+        errors: [],
+        truncated: page.truncated,
+        nextCursor:
+          page.continues && page.truncated
+            ? nextListCursor(cursor, page.items, items, page.cursorAdvance, page.resumeAfter)
+            : null,
+      };
+    };
+
+    // Single-project reads are reached from several batched paths at once; one cap keeps their
+    // total at what reading every project on its own allowed.
+    const singleReads = yield* Semaphore.make(REPOSITORY_CONCURRENCY);
+    const readSliceOnce = (
       project: SupportedProject,
       cursor: ListCursor | undefined,
     ): Effect.Effect<RepositoryBatch> => {
@@ -1449,37 +1498,9 @@ export const make = Effect.gen(function* () {
           })
           .pipe(
             observeRead,
-            Effect.map(({ value: page, observedAt }): RepositoryBatch => {
-              // The boundary instant was asked for inclusively, so the rows already sent at it
-              // come back with the slice. Dropping them here rather than asking for strictly
-              // older is what keeps their neighbours at the same instant from being skipped.
-              const items =
-                cursor === undefined
-                  ? page.items
-                  : page.items.filter(
-                      (item) =>
-                        item.updatedAt !== cursor.updatedBefore ||
-                        !cursor.seenAt.includes(item.number),
-                    );
-              return {
-                key,
-                entries: items
-                  .filter((item) => matchesRowFilters(item, input.filters, viewer))
-                  .map((item) => toEntry({ project, item, viewer, observedAt })),
-                errors: [],
-                truncated: page.truncated,
-                nextCursor:
-                  page.continues && page.truncated
-                    ? nextListCursor(
-                        cursor,
-                        page.items,
-                        items,
-                        page.cursorAdvance,
-                        page.resumeAfter,
-                      )
-                    : null,
-              };
-            }),
+            Effect.map(({ value: page, observedAt }) =>
+              pageBatch(project, cursor, page, observedAt),
+            ),
             Effect.catch((error): Effect.Effect<RepositoryBatch> =>
               Effect.succeed({
                 key,
@@ -1502,31 +1523,39 @@ export const make = Effect.gen(function* () {
       }
     };
 
+    const readSlice = (project: SupportedProject, cursor: ListCursor | undefined) =>
+      singleReads.withPermits(1)(readSliceOnce(project, cursor));
+
     // Filters a host cannot apply thin out the slices it hands over, so a repository keeps
     // reading until it has a page's worth or runs out. The reads are bounded: a filter that
     // matches nothing would otherwise walk the repository's whole history in one request.
-    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
-      const fill = (batch: RepositoryBatch, reads: number): Effect.Effect<RepositoryBatch> => {
-        const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
-        if (
-          input.filters === undefined ||
-          cursor === null ||
-          batch.entries.length >= limit ||
-          reads >= FILTERED_LIST_READS
-        ) {
-          return Effect.succeed(batch);
-        }
-        return readSlice(project, cursor).pipe(
-          Effect.flatMap((next) =>
-            // A slice that failed keeps the cursor before it, so the reader can try again.
-            next.errors.length > 0
-              ? Effect.succeed(batch)
-              : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
-          ),
-        );
-      };
-      return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
+    const fill = (
+      project: SupportedProject,
+      batch: RepositoryBatch,
+      reads: number,
+    ): Effect.Effect<RepositoryBatch> => {
+      const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
+      if (
+        input.filters === undefined ||
+        cursor === null ||
+        batch.entries.length >= limit ||
+        reads >= FILTERED_LIST_READS
+      ) {
+        return Effect.succeed(batch);
+      }
+      return readSlice(project, cursor).pipe(
+        Effect.flatMap((next) =>
+          // A slice that failed keeps the cursor before it, so the reader can try again.
+          next.errors.length > 0
+            ? Effect.succeed(batch)
+            : fill(project, { ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
+        ),
+      );
     };
+    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> =>
+      readSlice(project, cursorOf(project)).pipe(
+        Effect.flatMap((batch) => fill(project, batch, 1)),
+      );
 
     const readTogether = (
       chunk: ReadonlyArray<SupportedProject>,
@@ -1604,11 +1633,61 @@ export const make = Effect.gen(function* () {
       );
     };
 
+    const readFirstPages = (
+      chunk: ReadonlyArray<SupportedProject>,
+    ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
+      const first = chunk[0]!;
+      const readInRepositories = first.api.listChangeRequestsInRepositories!;
+      const separately = () =>
+        Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
+      return readInRepositories({
+        host: first.host,
+        repositories: chunk.map((project) => ({
+          repository: project.repository,
+          cwd: project.project.workspaceRoot,
+        })),
+        state: input.state,
+        involvement,
+        viewer: viewers[first.host]!,
+        limit,
+        query: input.query,
+        filters: input.filters,
+      }).pipe(
+        observeRead,
+        Effect.flatMap(({ value: answered, observedAt }) => {
+          const pages = new Map(
+            answered.map(({ repository, page }) => [repository.trim().toLowerCase(), page]),
+          );
+          return Effect.forEach(
+            chunk,
+            (project) => {
+              const page = pages.get(project.repository.trim().toLowerCase());
+              return page === undefined
+                ? readRepository(project)
+                : fill(project, pageBatch(project, undefined, page, observedAt), 1);
+            },
+            { concurrency: REPOSITORY_CONCURRENCY },
+          );
+        }),
+        Effect.catch(separately),
+      );
+    };
+
     const together = new Map<string, Array<SupportedProject>>();
+    const firstPages = new Map<string, Array<SupportedProject>>();
     const separate: Array<SupportedProject> = [];
     for (const project of readable) {
       if (project.api.listChangeRequestsAcross === undefined) {
-        separate.push(project);
+        if (
+          project.api.listChangeRequestsInRepositories === undefined ||
+          cursorOf(project) !== undefined
+        ) {
+          separate.push(project);
+          continue;
+        }
+        const group = firstPages.get(project.host);
+        if (group === undefined) firstPages.set(project.host, [project]);
+        else group.push(project);
         continue;
       }
       const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
@@ -1623,6 +1702,19 @@ export const make = Effect.gen(function* () {
       for (let start = 0; start < group.length; start += REPOSITORY_SEARCH_CHUNK) {
         reads.push(readTogether(group.slice(start, start + REPOSITORY_SEARCH_CHUNK)));
       }
+    }
+    for (const group of firstPages.values()) {
+      // One call per host read, so a rate limit on one read keeps the pages its siblings answered.
+      const size = group[0]!.api.repositoriesPerRead ?? REPOSITORY_SEARCH_CHUNK;
+      const chunks: Array<ReadonlyArray<SupportedProject>> = [];
+      for (let start = 0; start < group.length; start += size) {
+        chunks.push(group.slice(start, start + size));
+      }
+      reads.push(
+        Effect.forEach(chunks, readFirstPages, { concurrency: BATCHED_READS_PER_HOST }).pipe(
+          Effect.map((batches) => batches.flat()),
+        ),
+      );
     }
     const batches = (yield* Effect.all(reads, { concurrency: REPOSITORY_CONCURRENCY })).flat();
 

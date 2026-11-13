@@ -4,10 +4,14 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import type { PlatformError } from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - checkouts use this platform's paths, and drivers get no Path service.
+import * as NodePath from "node:path";
 import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import type {
@@ -54,6 +58,7 @@ import {
   decodeMergeRequestChangesJson,
   decodeGraphqlListSupportJson,
   decodeMergeRequestGraphqlListJson,
+  decodeMergeRequestGraphqlProjectsListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
@@ -85,6 +90,7 @@ import {
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
   type GitLabMergeRequestListState,
+  type GitLabMergeRequestGraphqlPage,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
@@ -343,6 +349,8 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Ten busy gitlab.com projects at 99 rows each answer about 1.06 MB, past the 1 MB process default.
+const PROJECTS_LIST_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestConversationThread>;
@@ -392,6 +400,26 @@ export class GitLabPullRequestCli extends Context.Service<
        */
       readonly graphql?: boolean;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
+
+    /**
+     * One GraphQL read of each project's first page, as `listMergeRequests` reads it from its
+     * checkout. A project is absent when its checkout has its own glab config, when the reader
+     * cannot see it or its merge requests, or when its page lost rows to decoding. Needs
+     * `supportsGraphqlList`.
+     */
+    readonly listMergeRequestsInProjects: (input: {
+      readonly host?: string | undefined;
+      readonly repositories: ReadonlyArray<{ readonly repository: string; readonly cwd: string }>;
+      readonly state: PullRequestListState;
+      readonly involvement: PullRequestInvolvement;
+      readonly viewer: string;
+      readonly first: number;
+      readonly query?: string | undefined;
+      readonly filters?: PullRequestListFilters | undefined;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly repository: string; readonly batch: GitLabMergeRequestListBatch }>,
+      GitLabPullRequestCliError
+    >;
 
     /** Whether this host's GraphQL list takes every filter the REST list does. */
     readonly supportsGraphqlList: (input: {
@@ -835,21 +863,24 @@ function filterParams(input: {
   ];
 }
 
-/**
- * The GraphQL list takes the REST filters and narrows two review filters exactly: `approvedBy`
- * Any for approved, and reviewer states for changes requested. Only arguments in use are
- * declared, since GraphQL rejects a declared variable the query never reads.
- */
-function graphqlListQuery(input: {
-  readonly repository: string;
+interface GraphqlListFilters {
   readonly state: PullRequestListState;
   readonly involvement: PullRequestInvolvement;
   readonly viewer: string;
   readonly query?: string | undefined;
   readonly filters?: PullRequestListFilters | undefined;
-  readonly first: number;
-  readonly after: string | undefined;
-}): { readonly query: string; readonly variables: Record<string, unknown> } {
+}
+
+/**
+ * The GraphQL list takes the REST filters and narrows two review filters exactly: `approvedBy`
+ * Any for approved, and reviewer states for changes requested. Only arguments in use are
+ * declared, since GraphQL rejects a declared variable the query never reads.
+ */
+function graphqlListArguments(input: GraphqlListFilters & { readonly first: number }): {
+  readonly declarations: string;
+  readonly usages: string;
+  readonly variables: Record<string, unknown>;
+} {
   const filters = input.filters ?? {};
   const { required, excluded } = listableLabels(filters);
   const search = input.query?.trim() ?? "";
@@ -860,6 +891,7 @@ function graphqlListQuery(input: {
         ? undefined
         : resolvePullRequestAuthorFilter(filters.author, input.viewer);
   const args: ReadonlyArray<readonly [name: string, type: string, value: unknown]> = [
+    ["first", "Int!", input.first],
     ["state", "MergeRequestState", stateParam(input.state)],
     ...(author === undefined ? [] : [["authorUsername", "String", author] as const]),
     ...(input.involvement === "reviewing"
@@ -876,42 +908,96 @@ function graphqlListQuery(input: {
       ? [["reviewStates", "[MergeRequestReviewState!]", ["REQUESTED_CHANGES"]] as const]
       : []),
   ];
-  const declarations = [
-    "$fullPath: ID!",
-    "$first: Int!",
-    "$after: String",
-    ...args.map(([name, type]) => `$${name}: ${type}`),
-    ...(excluded.length === 0 ? [] : ["$notLabels: [String!]"]),
-  ];
-  const usages = [
-    "sort: UPDATED_DESC",
-    "first: $first",
-    "after: $after",
-    ...args.map(([name]) => `${name}: $${name}`),
-    ...(excluded.length === 0 ? [] : ["not: { labels: $notLabels }"]),
-  ];
   return {
-    query: `query(${declarations.join(", ")}) {
-  metadata { enterprise }
-  project(fullPath: $fullPath) {
-    mergeRequests(${usages.join(", ")}) {
-      pageInfo { hasNextPage endCursor }
-      nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
-    }
-  }
-}`,
+    declarations: [
+      ...args.map(([name, type]) => `$${name}: ${type}`),
+      ...(excluded.length === 0 ? [] : ["$notLabels: [String!]"]),
+    ].join(", "),
+    usages: [
+      "sort: UPDATED_DESC",
+      ...args.map(([name]) => `${name}: $${name}`),
+      ...(excluded.length === 0 ? [] : ["not: { labels: $notLabels }"]),
+    ].join(", "),
     variables: {
-      fullPath: input.repository.trim(),
-      first: input.first,
-      after: input.after ?? null,
       ...Object.fromEntries(args.map(([name, , value]) => [name, value])),
       ...(excluded.length === 0 ? {} : { notLabels: excluded }),
     },
   };
 }
 
+function graphqlListQuery(
+  input: GraphqlListFilters & {
+    readonly repository: string;
+    readonly first: number;
+    readonly after: string | undefined;
+  },
+): { readonly query: string; readonly variables: Record<string, unknown> } {
+  const { declarations, usages, variables } = graphqlListArguments(input);
+  return {
+    query: `query($fullPath: ID!, $after: String, ${declarations}) {
+  metadata { enterprise }
+  project(fullPath: $fullPath) {
+    mergeRequests(after: $after, ${usages}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
+    }
+  }
+}`,
+    variables: { fullPath: input.repository.trim(), after: input.after ?? null, ...variables },
+  };
+}
+
+/** The same list's newest `first` rows in each of several projects. */
+function graphqlProjectsListQuery(
+  input: GraphqlListFilters & {
+    readonly repositories: ReadonlyArray<string>;
+    readonly first: number;
+  },
+): { readonly query: string; readonly variables: Record<string, unknown> } {
+  const { declarations, usages, variables } = graphqlListArguments(input);
+  return {
+    query: `query($fullPaths: [String!], $projectCount: Int!, ${declarations}) {
+  metadata { enterprise }
+  projects(fullPaths: $fullPaths, first: $projectCount) {
+    nodes {
+      fullPath
+      mergeRequests(${usages}) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
+      }
+    }
+  }
+}`,
+    variables: {
+      fullPaths: input.repositories.map((repository) => repository.trim()),
+      projectCount: input.repositories.length,
+      ...variables,
+    },
+  };
+}
+
 /** The list cursor carries GitLab's own position only when it fits the cursor's alphabet. */
 const RESUME_AFTER_PATTERN = /^[\w.:~+-]{1,128}$/u;
+
+function resumeAfterOf(endCursor: string | null): string | undefined {
+  return endCursor !== null && RESUME_AFTER_PATTERN.test(endCursor) ? endCursor : undefined;
+}
+
+function graphqlListBatch(input: {
+  readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
+  readonly states: ReadonlyMap<number, GitLabMergeRequestListState>;
+  readonly cursorAdvance: number;
+  readonly page: GitLabMergeRequestGraphqlPage;
+}): GitLabMergeRequestListBatch {
+  const resumeAfter = resumeAfterOf(input.page.endCursor);
+  return {
+    items: input.items,
+    truncated: input.page.hasNextPage,
+    cursorAdvance: input.cursorAdvance,
+    ...(resumeAfter === undefined ? {} : { resumeAfter }),
+    listStates: input.states,
+  };
+}
 
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
@@ -1021,6 +1107,29 @@ function actionArgs(
 /** @public */
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
+  const fileSystem = yield* FileSystem.FileSystem;
+
+  // glab layers `<toplevel>/.git/glab-cli/config.yml` over its global config, so a checkout with
+  // one may sign in as another account. An unreadable checkout counts as having one.
+  const hasOwnGlabConfig = (cwd: string): Effect.Effect<boolean> => {
+    const from = (directory: string): Effect.Effect<boolean, PlatformError> =>
+      fileSystem
+        .exists(NodePath.join(directory, ".git"))
+        .pipe(
+          Effect.flatMap((found) =>
+            found
+              ? fileSystem.exists(NodePath.join(directory, ".git", "glab-cli", "config.yml"))
+              : NodePath.dirname(directory) === directory
+                ? Effect.succeed(false)
+                : from(NodePath.dirname(directory)),
+          ),
+        );
+    // glab finds the repository through git, which resolves symlinks.
+    return fileSystem.realPath(cwd).pipe(
+      Effect.flatMap(from),
+      Effect.orElseSucceed(() => true),
+    );
+  };
 
   const api = (input: {
     readonly cwd: string;
@@ -1798,6 +1907,7 @@ export const make = Effect.gen(function* () {
     readonly query: string;
     readonly variables: Record<string, unknown>;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
+    readonly maxOutputBytes?: number;
   }) =>
     api({
       cwd: input.cwd,
@@ -1805,6 +1915,7 @@ export const make = Effect.gen(function* () {
       path: "graphql",
       method: "POST",
       stdin: JSON.stringify({ query: input.query, variables: input.variables }),
+      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     }).pipe(
       Effect.flatMap((result) => {
         const decoded = input.decode(result.stdout.trim());
@@ -1887,10 +1998,7 @@ export const make = Effect.gen(function* () {
         const collected = [...input.collected, ...page.items];
         const states = new Map([...input.states, ...page.states]);
         const cursorAdvance = input.cursorAdvance + page.rawCount;
-        const resumeAfter =
-          page.endCursor !== null && RESUME_AFTER_PATTERN.test(page.endCursor)
-            ? page.endCursor
-            : undefined;
+        const resumeAfter = resumeAfterOf(page.endCursor);
         if (
           page.hasNextPage &&
           resumeAfter !== undefined &&
@@ -1906,13 +2014,7 @@ export const make = Effect.gen(function* () {
             reads: input.reads - 1,
           });
         }
-        return Effect.succeed({
-          items: collected,
-          truncated: page.hasNextPage,
-          cursorAdvance,
-          ...(resumeAfter === undefined ? {} : { resumeAfter }),
-          listStates: states,
-        });
+        return Effect.succeed(graphqlListBatch({ items: collected, states, cursorAdvance, page }));
       }),
     );
 
@@ -2219,6 +2321,50 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+
+    listMergeRequestsInProjects: Effect.fn("GitLabPullRequestCli.listMergeRequestsInProjects")(
+      function* (input) {
+        const ownConfig = yield* Effect.forEach(
+          input.repositories,
+          ({ cwd }) => hasOwnGlabConfig(cwd),
+          { concurrency: "unbounded" },
+        );
+        // Every other checkout reads as the global account, so any one of them answers for all.
+        const shared = input.repositories.filter((_, index) => !ownConfig[index]);
+        if (shared.length === 0) return [];
+        return yield* graphqlRead({
+          cwd: shared[0]!.cwd,
+          host: input.host,
+          operation: "listMergeRequestsInProjects",
+          ...graphqlProjectsListQuery({
+            ...input,
+            repositories: shared.map(({ repository }) => repository),
+            first: Math.max(1, Math.min(input.first, MAX_PAGE_SIZE)),
+          }),
+          decode: decodeMergeRequestGraphqlProjectsListJson,
+          maxOutputBytes: PROJECTS_LIST_MAX_OUTPUT_BYTES,
+        }).pipe(
+          Effect.map((projects) =>
+            projects.flatMap(({ repository, page }) =>
+              // Left out, the project is read on its own, which also reads past rows lost to decoding.
+              page === null || (page.hasNextPage && page.items.length < page.rawCount)
+                ? []
+                : [
+                    {
+                      repository,
+                      batch: graphqlListBatch({
+                        items: page.items,
+                        states: page.states,
+                        cursorAdvance: page.rawCount,
+                        page,
+                      }),
+                    },
+                  ],
+            ),
+          ),
+        );
+      },
+    ),
 
     supportsGraphqlList: Effect.fn("GitLabPullRequestCli.supportsGraphqlList")((input) =>
       graphqlRead({
