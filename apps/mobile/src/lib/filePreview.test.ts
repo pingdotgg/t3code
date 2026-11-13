@@ -85,6 +85,7 @@ vi.mock("react-native", () => ({
     addEventListener: () => ({ remove() {} }),
   },
   View: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
+  ScrollView: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   Pressable: (props: {
     children?: ReactNode;
     onPress: () => void;
@@ -193,12 +194,15 @@ vi.mock("../native/SelectableMarkdownText", () => ({
     markdown: string;
     onLinkPress(href: string): void;
     renderImage?: MarkdownImageRenderer;
+    onCiteText?: (text: string) => void;
   }) => {
     const embed = props.markdown.match(/!\[([^\]]*)\]\(([^)]+)\)/);
     return createElement(
       "div",
       null,
       createElement("button", { onClick: () => props.onLinkPress("target.ts") }, props.markdown),
+      props.onCiteText &&
+        createElement("button", { onClick: () => props.onCiteText?.("quote") }, "Cite quote"),
       embed && props.renderImage?.({ href: embed[2]!, alt: embed[1]!, title: null }),
     );
   },
@@ -232,6 +236,13 @@ vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
 vi.mock("expo-image", () => ({}));
 vi.mock("uniwind", () => ({}));
 vi.mock("../components/ui/Dialog", () => ({}));
+vi.mock("../components/ui/Sheet", () => ({
+  Sheet: ({ children }: { children?: ReactNode }) => children,
+}));
+vi.mock("../components/ui/ListActionRow", () => ({
+  ListActionRow: ({ label, onPress }: { label: string; onPress(): void }) =>
+    createElement("button", { onClick: onPress }, label),
+}));
 vi.mock("../components/ui/NativePresentation", () => ({
   PresentationSource: ({ children }: { children?: ReactNode }) => children,
 }));
@@ -1335,6 +1346,75 @@ describe("inline file previews", () => {
 });
 
 describe("ThreadFeed previews", () => {
+  it("drops stale quote choices when the streaming source changes", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    const cited = vi.fn();
+    const element = (text: string) =>
+      createElement(ThreadFeed, {
+        environmentId,
+        threadId,
+        detailRef: null,
+        threadTitle: "quotes",
+        workspaceRoot: "/repo",
+        feed: [
+          {
+            type: "message",
+            id: messageId,
+            createdAt: timestamp,
+            message: {
+              id: messageId,
+              role: "assistant",
+              text,
+              attachments: [],
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              runId: null,
+              streaming: true,
+              visibility: "local",
+              sourceThreadId: threadId,
+            },
+          },
+        ],
+        queuedMessages: [],
+        dispatchingMessageId: null,
+        onEditPendingMessage: null,
+        contentPresentation: { kind: "ready" },
+        latestRun: null,
+        activeWorkStartedAt: null,
+        listRef: { current: null },
+        freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+        contentInsetEndAdjustment: { value: 0 } as Parameters<
+          typeof ThreadFeed
+        >[0]["contentInsetEndAdjustment"],
+        anchorMessageId: null,
+        keyboardOffset: 0,
+        onCiteAssistantText: cited,
+      });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const button = (text: string) =>
+      [...container.querySelectorAll("button")].find((e) => e.textContent === text);
+    try {
+      await act(async () => root.render(element("first quote then quote")));
+      await act(async () => button("Cite quote")!.click());
+      expect(button("Occurrence 2 of 2")).toBeDefined();
+      await act(async () => root.render(element("first quote then quote and quote")));
+      expect(button("Occurrence 2 of 2")).toBeUndefined();
+      expect(cited).not.toHaveBeenCalled();
+      await act(async () => button("Cite quote")!.click());
+      await act(async () => button("Occurrence 2 of 3")!.click());
+      expect(cited).toHaveBeenCalledWith(
+        expect.objectContaining({ occurrence: { index: 1, count: 3 } }),
+      );
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("does not commit an open preview over a different thread", async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const environmentId = EnvironmentId.make("environment-1");

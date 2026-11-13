@@ -1,9 +1,14 @@
 import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ComposerContextId,
+  EnvironmentId,
+  MessageId,
+  ThreadId,
   type OrchestrationMessageContext,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -12,6 +17,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  assistantCitationDraftWithinLimit,
   collectComposerModelTokens,
   composerContextEditorTokens,
   composerSkillLabels,
@@ -201,9 +207,45 @@ describe("mobile composer context", () => {
     expect(collectComposerModelTokens("model:codex/gpt-6.1", known, kept)).toEqual([]);
   });
 
+  it("rejects citation drafts exceeding either encoded or expanded input limits", () => {
+    const quote = (text: string) =>
+      serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("thread"),
+        messageId: MessageId.make("message"),
+        text,
+        start: 0,
+        end: text.length,
+        prefix: "",
+        suffix: "",
+      });
+    expect(assistantCitationDraftWithinLimit(`Explain ${quote("short quote")}`)).toBe(true);
+    expect(
+      assistantCitationDraftWithinLimit(
+        `${quote("日".repeat(8_000))} ${quote("語".repeat(8_000))}`,
+      ),
+    ).toBe(false);
+    const short = quote("x");
+    const expandedOverflow = "a".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - short.length) + short;
+    expect(expandedOverflow.length).toBe(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(assistantCitationDraftWithinLimit(expandedOverflow)).toBe(false);
+  });
+
   it("keeps exact source positions and repeated references alongside existing native tokens", () => {
     const reference = formatComposerContextReference(terminal);
-    const text = `Use $babysit with $disabled $agentOnly $HOME $PATH $anything $notaskill $20 $20k and [app.ts](src/app.ts) with ${reference} then ${reference}`;
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("remote"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "日本語 🚀 with @file.ts and $HOME",
+      start: 0,
+      end: 33,
+      prefix: "",
+      suffix: "",
+    });
+    const text = `Use $babysit with $disabled $agentOnly $HOME $PATH $anything $notaskill $20 $20k and [app.ts](src/app.ts) with ${reference} then ${reference} (${citation}),${citation}!`;
     const babysit: ServerProviderSkill = {
       name: "babysit",
       path: "/skills/babysit",
@@ -222,6 +264,8 @@ describe("mobile composer context", () => {
       "[app.ts](src/app.ts)",
       reference,
       reference,
+      citation,
+      citation,
     ]);
     for (const token of tokens) expect(text.slice(token.start, token.end)).toBe(token.source);
     expect(
@@ -230,7 +274,7 @@ describe("mobile composer context", () => {
         collectComposerInlineTokens(text),
         composerSkillLabels([]),
       ).map((token) => token.type),
-    ).toEqual(["mention", "context", "context"]);
+    ).toEqual(["mention", "context", "context", "citation", "citation"]);
     expect(
       composerContextEditorTokens(
         text,

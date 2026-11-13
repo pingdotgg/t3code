@@ -95,6 +95,10 @@ describe("assistant citation references", () => {
     "t3-citation://v1/a/b/c?text=quote&start=5&end=0&prefix=&suffix=",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&text=other",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&unknown=value",
+    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&occurrence=0",
+    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&occurrence=1&occurrences=1",
+    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&occurrence=0&occurrences=0",
+    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&occurrence=0&occurrences=9007199254740992",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=one&comment=two",
   ])("leaves invalid or unsupported references unchanged: %s", (href) => {
     expect(parseAssistantCitationHref(href)).toBeNull();
@@ -281,4 +285,16 @@ describe("assistant citation references", () => {
       ].join("\n"),
     );
   });
+});
+
+it("retains distinct repeated occurrences through serialization and provider expansion", () => {
+  const first = { ...citation, occurrence: { index: 0, count: 2 } };
+  const second = { ...citation, occurrence: { index: 1, count: 2 } };
+  expect(parseAssistantCitationHref(formatAssistantCitationHref(second))).toEqual(second);
+  const expanded = readProviderContext(
+    expandAssistantCitationsForProvider(
+      `${serializeAssistantCitation(first)} ${serializeAssistantCitation(second)}`,
+    ),
+  );
+  expect(expanded).toHaveLength(2);
 });

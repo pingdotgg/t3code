@@ -1,6 +1,7 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ModelSelection,
   type NodeId,
   ProviderSessionId,
@@ -422,6 +423,18 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const text = projectComposerContextForProvider({
+            text: message.text,
+            records: message.context?.records ?? [],
+          });
+          if (text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+            return yield* new ProviderTurnControlError({
+              threadId: input.threadId,
+              operation: "steer",
+              providerTurnId: input.providerTurnId,
+              cause: `Message exceeds ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")} characters after expanding context and quotes. Shorten it and try again.`,
+            });
+          }
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -433,10 +446,7 @@ export const layer: Layer.Layer<
                 : { modelSelection: input.modelSelection }),
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text,
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
