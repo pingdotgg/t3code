@@ -57,6 +57,11 @@ export function matchAcpLocalAgentPresets(query: string): readonly AcpLocalAgent
   );
 }
 
+/** Windows command paths carry a `.exe` suffix the preset omits. */
+function launchedExecutableName(commandPath: string): string {
+  return (commandPath.split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "").toLowerCase();
+}
+
 export function isConfiguredAcpLocalAgent(
   instances: Readonly<Record<string, { readonly driver: string; readonly config?: unknown }>>,
   preset: AcpLocalAgentPreset,
@@ -72,10 +77,10 @@ export function isConfiguredAcpLocalAgent(
     const config = instance.config as Record<string, unknown>;
     if (config.source !== "local") return false;
     const executable =
-      typeof config.commandPath === "string" ? (config.commandPath.split(/[\\/]/).pop() ?? "") : "";
+      typeof config.commandPath === "string" ? launchedExecutableName(config.commandPath) : "";
     const args = Array.isArray(config.commandArgs) ? config.commandArgs : [];
     return (
-      executable === preset.executable &&
+      executable === preset.executable.toLowerCase() &&
       args.length === preset.args.length &&
       args.every((argument, index) => argument === preset.args[index])
     );

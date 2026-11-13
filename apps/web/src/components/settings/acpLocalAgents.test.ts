@@ -72,6 +72,24 @@ describe("isConfiguredAcpLocalAgent", () => {
     ).toBe(true);
   });
 
+  it("recognizes a Windows launcher path with the .exe suffix", () => {
+    expect(
+      isConfiguredAcpLocalAgent(
+        {
+          acpRegistry_omp: {
+            driver: "acpRegistry",
+            config: {
+              source: "local",
+              commandPath: "C:\\tools\\OMP.EXE",
+              commandArgs: ["acp"],
+            },
+          },
+        },
+        ohMyPi,
+      ),
+    ).toBe(true);
+  });
+
   it("ignores registry agents, other commands, different arguments, and a cleared executable", () => {
     expect(
       isConfiguredAcpLocalAgent(
