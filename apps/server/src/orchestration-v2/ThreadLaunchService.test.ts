@@ -1458,7 +1458,7 @@ it.effect("replays a joined launch after its branch moves to the project folder"
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect("refuses to join a worktree another launch is still creating", () =>
+it.effect("refuses to join a worktree another launch is creating or failed to remove", () =>
   Effect.gen(function* () {
     const claimed = yield* Deferred.make<void>();
     let checkedOutAt: string | null = null;
@@ -1472,6 +1472,7 @@ it.effect("refuses to join a worktree another launch is still creating", () =>
             nextCursor: null,
             totalCount: 1,
           }),
+        removeWorktree: () => Effect.fail(new Error("worktree is locked") as never),
       },
       createWorktree: (_input, options) =>
         (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/feature") ?? Effect.void).pipe(
@@ -1485,12 +1486,19 @@ it.effect("refuses to join a worktree another launch is still creating", () =>
         ),
     });
     yield* Effect.gen(function* () {
-      yield* launchCheckoutExisting("feature/login", "provisional-first");
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const first = yield* launchCheckoutExisting("feature/login", "provisional-first");
       yield* Deferred.await(claimed);
-      const error = yield* launchCheckoutExisting("feature/login", "provisional-second").pipe(
+      const joinWhileCreating = launchCheckoutExisting("feature/login", "provisional-second").pipe(
         Effect.flip,
       );
-      assert.include(String(error.cause), "still being set up");
+      assert.include(String((yield* joinWhileCreating).cause), "still being set up");
+      assert.isTrue(yield* tracker.cancel(first.threadId));
+      const joinAfterFailedRemoval = launchCheckoutExisting("feature/login", "provisional-third");
+      assert.include(
+        String((yield* Effect.flip(joinAfterFailedRemoval)).cause),
+        "still being set up",
+      );
     }).pipe(Effect.provide(harness.layer));
   }),
 );
