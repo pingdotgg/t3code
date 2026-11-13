@@ -3120,6 +3120,13 @@ it.live("a tab opened from an agent's tab joins that agent only while it has roo
       const popup = yield* openFrom(tabId);
       expect(popup.automationOwner).toBeDefined();
       expect(popup.automationOwner).toBe(owner);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs?.find((entry) => entry.tabId === popup.tabId)?.openerTabId).toBe(tabId);
       const open = broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",

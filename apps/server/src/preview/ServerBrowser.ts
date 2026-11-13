@@ -540,6 +540,7 @@ const make = Effect.gen(function* () {
 
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const desktopOpeners = new Map<string, string>();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -900,6 +901,8 @@ const make = Effect.gen(function* () {
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
+    const desktopOpener = desktopOpeners.get(tabKey(snapshot.threadId, snapshot.tabId));
+    desktopOpeners.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -970,7 +973,7 @@ const make = Effect.gen(function* () {
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
-      openerTabId: adopted?.openerTabId,
+      openerTabId: adopted?.openerTabId ?? desktopOpener,
       downloads: [],
       fileChooser: null,
       dialog: null,
@@ -3114,13 +3117,15 @@ const make = Effect.gen(function* () {
         : (yield* manager.list({ threadId: input.threadId })).sessions.find(
             (session) => session.tabId === openerTabId,
           )?.automationOwner;
-    if (owner === undefined || atTabLimit(owner)) return yield* manager.open(openInput);
+    if (owner === undefined || openerTabId === undefined || atTabLimit(owner))
+      return yield* manager.open(openInput);
     let opened: PreviewSessionSnapshot | undefined;
     return yield* openTab({
       ...openInput,
       automationOwner: owner,
       beforePublish: (snapshot) => {
         opened = snapshot;
+        desktopOpeners.set(tabKey(snapshot.threadId, snapshot.tabId), openerTabId);
       },
     }).pipe(
       Effect.flatMap(() => (opened ? Effect.succeed(opened) : Effect.fail(undefined))),
