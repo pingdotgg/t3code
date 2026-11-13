@@ -78,6 +78,7 @@ export function createThreadNotificationGate<Key>(
       const fresh = attend(key, prior, next);
       if (!prior || options.archived) return;
       if (fresh) {
+        skip(key, next.completedAt);
         notify(key, "input");
         return;
       }

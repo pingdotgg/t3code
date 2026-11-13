@@ -214,6 +214,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "archivedAt"
   | "settledOverride"
   | "pinnedAt"
+  | "background"
   | "autoSettleDisabledAt"
   | "snoozedUntil"
   | "snoozedAt"
@@ -1806,6 +1807,7 @@ export function threadShellFromProjection(
     snoozedAt: projection.thread.snoozedAt ?? null,
     pinnedAt: projection.thread.pinnedAt ?? null,
 
+    background: projection.thread.background ?? null,
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
@@ -2103,6 +2105,7 @@ function shellFromState(input: {
     snoozedAt: input.state.thread.snoozedAt ?? null,
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
+    background: input.state.thread.background ?? null,
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
@@ -8054,6 +8057,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
               AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
+              AND json_extract(t.payload_json, '$.background') IS NULL
               AND (
                 json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
                 OR NOT EXISTS (
@@ -8108,6 +8112,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ...thread,
                   pinnedAt: thread.pinnedAt ?? null,
 
+                  background: thread.background ?? null,
                   autoSettleDisabledAt: thread.autoSettleDisabledAt ?? null,
                   snoozedUntil: thread.snoozedUntil ?? null,
                   snoozedAt: thread.snoozedAt ?? null,
@@ -8634,6 +8639,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               title: state.thread.title,
               lineage: state.thread.lineage,
               modelSelection: state.thread.modelSelection,
+              background: state.thread.background ?? null,
               settledOverride: state.thread.settledOverride,
               updatedAt: state.updatedAt,
               status: state.latestRunStatus,

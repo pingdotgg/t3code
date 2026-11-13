@@ -457,6 +457,11 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+const OrchestrationV2BackgroundPolicy = Schema.Struct({
+  acknowledgedAt: IsoDateTime,
+  reportedAt: Schema.NullOr(IsoDateTime),
+});
+
 const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   ...ThreadTitleRegenerationOutcome.fields,
   requestId: CommandId,
@@ -509,6 +514,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  background: Schema.optional(Schema.NullOr(OrchestrationV2BackgroundPolicy)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2209,6 +2215,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  background: Schema.optional(Schema.NullOr(OrchestrationV2BackgroundPolicy)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -3028,6 +3035,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    background: Schema.optional(Schema.Boolean),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -3170,6 +3178,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
+    background: Schema.optional(Schema.Boolean),
+    acknowledgeBackground: Schema.optional(Schema.Boolean),
     regenerateTitle: Schema.optional(Schema.Boolean),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -3804,6 +3814,7 @@ export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  background: Schema.optional(Schema.Boolean),
   commandId: CommandId,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),

@@ -1,3 +1,4 @@
+import { isQuietBackgroundThread } from "@t3tools/client-runtime/state/thread-settled";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -143,7 +144,9 @@ export function startThreadNotifications(
     const active = activeThread();
     const title =
       kind === "completion"
-        ? "Thread completed"
+        ? thread.source.background?.reportedAt
+          ? "Result reported"
+          : "Thread completed"
         : status === "approval"
           ? "Approval needed"
           : status === "limited"
@@ -278,10 +281,14 @@ export function startThreadNotifications(
         ? null
         : requestId !== null
           ? `${status}:${requestId}`
-          : `${thread.latestRun?.runId ?? ""}:${status}`;
-      const completed = status === "ready" && thread.latestRun?.status === "completed";
+          : `${rawThread.background?.reportedAt ?? thread.latestRun?.runId ?? ""}:${status}`;
+      const completed =
+        rawThread.background?.reportedAt != null ||
+        (status === "ready" && thread.latestRun?.status === "completed");
       const settled = completed && !monitorHoldsWakeCompletion(rawThread);
-      const parsedCompletedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+      const parsedCompletedAt = Date.parse(
+        rawThread.background?.reportedAt ?? thread.latestRun?.completedAt ?? "",
+      );
       const completedAt = Number.isFinite(parsedCompletedAt) ? parsedCompletedAt : null;
       const state = {
         raw: rawThread,
@@ -303,7 +310,7 @@ export function startThreadNotifications(
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true,
+        quiet: state.raw.latestRunStopRequested === true || isQuietBackgroundThread(state.thread),
       });
     }
   };

@@ -86,6 +86,8 @@ export interface ProjectThreadAwarenessV2Input {
   readonly project: Pick<Project, "title">;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
+    | "background"
+    | "latestRunCompletedAt"
     | "activityRunStatus"
     | "id"
     | "lineage"
@@ -109,11 +111,29 @@ export function projectThreadAwarenessV2(
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
   const subagentRequest = input.pendingSubagentRequest ?? null;
-  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest);
+  const executionPhase = resolveThreadAwarenessPhaseV2(thread, subagentRequest);
+  const report = thread.background?.reportedAt;
+  const reportsResult =
+    report != null &&
+    executionPhase !== "failed" &&
+    executionPhase !== "waiting_for_approval" &&
+    executionPhase !== "waiting_for_input";
+  const phase = reportsResult ? "completed" : executionPhase;
   if (phase === null) {
     return null;
   }
-  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  if (!reportsResult && phase === "completed" && thread.latestRunStopRequested === true)
+    return null;
+  if (
+    thread.background != null &&
+    thread.background.reportedAt == null &&
+    (phase === "completed" ||
+      (phase === "failed" &&
+        thread.latestRunCompletedAt != null &&
+        DateTime.toEpochMillis(thread.latestRunCompletedAt) <=
+          Date.parse(thread.background.acknowledgedAt)))
+  )
+    return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
   const runStatus = thread.activityRunStatus ?? thread.status;
   if (
@@ -127,7 +147,9 @@ export function projectThreadAwarenessV2(
   }
   const detail =
     phase === "completed"
-      ? "Review the completed task."
+      ? reportsResult
+        ? "Review the reported result. Work may still be running."
+        : "Review the completed task."
       : phase === "failed"
         ? "The agent run failed."
         : undefined;
@@ -137,16 +159,17 @@ export function projectThreadAwarenessV2(
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
-    headline: headlineForPhase(phase),
+    headline: reportsResult ? "Result reported" : headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    // A child's request leaves the parent's own timestamp alone. Alerts are
-    // keyed by phase and time, so a second wait needs the child's time.
-    updatedAt: DateTime.formatIso(
-      subagentRequest === null
-        ? thread.updatedAt
-        : DateTime.max(thread.updatedAt, subagentRequest.updatedAt),
-    ),
+    // Child approvals use the child's timestamp; reports use their explicit report time.
+    updatedAt: reportsResult
+      ? report
+      : DateTime.formatIso(
+          subagentRequest === null
+            ? thread.updatedAt
+            : DateTime.max(thread.updatedAt, subagentRequest.updatedAt),
+        ),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }

@@ -438,6 +438,13 @@ export function useThreadRelationshipShells(
   return useAtomValue(relationshipShellsAtomFamily(threadKey(ref)));
 }
 
+export function readEnvironmentSupportsThreadBackground(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadBackground === true
+  );
+}
+
 interface SubagentChild {
   readonly threadId: ThreadId;
   /** Set when the task ran on a linked environment, which holds its thread. */

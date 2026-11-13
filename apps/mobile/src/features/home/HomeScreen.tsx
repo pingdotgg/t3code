@@ -75,6 +75,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2BackgroundShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
@@ -382,9 +383,11 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
+    backgroundShelfExpanded,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
+    toggleBackgroundShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(props.threads);
@@ -425,6 +428,7 @@ export function HomeScreen(props: HomeScreenProps) {
     pendingOrder,
     shelfPreferencesLoaded,
     workingShelfEnabled,
+    backgroundShelfExpanded,
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
@@ -495,6 +499,16 @@ export function HomeScreen(props: HomeScreenProps) {
           disabled={item.disabled}
           expanded={item.expanded}
           onToggle={toggleWorkingShelf}
+        />
+      );
+    }
+    if (item.type === "v2-background-shelf") {
+      return (
+        <ThreadListV2BackgroundShelfHeader
+          count={item.count}
+          disabled={item.disabled}
+          expanded={item.expanded}
+          onToggle={toggleBackgroundShelf}
         />
       );
     }

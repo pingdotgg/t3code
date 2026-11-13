@@ -2128,6 +2128,243 @@ it.effect("dispatch records the command outcome and its duration", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect(
+  "background reports survive visits and automatic turns until explicitly acknowledged",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:background-policy");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("background:create"),
+        threadId,
+        projectId: ProjectId.make("project:background-policy"),
+        title: "Monitor",
+        background: true,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const initial = (yield* projections.getThreadShell(threadId))!.background;
+      assert.ok(initial);
+      assert.strictEqual(initial.reportedAt, null);
+      // A monitor can report during its first turn, before any completed run exists.
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("background:report"),
+        threadId,
+      });
+      const reported = (yield* projections.getThreadShell(threadId))!.background;
+      assert.ok(reported?.reportedAt);
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("background:visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(yield* DateTime.now),
+        opened: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("background:auto"),
+        threadId,
+        messageId: MessageId.make("background:auto"),
+        text: "Routine check",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("background:repeat"),
+        threadId,
+      });
+      assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background:ack"),
+        threadId,
+        acknowledgeBackground: true,
+      });
+      assert.strictEqual(
+        (yield* projections.getThreadShell(threadId))!.background?.reportedAt,
+        null,
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background:off"),
+        threadId,
+        background: false,
+      });
+      assert.strictEqual(
+        (yield* projections.getThreadProjection(threadId)).thread.background,
+        null,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("provider failures stay reported when another automated run starts", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const { threadId } = yield* completeAndSnoozeThread("background-failure", 30);
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("background-failure:enable"),
+      threadId,
+      background: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("background-failure:run"),
+      threadId,
+      messageId: MessageId.make("background-failure:run"),
+      text: "Check",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+    const now = yield* DateTime.now;
+    const terminalEvent: OrchestrationV2DomainEvent = {
+      id: EventId.make("background-failure:provider-terminal"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: { ...run, status: "failed", completedAt: now },
+    };
+    const stale = yield* eventSink.writeIfRunCurrent({
+      threadId,
+      runId: run.id,
+      activeAttemptId: RunAttemptId.make("stale-attempt"),
+      expectedStatus: run.status,
+      events: [terminalEvent],
+    });
+    assert.isFalse(stale.committed);
+    assert.isNull((yield* projections.getThreadShell(threadId))!.background?.reportedAt);
+    const finalized = yield* eventSink.writeIfRunCurrent({
+      threadId,
+      runId: run.id,
+      activeAttemptId: run.activeAttemptId!,
+      expectedStatus: run.status,
+      events: [terminalEvent],
+    });
+    assert.isTrue(finalized.committed);
+    const reported = (yield* projections.getThreadShell(threadId))!.background;
+    assert.ok(reported?.reportedAt);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("background-failure:next"),
+      threadId,
+      messageId: MessageId.make("background-failure:next"),
+      text: "Check again",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    assert.deepStrictEqual((yield* projections.getThreadShell(threadId))!.background, reported);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "acknowledged background failures stay quiet after delegated delivery metadata changes",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* EventSink.EventSinkV2;
+      const { threadId } = yield* completeAndSnoozeThread("background-metadata", 30);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("background-metadata:start"),
+        threadId,
+        messageId: MessageId.make("background-metadata:start"),
+        text: "Delegate a check",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* projections.getThreadProjection(threadId)).runs.at(-1)!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("background-metadata:delegate"),
+        parentThreadId: threadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Check",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* projections.getThreadProjection(threadId)).subagents[0]!;
+      const now = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("background-metadata:failed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              ...run,
+              status: "failed",
+              completedAt: now,
+              delegatedCompletion: {
+                disposition: "open",
+                nextGeneration: 2,
+                delivery: {
+                  generation: 1,
+                  messageId: MessageId.make("missing-delivery"),
+                  taskIds: [task.id],
+                },
+              },
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background-metadata:background"),
+        threadId,
+        background: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("background-metadata:report"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("background-metadata:ack"),
+        threadId,
+        acknowledgeBackground: true,
+      });
+      const result = yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.dispose",
+        commandId: CommandId.make("background-metadata:dispose"),
+        parentThreadId: threadId,
+        taskId: task.id,
+      });
+      assert.isTrue(result.storedEvents.some((stored) => stored.event.type === "run.updated"));
+      assert.isNull((yield* projections.getThreadShell(threadId))!.background!.reportedAt);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("a user message dispatched first stays run 1 when its lineage read is slow", () => {
   const threadId = ThreadId.make("thread:dispatch-order");
   // A file database serves projection reads from a reader worker, so the lineage read a user
