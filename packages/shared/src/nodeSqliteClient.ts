@@ -397,7 +397,7 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
             : Effect.fail(failedWith({ message: stoppedMessage }, "execute"));
         }
         const safeIntegers = Boolean(Context.get(fiber.context, Client.SafeIntegers));
-        return Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
+        const reply = Effect.callback<ReadonlyArray<any>, SqlError>((resume) => {
           const id = nextRequestId++;
           pending.set(id, {
             endsTransaction,
@@ -413,6 +413,9 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           worker.postMessage({ id, safeIntegers, ...input, cached });
         });
+        // A posted write runs to the end, as it did on the event loop; the caller and its lock
+        // must not move on while the worker is still applying it. Reads stay cancellable.
+        return options.role === "writer" ? Effect.uninterruptible(reply) : reply;
       });
 
     const connection = identity<Connection>({

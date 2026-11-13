@@ -267,6 +267,31 @@ it.effect("lets the event loop run while a write waits for another connection's 
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("finishes a write already sent to the writer before its caller is interrupted", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 5000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* Effect.forkChild(
+        sql`UPDATE counters SET value = value + 1 WHERE id = 1`,
+        { startImmediately: true },
+      );
+      yield* eventLoopTurn;
+      const interrupted = yield* Effect.forkChild(Fiber.interrupt(write), {
+        startImmediately: true,
+      });
+      yield* eventLoopTurn;
+      // The write is waiting in the worker for the lock, so the interrupt has to wait too.
+      assert.isUndefined(interrupted.pollUnsafe());
+      yield* Effect.sync(() => other.exec("COMMIT"));
+      yield* Fiber.join(interrupted);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[1]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("lets the writer commit while a read-only transaction is open", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
