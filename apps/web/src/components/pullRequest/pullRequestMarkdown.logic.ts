@@ -104,28 +104,21 @@ export function pullRequestMarkdownPlugins(
   return plugins;
 }
 
-type HastNode = {
-  type: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
-};
-
 // `dataDarkSrc` and `dataLightSrc` carry a `<picture>`'s theme sources.
 const URL_PROPERTIES = ["href", "src", "poster", "dataDarkSrc", "dataLightSrc"] as const;
 
 // After raw HTML is parsed, so `<img src>` and `<a href>` resolve like markdown's own; code is text.
 function rehypeChangeRequestUrls(options: { readonly resolve: (url: string) => string }) {
-  const visit = (node: HastNode): void => {
-    const properties = node.properties;
-    if (node.type === "element" && properties) {
+  const visit = (node: Nodes): void => {
+    if (node.type === "element") {
       for (const key of URL_PROPERTIES) {
-        const value = properties[key];
-        if (typeof value === "string") properties[key] = options.resolve(value);
+        const value = node.properties[key];
+        if (typeof value === "string") node.properties[key] = options.resolve(value);
       }
     }
-    node.children?.forEach(visit);
+    if ("children" in node) node.children.forEach(visit);
   };
-  return (tree: HastNode) => visit(tree);
+  return (tree: Nodes) => visit(tree);
 }
 
 const changeRequestRehypePlugins = new Map<string, PluggableList>();
