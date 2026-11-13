@@ -64,6 +64,8 @@ pub struct Process {
     writer: mpsc::Sender<String>,
     kill: Arc<Notify>,
     exited: watch::Receiver<bool>,
+    /// Fires when the writer task has closed the child's stdin.
+    stdin_closed: oneshot::Receiver<()>,
 }
 
 impl Process {
@@ -101,6 +103,7 @@ impl Process {
         };
 
         let (writer, mut lines) = mpsc::channel::<String>(64);
+        let (stdin_closed_tx, stdin_closed) = oneshot::channel();
         tokio::spawn(async move {
             let mut stdin = stdin;
             while let Some(line) = lines.recv().await {
@@ -114,6 +117,8 @@ impl Process {
                 }
             }
             // Dropping stdin is the CLI's end of input.
+            drop(stdin);
+            let _ = stdin_closed_tx.send(());
         });
 
         let tail = Arc::new(Mutex::new(String::new()));
@@ -147,6 +152,7 @@ impl Process {
             writer,
             kill,
             exited,
+            stdin_closed,
         })
     }
 
@@ -174,6 +180,34 @@ impl Process {
         drop(writer);
         let wait = exited.wait_for(|done| *done);
         if tokio::time::timeout(CLOSE_GRACE, wait).await.is_err() {
+            kill.notify_one();
+            let _ = exited.wait_for(|done| *done).await;
+        }
+    }
+}
+
+impl Process {
+    /// Ends input, then sends SIGTERM to the process group, and SIGKILL after `grace` when
+    /// the child still runs. Returns once the child is reaped. This is how the T3 server stops
+    /// a CLI (Effect's spawner with `forceKillAfter`).
+    pub async fn terminate(self, grace: Duration) {
+        let Process {
+            pid,
+            writer,
+            kill,
+            mut exited,
+            stdin_closed,
+        } = self;
+        drop(writer);
+        // The end of input goes first, as in TS; a writer stuck on a full pipe does not hold
+        // the signal back for long.
+        let _ = tokio::time::timeout(Duration::from_millis(200), stdin_closed).await;
+        #[cfg(unix)]
+        signal_group(pid, rustix::process::Signal::TERM);
+        #[cfg(not(unix))]
+        let _ = pid;
+        let wait = exited.wait_for(|done| *done);
+        if tokio::time::timeout(grace, wait).await.is_err() {
             kill.notify_one();
             let _ = exited.wait_for(|done| *done).await;
         }
@@ -331,6 +365,33 @@ mod tests {
         let Some(ProcEvent::Exited(info)) = rx.recv().await else {
             panic!("expected exit")
         };
+        assert_eq!(info.signal, Some(9));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminate_sends_sigterm_then_kills_after_the_grace() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let process = Process::spawn(
+            &sh("trap 'echo term' TERM; while :; do sleep 0.05; done"),
+            1024,
+            tx,
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let started = std::time::Instant::now();
+        process.terminate(Duration::from_millis(300)).await;
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(300), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        let mut lines = Vec::new();
+        let info = loop {
+            match rx.recv().await {
+                Some(ProcEvent::Line(Line::Text(t))) => lines.push(t),
+                Some(ProcEvent::Exited(info)) => break info,
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        assert_eq!(lines, ["term"]);
         assert_eq!(info.signal, Some(9));
     }
 

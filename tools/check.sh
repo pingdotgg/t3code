@@ -53,6 +53,8 @@ monorepo_checks=(
   "client-check"
   "replay"
   "parity"
+  "codex instructions --check"
+  "codex conformance"
 )
 
 if [ -z "${CONN_MONOREPO:-}" ]; then
@@ -70,6 +72,9 @@ else
   run "replay" node crates/conn-server/tools/replay.mjs "$release/examples/replay_server"
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
+  run "codex instructions --check" \
+    node crates/conn-provider-codex/tools/gen-instructions.mjs --check
+  run "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs
 fi
 # orbit-flow needs no monorepo.
 run "orbit-flow (fake provider)" \

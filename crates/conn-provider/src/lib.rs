@@ -254,6 +254,13 @@ pub struct RuntimePolicy {
     pub runtime_mode: RuntimeMode,
     pub interaction_mode: InteractionMode,
     pub cwd: Option<String>,
+    /// A native approval policy that replaces the runtime mode's default (a managed policy's
+    /// override). Passed to the provider as is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<serde_json::Value>,
+    /// A native sandbox policy that replaces the runtime mode's default. Passed as is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<serde_json::Value>,
 }
 
 /// `ProviderAdapterV2OpenSessionInput`.

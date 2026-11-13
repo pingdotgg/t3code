@@ -12,6 +12,9 @@ use crate::support::{
     tagged_union,
 };
 
+/// `version` in `apps/server/package.json` at the pinned commit.
+pub const SERVER_VERSION: &str = "0.1.9";
+
 /// Single-value types for literal fields. Each serializes to its value and rejects any other.
 pub mod lit {
     use crate::support::literal;

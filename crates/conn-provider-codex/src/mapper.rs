@@ -474,7 +474,10 @@ impl<E: Env> Mapper<E> {
         let mut out = Vec::new();
         match inbound {
             Inbound::Notification { method, params } => {
-                if method != "turn/started" {
+                // Thread-level frames do not adopt: a resumed thread reports the previous
+                // turn's token usage before the new turn starts, and that turn id must not
+                // bind the new turn (found by the conformance check, `provider_thread_resume`).
+                if method != "turn/started" && !method.starts_with("thread/") {
                     self.adopt_pending(&params, &mut out);
                 }
                 self.notification(&method, &params, &mut out)

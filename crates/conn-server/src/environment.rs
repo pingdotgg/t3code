@@ -20,9 +20,10 @@ use crate::{
     settings::SettingsStore,
 };
 
-/// The `apps/server` version at the pinned contract commit. Clients compare it with their
-/// own version; a lower one shows a "server is behind" hint.
-pub const CONTRACT_SERVER_VERSION: &str = "0.1.9";
+/// The `apps/server` version at the pinned commit (generated into `conn-contract`). Clients
+/// compare it with their own version; a lower one shows a "server is behind" hint. The Codex
+/// provider sends the same value in `initialize`, as the T3 server does.
+pub const CONTRACT_SERVER_VERSION: &str = conn_contract::SERVER_VERSION;
 
 pub struct Environment {
     /// `ExecutionEnvironmentDescriptor`, served at `/.well-known/t3/environment` and inside

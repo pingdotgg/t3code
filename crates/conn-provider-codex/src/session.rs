@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
 
 use crate::client::{AppServer, CallError, SessionMsg};
+use crate::context::ToolAvailability;
 use crate::launch;
 use crate::mapper::{DRIVER, Mapper, Out};
 
@@ -36,6 +37,8 @@ pub struct CodexSession {
 struct Inner {
     id: String,
     instance_id: String,
+    /// Where chat attachments are read from (`CodexConfig::attachments_dir`).
+    attachments_dir: Option<std::path::PathBuf>,
     server: Arc<AppServer>,
     inbox: mpsc::Sender<SessionMsg>,
     state: Mutex<State>,
@@ -61,12 +64,14 @@ impl CodexSession {
         instance_id: &ProviderInstanceId,
         server: Arc<AppServer>,
         events: mpsc::Sender<ProviderEvent>,
+        attachments_dir: Option<std::path::PathBuf>,
     ) -> Self {
         let (inbox, rx) = mpsc::channel(EVENT_CAPACITY);
         server.add_session(id.as_str(), inbox.clone());
         let inner = Arc::new(Inner {
             id: id.as_str().to_owned(),
             instance_id: instance_id.as_str().to_owned(),
+            attachments_dir,
             server,
             inbox,
             state: Mutex::new(State {
@@ -407,12 +412,28 @@ impl Session for CodexSession {
                         .as_str()
                         .map(str::to_owned)
                 });
+            let codex_input = launch::user_input(
+                &input.message.text,
+                &input.message.attachments,
+                inner.attachments_dir.as_deref(),
+            )
+            .map_err(|detail| ProviderError::Protocol { detail })?;
+            // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
+            // `t3-code` server. Browser tools on, device tools off: the session carries no
+            // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
+            let t3_tools = inner
+                .lock()
+                .mcp_servers
+                .iter()
+                .any(|s| s.name == "t3-code")
+                .then(ToolAvailability::default);
             let params = launch::turn_start_params(
                 &native,
-                launch::user_input(&input.message.text),
+                codex_input,
                 &input.runtime_policy,
                 &input.model_selection,
                 summary.as_deref(),
+                t3_tools,
             );
             inner.lock().mapper.begin_turn(&native, &input);
             match inner.server.request("turn/start", params).await {
@@ -442,11 +463,17 @@ impl Session for CodexSession {
             let (Some(turn), Some(thread)) = (native_turn, native_thread) else {
                 return Err(failed("steer_turn", "that turn is not running"));
             };
+            let codex_input = launch::user_input(
+                &input.message.text,
+                &input.message.attachments,
+                inner.attachments_dir.as_deref(),
+            )
+            .map_err(|detail| ProviderError::Protocol { detail })?;
             inner
                 .server
                 .request(
                     "turn/steer",
-                    json!({"expectedTurnId": turn, "input": launch::user_input(&input.message.text), "threadId": thread}),
+                    json!({"expectedTurnId": turn, "input": codex_input, "threadId": thread}),
                 )
                 .await
                 .map(|_| ())
@@ -534,7 +561,10 @@ impl Session for CodexSession {
                 state.thread.clone()
             };
             if let Some((native, Some(generation))) = thread {
-                if inner.server.generation() == Some(generation) {
+                // TS unloads a thread (`thread/unsubscribe`) only while the shared process
+                // keeps serving other threads; the last session just stops the process.
+                if inner.server.generation() == Some(generation) && inner.server.session_count() > 1
+                {
                     let _ = inner
                         .server
                         .request("thread/unsubscribe", json!({ "threadId": native }))

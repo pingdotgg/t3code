@@ -289,3 +289,30 @@ fn a_frame_that_beats_the_turn_start_answer_registers_the_turn() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_resumed_threads_old_token_usage_does_not_bind_the_new_turn() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let stale = json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "th",
+        "turnId": "old", "tokenUsage": {"total": {"totalTokens": 5}, "last": {"totalTokens": 5}}}});
+    assert!(mapper.handle(Inbound::from_value(stale)).is_empty());
+    let outs = mapper.turn_start_result("th", &json!({"turn": {"id": "new", "startedAt": null}}));
+    assert!(!outs.is_empty());
+    assert_eq!(mapper.native_turn(&ids_for(&outs)), Some("new".to_owned()));
+}
+
+/// The provider turn id of the first `provider_turn.updated` in `outs`.
+fn ids_for(outs: &[Out]) -> String {
+    outs.iter()
+        .find_map(|o| match o {
+            Out::Event(e) => serde_json::to_value(e).unwrap()["providerTurn"]["id"]
+                .as_str()
+                .map(str::to_owned),
+            _ => None,
+        })
+        .unwrap()
+}

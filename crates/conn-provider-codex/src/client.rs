@@ -25,15 +25,13 @@ use crate::protocol::{Inbound, RpcError, notification, reply_error, request};
 /// A line longer than this is dropped. Tool results with inline images stay below it.
 pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// SIGTERM, then SIGKILL after this (`CODEX_APP_SERVER_FORCE_KILL_AFTER` in TS).
+pub const FORCE_KILL_AFTER: Duration = Duration::from_secs(2);
 /// The CLI release this crate was checked against: its printed schema (0.167.0) and the TS
 /// recordings (0.156.1). Newer releases still work while the fields read here keep their
 /// names; unknown methods and items are skipped and logged.
 pub const TESTED_CLI_VERSION: &str = "0.167.0";
 const SESSION_INBOX: usize = 256;
-
-/// `(slug, display name)` pairs from `model/list`.
-pub type ModelList = Vec<(String, String)>;
-type OnModels = Box<dyn Fn(ModelList) + Send + Sync>;
 
 #[derive(Debug)]
 pub enum SessionMsg {
@@ -86,20 +84,16 @@ pub struct AppServer {
     state: Mutex<State>,
     /// Serializes start-up and `initialize`; never held by notification routing.
     starting: tokio::sync::Mutex<()>,
-    /// Called once per process with the `model/list` entries.
-    on_models: OnModels,
 }
 
 impl AppServer {
-    pub fn new(
-        spec: LaunchSpec,
-        on_models: impl Fn(Vec<(String, String)>) + Send + Sync + 'static,
-    ) -> Arc<Self> {
+    /// The T3 server sends a session's app-server nothing beyond `initialize` until a thread
+    /// call (no `model/list`: its model catalog comes from a separate status probe).
+    pub fn new(spec: LaunchSpec) -> Arc<Self> {
         Arc::new(Self {
             spec,
             state: Mutex::new(State::default()),
             starting: tokio::sync::Mutex::new(()),
-            on_models: Box::new(on_models),
         })
     }
 
@@ -125,8 +119,13 @@ impl AppServer {
             }
         };
         if let Some(live) = live {
-            live.process.shutdown().await;
+            live.process.terminate(FORCE_KILL_AFTER).await;
         }
+    }
+
+    /// How many sessions share the process.
+    pub fn session_count(&self) -> usize {
+        self.lock().sessions.len()
     }
 
     pub fn route(&self, native_thread_id: &str, inbox: mpsc::Sender<SessionMsg>) {
@@ -172,7 +171,7 @@ impl AppServer {
             Err(e) => {
                 let live = self.lock().live.take();
                 if let Some(live) = live {
-                    live.process.shutdown().await;
+                    live.process.terminate(FORCE_KILL_AFTER).await;
                 }
                 return Err(e);
             }
@@ -198,43 +197,11 @@ impl AppServer {
                 live.initialized = true;
             }
         }
-        tokio::spawn(self.clone().list_models(generation));
         Ok(generation)
     }
 
     pub fn version(&self) -> Option<String> {
         self.lock().version.clone()
-    }
-
-    async fn list_models(self: Arc<Self>, generation: u64) {
-        let mut models = Vec::new();
-        let mut cursor = Value::Null;
-        loop {
-            let params = if cursor.is_null() {
-                serde_json::json!({})
-            } else {
-                serde_json::json!({ "cursor": cursor })
-            };
-            let Ok(page) = self.request_on(generation, "model/list", params).await else {
-                return;
-            };
-            for model in page["data"].as_array().into_iter().flatten() {
-                if model["hidden"] == true {
-                    continue;
-                }
-                if let Some(slug) = model["model"].as_str().or(model["id"].as_str()) {
-                    let name = model["displayName"].as_str().unwrap_or(slug);
-                    models.push((slug.to_owned(), name.to_owned()));
-                }
-            }
-            cursor = page["nextCursor"].clone();
-            if cursor.is_null() || models.len() > 500 {
-                break;
-            }
-        }
-        if !models.is_empty() {
-            (self.on_models)(models);
-        }
     }
 
     /// A request on the current process, starting it when needed.
@@ -406,29 +373,20 @@ mod tests {
 read init
 echo '{"id":1,"result":{"userAgent":"t3code_desktop/0.167.0 (x)"}}'
 read initialized
-read models
-echo '{"id":2,"result":{"data":[{"model":"gpt-6-luna","displayName":"GPT-6-Luna","hidden":false}],"nextCursor":null}}'
 read start
 echo '{"method":"thread/started","params":{"threadId":"t1"}}'
-echo '{"id":3,"result":{"thread":{"id":"t1"}}}'
+echo '{"id":2,"result":{"thread":{"id":"t1"}}}'
 read never
 "#;
 
     #[tokio::test(flavor = "current_thread")]
     async fn routes_responses_and_notifications_then_reports_exit() {
-        let models = Arc::new(Mutex::new(Vec::new()));
-        let seen = models.clone();
-        let server = AppServer::new(fake(FAKE), move |m| *seen.lock().unwrap() = m);
+        let server = AppServer::new(fake(FAKE));
         let (tx, mut inbox) = mpsc::channel(8);
         server.add_session("s1", tx.clone());
         server.route("t1", tx);
         let generation = server.ensure_started().await.unwrap();
         assert_eq!(server.version().as_deref(), Some("0.167.0"));
-        // Let the model listing take id 2 before the thread request.
-        while models.lock().unwrap().is_empty() {
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(models.lock().unwrap()[0].0, "gpt-6-luna");
         let result = server
             .request_on(generation, "thread/start", json!({}))
             .await
@@ -448,12 +406,9 @@ read never
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_crash_fails_pending_requests_and_tells_sessions() {
-        let server = AppServer::new(
-            fake(
-                r#"read init; echo '{"id":1,"result":{}}'; read initialized; read models; read req; exit 7"#,
-            ),
-            |_| {},
-        );
+        let server = AppServer::new(fake(
+            r#"read init; echo '{"id":1,"result":{}}'; read initialized; read req; exit 7"#,
+        ));
         let (tx, mut inbox) = mpsc::channel(8);
         server.add_session("s1", tx);
         let generation = server.ensure_started().await.unwrap();

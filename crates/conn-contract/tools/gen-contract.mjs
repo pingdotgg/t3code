@@ -1049,7 +1049,15 @@ const body = itemOrder
   .filter((n) => items.has(n))
   .map((n) => items.get(n))
   .join("\n\n");
+// The T3 server's own version at the pinned commit (`apps/server/package.json`). Conn Server
+// reports it as its server version and sends it to provider CLIs as T3 does (`clientInfo`).
+const serverVersion = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(repoDir, "apps/server/package.json"), "utf8"),
+).version;
 const generated = `${header}
+/// \`version\` in \`apps/server/package.json\` at the pinned commit.
+pub const SERVER_VERSION: &str = ${JSON.stringify(serverVersion)};
+
 /// Single-value types for literal fields. Each serializes to its value and rejects any other.
 pub mod lit {
     use crate::support::literal;

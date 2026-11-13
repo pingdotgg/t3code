@@ -11,6 +11,9 @@
 //! Reference behaviour: `CodexAdapterV2.ts`. See `PROTOCOL.md` and `README.md`.
 
 pub mod client;
+pub mod context;
+#[rustfmt::skip]
+pub mod instructions;
 pub mod launch;
 pub mod mapper;
 pub mod protocol;
@@ -49,19 +52,15 @@ pub struct CodexProvider {
 impl CodexProvider {
     pub fn new(instance_id: ProviderInstanceId, config: CodexConfig) -> Self {
         let launch_args = std::env::var(launch::LAUNCH_ARGS_ENV).ok();
-        let spec = launch::launch_spec(&config, launch_args.as_deref());
+        let host_has_originator = std::env::var_os(launch::ORIGINATOR_ENV).is_some();
+        let spec = launch::launch_spec(&config, launch_args.as_deref(), host_has_originator);
         let models = Arc::new(Mutex::new(
             config
                 .effective_home()
                 .and_then(|home| cached_models(&home.join("models_cache.json")))
                 .unwrap_or_else(fallback_models),
         ));
-        let live_models = models.clone();
-        let server = client::AppServer::new(spec, move |list| {
-            if let Ok(mut models) = live_models.lock() {
-                *models = list;
-            }
-        });
+        let server = client::AppServer::new(spec);
         Self {
             instance_id,
             config,
@@ -136,6 +135,7 @@ impl Provider for CodexProvider {
                 &self.instance_id,
                 self.server.clone(),
                 tx,
+                self.config.attachments_dir.clone(),
             );
             Ok(OpenedSession {
                 session: Box::new(session),
