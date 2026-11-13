@@ -57,6 +57,12 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+Agents and [outside agents](./outside-agents.md) read the same token and cost totals with the
+`t3_usage_read` MCP tool, for days in a time zone they choose. Pass a
+[linked environment's](./remote-access.md#link-another-environment) `environmentId` to read that
+machine's totals instead. Each environment answers on its own, so a script that adds environments
+together should count a source that two of them share once.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,

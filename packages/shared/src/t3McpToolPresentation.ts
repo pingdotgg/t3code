@@ -338,6 +338,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Read", "Reading", "Read", "environment preferences"],
     "environment-read",
   ),
+  t3_usage_read: tool(["Read", "Reading", "Read", "usage"], "environment-read"),
   t3_environment_links: tool(
     ["List", "Listing", "Listed", "linked environments"],
     "environment-links",

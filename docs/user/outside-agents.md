@@ -1,8 +1,8 @@
 # Outside agents
 
 Agents that T3 Code did not start can work with an environment through its MCP
-server. They can read projects and threads, start and message threads, and
-check which providers and models are available. This covers Claude Code or
+server. They can read projects, threads and usage, start and message threads,
+and check which providers and models are available. This covers Claude Code or
 Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
 in once, and you choose what it may do.
 
@@ -74,7 +74,7 @@ picked there. With another code, choose what the agent may do here: **Auto** is
 selected by default, or the closest lower mode allowed by your organization’s
 policy. Approving without a code starts at **Read only**:
 
-- **Read only** lets the agent read projects and threads and see
+- **Read only** lets the agent read projects, threads and usage and see
   the available providers and models. It cannot change anything.
 - **Supervised** through **Full access** also let it start, message and stop
   threads in every project. A thread it starts or steers cannot run with more

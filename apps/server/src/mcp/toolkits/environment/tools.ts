@@ -6,6 +6,8 @@ import {
   OrchestratorMcpFailure,
   ServerSettings,
   ServerSettingsPatch,
+  UsageSummary,
+  UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -13,6 +15,7 @@ import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
+import * as UsageService from "../../../usage/UsageService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const PreferenceFields = {
@@ -67,4 +70,24 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+const UsageReadTool = Tool.make("t3_usage_read", {
+  ...shared,
+  dependencies: [...shared.dependencies, UsageService.UsageService],
+  description:
+    "Read token use and estimated cost, as the Usage page shows. Days are YYYY-MM-DD in IANA `timeZone`. Sources still scanning are marked `refreshing`; `awaitRefresh: true` waits for them.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    sinceDay: UsageSummaryInput.fields.sinceDay,
+    untilDay: UsageSummaryInput.fields.untilDay,
+    timeZone: UsageSummaryInput.fields.timeZone,
+    awaitRefresh: UsageSummaryInput.fields.awaitRefresh,
+  }),
+  success: UsageSummary,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  UsageReadTool,
+);

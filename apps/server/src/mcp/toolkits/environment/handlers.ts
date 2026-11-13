@@ -1,8 +1,13 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type ServerSettings,
+  type UsageReadError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
+import * as UsageService from "../../../usage/UsageService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller, unavailable } from "../../threadAccess.ts";
@@ -40,6 +45,11 @@ const access = Effect.gen(function* () {
     });
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
+const usageFailure = (error: UsageReadError) =>
+  new OrchestratorMcpFailure({
+    code: error.reason === "invalidWindow" ? "invalid_request" : "orchestration_error",
+    message: error.message,
+  });
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
@@ -69,6 +79,13 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       return yield* scope.thread === undefined
         ? update
         : executor.withLock(scope.thread.threadId, update);
+    }),
+  ),
+  t3_usage_read: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      yield* access;
+      const usage = yield* UsageService.UsageService;
+      return yield* usage.readSummary(input).pipe(Effect.mapError(usageFailure));
     }),
   ),
 });

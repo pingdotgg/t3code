@@ -11,6 +11,10 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  USAGE_CONTRACT_VERSION,
+  UsageDay,
+  type UsageSummary,
+  type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -34,6 +38,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as UsageService from "../usage/UsageService.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -56,6 +61,7 @@ interface Seen {
   readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
+  readonly usageReads: ReadonlyArray<UsageSummaryInput>;
   /** Commands dispatched and delegated-task stops, as `<type> <threadId>`. */
   readonly stops: ReadonlyArray<string>;
 }
@@ -65,6 +71,7 @@ const nothingSeen: Seen = {
   launches: [],
   projects: [],
   clones: [],
+  usageReads: [],
   stops: [],
 };
 
@@ -163,6 +170,63 @@ const boxLaunches = (seen: Ref.Ref<Seen>) =>
       ),
   });
 
+/** One Codex source on `hostId` with one priced bucket, for the window asked. */
+const usageOn = (hostId: string, input: UsageSummaryInput): UsageSummary => ({
+  contractVersion: USAGE_CONTRACT_VERSION,
+  readAt: "2026-11-13T00:00:00.000Z",
+  timeZone: input.timeZone,
+  sinceDay: input.sinceDay,
+  untilDay: input.untilDay,
+  buckets: [
+    {
+      day: input.sinceDay,
+      provider: "codex",
+      model: "gpt-5",
+      totals: {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 50,
+        cacheCreationTokens: 0,
+        outputTokens: 20,
+        reasoningTokens: 5,
+      },
+      costUsd: 0.25,
+      cacheSavingsUsd: 0.01,
+      costSource: "modelPriced",
+      records: 3,
+      unpricedRecords: 0,
+      sessions: 1,
+    },
+  ],
+  sources: [
+    {
+      fingerprint: {
+        hostId,
+        provider: "codex",
+        resolvedHomePath: "/home/user/.codex",
+        volumeId: "1:2",
+      },
+      status: "ok",
+      scannedFiles: 1,
+      skippedFiles: 0,
+      malformedRecords: 0,
+      distinctSessions: 1,
+      message: null,
+    },
+  ],
+  pricing: { status: "cached", source: "test", fetchedAt: null, knownModels: 1 },
+  scanDurationMs: 0,
+});
+
+/** B reads its usage for any window, and records the window. */
+const boxUsage = (seen: Ref.Ref<Seen>) =>
+  Layer.mock(UsageService.UsageService)({
+    readSummary: (input) =>
+      Ref.update(seen, (current) => ({
+        ...current,
+        usageReads: [...current.usageReads, input],
+      })).pipe(Effect.as(usageOn("box", input))),
+  });
+
 /** B clones and registers whatever it is asked to, and records it. */
 const boxProjects = (seen: Ref.Ref<Seen>) =>
   Layer.merge(
@@ -223,10 +287,11 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       McpHttpServer.layerOrchestratorToolkit,
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
+      McpHttpServer.layerEnvironmentToolkit,
     ).pipe(
       Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Layer.provide(NodeCrypto.layer),
-      Layer.provide(boxThreads(seen, linkSession)),
+      Layer.provide(Layer.merge(boxThreads(seen, linkSession), boxUsage(seen))),
       Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
       Layer.provide(boxLaunches(seen)),
       Layer.provide(
@@ -278,6 +343,7 @@ const makeLaptop = Effect.gen(function* () {
     McpHttpServer.layerOrchestratorToolkit,
     McpHttpServer.layerProjectRegistration,
     McpHttpServer.layerThreadToolkit,
+    McpHttpServer.layerEnvironmentToolkit,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -334,6 +400,9 @@ const makeLaptop = Effect.gen(function* () {
           followUp: (_scope, _environmentId, _request, sent) => Effect.succeed(sent),
         }),
         Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+        Layer.mock(UsageService.UsageService)({
+          readSummary: (input) => Effect.succeed(usageOn("laptop", input)),
+        }),
       ),
     ),
     Layer.fresh,
@@ -632,6 +701,19 @@ it.effect("runs any tool that takes a linked environment there", () =>
       expect(archived.isError).toBe(false);
       expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
 
+      const window = {
+        sinceDay: UsageDay.make("2026-11-01"),
+        untilDay: UsageDay.make("2026-11-13"),
+        timeZone: "Australia/Sydney",
+      };
+      const usage = yield* a.call("thread:laptop-full", "t3_usage_read", {
+        environmentId: box.environmentId,
+        ...window,
+        awaitRefresh: true,
+      });
+      expect(usage.structuredContent).toEqual(usageOn("box", window));
+      expect((yield* Ref.get(seen)).usageReads).toEqual([{ ...window, awaitRefresh: true }]);
+
       // This environment's own id keeps the call here.
       const own = yield* a.call("thread:laptop-full", "t3_thread_configure", {
         environmentId: laptop.environmentId,
@@ -640,6 +722,12 @@ it.effect("runs any tool that takes a linked environment there", () =>
         threadId: "thread:laptop-full",
         runtimeMode: "full-access",
       });
+      const ownUsage = yield* a.call("thread:laptop-full", "t3_usage_read", {
+        environmentId: laptop.environmentId,
+        ...window,
+      });
+      expect(ownUsage.structuredContent).toEqual(usageOn("laptop", window));
+      expect((yield* Ref.get(seen)).usageReads).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -671,6 +759,15 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
         ["t3_thread_list", { environmentId: box.environmentId, projectId: boxProject }],
         ["t3_thread_read", { environmentId: box.environmentId, threadId: boxThread }],
         ["t3_thread_wait", { environmentId: box.environmentId, threadId: boxThread }],
+        [
+          "t3_usage_read",
+          {
+            environmentId: box.environmentId,
+            sinceDay: "2026-11-01",
+            untilDay: "2026-11-13",
+            timeZone: "UTC",
+          },
+        ],
         [
           "t3_thread_send",
           { environmentId: box.environmentId, threadId: boxThread, message: "Carry on there." },
