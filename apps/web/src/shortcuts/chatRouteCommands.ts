@@ -123,12 +123,12 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "chat.newLocal": startNewLocal,
       "chat.newWithoutProject": (event) => {
         const { activeThread, activeDraftThread } = readThreadContext();
-        const environmentId = scratch.scratchEnvironmentId(
-          activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null,
-        );
-        if (environmentId === null) return;
+        const current = activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
+        const environmentId = scratch.scratchEnvironmentId(current);
+        const blocked = environmentId === null ? scratch.scratchBlocked(current) : null;
+        if (environmentId === null && blocked === null) return;
         claim(event);
-        void scratch.startScratchThread(environmentId);
+        void scratch.startScratchThreadOrExplain(environmentId, blocked);
       },
       "chat.new": (event) => {
         const groups = readProjectGroups();

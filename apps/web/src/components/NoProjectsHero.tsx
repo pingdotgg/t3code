@@ -13,8 +13,11 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
 export function NoProjectsHero() {
   const contentArea = workspaceAreaProps("home", 1, "Home");
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const { scratchEnvironmentId, scratchBlocked, startScratchThreadOrExplain } = useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
+  const scratchBlockedByRepository =
+    scratchTargetEnvironmentId === null ? scratchBlocked(primaryEnvironmentId) : null;
+  const offersScratch = scratchTargetEnvironmentId !== null || scratchBlockedByRepository !== null;
 
   return (
     <SidebarInset
@@ -30,25 +33,30 @@ export function NoProjectsHero() {
             <EmptyHeader className="max-w-none">
               <EmptyTitle>What should we work on?</EmptyTitle>
               <EmptyDescription>
-                {scratchTargetEnvironmentId === null
-                  ? "Add a project to start your first thread."
-                  : "Add a project, or start without one."}
+                {offersScratch
+                  ? "Add a project, or start without one."
+                  : "Add a project to start your first thread."}
               </EmptyDescription>
               <div className="mt-6 flex justify-center gap-2">
                 <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
                   <PlusIcon className="size-4" />
                   Add project
                 </Button>
-                {scratchTargetEnvironmentId === null ? null : (
+                {offersScratch ? (
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => void startScratchThread(scratchTargetEnvironmentId)}
+                    onClick={() =>
+                      void startScratchThreadOrExplain(
+                        scratchTargetEnvironmentId,
+                        scratchBlockedByRepository,
+                      )
+                    }
                   >
                     <MessageSquareDashedIcon className="size-4" />
                     Start without a project
                   </Button>
-                )}
+                ) : null}
               </div>
             </EmptyHeader>
           </div>
