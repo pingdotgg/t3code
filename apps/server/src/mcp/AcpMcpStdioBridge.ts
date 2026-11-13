@@ -58,6 +58,12 @@ function protocolVersionOf(entry: unknown): string | null {
   return typeof version === "string" && version.length > 0 ? version : null;
 }
 
+function replyToServerRequest(envelope: JsonRpcEnvelope): unknown {
+  return envelope.method === "ping"
+    ? { jsonrpc: "2.0", id: envelope.id, result: {} }
+    : { jsonrpc: "2.0", id: envelope.id, error: { code: -32601, message: "Method not found" } };
+}
+
 export interface McpToolSessionOptions {
   readonly endpoint: string;
   readonly authorization: string;
@@ -112,10 +118,16 @@ export const mcpToolSession = (
         message: `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
       });
     }
-    const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
-    for (const payload of payloads) {
+    const payloads: Array<unknown> = [];
+    yield* Stream.runForEach(responsePayloads(response, bridgeError), (payload) => {
       protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
-    }
+      const envelope = asEnvelope(payload);
+      if (envelope?.id !== undefined && typeof envelope.method === "string") {
+        return send(replyToServerRequest(envelope)).pipe(Effect.asVoid);
+      }
+      payloads.push(payload);
+      return Effect.void;
+    });
     return payloads;
   });
 

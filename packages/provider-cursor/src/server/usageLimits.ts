@@ -16,6 +16,7 @@ import {
 import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 
 const CursorUsageResponse = Schema.Struct({
+  billingCycleStart: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   planUsage: Schema.optional(
     Schema.Struct({
@@ -36,6 +37,11 @@ export function cursorUsageResponseToLimits(
     Number(response.billingCycleEnd) > 0 && Option.isSome(reset)
       ? DateTime.formatIso(reset.value)
       : undefined;
+  const cycleStart = Number(response.billingCycleStart);
+  const windowDurationMins =
+    resetsAt && cycleStart > 0
+      ? Math.round((Number(response.billingCycleEnd) - cycleStart) / 60_000)
+      : 0;
   const windows: ServerProviderUsageWindow[] = [];
   if (response.planUsage) {
     for (const { id, label } of CURSOR_USAGE_WINDOWS) {
@@ -47,6 +53,7 @@ export function cursorUsageResponseToLimits(
         label,
         usedPercent: clampPercent(usedPercent),
         ...(resetsAt ? { resetsAt } : {}),
+        ...(windowDurationMins > 0 ? { windowDurationMins } : {}),
       });
     }
   }

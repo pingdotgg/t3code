@@ -50,7 +50,7 @@ export function drawFrame(
   frozen: { readonly rows: number; readonly cols: number },
   wider?: SheetViewport,
 ): Frame | undefined {
-  const around = wider && attempt(() => workbook.displayList(wider));
+  const around = wider && untruncated(workbook, wider);
 
   if (wider && around)
     return {
@@ -59,15 +59,15 @@ export function drawFrame(
       viewport: wider,
     };
 
-  const whole = attempt(() => workbook.displayList(viewport));
+  const whole = untruncated(workbook, viewport);
 
   if (whole)
     return { list: whole, tiles: [{ list: whole, x: 0, y: 0, clipX: 0, clipY: 0 }], viewport };
 
   // The engine refuses a viewport with too many cells, as a wide pane of narrow columns has. One row and one column of
   // the frame give its tracks, and so where its frozen panes end.
-  const columns = attempt(() => workbook.displayList({ ...viewport, height: 1 }).grid);
-  const rows = attempt(() => workbook.displayList({ ...viewport, width: 1 }).grid);
+  const columns = untruncated(workbook, { ...viewport, height: 1 })?.grid;
+  const rows = untruncated(workbook, { ...viewport, width: 1 })?.grid;
 
   if (!columns || !rows) return undefined;
 
@@ -81,6 +81,54 @@ export function drawFrame(
   };
 
   return tiled(workbook, viewport, frozenSize(grid, frozen), grid, 2);
+}
+
+/** The engine's screen gridlines: one-pixel solid lines in its gridline grey, unlike any border it draws. */
+const gridline = (command: DisplayList["commands"][number]) =>
+  command.op === "line" && command.color === "#d4d4d4" && command.width === 1 && !command.style;
+
+/** A frame without the gridlines the engine draws on every sheet, for a sheet whose view hides them. */
+export function withoutGridlines(frame: Frame): Frame {
+  return {
+    ...frame,
+    tiles: frame.tiles.map((tile) => ({
+      ...tile,
+      list: { ...tile.list, commands: tile.list.commands.filter((command) => !gridline(command)) },
+    })),
+  };
+}
+
+/**
+ * A frame whose chart text names real fonts. The engine leaves the theme's `+mj-lt` and `+mn-lt` in chart text and the
+ * painter sets chart families as CSS as they are, so an unresolved or missing family would keep the previous font.
+ */
+export function chartFonts(
+  frame: Frame,
+  theme: { readonly major: string; readonly minor: string },
+): Frame {
+  const family = (name: string) => {
+    const resolved = name.startsWith("+mj-")
+      ? theme.major
+      : name.startsWith("+mn-")
+        ? theme.minor
+        : name;
+    return `"${resolved.replaceAll('"', "")}", sans-serif`;
+  };
+
+  return {
+    ...frame,
+    tiles: frame.tiles.map((tile) => ({
+      ...tile,
+      list: {
+        ...tile.list,
+        commands: tile.list.commands.map((command) =>
+          command.op === "text" && command.chart
+            ? { ...command, fontFamily: family(command.fontFamily ?? theme.minor) }
+            : command,
+        ),
+      },
+    })),
+  };
 }
 
 /**
@@ -175,14 +223,12 @@ function tiled(
       const right = column.end === viewport.width ? column.end : column.end + seamOverlap;
       const bottom = row.end === viewport.height ? row.end : row.end + seamOverlap;
 
-      const list = attempt(() =>
-        workbook.displayList({
-          x: viewport.x + x,
-          y: viewport.y + y,
-          width: right - x,
-          height: bottom - y,
-        }),
-      );
+      const list = untruncated(workbook, {
+        x: viewport.x + x,
+        y: viewport.y + y,
+        width: right - x,
+        height: bottom - y,
+      });
 
       if (list) tiles.push({ list, x, y, clipX: column.start, clipY: row.start });
 
@@ -203,6 +249,13 @@ function tiled(
   if (split >= maxSplit) return undefined;
 
   return tiled(workbook, viewport, panes, grid, split + 1);
+}
+
+/** A viewport's display list, or undefined where the engine refuses it or cuts it short at its cell limit. */
+function untruncated(workbook: WorkbookHandle, viewport: SheetViewport) {
+  const list = attempt(() => workbook.displayList(viewport));
+
+  return list?.truncated ? undefined : list;
 }
 
 /** Even spans of a side, the first holding the frozen panes whole; a seam inside them is dropped. */

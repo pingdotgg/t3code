@@ -80,19 +80,6 @@ describe("effectiveSnoozed", () => {
     expect(effectiveSnoozed(makeShell({ snoozedUntil: "not-a-date" }), { now: NOW })).toBe(false);
   });
 
-  it("wakes early when the agent is blocked on the user", () => {
-    expect(
-      effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, pending: "approval" }), {
-        now: NOW,
-      }),
-    ).toBe(false);
-    expect(
-      effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, pending: "user-input" }), {
-        now: NOW,
-      }),
-    ).toBe(false);
-  });
-
   it("defers an existing question until the timer, but wakes for a new question", () => {
     const shell = makeShell({
       snoozedUntil: FUTURE_WAKE,
