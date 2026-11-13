@@ -80,6 +80,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
@@ -5576,6 +5577,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "fork",
       }),
     );
+    const sideChatRuntimeMode = command.sideChat
+      ? resolveProjectSettings(
+          yield* serverSettings.getSettings.pipe(mapDispatchError(command)),
+          sourceProjection.thread.projectId,
+        ).settings.sideChatRuntimeMode
+      : undefined;
+    const selectedRuntimeMode =
+      sideChatRuntimeMode === "inherit-parent"
+        ? sourceProjection.thread.runtimeMode
+        : sideChatRuntimeMode;
+    const runtimeMode =
+      selectedRuntimeMode !== undefined &&
+      runtimeModeCeiling !== undefined &&
+      isRuntimeModeAbove(selectedRuntimeMode, runtimeModeCeiling.maxRuntimeMode)
+        ? runtimeModeCeiling.maxRuntimeMode
+        : selectedRuntimeMode;
+    if (runtimeMode !== undefined) {
+      yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, {
+        runtimeMode,
+        interactionMode: sourceProjection.thread.interactionMode,
+      });
+    }
     const { targetThread, transfer } = yield* threadForkService
       .plan({
         sourceProjection,
@@ -5592,7 +5615,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
-        ...(command.sideChat ? { sideChat: true } : {}),
+        ...(runtimeMode === undefined
+          ? {}
+          : {
+              sideChat: true,
+              sideChatRuntimeMode: runtimeMode,
+            }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

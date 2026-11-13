@@ -2799,7 +2799,6 @@ export default function ChatView(props: ChatViewProps) {
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
     readSettings: () => ({
-      runtimeMode,
       modelSelection: composerRef.current?.getSendContext().selectedModelSelection,
     }),
     onError: (message) => {

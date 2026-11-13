@@ -5,13 +5,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  MessageId,
-  ThreadId,
-  type ModelSelection,
-  type RuntimeMode,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { MessageId, ThreadId, type ModelSelection, type ScopedThreadRef } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { uuidv4 } from "../../lib/uuid";
@@ -23,13 +17,12 @@ import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 /**
  * Forks `source` at its latest stable point into a side chat, sends `prompt` there, and opens
- * it like any linked thread. Resolves false when the side chat did not start. `settings` are
- * what the parent's composer would send, which its thread gets only on its next send.
+ * it like any linked thread with server-resolved permissions and the parent's model.
+ * Resolves false when the side chat did not start.
  */
 export function useStartSideChat() {
   const forkSideChat = useAtomCommand(threadEnvironment.forkSideChat, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
-  const setRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, { reportFailure: false });
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const openLinkedThread = useOpenLinkedThread();
 
@@ -45,7 +38,7 @@ export function useStartSideChat() {
   return async (
     source: ScopedThreadRef,
     prompt: string,
-    settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+    settings: { readonly modelSelection: ModelSelection },
   ): Promise<boolean> => {
     const targetThreadId = ThreadId.make(uuidv4());
     const fork = await forkSideChat({
@@ -82,21 +75,6 @@ export function useStartSideChat() {
       discard();
       return false;
     }
-    if (settings.runtimeMode !== sideChat.runtimeMode) {
-      const mode = await setRuntimeMode({
-        environmentId: source.environmentId,
-        input: {
-          threadId: targetThreadId,
-          runtimeMode: settings.runtimeMode,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (mode._tag === "Failure") {
-        alertFailure(mode, "Could not set the side chat's permission mode.");
-        discard();
-        return false;
-      }
-    }
     const turn = await startTurn({
       environmentId: source.environmentId,
       input: {
@@ -109,7 +87,7 @@ export function useStartSideChat() {
         },
         modelSelection: settings.modelSelection,
         titleSeed: deriveThreadTitleSeed({ text: prompt, attachments: [] }),
-        runtimeMode: settings.runtimeMode,
+        runtimeMode: sideChat.runtimeMode,
         interactionMode: "default",
         createdAt: new Date().toISOString(),
       },

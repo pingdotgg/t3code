@@ -5,10 +5,14 @@ composer; it applies to that thread. A new thread names its mode under the compo
 on your default mode, open the model picker and choose **Permissions** at its bottom, or press
 `mod+shift+a`. A thread on another mode shows the mode next to the model.
 
-Set the default for new threads in **Settings → Threads → New threads → Permissions**.
-Projects can override the environment default. New threads use this setting rather than the
-mode of the thread you were viewing. The initial default is **Full access**; existing threads
-and modes you choose in a draft keep their permissions.
+Set permission defaults in **Settings → Threads → Permissions**: **New threads** for
+regular threads and **Side chats** for `/side` chats. Side chats default to **Inherit parent**.
+**Inherit parent** copies the parent thread’s current permissions when a side chat is
+created, including its first turn. Administrator limits still apply. Later changes to the parent
+or this setting do not change existing side chats; their composers can still choose another mode.
+Projects can override the environment defaults. New threads use the **New threads** setting
+rather than the mode of the thread you were viewing. Its initial default is **Full access**;
+existing threads and modes you choose in a draft keep their permissions.
 
 | Mode                  | Behavior                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------- |

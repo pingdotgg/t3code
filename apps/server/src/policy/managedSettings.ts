@@ -5,6 +5,7 @@ import {
   ProjectSettingsOverrides,
   type RuntimeMode,
   ServerSettings,
+  type SideChatRuntimeMode,
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
@@ -207,6 +208,11 @@ const lockTargets = (encoded: unknown, entry: Entry): ReadonlyArray<Segments> =>
   return [entry.segments, ...projectTargets];
 };
 
+const isDefaultRuntimeModeAbove = (
+  mode: SideChatRuntimeMode | undefined,
+  ceiling: RuntimeMode | undefined,
+) => mode !== undefined && mode !== "inherit-parent" && isRuntimeModeAbove(mode, ceiling);
+
 /**
  * A user's stored default runtime mode can sit above a ceiling deployed after it was chosen, and
  * the built-in default is the broadest mode. Every new thread would then be refused, so the
@@ -217,29 +223,27 @@ const clampDefaultRuntimeModes = (
   settings: ServerSettings,
   ceiling: RuntimeMode,
 ): ServerSettings => {
-  const projectsAbove = Object.entries(settings.projectSettingsOverrides).filter(
-    ([, overrides]) =>
-      overrides.defaultRuntimeMode !== undefined &&
-      isRuntimeModeAbove(overrides.defaultRuntimeMode, ceiling),
-  );
-  if (!isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling) && projectsAbove.length === 0) {
-    return settings;
-  }
-  return {
-    ...settings,
-    defaultRuntimeMode: isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling)
-      ? ceiling
-      : settings.defaultRuntimeMode,
-    projectSettingsOverrides: {
-      ...settings.projectSettingsOverrides,
-      ...Object.fromEntries(
-        projectsAbove.map(([projectId, overrides]) => [
-          projectId,
-          { ...overrides, defaultRuntimeMode: ceiling },
-        ]),
+  let effective = settings;
+  for (const key of ["defaultRuntimeMode", "sideChatRuntimeMode"] as const) {
+    const projectsAbove = Object.entries(effective.projectSettingsOverrides).filter(
+      ([, overrides]) => isDefaultRuntimeModeAbove(overrides[key], ceiling),
+    );
+    if (!isDefaultRuntimeModeAbove(effective[key], ceiling) && projectsAbove.length === 0) continue;
+    effective = Object.assign({}, effective, {
+      [key]: isDefaultRuntimeModeAbove(effective[key], ceiling) ? ceiling : effective[key],
+      projectSettingsOverrides: Object.assign(
+        {},
+        effective.projectSettingsOverrides,
+        Object.fromEntries(
+          projectsAbove.map(([projectId, overrides]) => [
+            projectId,
+            { ...overrides, [key]: ceiling },
+          ]),
+        ),
       ),
-    },
-  };
+    });
+  }
+  return effective;
 };
 
 /** Build the overlay for a policy's settings, or describe the first entry this build cannot apply. */
@@ -363,14 +367,16 @@ export function makeManagedSettings(
     };
   }
   // A managed default above the ceiling would start every thread in a mode the policy refuses.
-  if (
-    all.some((entry) => entry.path === "defaultRuntimeMode") &&
-    isRuntimeModeAbove(decoded.value.defaultRuntimeMode, maxRuntimeMode)
-  ) {
-    return {
-      _tag: "Invalid",
-      reason: `"defaultRuntimeMode" is above "limits.maxRuntimeMode"`,
-    };
+  for (const key of ["defaultRuntimeMode", "sideChatRuntimeMode"] as const) {
+    if (
+      all.some((entry) => entry.path === key) &&
+      isDefaultRuntimeModeAbove(decoded.value[key], maxRuntimeMode)
+    ) {
+      return {
+        _tag: "Invalid",
+        reason: `"${key}" is above "limits.maxRuntimeMode"`,
+      };
+    }
   }
 
   const defaultsTree = defaults.reduce<unknown>(
