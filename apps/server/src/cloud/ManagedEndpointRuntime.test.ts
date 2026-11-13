@@ -28,69 +28,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-
-const layerRelayClientAvailable = Layer.succeed(
-  RelayClient.RelayClient,
-  RelayClient.RelayClient.of({
-    resolve: Effect.succeed({
-      status: "available",
-      executablePath: "cloudflared",
-      source: "path",
-      version: RelayClient.CLOUDFLARED_VERSION,
-    }),
-    install: Effect.die("unused"),
-    installWithProgress: () => Effect.die("unused"),
-    pruneManagedVersions: Effect.void,
-  }),
-);
-
-const unusedHttpClient = HttpClient.make(() => Effect.die("unused"));
-
-const decodeLogEntry = Schema.decodeUnknownSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      level: Schema.String,
-      message: Schema.Tuple([Schema.String, Schema.Unknown]),
-    }),
-  ),
-);
-
-const emptySecretStoreLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
-  get: () => Effect.succeedNone,
-  set: () => Effect.void,
-});
-
-const runtimeDependencies = (
-  spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = layerRelayClientAvailable,
-  httpClient = unusedHttpClient,
-  secretStoreLayer = emptySecretStoreLayer,
-) =>
-  Layer.mergeAll(
-    ManagedPolicy.layerTest(),
-    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Layer.succeed(HttpClient.HttpClient, httpClient),
-    relayClientLayer,
-    secretStoreLayer,
-    ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
-  ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
-
-const buildCloudManagedEndpointRuntime = (
-  spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = layerRelayClientAvailable,
-  httpClient = unusedHttpClient,
-  secretStoreLayer = emptySecretStoreLayer,
-) =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(
-      ManagedEndpointRuntime.layer.pipe(
-        Layer.provide(runtimeDependencies(spawner, relayClientLayer, httpClient, secretStoreLayer)),
-      ),
-    );
-    return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
-      Effect.provide(context),
-    );
-  });
+import { buildCloudManagedEndpointRuntime, decodeLogEntry, layerRelayClientAvailable, runtimeDependencies, unusedHttpClient } from "./ManagedEndpointRuntime-part2.testkit.ts";
 
 function makeHandle(input: {
   readonly pid: number;

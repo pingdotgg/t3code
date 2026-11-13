@@ -1,3 +1,5 @@
+import type { LedgerEntry, RunningSession } from "./EasDeviceHost-part2.ts";
+import { CATALOG, PLATFORMS, POLL_INTERVAL, PREVIEW_TIMEOUT, REAP_INTERVAL_MS, RECORD_LIFETIME_MS, RECORD_MAX_AGE_MS, START_TIMEOUT, STATUS_TTL_MS, TRANSIENT_RETRY, UNCERTAIN_CREATE_MS, decodeLedger, decodePathSegment, encodeLedger, resolveSavedExpoCredential } from "./EasDeviceHost-part2.ts";
 /**
  * Cloud simulators from EAS Simulator. A device exists only while a session
  * runs, and every session bills the Expo account until it stops, so this host
@@ -39,118 +41,6 @@ import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { findEasProjectId } from "./easProjectId.ts";
 import { type ExpoApi, makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
-
-const POLL_INTERVAL = Duration.seconds(5);
-// How stale a running session's status may get before listing rechecks it.
-const STATUS_TTL_MS = 15_000;
-// Expo's own CLI waits this long once a worker picks the session up.
-const START_TIMEOUT = Duration.minutes(15);
-const PREVIEW_TIMEOUT = Duration.seconds(20);
-const decodeServeSimApi = Schema.decodeUnknownEffect(
-  Schema.Struct({ device: Schema.NonEmptyString }),
-);
-const decodeServeEmuApi = Schema.decodeUnknownEffect(
-  Schema.Struct({ serial: Schema.NonEmptyString }),
-);
-/**
- * Each session's preview host serves serve-sim at its root and serve-emu under
- * its vendor prefix, and names its device by an id of its own that agent-device
- * also selects it by.
- */
-const PLATFORMS = {
-  ios: {
-    name: "iPhone (EAS Simulator)",
-    hubPrefix: "/vendor/serve-sim",
-    previewPrefix: "",
-    protocol: "serve-sim",
-    remoteDeviceId: (api: unknown) => decodeServeSimApi(api).pipe(Effect.map((api) => api.device)),
-  },
-  android: {
-    name: "Android (EAS Simulator)",
-    hubPrefix: "/vendor/serve-emu",
-    previewPrefix: "/vendor/serve-emu",
-    protocol: "serve-emu",
-    remoteDeviceId: (api: unknown) => decodeServeEmuApi(api).pipe(Effect.map((api) => api.serial)),
-  },
-} as const;
-
-/** EAS picks the simulator model; one entry starts a session. */
-const CATALOG: ReadonlyArray<DeviceHost.HostDevice> = [
-  {
-    id: "eas-ios",
-    platform: "ios",
-    name: PLATFORMS.ios.name,
-    version: "Cloud",
-    booted: false,
-    physical: false,
-  },
-  {
-    id: "eas-android",
-    platform: "android",
-    name: PLATFORMS.android.name,
-    version: "Cloud",
-    booted: false,
-    physical: false,
-  },
-];
-
-interface RunningSession {
-  readonly sessionId: string;
-  readonly name: string;
-  readonly platform: DevicePlatform;
-  readonly remoteDeviceId: string;
-  readonly preview: { readonly origin: string; readonly token: Redacted.Redacted<string> };
-  readonly agent: DeviceHost.AgentDaemonEndpoint;
-  /** Set once a stop has been asked for but Expo has not confirmed it. */
-  stopping: boolean;
-}
-
-/**
- * Every session this host may have started, recorded by its unique name before
- * Expo is asked to create it, so a server that crashes at any point can still
- * find and stop the session on its next start.
- */
-const LedgerEntry = Schema.Struct({
-  name: Schema.String,
-  appId: Schema.String,
-  recordedAt: Schema.Number,
-  /** Expo refused the create: nothing should run, but the reaper still looks. */
-  refused: Schema.optional(Schema.Boolean),
-});
-type LedgerEntry = typeof LedgerEntry.Type;
-const Ledger = Schema.fromJsonString(Schema.Array(LedgerEntry));
-const decodeLedger = Schema.decodeUnknownEffect(Ledger);
-const encodeLedger = Schema.encodeSync(Ledger);
-// How often listing looks for recorded sessions this host no longer tracks.
-const REAP_INTERVAL_MS = 60_000;
-// Expo's ready queue is unbounded despite its 115-minute session limit and five-minute cleanup.
-// Unlisted sessions stop counting after this lifetime; forget their records only once
-// confirmed not running or after a day unconfirmed.
-const RECORD_LIFETIME_MS = 180 * 60_000;
-const RECORD_MAX_AGE_MS = 24 * 60 * 60_000;
-// Expo lists a session it made within seconds; a create with an unknown
-// outcome stops counting against the limit once it has had this long.
-const UNCERTAIN_CREATE_MS = 5 * 60_000;
-// One failed request to Expo during a minutes-long start does not end the start.
-const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
-
-/** A malformed escape names no device, so the proxy answers 404 instead of failing. */
-const decodePathSegment = (segment: string): string | null => {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
-};
-
-/**
- * The Expo credential a host's setting holds or names. Every session bills the account behind
- * it, so a named secret that cannot be read fails rather than falling back to another login.
- */
-export const resolveSavedExpoCredential = (
-  secrets: SecretResolver.SecretResolver["Service"],
-  saved: SettingsSecretValue,
-) => requireSettingsSecret(secrets, saved).pipe(Effect.flatMap(resolveExpoCredential));
 
 export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDeviceHostConfig) {
   const http = yield* HttpClient.HttpClient;
@@ -946,3 +836,4 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     stop: stopAll,
   });
 });
+export * from "./EasDeviceHost-part2.ts";

@@ -57,7 +57,7 @@ function makeMockDetachedHandle(input: MockSpawnResult & { readonly onUnref?: ()
   });
 }
 
-const layerTest = (input: {
+export const layerTest = (input: {
   readonly platform: NodeJS.Platform;
   readonly env?: Record<string, string>;
   readonly resolveExecutable?: (command: string) => string | undefined;
@@ -845,64 +845,3 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
     ),
   );
 });
-
-const launchWindowsShimEditor = (cwd: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    yield* fileSystem.writeFileString(path.join(binDir, "code.CMD"), "@echo off\r\n");
-    let spawned: ChildProcess.StandardCommand | undefined;
-    const exit = yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      return yield* launcher.launchEditor({ editor: "vscode", cwd }).pipe(Effect.exit);
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          platform: "win32",
-          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-          resolveExecutable: (command) =>
-            command === "code" ? "C:\\Program Files\\Microsoft VS Code\\bin\\code.CMD" : command,
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
-    return { exit, spawned };
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
-
-it.effect.each([
-  ["CRLF", "C:\\workspace\\file.ts\r\ncalc.exe"],
-  ["LF", "C:\\workspace\\file.ts\ncalc.exe"],
-  ["double quote", 'C:\\workspace\\file.ts" & calc.exe & "'],
-] as const)("does not start a Windows command shim for a path with a $0", ([, cwd]) =>
-  Effect.gen(function* () {
-    const { exit, spawned } = yield* launchWindowsShimEditor(cwd);
-    assert.equal(spawned, undefined);
-    assert.isTrue(Exit.isFailure(exit));
-    if (Exit.isFailure(exit)) {
-      assert.instanceOf(
-        Cause.squash(exit.cause),
-        ExternalLauncher.ExternalLauncherUnsupportedTargetError,
-      );
-    }
-  }),
-);
-
-it.effect("starts a Windows command shim for unicode paths with cmd metacharacters", () =>
-  Effect.gen(function* () {
-    const { exit, spawned } = yield* launchWindowsShimEditor(
-      "C:\\Users\\jö\\R&D (100%)\\naïve ^file!.ts:3:7",
-    );
-    assert.isTrue(Exit.isSuccess(exit));
-    assert.ok(spawned);
-    assert.equal(spawned.options.shell, true);
-    assert.deepEqual(spawned.args, []);
-    assert.isTrue(
-      spawned.command.endsWith(
-        ' ^"--goto^" ^"C:\\Users\\jö\\R^&D^ ^(100^%^)\\naïve^ ^^file^!.ts:3:7^"',
-      ),
-    );
-  }),
-);
