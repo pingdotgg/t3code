@@ -1392,7 +1392,7 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect.each(["user_message", "agent_message_chunk", "tool_call"] as const)(
+  it.effect.each(["user_message", "agent_message_chunk", "tool_call", "tool_call_update"] as const)(
     "confirms input only after a root %s, and keeps it when the turn settles",
     (sessionUpdate) =>
       Effect.gen(function* () {
@@ -1476,7 +1476,7 @@ describe("AcpRegistryAdapterV2", () => {
                       },
                     ],
                   }
-                : sessionUpdate === "tool_call"
+                : sessionUpdate === "tool_call" || sessionUpdate === "tool_call_update"
                   ? {
                       toolCallId: "append-action-log",
                       title: "Append to actions.log",
@@ -1517,7 +1517,7 @@ describe("AcpRegistryAdapterV2", () => {
           event.type === "provider_turn.updated" ? [event.providerTurn] : [],
         );
         assert.isNotEmpty(initial);
-        assert.isTrue(initial.every((turn) => turn.inputRecordedAt === undefined));
+        assert.isTrue(initial.every((turn) => turn.inputRecordedAt === null));
         const accepted = acceptedEvents.find((event) => event.type === "provider_turn.updated");
         const acceptedTurn =
           accepted?.type === "provider_turn.updated" ? accepted.providerTurn : undefined;

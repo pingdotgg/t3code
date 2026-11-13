@@ -1952,6 +1952,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
+        // Spans turns, so a late update to an earlier turn's tool is not taken for a new one.
+        const seenToolCallIds = new Set<string>();
         // Keyed by the agent's steer id; an injection can arrive before its send returns.
         const steerInjections = new Map<string, Deferred.Deferred<void>>();
         const steerInjection = (steerId: string) => {
@@ -5061,8 +5063,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
+          // ACP v2 starts a tool with its first tool_call_update rather than a tool_call.
+          let startsTool = false;
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            const key = `${notification.sessionId}\u0000${update.toolCallId}`;
+            startsTool =
+              !seenToolCallIds.has(key) &&
+              (update.sessionUpdate === "tool_call" ||
+                update.status === "pending" ||
+                update.status === "in_progress");
+            seenToolCallIds.add(key);
+          }
           // Session metadata, child output, and updates to earlier tools do not acknowledge this
-          // root prompt; a new root tool call does, since the agent may act before it writes text.
+          // root prompt; a new root tool does, since the agent may act before it writes text.
           if (
             context !== null &&
             !context.finalized &&
@@ -5076,7 +5089,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 update.sessionUpdate === "agent_thought_chunk" ||
                 update.sessionUpdate === "agent_message" ||
                 update.sessionUpdate === "agent_thought" ||
-                update.sessionUpdate === "tool_call") &&
+                startsTool) &&
                 acpPostSettleWakeEvidence(notification, flavor)))
           ) {
             context.inputRecordedAt = yield* DateTime.now;
@@ -7645,9 +7658,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status,
           startedAt: context.startedAt,
           completedAt,
-          ...(context.inputRecordedAt === undefined
-            ? {}
-            : { inputRecordedAt: context.inputRecordedAt }),
+          inputRecordedAt: context.inputRecordedAt ?? null,
           ...(status === "running" || status === "pending"
             ? {}
             : {

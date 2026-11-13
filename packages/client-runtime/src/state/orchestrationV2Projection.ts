@@ -1,4 +1,5 @@
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
+import { mergeProviderTurnInputRecordedAt } from "@t3tools/contracts";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -380,7 +381,10 @@ export function applyOrchestrationV2ProjectionEvent(
     case "provider-turn.updated": {
       const current = base.providerTurns.find((turn) => turn.id === event.payload.id);
       const tokenUsage = event.payload.tokenUsage ?? current?.tokenUsage;
-      const inputRecordedAt = event.payload.inputRecordedAt ?? current?.inputRecordedAt;
+      const inputRecordedAt = mergeProviderTurnInputRecordedAt(
+        current?.inputRecordedAt,
+        event.payload.inputRecordedAt,
+      );
       return {
         ...base,
         providerTurns: upsertEntity(base.providerTurns, {

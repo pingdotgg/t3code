@@ -1,5 +1,5 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { mergeProviderTurnInputRecordedAt, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -794,14 +794,16 @@ function upsertProviderTurn(
   next: OrchestrationV2ProviderTurn,
 ): Array<OrchestrationV2ProviderTurn> {
   const current = turns.find((turn) => turn.id === next.id);
+  const inputRecordedAt = mergeProviderTurnInputRecordedAt(
+    current?.inputRecordedAt,
+    next.inputRecordedAt,
+  );
   return upsertById(turns, {
     ...next,
     ...((next.tokenUsage ?? current?.tokenUsage) === undefined
       ? {}
       : { tokenUsage: next.tokenUsage ?? current?.tokenUsage }),
-    ...((next.inputRecordedAt ?? current?.inputRecordedAt) === undefined
-      ? {}
-      : { inputRecordedAt: next.inputRecordedAt ?? current?.inputRecordedAt }),
+    ...(inputRecordedAt === undefined ? {} : { inputRecordedAt }),
   });
 }
 
@@ -2682,8 +2684,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "provider-turn.updated": {
               const existingRows =
-                event.payload.tokenUsage === undefined ||
-                event.payload.inputRecordedAt === undefined
+                event.payload.tokenUsage === undefined || event.payload.inputRecordedAt == null
                   ? yield* sql<PayloadRow>`
                     SELECT payload_json
                     FROM orchestration_v2_projection_provider_turns

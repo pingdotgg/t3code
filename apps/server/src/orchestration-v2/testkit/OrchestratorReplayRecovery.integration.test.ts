@@ -555,7 +555,7 @@ describe("orchestrator replay recovery", () => {
         // Codex confirmed the resent request, and later usage updates kept that confirmation.
         assert.deepEqual(
           projection.providerTurns.map((turn) => [
-            turn.inputRecordedAt !== undefined,
+            turn.inputRecordedAt instanceof Object,
             turn.tokenUsage !== undefined,
           ]),
           [

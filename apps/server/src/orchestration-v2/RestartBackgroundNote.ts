@@ -307,6 +307,7 @@ export function isRestartNoteContinuation(
 /**
  * Without the provider's confirmation, the native history may lack the request: Codex runs prompt
  * hooks and pre-turn compaction first. Native continuations inherit the source request's confirmation.
+ * Turns from servers that did not track it (no inputRecordedAt) count as possibly recorded.
  */
 export function restartSourceInputUnrecorded(
   source: OrchestrationV2Run,
@@ -322,9 +323,7 @@ export function restartSourceInputUnrecorded(
     const attemptId = current.activeAttemptId;
     if (
       attemptId !== null &&
-      providerTurns.some(
-        (turn) => turn.runAttemptId === attemptId && turn.inputRecordedAt !== undefined,
-      )
+      providerTurns.some((turn) => turn.runAttemptId === attemptId && turn.inputRecordedAt !== null)
     )
       return false;
     const previousId: OrchestrationV2Run["restartContinuationOfRunId"] =

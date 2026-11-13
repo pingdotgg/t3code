@@ -1137,10 +1137,11 @@ it.effect.each(["codex", "acpRegistry"] as const)(
   (driverKind) =>
     Effect.gen(function* () {
       const cut = cutMidTurn();
+      const unconfirmed = cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt: null }));
       for (const providerTurns of [
-        cut.providerTurns,
+        unconfirmed,
         // Pre-turn compaction reports usage before Codex records the new request.
-        cut.providerTurns.map((turn) => ({ ...turn, tokenUsage: { usedTokens: 1 } })),
+        unconfirmed.map((turn) => ({ ...turn, tokenUsage: { usedTokens: 1 } })),
       ]) {
         const dispatches = yield* continuationDispatches({
           ...cut,
@@ -1159,47 +1160,73 @@ it.effect.each(["codex", "acpRegistry"] as const)(
     }),
 );
 
-it.effect("resumes natively once Codex recorded the request, and for other providers", () =>
-  Effect.gen(function* () {
-    const cut = cutMidTurn();
-    const inputRecordedAt = DateTime.makeUnsafe("2026-10-03T11:59:00.000Z");
-    const recorded = {
-      ...cut,
-      messages: [cutRequest],
-      providerTurns: cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt })),
-    } as unknown as OrchestrationV2ThreadProjection;
-    const recordedAcp = {
-      ...recorded,
-      providerThreads: recorded.providerThreads.map((thread) => ({
-        ...thread,
-        driver: ProviderDriverKind.make("acpRegistry"),
-      })),
-    };
-    // A goal's first native turn recorded the request; its cut follow-up turn records none.
-    const goalFollowUp = {
-      ...cut,
-      messages: [
-        { ...cutRequest, text: "/goal find the cheapest return flights", attachments: [] },
-      ],
-      providerTurns: [
-        { ...cut.providerTurns[0]!, ordinal: 1, status: "completed", inputRecordedAt },
-        { ...cut.providerTurns[0]!, id: "turn:goal-follow-up", ordinal: 2 },
-      ],
-    } as unknown as OrchestrationV2ThreadProjection;
-    const claude = ProviderDriverKind.make("claudeAgent");
-    const otherDriver = {
-      ...cut,
-      messages: [cutRequest],
-      providerThreads: cut.providerThreads.map((thread) => ({ ...thread, driver: claude })),
-    } as unknown as OrchestrationV2ThreadProjection;
-    for (const projection of [recorded, recordedAcp, goalFollowUp, otherDriver]) {
-      const commands = yield* continuationDispatches(projection);
-      assert.lengthOf(commands, 1);
-      assert.notInclude(commands[0]!.text, cutRequest.text);
-      assert.deepEqual(commands[0]!.attachments, []);
-      assert.isUndefined(commands[0]!.context);
-    }
-  }),
+it.effect(
+  "resumes natively once recorded, for turns from before tracking, and for other providers",
+  () =>
+    Effect.gen(function* () {
+      const cut = cutMidTurn();
+      const inputRecordedAt = DateTime.makeUnsafe("2026-10-03T11:59:00.000Z");
+      const recorded = {
+        ...cut,
+        messages: [cutRequest],
+        providerTurns: cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt })),
+      } as unknown as OrchestrationV2ThreadProjection;
+      const recordedAcp = {
+        ...recorded,
+        providerThreads: recorded.providerThreads.map((thread) => ({
+          ...thread,
+          driver: ProviderDriverKind.make("acpRegistry"),
+        })),
+      };
+      // A goal's first native turn recorded the request; its cut follow-up turn records none.
+      const goalFollowUp = {
+        ...cut,
+        messages: [
+          { ...cutRequest, text: "/goal find the cheapest return flights", attachments: [] },
+        ],
+        providerTurns: [
+          { ...cut.providerTurns[0]!, ordinal: 1, status: "completed", inputRecordedAt },
+          {
+            ...cut.providerTurns[0]!,
+            id: "turn:goal-follow-up",
+            ordinal: 2,
+            inputRecordedAt: null,
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      // Servers before acceptance tracking left the field off, so the request may already have run.
+      const legacy = {
+        ...cut,
+        messages: [cutRequest],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const legacyAcp = {
+        ...legacy,
+        providerThreads: legacy.providerThreads.map((thread) => ({
+          ...thread,
+          driver: ProviderDriverKind.make("acpRegistry"),
+        })),
+      };
+      const claude = ProviderDriverKind.make("claudeAgent");
+      const otherDriver = {
+        ...cut,
+        messages: [cutRequest],
+        providerThreads: cut.providerThreads.map((thread) => ({ ...thread, driver: claude })),
+      } as unknown as OrchestrationV2ThreadProjection;
+      for (const projection of [
+        recorded,
+        recordedAcp,
+        goalFollowUp,
+        legacy,
+        legacyAcp,
+        otherDriver,
+      ]) {
+        const commands = yield* continuationDispatches(projection);
+        assert.lengthOf(commands, 1);
+        assert.notInclude(commands[0]!.text, cutRequest.text);
+        assert.deepEqual(commands[0]!.attachments, []);
+        assert.isUndefined(commands[0]!.context);
+      }
+    }),
 );
 
 it.effect(

@@ -2337,6 +2337,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               status: "running",
               startedAt: input.startedAt,
               completedAt: null,
+              inputRecordedAt: null,
             },
           });
           yield* rememberRootProviderThread(input.turnInput.providerThread);
