@@ -297,4 +297,14 @@ describe("resolvePathLinkTarget", () => {
       "/Users/julius/project/main.c:10:5",
     );
   });
+
+  // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
+  it("does not resolve an OSC 8 file URI target against the cwd", () => {
+    expect(resolvePathLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
+      "/var/tmp/report.txt",
+    );
+    expect(
+      resolvePathLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
+    ).not.toMatch(/^\/workspace\/project\//);
+  });
 });
